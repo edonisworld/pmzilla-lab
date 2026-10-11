@@ -166,7 +166,9 @@ class CatalogueDansLIndex(base.Base):
                                   "Discovery.md:\n  titre: Sans auteur\n  note: Ignorée\n", encoding="utf-8")
         self.indexer()
         self.assertEqual(self.livres()["Flux.md"][0], "Titre du catalogue")
-        self.assertEqual(library.Library().search("kanban", None, 1)[0]["author"], "Auteur Un")
+        self.assertEqual(self.store.books["Flux.md"]["meta"]["author"], "Auteur Un")
+        self.assertEqual(self.store.books["Discovery.md"]["meta"]["author"], "auteur non indiqué")
+        self.assertEqual(self.bibliotheque().search("kanban", None, 1)[0]["author"], "Auteur Un")
         self.assertEqual(library.Library().search("arbre d'opportunités", ["produit"], 1)[0]["author"], "auteur non indiqué")
 
 

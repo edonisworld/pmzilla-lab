@@ -384,6 +384,43 @@ class TableEquipes(Base):
         self.assertNotIn("Complétez", sortie)
         self.assertNotIn("inconnues", sortie)
 
+    def test_strict_teams_identifiant_inconnu_ecrit_le_fichier_puis_sort_avec_3(self):
+        self.ecrire_table()
+        chemin = self.ws / "api.csv"
+        code, sortie = self.lancer("export", "--strict-teams", "--output", str(chemin))
+        self.assertEqual(code, 3, sortie)
+        self.assertTrue(chemin.exists())
+        self.assertIn("Fichier écrit", sortie)
+        self.assertTrue(sortie.rstrip().endswith("identifiants d'équipe inconnus : export incomplet"), sortie)
+        for interdit in ("Equipe", "ABC-", "ws-secret"):
+            self.assertNotIn(interdit, sortie.splitlines()[-1])
+
+    def test_strict_teams_en_anglais(self):
+        self.ecrire_table()
+        code, sortie = self.lancer("export", "--strict-teams", "--output", str(self.ws / "api.csv"), "--language", "en")
+        self.assertEqual(code, 3, sortie)
+        self.assertTrue(sortie.rstrip().endswith("unknown team identifiers: export incomplete"), sortie)
+
+    def test_strict_teams_table_complete_sort_avec_0(self):
+        self.ecrire_table("equipes: {'1': A, '2': B, '3': C, '4': D, '5': E, '6': F}\n")
+        code, sortie = self.lancer("export", "--strict-teams", "--output", str(self.ws / "api.csv"))
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("export incomplet", sortie)
+
+    def test_sans_strict_teams_le_code_reste_0(self):
+        self.ecrire_table()
+        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("export incomplet", sortie)
+
+    def test_strict_teams_requetes_nommees_une_seule_phrase_a_la_fin(self):
+        self.ecrire_table()
+        self.ecrire_reglages(f"export_team_field: {CHAMP}\njql_exports:\n  a: project = AAA\n  b: project = BBB\n")
+        code, sortie = self.lancer("export", "--strict-teams")
+        self.assertEqual(code, 3, sortie)
+        self.assertEqual(sortie.count("export incomplet"), 1)
+        self.assertEqual(sortie.count("Fichier écrit"), 2)
+
     def test_cles_conflits_et_appuis_ignorees_a_la_lecture(self):
         self.ecrire_table("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\nconflits: {'4': [D, E]}\nappuis: {'1': 1}\n")
         self.assertEqual(ex.charger_table(), {"1": "Equipe A", "2": "Equipe B", "3": "Equipe C"})

@@ -14,9 +14,18 @@ Le document contient de la prose libre et exactement un bloc YAML clôturé dont
     uv run tools/roadmap.py next --budget 2h [--file CHEMIN]
         Propose, dans l'ordre de la file, les jobs prêts qui tiennent dans le temps donné. Code 1 : file invalide. Code 2 : durée mal formée.
 
-    uv run tools/roadmap.py done R-3 [--file CHEMIN]
-        Passe le job à `done` (seule sa ligne d'état change) et liste les jobs débloqués. Code 1 : file invalide ou identifiant inconnu.
-        Un identifiant déjà archivé répond qu'il est archivé (code 0).
+    uv run tools/roadmap.py done R-3 [--today AAAA-MM-JJ] [--file CHEMIN]
+        Passe le job à `done`, écrit sa date de clôture `done_on` sous la ligne d'état (ou remplace celle qui existe) et liste
+        les jobs débloqués. Code 1 : file invalide ou identifiant inconnu. Un identifiant déjà archivé répond qu'il est archivé (code 0).
+
+    uv run tools/roadmap.py status [--file CHEMIN]
+        Résumé texte, file et archive réunies : compte par état et par thème, jobs en cours (date de début `started_on` si connue),
+        cinq prochains jobs prêts dans l'ordre de la file, jobs bloqués avec leurs dépendances non faites. N'écrit rien.
+
+    uv run tools/roadmap.py board [--open] [--file CHEMIN]
+        Page HTML autonome (sans réseau ni dépendance externe) écrite dans le dossier de données ($PMZILLA_LAB_DATA, défaut
+        ~/.pmzilla-lab), jamais dans le dépôt : avancement par thème, en cours, prochains prêts, bloqués et par quoi, fait par
+        semaine (lundi de la semaine de `done_on`). --open l'ouvre dans le navigateur.
 
     uv run tools/roadmap.py archive [--dry-run] [--file CHEMIN]
         Déplace vers l'archive (feuille-de-route-archive.md, à côté de la file) chaque job `done` dont aucun job non `done` ne
@@ -27,12 +36,15 @@ L'archive a le même format que la file (un bloc YAML `jobs` et des descriptions
 et `done` la lisent pour résoudre les dépendances : un identifiant archivé compte comme `done`, et les identifiants sont uniques
 sur les deux fichiers.
 
-Interdit à l'outil : écrire autre chose que l'état du job donné à `done` et les déplacements de `archive`, réordonner la file,
+Interdit à l'outil : écrire dans la file autre chose que l'état et la date de clôture du job donné à `done` et les déplacements de `archive`, réordonner la file,
 calculer une date autre que la comparaison avec aujourd'hui. La date du jour peut être imposée avec --today AAAA-MM-JJ ou ROADMAP_TODAY (tests).
 """
 import argparse
+import collections
 import datetime
+import html
 import os
+import subprocess
 import re
 import sys
 from pathlib import Path
@@ -46,8 +58,11 @@ PREFIXE = "roadmap : "
 ETATS = ("ready", "blocked", "in-progress", "done")
 METHODES = ("openspec", "direct-prompt")
 MODELES = ("opus", "sonnet", "haiku", "tbd")      # décision R-16 du 2026-10-10 : alias de /model, ou tbd
-REQUIS = ("id", "title", "depends_on", "conditions", "state", "estimate", "method", "model")
-OPTIONNELS = ("not_before", "due", "change")
+THEMES = ("fiabilite", "veille", "bibliotheque", "base", "cas", "postures", "edition", "outillage")   # R-57
+REQUIS = ("id", "title", "theme", "depends_on", "conditions", "state", "estimate", "method", "model")
+OPTIONNELS = ("not_before", "due", "change", "done_on", "started_on")
+INCONNUE = "inconnue"   # done_on d'un job fait dont la date n'a pas été retrouvée
+NB_PRETS = 5
 RE_ID = re.compile(r"^R-\d+$")
 RE_BLOC = re.compile(r"^```[ \t]*(?:ya?ml)[ \t]*$", re.I)
 RE_FIN = re.compile(r"^```[ \t]*$")
@@ -191,7 +206,11 @@ def verifie(file: list, archives: list = ()) -> list[str]:
             pb.append(f"{jid} : estimate : durée (45min, 2h, 1h30) ou tbd attendue")
         if "model" in j and j["model"] not in MODELES:
             pb.append(f"{jid} : model : valeur hors de {', '.join(MODELES)}")
-        for c in ("not_before", "due"):
+        if "theme" in j and j["theme"] not in THEMES:
+            pb.append(f"{jid} : theme : valeur hors de {', '.join(THEMES)}")
+        if "done_on" in j and j["done_on"] != INCONNUE and not est_date(j["done_on"]):
+            pb.append(f"{jid} : done_on : date AAAA-MM-JJ ou {INCONNUE} attendue")
+        for c in ("not_before", "due", "started_on"):
             if c in j and not est_date(j[c]):
                 pb.append(f"{jid} : {c} : date AAAA-MM-JJ attendue")
         if "change" in j and not (isinstance(j["change"], str) and j["change"].strip()):
@@ -333,6 +352,7 @@ def cmd_next(args) -> int:
 
 
 def cmd_done(args) -> int:
+    jour = aujourdhui(args)
     chemin = Path(args.file)
     jobs, pb, lignes, bloc, archives = lit(chemin)
     if pb:
@@ -345,12 +365,15 @@ def cmd_done(args) -> int:
         return 1
     d, f = bloc
     racine = yaml.compose("\n".join(lignes[d:f + 1]))
-    ligne_etat = None
+    ligne_etat = ligne_cloture = colonne = None
     liste = next(v for k, v in racine.value if k.value == "jobs")
     for item in liste.value:
         champs = {k.value: v for k, v in item.value}
         if champs["id"].value == args.id:
             ligne_etat = d + champs["state"].start_mark.line
+            colonne = next(k.start_mark.column for k, _ in item.value if k.value == "state")
+            if "done_on" in champs:
+                ligne_cloture = d + champs["done_on"].start_mark.line
     if ligne_etat is None:
         print(f"{PREFIXE}{args.id} : state : ligne d'état introuvable")
         return 1
@@ -359,6 +382,11 @@ def cmd_done(args) -> int:
         print(f"{PREFIXE}{args.id} : state : ligne d'état non modifiable (forme inattendue)")
         return 1
     lignes[ligne_etat] = nouvelle
+    cloture = " " * colonne + f"done_on: {jour.isoformat()}"
+    if ligne_cloture is not None:
+        lignes[ligne_cloture] = cloture
+    else:
+        lignes.insert(ligne_etat + 1, cloture)
     chemin.write_text("\n".join(lignes), encoding="utf-8")
     etat = {j["id"]: j["state"] for j in jobs + archives}
     etat[args.id] = "done"
@@ -367,6 +395,131 @@ def cmd_done(args) -> int:
     print(f"{PREFIXE}{args.id} : state : done")
     if debloques:
         print(PREFIXE + "jobs dont toutes les dépendances sont done (à passer ready si tu le décides) : " + ", ".join(debloques))
+    return 0
+
+
+def vue(jobs: list, archives: list) -> dict:
+    """Ce que montrent `status` et `board` : comptes, en cours, prochains prêts, bloqués, faits par semaine."""
+    tous = jobs + archives
+    etat = {j["id"]: j["state"] for j in tous}
+    par_theme = {th: [0, 0] for th in THEMES}        # [faits, total]
+    for j in tous:
+        par_theme[j["theme"]][1] += 1
+        par_theme[j["theme"]][0] += j["state"] == "done"
+    prets = [j for j in jobs if j["state"] == "ready" and all(etat[d] == "done" for d in j["depends_on"])]
+    semaines: dict = collections.Counter()
+    for j in tous:
+        if j["state"] == "done":
+            fin = j.get("done_on", INCONNUE)
+            if fin == INCONNUE:
+                semaines[INCONNUE] += 1
+            else:
+                fin = en_date(fin)
+                semaines[(fin - datetime.timedelta(days=fin.weekday())).isoformat()] += 1
+    return {
+        "etats": collections.Counter(j["state"] for j in tous),
+        "themes": {th: v for th, v in par_theme.items() if v[1]},
+        "en_cours": [j for j in jobs if j["state"] == "in-progress"],
+        "prets": prets[:NB_PRETS],
+        "bloques": [(j, [d for d in j["depends_on"] if etat[d] != "done"]) for j in jobs if j["state"] == "blocked"],
+        "semaines": sorted(((s, n) for s, n in semaines.items() if s != INCONNUE), reverse=True),
+        "inconnues": semaines[INCONNUE],
+    }
+
+
+def debut(j) -> str:
+    return f"depuis {en_date(j['started_on']).isoformat()}" if "started_on" in j else "début inconnu"
+
+
+def estimation(j) -> str:
+    return f"estimation {j['estimate']}" + (f", pas avant {en_date(j['not_before']).isoformat()}" if "not_before" in j else "")
+
+
+def attente(deps: list) -> str:
+    return "attend " + ", ".join(deps) if deps else "dépendances faites, à passer ready si tu le décides"
+
+
+def cmd_status(args) -> int:
+    jobs, pb, _, _, archives = lit(Path(args.file))
+    if pb:
+        return sortie_invalide(pb)
+    v = vue(jobs, archives)
+    print(PREFIXE + "par état : " + ", ".join(f"{e} {v['etats'][e]}" for e in ETATS))
+    print(PREFIXE + "par thème (faits/total) :")
+    for th, (faits, total) in v["themes"].items():
+        print(f"  {th:<13}{faits}/{total}")
+    for titre, liste, detail in (("en cours", v["en_cours"], debut),
+                                 (f"{NB_PRETS} prochains prêts", v["prets"], estimation),
+                                 ("bloqués", v["bloques"], None)):
+        print(PREFIXE + titre + " :" + ("" if liste else " aucun"))
+        for x in liste:
+            j, info = (x[0], attente(x[1])) if detail is None else (x, detail(x))
+            print(f"  {j['id']} | {j['title']} | {info}")
+    return 0
+
+
+STYLE = """:root{--fond:#fbfaf7;--texte:#1d1d1b;--doux:#6b6a65;--trait:#e3e1da;--plein:#2f6f5e;--vide:#e8e6df}
+@media (prefers-color-scheme:dark){:root{--fond:#1b1b1a;--texte:#ecebe6;--doux:#a3a29c;--trait:#33322f;--plein:#5fb39b;--vide:#2c2b29}}
+body{margin:0;background:var(--fond);color:var(--texte);font:15px/1.5 -apple-system,system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
+p.doux,span.doux{color:var(--doux)}ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid var(--trait)}
+.ligne{display:grid;grid-template-columns:110px 1fr 56px;gap:10px;align-items:center;padding:3px 0}
+.barre{height:12px;background:var(--vide);border-radius:6px;overflow:hidden}.barre i{display:block;height:100%;background:var(--plein)}
+code{font-size:13px}"""
+
+
+def ligne_html(j, info: str) -> str:
+    e = html.escape
+    return f"<li><code>{e(j['id'])}</code> {e(j['title'])} <span class=\"doux\">{e(info)}</span></li>"
+
+
+def page_board(v: dict, jour: datetime.date) -> str:
+    e = html.escape
+    bloc = [f"<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
+            f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Feuille de route</title>"
+            f"<style>{STYLE}</style></head><body><main>",
+            "<h1>Feuille de route</h1>",
+            f"<p class=\"doux\">Généré le {jour.isoformat()} par roadmap.py board · "
+            + " · ".join(f"{e(s)} {v['etats'][s]}" for s in ETATS) + "</p>",
+            "<h2>Avancement par thème</h2>"]
+    for th, (faits, total) in v["themes"].items():
+        bloc.append(f"<div class=\"ligne\"><span>{e(th)}</span><div class=\"barre\"><i style=\"width:{round(100 * faits / total)}%\">"
+                    f"</i></div><span class=\"doux\">{faits}/{total}</span></div>")
+    sections = (("En cours", [(j, debut(j)) for j in v["en_cours"]]),
+                (f"{NB_PRETS} prochains prêts", [(j, estimation(j)) for j in v["prets"]]),
+                ("Bloqués, et par quoi", [(j, attente(d)) for j, d in v["bloques"]]))
+    for titre, liste in sections:
+        bloc.append(f"<h2>{e(titre)}</h2>")
+        bloc.append("<ul>" + "".join(ligne_html(j, info) for j, info in liste) + "</ul>" if liste else "<p class=\"doux\">aucun</p>")
+    bloc.append("<h2>Fait par semaine</h2>")
+    plus = max([n for _, n in v["semaines"]] + [1])
+    for s, n in v["semaines"]:
+        bloc.append(f"<div class=\"ligne\"><span>{e(s)}</span><div class=\"barre\"><i style=\"width:{round(100 * n / plus)}%\"></i>"
+                    f"</div><span class=\"doux\">{n}</span></div>")
+    if v["inconnues"]:
+        bloc.append(f"<p class=\"doux\">{v['inconnues']} travaux faits à date inconnue.</p>")
+    bloc.append("</main></body></html>\n")
+    return "\n".join(bloc)
+
+
+def dossier_donnees() -> Path:
+    return Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser()
+
+
+def ouvre(chemin: Path) -> None:
+    subprocess.run(["open", str(chemin)], check=False)
+
+
+def cmd_board(args) -> int:
+    jobs, pb, _, _, archives = lit(Path(args.file))
+    if pb:
+        return sortie_invalide(pb)
+    sortie = dossier_donnees() / "feuille-de-route.html"
+    sortie.parent.mkdir(parents=True, exist_ok=True)
+    sortie.write_text(page_board(vue(jobs, archives), aujourdhui(args)), encoding="utf-8")
+    print(f"{PREFIXE}tableau écrit : {sortie}")
+    if args.open:
+        ouvre(sortie)
     return 0
 
 
@@ -452,19 +605,23 @@ def cmd_archive(args) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="roadmap.py", description="Lecteur de la file de travail.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for nom in ("check", "next", "done", "archive"):
+    for nom in ("check", "next", "done", "archive", "status", "board"):
         s = sub.add_parser(nom)
         s.add_argument("--file", default=str(DOCUMENT))
         if nom == "archive":
             s.add_argument("--dry-run", action="store_true")
         if nom == "next":
             s.add_argument("--budget", required=True)
+        if nom in ("next", "done", "board"):
             s.add_argument("--today", default=None)
         if nom == "done":
             s.add_argument("id")
+        if nom == "board":
+            s.add_argument("--open", action="store_true")
     try:
         args = p.parse_args(argv)
-        return {"check": cmd_check, "next": cmd_next, "done": cmd_done, "archive": cmd_archive}[args.cmd](args)
+        return {"check": cmd_check, "next": cmd_next, "done": cmd_done, "archive": cmd_archive, "status": cmd_status,
+                "board": cmd_board}[args.cmd](args)
     except Usage as e:
         print(PREFIXE + str(e), file=sys.stderr)
         return 2

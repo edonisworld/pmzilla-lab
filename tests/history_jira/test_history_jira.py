@@ -503,6 +503,37 @@ class Collecte(Base):
         self.assertFalse((self.ws / "Flux-Lab" / "historique" / "transitions.json").exists())
         self.assertTrue(self.attentes)
 
+    def test_strict_429_persistant_sort_avec_3_sans_cache(self):
+        self.faux.toujours_429 = True
+        code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(2)), "--strict")
+        self.assertEqual(code, 3, sortie)
+        self.assertIn("erreurs : 2 (HTTP 429 : 2)", sortie)
+        self.assertFalse((self.ws / "Flux-Lab" / "historique" / "transitions.json").exists())
+        self.assertTrue(sortie.rstrip().endswith("erreurs de collecte : historique incomplet"), sortie)
+
+    def test_strict_429_persistant_en_anglais(self):
+        self.faux.toujours_429 = True
+        code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(2)), "--strict", "--language", "en")
+        self.assertEqual(code, 3, sortie)
+        self.assertTrue(sortie.rstrip().endswith("collection errors: history incomplete"), sortie)
+
+    def test_strict_sans_erreur_sort_avec_0(self):
+        code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(2)), "--strict")
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("historique incomplet", sortie)
+
+    def test_sans_strict_429_persistant_reste_0(self):
+        self.faux.toujours_429 = True
+        code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(2)))
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("historique incomplet", sortie)
+
+    def test_strict_garde_le_code_1_d_une_erreur_d_acces(self):
+        self.faux.attendu = "Basic autre"
+        code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(3)), "--strict")
+        self.assertEqual(code, 1, sortie)
+        self.assertNotIn("historique incomplet", sortie)
+
     def test_attente_croissante_sans_retry_after(self):
         faux_attentes = []
         r_sans = mock.Mock(status_code=503, headers={})

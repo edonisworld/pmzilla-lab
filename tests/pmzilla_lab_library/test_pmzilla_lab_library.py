@@ -3,10 +3,13 @@ Tests de la bibliothèque (tools/pmzilla_lab_library.py) sur des livres et des a
 
     uv run --with numpy --with httpx --with pyyaml python -m unittest discover -s tests/pmzilla_lab_library -v
 
-Tout se passe dans un dossier temporaire : l'index, le catalogue et les livres sont inventés, jamais
-Bibliotheque-MD ni l'index réel. Aucun accès réseau : `embed` (Ollama) est remplacé par un plongement
-déterministe fondé sur les mots, les appels sont comptés pour prouver qu'une indexation incrémentale
-ne recalcule rien d'inutile.
+Tout se passe dans un dossier temporaire : le catalogue et les livres sont inventés, jamais Bibliotheque-MD
+ni la vraie base. L'indexeur écrit dans un faux magasin en mémoire (fake_store.FakeStore, même interface que
+KnowledgeStore) ; la classe AvecBase refait l'essentiel sur une base jetable (sautée sans base, lancée par
+tools/dbtest.sh). Aucun accès réseau : `embed` (Ollama) est remplacé par un plongement déterministe fondé sur
+les mots, les appels sont comptés pour prouver qu'une indexation incrémentale ne recalcule rien d'inutile. Les
+tests de la voie de lecture SQLite (`Library`, conservée jusqu'au change R-27) recopient le faux magasin dans un
+index SQLite temporaire (fake_store.export_sqlite).
 """
 import ast
 import contextlib
@@ -23,8 +26,10 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import identifiants_personnels  # noqa: E402
 import pmzilla_lab_library as library  # noqa: E402
+from fake_store import FakeStore, export_sqlite  # noqa: E402
 
 RACINE = Path(__file__).resolve().parents[2]
 
@@ -39,6 +44,19 @@ def fake_embed(texts):
             out[row, int(hashlib.md5(word.encode()).hexdigest(), 16) % DIM] += 1
     norms = np.linalg.norm(out, axis=1, keepdims=True)
     return out / np.where(norms == 0, 1, norms)
+
+
+def fake_embed_1024(texts):
+    """Le même plongement, complété de zéros jusqu'aux 1024 dimensions de la base."""
+    out = np.zeros((len(texts), 1024), dtype=np.float32)
+    out[:, :DIM] = fake_embed(texts)
+    return out
+
+
+def code_de_sortie(arret: SystemExit) -> int:
+    """Code de sortie du processus pour un SystemExit : un message vaut 1."""
+    code = arret.code
+    return 0 if code is None else (1 if isinstance(code, str) else int(code))
 
 
 def livre(titre: str, sections: dict[str, str], entete: str = "") -> str:
@@ -75,10 +93,12 @@ class Base(unittest.TestCase):
         self.racine = self.tmp / "collections"
         self.catalogue = self.tmp / "catalogue.yaml"
         self.calls = 0
+        self.plongement = fake_embed
+        self.store = FakeStore()
 
         def compte(texts):
             self.calls += 1
-            return fake_embed(texts)
+            return self.plongement(texts)
 
         for patch in (
             mock.patch.object(library, "DATA_DIR", self.tmp / "data"),
@@ -101,15 +121,25 @@ class Base(unittest.TestCase):
         chemin.write_text(texte, encoding="utf-8")
         return chemin
 
-    def indexer(self) -> str:
+    def indexer(self, **options) -> str:
         sortie = io.StringIO()
         with contextlib.redirect_stdout(sortie):
-            library.index([self.racine])
+            library.index([self.racine], store=self.store, **options)
         return sortie.getvalue()
 
     def livres(self) -> dict:
-        db = library.connect()
-        return {r[0]: r[1:] for r in db.execute("SELECT file_name, title, collections, sha256 FROM books")}
+        return {nom: (b.title, "|".join(sorted(b.collections)), b.sha256) for nom, b in self.store.stored_books().items()}
+
+    def textes(self, fichier: str | None = None) -> list[str]:
+        return [p["text"] for nom, b in sorted(self.store.books.items()) if fichier in (None, nom) for p in b["passages"]]
+
+    def bibliotheque(self) -> "library.Library":
+        """La voie de lecture SQLite sur le contenu du faux magasin."""
+        export_sqlite(self.store)
+        return library.Library()
+
+    def fichiers_sqlite(self) -> list[Path]:
+        return sorted(self.tmp.rglob("*.sqlite*"))
 
 
 class Indexation(Base):
@@ -143,12 +173,9 @@ class Indexation(Base):
                              "assez long pour dépasser le seuil de quatre-vingts caractères."}))
         sortie = self.indexer()
         self.assertIn("Indexed: 1 · unchanged: 3", sortie)
-        db = library.connect()
-        sections = [r[0] for r in db.execute(
-            "SELECT c.section FROM chunks c JOIN books b ON b.id = c.book_id WHERE b.file_name = 'Flux.md'")]
+        sections = [p["section"] for p in self.store.books["Flux.md"]["passages"]]
         self.assertEqual(sections, ["Seule section"])
-        # l'index plein texte suit : l'ancien vocabulaire a disparu
-        self.assertEqual(db.execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'kanban'").fetchone()[0], 0)
+        self.assertFalse([t for t in self.textes() if "kanban" in t])      # l'ancien vocabulaire a disparu
 
     def test_fichier_supprime_sort_de_l_index(self):
         self.indexer()
@@ -156,8 +183,7 @@ class Indexation(Base):
         sortie = self.indexer()
         self.assertIn("removed: Discovery.md", sortie)
         self.assertNotIn("Discovery.md", self.livres())
-        self.assertEqual(library.connect().execute(
-            "SELECT COUNT(*) FROM chunks WHERE text LIKE '%arbre d''opportunités%'").fetchone()[0], 0)
+        self.assertFalse([t for t in self.textes() if "arbre d'opportunités" in t])
 
     def test_changement_de_collection_sans_recalcul(self):
         self.indexer()
@@ -182,7 +208,9 @@ class Indexation(Base):
         self.indexer()
         self.assertEqual(self.calls, appels)
         self.assertEqual(self.livres()["Flux.md"][0], "Titre du catalogue")
-        hit = library.Library().search("kanban", None, 1)[0]
+        self.assertEqual(self.store.books["Flux.md"]["meta"]["author"], "Auteur Un, Auteur Deux")
+        self.assertEqual(self.store.books["Discovery.md"]["meta"]["author"], "auteur non indiqué")
+        hit = self.bibliotheque().search("kanban", None, 1)[0]
         self.assertEqual(hit["book"], "Titre du catalogue")
         self.assertEqual(hit["author"], "Auteur Un, Auteur Deux")
         hit = library.Library().search("arbre d'opportunités", ["produit"], 1)[0]
@@ -196,8 +224,77 @@ class Indexation(Base):
     def test_fichiers_underscore_ignores_et_dossier_absent(self):
         self.ecrire("flow/_note.md", "# brouillon\n\nignoré")
         self.assertIn("Indexed: 4", self.indexer())
-        with self.assertRaises(SystemExit):
-            library.index([self.tmp / "absent"])
+        with self.assertRaises(SystemExit) as arret:
+            library.index([self.tmp / "absent"], store=self.store)
+        self.assertIn("Not a folder", str(arret.exception))
+
+    def test_livre_deja_copie_par_l_ancien_import_est_inchange(self):
+        """Hash, modèle, titre, métadonnées (autre ordre des clés) et collections identiques : aucun recalcul (design.md D1)."""
+        self.indexer()
+        ancien = FakeStore()
+        for nom, b in self.store.books.items():
+            meta = dict(reversed(list(b["meta"].items())))
+            ancien.books[nom] = dict(b, meta=meta, collections=set(b["collections"]), passages=list(b["passages"]))
+            ancien.collections |= b["collections"]
+        self.store, appels = ancien, self.calls
+        self.assertIn("Indexed: 0 · unchanged: 4", self.indexer())
+        self.assertEqual(self.calls, appels)
+        self.assertEqual(ancien.writes, [])                                   # rien n'est réécrit
+
+    def test_passages_dans_l_ordre_avec_le_genre_text(self):
+        self.indexer()
+        for nom, b in self.store.books.items():
+            self.assertEqual([p["position"] for p in b["passages"]], list(range(len(b["passages"]))), nom)
+            self.assertEqual({p["kind"] for p in b["passages"]}, {"text"}, nom)
+            self.assertTrue(all(p["ref"] == {} for p in b["passages"]))
+
+    def test_vecteur_arrondi_en_demi_precision(self):
+        self.indexer()
+        b = self.store.books["Flux.md"]
+        for p in b["passages"]:
+            attendu = fake_embed([f"{b['title']}\n{p['section']}\n{p['text']}"])[0].astype(np.float16)
+            self.assertEqual(p["vector"].dtype, np.float16)
+            self.assertEqual(p["vector"].tobytes(), attendu.tobytes())
+
+    def test_taille_de_vecteur_fausse_arrete_le_livre_sans_texte(self):
+        self.store = FakeStore(dimensions=1024)
+        sortie, erreurs = io.StringIO(), io.StringIO()
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreurs):
+            library.index([self.racine], store=self.store)
+        self.assertEqual(code_de_sortie(arret.exception), 1)
+        tout = sortie.getvalue() + erreurs.getvalue() + str(arret.exception.code)
+        self.assertIn("128 dimensions", tout)
+        self.assertIn("1024", tout)
+        self.assertNotIn("kanban", tout)                            # aucun texte de livre
+        self.assertEqual(self.store.books, {})
+
+    def test_livre_en_echec_absent_les_autres_ecrits_code_1(self):
+        self.store.fail_on.add("Discovery.md")
+        sortie, erreurs = io.StringIO(), io.StringIO()
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreurs):
+            library.index([self.racine], store=self.store)
+        self.assertEqual(code_de_sortie(arret.exception), 1)
+        self.assertIn("Discovery.md", str(arret.exception.code))
+        self.assertEqual(set(self.store.books), {"Flux.md", "Topologies.md", "article-flux.md"})
+
+    def test_collection_orpheline_supprimee_sans_recalcul(self):
+        self.indexer()
+        appels = self.calls
+        shutil.move(self.racine / "produit" / "Discovery.md", self.racine / "organisation" / "Discovery.md")
+        self.indexer()
+        self.assertEqual(self.calls, appels)
+        self.assertNotIn("produit", self.store.collections)
+        self.assertIn("organisation", self.store.collections)
+
+    def test_resume_nomme_la_base(self):
+        sortie = self.indexer()
+        self.assertRegex(sortie, r"Indexed: 4 · unchanged: 0 · passages in the index: \d+")
+        self.assertIn("Index: database, schema knowledge", sortie)
+
+    def test_aucun_fichier_sqlite_apres_index(self):
+        self.indexer()
+        self.indexer()
+        self.assertEqual(self.fichiers_sqlite(), [])
 
 
 class Decoupage(unittest.TestCase):
@@ -229,7 +326,7 @@ class Recherche(Base):
     def setUp(self):
         super().setUp()
         self.indexer()
-        self.biblio = library.Library()
+        self.biblio = self.bibliotheque()
 
     def test_pertinence_de_base(self):
         premier = self.biblio.search("charge cognitive des équipes", None, 3)[0]
@@ -291,23 +388,29 @@ class Renommage(Base):
 
     def stocke(self, nom: str):
         """Remet l'index dans l'état d'avant le renommage : le livre est stocké sous `nom`."""
-        db = library.connect()
-        db.execute("UPDATE books SET collections = ? WHERE file_name = 'article-flux.md'", (nom,))
-        db.commit()
+        self.store.books["article-flux.md"]["collections"] = set(nom.split("|"))
+        self.store.collections |= set(nom.split("|"))
 
     def renommer(self, *args) -> str:
         sortie = io.StringIO()
         with contextlib.redirect_stdout(sortie):
-            library.rename_collection(*args)
+            library.rename_collection(*args, store=self.store)
         return sortie.getvalue()
 
     def collections_stockees(self):
-        return library.connect().execute(
-            "SELECT collections FROM books WHERE file_name = 'article-flux.md'").fetchone()[0]
+        return "|".join(sorted(self.store.books["article-flux.md"]["collections"]))
+
+    def passages(self) -> list:
+        return [(nom, p["position"], p["section"], p["text"], p["kind"], p["vector"].tobytes())
+                for nom, b in sorted(self.store.books.items()) for p in b["passages"]]
+
+    def autres_livres(self) -> list:
+        return [(nom, b["sha256"], sorted(b["collections"]), b["title"], b["meta"], b["indexed_at"])
+                for nom, b in sorted(self.store.books.items()) if nom != "article-flux.md"]
 
     def test_ancien_index_montre_le_nom_stocke_et_le_nom_actuel_ne_trouve_rien(self):
         self.stocke("veille")
-        biblio = library.Library()
+        biblio = self.bibliotheque()
         self.assertEqual(biblio.collections().get("veille"), 1)
         self.assertNotIn("watch", biblio.collections())
         self.assertEqual(biblio.search("métriques de flux agrégées", ["watch"], 5), [])
@@ -315,29 +418,30 @@ class Renommage(Base):
         self.assertFalse(hasattr(library, "COLLECTION_ALIASES"))
 
     def test_nouvel_index_ne_trouve_rien_par_l_ancien_nom(self):
-        biblio = library.Library()
+        biblio = self.bibliotheque()
         self.assertEqual(biblio.search("métriques de flux agrégées", ["veille"], 5), [])
         hits = biblio.search("métriques de flux agrégées", ["watch"], 5)
         self.assertEqual({h["file"] for h in hits}, {"article-flux.md"})
 
     def test_les_deux_noms_stockes_restent_distincts(self):
-        db = library.connect()
-        db.execute("UPDATE books SET collections = 'veille' WHERE file_name = 'article-flux.md'")
-        db.execute("UPDATE books SET collections = 'watch' WHERE file_name = 'Flux.md'")
-        db.commit()
-        biblio = library.Library()
+        self.store.books["article-flux.md"]["collections"] = {"veille"}
+        self.store.books["Flux.md"]["collections"] = {"watch"}
+        biblio = self.bibliotheque()
         self.assertEqual(biblio.collections()["watch"], 1)
         self.assertEqual(biblio.collections()["veille"], 1)
         hits = biblio.search("flux cycle time débit", ["watch"], 10)
         self.assertEqual({h["file"] for h in hits}, {"Flux.md"})
 
-    def test_dossier_ancien_nom_indexe_sous_son_propre_nom_sans_avertissement(self):
+    def test_dossier_ancien_nom_indexe_sous_le_nouveau_avec_avertissement(self):
         shutil.move(self.racine / "watch", self.racine / "veille")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.indexer()
-        self.assertEqual(err.getvalue(), "")
-        self.assertEqual(self.collections_stockees(), "veille")
+            sortie = self.indexer()
+        self.assertIn("'veille'", err.getvalue())
+        self.assertIn("'watch'", err.getvalue())
+        self.assertEqual(self.store.books["article-flux.md"]["collections"], {"watch"})
+        self.assertIn("Indexed: 0 · unchanged: 4", sortie)
+        self.assertEqual(self.calls, self.appels)
 
     def test_deplacement_de_dossier_ne_recalcule_rien(self):
         self.stocke("veille")
@@ -346,23 +450,23 @@ class Renommage(Base):
         sortie = self.indexer()
         self.assertIn("Indexed: 0 · unchanged: 4", sortie)
         self.assertEqual(self.calls, self.appels)
-        self.assertEqual(self.collections_stockees(), "watch")
+        self.assertEqual(self.store.books["article-flux.md"]["collections"], {"watch"})
 
     def test_rename_collection_en_place_sans_recalcul(self):
         self.stocke("veille")
-        db = library.connect()
-        avant = db.execute("SELECT id, book_id, position, embedding, text FROM chunks ORDER BY id").fetchall()
-        autres = db.execute("SELECT file_name, sha256, collections, title, meta FROM books "
-                            "WHERE file_name != 'article-flux.md' ORDER BY id").fetchall()
+        self.store.collections.discard("watch")
+        avant, autres = self.passages(), self.autres_livres()
         sortie = self.renommer("veille", "watch")
         self.assertIn("1 books", sortie)
+        self.assertIn("Vectors recomputed: 0", sortie)
+        self.assertTrue(sortie.rstrip().endswith("Index: database, schema knowledge"), sortie)
         self.assertEqual(self.collections_stockees(), "watch")
-        db = library.connect()
-        self.assertEqual(db.execute("SELECT id, book_id, position, embedding, text FROM chunks ORDER BY id").fetchall(), avant)
-        self.assertEqual(db.execute("SELECT file_name, sha256, collections, title, meta FROM books "
-                                    "WHERE file_name != 'article-flux.md' ORDER BY id").fetchall(), autres)
+        self.assertEqual(self.passages(), avant)
+        self.assertEqual(self.autres_livres(), autres)
         self.assertEqual(self.calls, self.appels)
-        self.assertTrue(db.execute("SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH 'agrégées'").fetchall())
+        self.assertNotIn("veille", self.store.collections)              # l'ancienne collection, inutilisée, disparaît
+        self.assertIn("watch", self.store.collections)
+        self.assertEqual(sum(w[0] == "collections" for w in self.store.writes), 1)   # une seule transaction
 
     def test_rename_collection_dry_run_et_idempotence(self):
         self.stocke("veille")
@@ -383,9 +487,254 @@ class Renommage(Base):
         sortie = io.StringIO()
         with mock.patch.object(sys, "argv", ["x", "rename-collection", "veille", "watch", "--dry-run"]), \
                 contextlib.redirect_stdout(sortie):
-            library.main()
+            library.main(store=self.store)
         self.assertIn("would be renamed", sortie.getvalue())
         self.assertEqual(self.collections_stockees(), "veille")
+        self.assertEqual([w for w in self.store.writes if w[0] == "collections"], [])
+
+    def test_rename_collection_base_injoignable_code_2(self):
+        self.store = FakeStore(available=False)
+        erreurs = io.StringIO()
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stderr(erreurs), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.renommer("veille", "watch")
+        self.assertEqual(code_de_sortie(arret.exception), 2)
+        self.assertIn("Database unreachable: nothing was renamed. Start it: bash tools/db_up.sh", erreurs.getvalue())
+
+    def test_rename_collection_verrou_tenu_code_1(self):
+        self.stocke("veille")
+        self.store.locked = True
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stdout(io.StringIO()):
+            self.renommer("veille", "watch")
+        self.assertEqual(code_de_sortie(arret.exception), 1)
+        self.assertIn("Another indexing run is in progress", str(arret.exception.code))
+        self.assertEqual(self.collections_stockees(), "veille")
+
+    def test_rename_collection_noms_invalides(self):
+        for noms in (("", "watch"), ("veille", "")):
+            with self.assertRaises(SystemExit):
+                self.renommer(*noms)
+        self.assertEqual(self.store.opened, 1)                          # seule l'indexation du setUp a ouvert le magasin
+
+    def test_aucun_fichier_sqlite_apres_index_et_renommage(self):
+        self.stocke("veille")
+        self.renommer("veille", "watch")
+        self.indexer()
+        self.assertEqual(self.fichiers_sqlite(), [])
+
+
+class Gardes(Base):
+    """Gardes d'une indexation (design.md D1 étapes 2, 3, 5 ; D2) : base injoignable, verrou tenu, dossiers vides."""
+
+    def lancer(self, *arguments, **options):
+        sortie, erreurs = io.StringIO(), io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreurs):
+            try:
+                if arguments:
+                    with mock.patch.object(sys, "argv", ["pmzilla_lab_library.py", *arguments]):
+                        library.main(store=self.store)
+                else:
+                    library.index([self.racine], store=self.store, **options)
+            except SystemExit as arret:
+                code, message = code_de_sortie(arret), arret.code
+                if isinstance(message, str):
+                    erreurs.write(message)
+        return code, sortie.getvalue() + erreurs.getvalue()
+
+    def vider_les_dossiers(self):
+        shutil.rmtree(self.racine)
+        (self.racine / "flow").mkdir(parents=True)
+
+    def test_base_injoignable_code_2_sans_appel_au_modele(self):
+        self.store = FakeStore(available=False)
+        code, sortie = self.lancer()
+        self.assertEqual(code, 2)
+        self.assertIn("Database unreachable: nothing was indexed. Start it: bash tools/db_up.sh", sortie)
+        self.assertEqual(self.calls, 0)
+        for interdit in ("password", "postgresql://", "OperationalError"):
+            self.assertNotIn(interdit, sortie)
+
+    def test_verrou_tenu_code_1_rien_n_est_ecrit(self):
+        self.store = FakeStore(locked=True)
+        code, sortie = self.lancer()
+        self.assertEqual(code, 1)
+        self.assertIn("Another indexing run is in progress: nothing was indexed.", sortie)
+        self.assertEqual((self.store.writes, self.calls), ([], 0))
+        self.assertEqual(self.store.closed, 1)                           # la connexion est rendue
+
+    def test_dossiers_vides_face_a_une_base_remplie_refuses(self):
+        self.indexer()
+        self.vider_les_dossiers()
+        ecritures = list(self.store.writes)
+        code, sortie = self.lancer()
+        self.assertEqual(code, 1)
+        self.assertIn("No book found in the folders while the database holds 4: nothing was removed "
+                      "(--allow-empty empties the library).", sortie)
+        self.assertEqual(len(self.store.books), 4)
+        self.assertEqual(self.store.writes, ecritures)
+        self.assertNotIn("removed:", sortie)
+
+    def test_allow_empty_vide_la_bibliotheque_en_nommant_chaque_livre(self):
+        self.indexer()
+        self.vider_les_dossiers()
+        code, sortie = self.lancer(allow_empty=True)
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(self.store.books, {})
+        for nom in ("Flux.md", "Discovery.md", "Topologies.md", "article-flux.md"):
+            self.assertIn(f"removed: {nom}", sortie)
+
+    def test_allow_empty_en_ligne_de_commande(self):
+        self.indexer()
+        self.vider_les_dossiers()
+        code, sortie = self.lancer("index", str(self.racine))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.store.books), 4)
+        code, sortie = self.lancer("index", "--allow-empty", str(self.racine))
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(self.store.books, {})
+
+    def test_base_vide_et_dossiers_vides_sans_option(self):
+        self.vider_les_dossiers()
+        code, sortie = self.lancer()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("Indexed: 0 · unchanged: 0", sortie)
+
+
+class AvecBase(Base):
+    """KnowledgeStore sur une base jetable migrée (tests/library_backend/pg_demo.py), tables knowledge vidées avant chaque test.
+    Sautée sans base ; lancée par l'utilisateur avec bash tools/dbtest.sh. Jamais la vraie base."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
+        import pg_demo
+        self.pg = pg_demo
+        self.base = pg_demo.ThrowawayDatabase(self)            # saute le test sans base
+        self.lecture = self.base._raw()
+        self.lecture.execute("TRUNCATE knowledge.chunks, knowledge.book_collections, knowledge.books, knowledge.collections")
+        self.lecture.commit()
+        self.lecture.autocommit = True
+        self.plongement = fake_embed_1024
+        self.store = self.magasin()
+
+    def connexion(self):
+        conn = self.pg.db.connect(self.base.url, password=self.pg.base.MOT_DE_PASSE)
+        self.base.opened.append(conn)
+        return conn
+
+    def magasin(self):
+        return library.KnowledgeStore(connect=self.connexion)
+
+    def valeur(self, sql, params=None):
+        return self.lecture.execute(sql, params).fetchone()[0]
+
+    def test_premiere_indexation_puis_relance_inchangee(self):
+        self.assertIn("Indexed: 4 · unchanged: 0", self.indexer())
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.books"), 4)
+        self.assertEqual({r[0] for r in self.lecture.execute("SELECT name FROM knowledge.collections")},
+                         {"flow", "produit", "organisation", "watch"})
+        self.assertEqual({r[0] for r in self.lecture.execute("SELECT DISTINCT kind FROM knowledge.chunks")}, {"text"})
+        meta = self.valeur("SELECT meta FROM knowledge.books WHERE file_name = 'article-flux.md'")
+        self.assertEqual(meta["url"], "https://exemple.test/a")
+        appels = self.calls
+        self.assertIn("Indexed: 0 · unchanged: 4", self.indexer())
+        self.assertEqual(self.calls, appels)
+        self.assertEqual(self.fichiers_sqlite(), [])
+
+    def test_vecteur_en_demi_precision(self):
+        self.indexer()
+        section, texte, vecteur = self.lecture.execute(
+            "SELECT c.section, c.text, c.embedding::text FROM knowledge.chunks c JOIN knowledge.books b ON b.id = c.book_id "
+            "WHERE b.file_name = 'Flux.md' ORDER BY c.position LIMIT 1").fetchone()
+        attendu = fake_embed_1024([f"Flux inventé\n{section}\n{texte}"])[0].astype(np.float16)
+        lu = np.array([float(v) for v in vecteur.strip()[1:-1].split(",")], dtype=np.float32).astype(np.float16)
+        self.assertEqual(lu.tobytes(), attendu.tobytes())
+
+    def test_livre_reecrit_remplace_et_mot_disparu_introuvable(self):
+        self.indexer()
+        requete = "SELECT count(*) FROM knowledge.chunks WHERE search_vector @@ to_tsquery('simple', %s)"
+        self.assertGreater(self.valeur(requete, ("kanban",)), 0)
+        self.ecrire("flow/Flux.md", livre("Flux inventé", {
+            "Seule section": "Texte entièrement nouveau sur la loi de Little et les files d'attente, "
+                             "assez long pour dépasser le seuil de quatre-vingts caractères."}))
+        self.assertIn("Indexed: 1 · unchanged: 3", self.indexer())
+        self.assertEqual(self.valeur(requete, ("kanban",)), 0)
+        self.assertGreater(self.valeur(requete, ("little",)), 0)
+
+    def test_fichier_supprime_sort_avec_ses_passages(self):
+        self.indexer()
+        (self.racine / "produit" / "Discovery.md").unlink()
+        self.assertIn("removed: Discovery.md", self.indexer())
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.books WHERE file_name = 'Discovery.md'"), 0)
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.chunks WHERE text LIKE %s", ("%arbre d'opportunités%",)), 0)
+
+    def test_livre_en_echec_ne_laisse_ni_livre_ni_passage(self):
+        def plongement(texts):
+            out = fake_embed_1024(texts)
+            if any(t.startswith("Discovery inventée") for t in texts):
+                out[:] = np.nan                                  # refusé par halfvec : l'écriture du livre échoue
+            return out
+        self.plongement = plongement
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            library.index([self.racine], store=self.store)
+        self.assertEqual(code_de_sortie(arret.exception), 1)
+        self.assertIn("Discovery.md", str(arret.exception.code))
+        self.assertEqual({r[0] for r in self.lecture.execute("SELECT file_name FROM knowledge.books")},
+                         {"Flux.md", "Topologies.md", "article-flux.md"})
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.chunks c WHERE NOT EXISTS "
+                                     "(SELECT 1 FROM knowledge.books b WHERE b.id = c.book_id)"), 0)
+
+    def test_collection_orpheline_supprimee(self):
+        self.indexer()
+        appels = self.calls
+        shutil.move(self.racine / "produit" / "Discovery.md", self.racine / "organisation" / "Discovery.md")
+        self.indexer()
+        self.assertEqual(self.calls, appels)
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.collections WHERE name = 'produit'"), 0)
+
+    def test_deuxieme_indexation_refusee_tant_que_la_premiere_tient_le_verrou(self):
+        premiere = self.magasin()
+        premiere.open()
+        self.addCleanup(premiere.close)
+        self.assertTrue(premiere.try_lock())
+        with self.assertRaises(SystemExit) as arret, contextlib.redirect_stdout(io.StringIO()):
+            library.index([self.racine], store=self.store)
+        self.assertEqual(code_de_sortie(arret.exception), 1)
+        self.assertIn("Another indexing run is in progress", str(arret.exception.code))
+        self.assertEqual((self.valeur("SELECT count(*) FROM knowledge.books"), self.calls), (0, 0))
+        premiere.close()                                          # verrou rendu : la suivante passe
+        self.assertIn("Indexed: 4", self.indexer())
+
+    def test_renommage_en_une_transaction_sans_toucher_les_vecteurs(self):
+        self.indexer()
+        appels = self.calls
+        self.lecture.execute("INSERT INTO knowledge.collections (name) VALUES ('veille')")
+        self.lecture.execute(
+            "UPDATE knowledge.book_collections SET collection_id = (SELECT id FROM knowledge.collections WHERE name = 'veille') "
+            "WHERE book_id = (SELECT id FROM knowledge.books WHERE file_name = 'article-flux.md')")
+        self.lecture.execute("DELETE FROM knowledge.collections WHERE name = 'watch'")
+        avant = self.lecture.execute("SELECT id, book_id, position, text, embedding::text FROM knowledge.chunks ORDER BY id").fetchall()
+
+        def renommer(*args):
+            sortie = io.StringIO()
+            with contextlib.redirect_stdout(sortie):
+                library.rename_collection(*args, store=self.magasin())
+            return sortie.getvalue()
+
+        self.assertIn("would be renamed", renommer("veille", "watch", True))
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.collections WHERE name = 'veille'"), 1)
+        self.assertIn("1 books", renommer("veille", "watch"))
+        noms = self.valeur(
+            "SELECT array_agg(c.name) FROM knowledge.book_collections bc JOIN knowledge.collections c ON c.id = bc.collection_id "
+            "JOIN knowledge.books b ON b.id = bc.book_id WHERE b.file_name = 'article-flux.md'")
+        self.assertEqual(noms, ["watch"])
+        self.assertEqual(self.valeur("SELECT count(*) FROM knowledge.collections WHERE name = 'veille'"), 0)
+        self.assertEqual(self.lecture.execute(
+            "SELECT id, book_id, position, text, embedding::text FROM knowledge.chunks ORDER BY id").fetchall(), avant)
+        self.assertIn("nothing to do", renommer("veille", "watch"))
+        self.assertEqual(self.calls, appels)                      # aucun appel au modèle par le renommage
 
 
 class DescriptionDeSearchLibrary(unittest.TestCase):

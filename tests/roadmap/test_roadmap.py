@@ -18,7 +18,7 @@ DOCUMENT_REEL = RACINE / "docs" / "pmzilla" / "feuille-de-route.md"
 
 
 def job(i, **kw):
-    d = {"id": f"R-{i}", "title": f"Travail {i}", "depends_on": [], "conditions": "", "state": "ready",
+    d = {"id": f"R-{i}", "title": f"Travail {i}", "theme": "outillage", "depends_on": [], "conditions": "", "state": "ready",
          "estimate": "1h", "method": "direct-prompt", "model": "tbd"}
     d.update(kw)
     return d
@@ -135,6 +135,47 @@ class TestFormat(Base):
         self.assertTrue(all(l.startswith("roadmap : ") for l in out.splitlines()))
 
 
+class TestThemeEtDates(Base):
+    def test_themes_admis(self):
+        for th in ("fiabilite", "veille", "bibliotheque", "base", "cas", "postures", "edition", "outillage"):
+            with self.subTest(th=th):
+                self.assertEqual(self.check([job(1, theme=th)])[0], 0)
+
+    def test_theme_absent(self):
+        j = job(1)
+        del j["theme"]
+        code, out, _ = self.check([j])
+        self.assertEqual(code, 1)
+        self.assertIn("R-1 : theme : champ obligatoire absent", out)
+
+    def test_theme_inconnu(self):
+        for th in ("flux", "Veille", ""):
+            with self.subTest(th=th):
+                code, out, _ = self.check([job(1, theme=th)])
+                self.assertEqual(code, 1)
+                self.assertIn("R-1 : theme : valeur hors de fiabilite, veille", out)
+
+    def test_theme_exige_dans_l_archive(self):
+        archive = self.chemin.with_name("feuille-archive.md")
+        j = job(1, state="done")
+        del j["theme"]
+        self.ecrit(document([job(2)]))
+        archive.write_text(document([j]), encoding="utf-8")
+        code, out, _ = self.lance("check", "--file", str(self.chemin))
+        self.assertEqual(code, 1)
+        self.assertIn("R-1 : theme", out)
+
+    def test_dates_de_cloture_et_de_debut(self):
+        self.assertEqual(self.check([job(1, state="done", done_on="2026-10-11")])[0], 0)
+        self.assertEqual(self.check([job(1, state="done", done_on="inconnue")])[0], 0)
+        self.assertEqual(self.check([job(1, state="in-progress", started_on="2026-10-11")])[0], 0)
+        for champ, valeur in (("done_on", "hier"), ("done_on", "2026-02-30"), ("started_on", "inconnue")):
+            with self.subTest(champ=champ, valeur=valeur):
+                code, out, _ = self.check([job(1, **{champ: valeur})])
+                self.assertEqual(code, 1)
+                self.assertIn(f"R-1 : {champ} :", out)
+
+
 class TestCoherence(Base):
     def test_identifiant_en_double(self):
         code, out, _ = self.check([job(1), job(1)])
@@ -239,29 +280,46 @@ class TestNext(Base):
 
 
 class TestDone(Base):
-    def test_une_seule_ligne_change_et_debloques_listes(self):
+    def test_etat_change_date_ajoutee_et_debloques_listes(self):
         jobs = [job(1, state="in-progress"), job(2, depends_on=["R-1"], state="blocked"),
                 job(3, depends_on=["R-1", "R-4"], state="blocked"), job(4, state="blocked")]
         avant = document(jobs)
         self.ecrit(avant)
-        code, out, _ = self.lance("done", "R-1", "--file", str(self.chemin))
+        code, out, _ = self.lance("done", "R-1", "--today", "2026-10-12", "--file", str(self.chemin))
         self.assertEqual(code, 0, out)
         apres = self.chemin.read_text(encoding="utf-8")
-        a, b = avant.split("\n"), apres.split("\n")
-        self.assertEqual(len(a), len(b))
-        diff = [(x, y) for x, y in zip(a, b) if x != y]
-        self.assertEqual(diff, [("    state: in-progress", "    state: done")])
+        attendu = avant.replace("    state: in-progress\n", "    state: done\n    done_on: 2026-10-12\n", 1)
+        self.assertEqual(apres, attendu)
         self.assertIn("R-2", out)
         self.assertNotIn("R-3", out)
         self.assertIn("blocked", apres)  # R-2 reste blocked
         self.assertEqual(self.lance("check", "--file", str(self.chemin))[0], 0)
 
     def test_etat_sur_la_ligne_du_tiret(self):
-        texte = "Prose.\n\n```yaml\njobs:\n  - state: ready\n    id: R-1\n    title: \"T\"\n    depends_on: []\n    conditions: \"\"\n" \
-                "    estimate: 1h\n    method: openspec\n    model: tbd\n```\nFin.\n"
+        texte = "Prose.\n\n```yaml\njobs:\n  - state: ready\n    id: R-1\n    title: \"T\"\n    theme: base\n    depends_on: []\n" \
+                "    conditions: \"\"\n    estimate: 1h\n    method: openspec\n    model: tbd\n```\nFin.\n"
         self.ecrit(texte)
-        self.assertEqual(self.lance("done", "R-1", "--file", str(self.chemin))[0], 0)
-        self.assertEqual(self.chemin.read_text(encoding="utf-8"), texte.replace("state: ready", "state: done"))
+        self.assertEqual(self.lance("done", "R-1", "--today", "2026-10-12", "--file", str(self.chemin))[0], 0)
+        self.assertEqual(self.chemin.read_text(encoding="utf-8"),
+                         texte.replace("  - state: ready\n", "  - state: done\n    done_on: 2026-10-12\n"))
+
+    def test_date_de_cloture_par_environnement(self):
+        import os
+        self.ecrit(document([job(1)]))
+        os.environ["ROADMAP_TODAY"] = "2026-11-03"
+        try:
+            self.assertEqual(self.lance("done", "R-1", "--file", str(self.chemin))[0], 0)
+        finally:
+            del os.environ["ROADMAP_TODAY"]
+        self.assertIn("    done_on: 2026-11-03\n", self.chemin.read_text(encoding="utf-8"))
+
+    def test_date_de_cloture_existante_remplacee(self):
+        self.ecrit(document([job(1, state="in-progress", done_on="inconnue")]))
+        self.assertEqual(self.lance("done", "R-1", "--today", "2026-10-12", "--file", str(self.chemin))[0], 0)
+        texte = self.chemin.read_text(encoding="utf-8")
+        self.assertEqual(texte.count("done_on"), 1)
+        self.assertIn("    done_on: 2026-10-12\n", texte)
+        self.assertEqual(self.lance("check", "--file", str(self.chemin))[0], 0)
 
     def test_identifiant_inconnu(self):
         self.ecrit(document([job(1)]))
@@ -304,6 +362,115 @@ class TestCodesDeSortie(Base):
         finally:
             del os.environ["ROADMAP_TODAY"]
         self.assertIn("R-1", out)
+
+
+def file_d_essai():
+    """Une feuille de route factice : six prêts, deux en cours, deux bloqués, deux faits (dont un archivé)."""
+    actifs = [job(10, state="in-progress", theme="veille", started_on="2026-10-05"),
+              job(11, state="in-progress", theme="base"),
+              job(12, state="done", theme="veille", done_on="2026-10-07")]
+    actifs += [job(n, theme="cas") for n in range(20, 26)]
+    actifs += [job(30, state="blocked", theme="base", depends_on=["R-10", "R-12"]),
+               job(31, state="blocked", theme="edition", depends_on=["R-1"], title="Titre <b>gras</b> & co")]
+    archives = [job(1, state="done", theme="edition", done_on="2026-09-28"),
+                job(2, state="done", theme="fiabilite", done_on="inconnue")]
+    return actifs, archives
+
+
+class TestStatus(Base):
+    def setUp(self):
+        super().setUp()
+        actifs, archives = file_d_essai()
+        self.ecrit(document(actifs))
+        self.chemin.with_name("feuille-archive.md").write_text(document(archives), encoding="utf-8")
+
+    def test_resume(self):
+        avant = self.chemin.read_text(encoding="utf-8")
+        code, out, _ = self.lance("status", "--file", str(self.chemin))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.chemin.read_text(encoding="utf-8"), avant)
+        self.assertIn("ready 6", out)
+        self.assertIn("in-progress 2", out)
+        self.assertIn("blocked 2", out)
+        self.assertIn("done 3", out)
+        self.assertRegex(out, r"veille\s+1/2")
+        self.assertRegex(out, r"edition\s+1/2")
+        self.assertRegex(out, r"cas\s+0/6")
+        self.assertIn("R-10 | Travail 10 | depuis 2026-10-05", out)
+        self.assertIn("R-11 | Travail 11 | début inconnu", out)
+
+    def test_cinq_prochains_prets_dans_l_ordre(self):
+        _, out, _ = self.lance("status", "--file", str(self.chemin))
+        prets = [l.split(" | ")[0].strip() for l in out.split("prochains prêts")[1].split("roadmap : ")[0].splitlines() if " | " in l]
+        self.assertEqual(prets, ["R-20", "R-21", "R-22", "R-23", "R-24"])
+
+    def test_bloques_avec_leur_dependance_non_faite(self):
+        _, out, _ = self.lance("status", "--file", str(self.chemin))
+        self.assertIn("R-30 | Travail 30 | attend R-10", out)
+        self.assertNotIn("attend R-10, R-12", out)
+        self.assertIn("R-31 | Titre <b>gras</b> & co | dépendances faites", out)
+
+    def test_file_invalide(self):
+        self.ecrit(document([job(1, theme="inconnu")]))
+        self.assertEqual(self.lance("status", "--file", str(self.chemin))[0], 1)
+
+
+class TestBoard(Base):
+    def setUp(self):
+        super().setUp()
+        import os
+        actifs, archives = file_d_essai()
+        self.ecrit(document(actifs))
+        self.chemin.with_name("feuille-archive.md").write_text(document(archives), encoding="utf-8")
+        self.donnees = Path(self.tmp.name) / "donnees"
+        os.environ["PMZILLA_LAB_DATA"] = str(self.donnees)
+        self.addCleanup(os.environ.pop, "PMZILLA_LAB_DATA", None)
+
+    def page(self):
+        code, out, _ = self.lance("board", "--file", str(self.chemin))
+        self.assertEqual(code, 0, out)
+        sortie = self.donnees / "feuille-de-route.html"
+        self.assertIn(str(sortie), out)
+        return sortie.read_text(encoding="utf-8")
+
+    def test_page_autonome_dans_le_dossier_de_donnees(self):
+        html = self.page()
+        self.assertTrue(html.startswith("<!doctype html>"))
+        for interdit in ("http://", "https://", "src=", "<link", "@import"):
+            self.assertNotIn(interdit, html)
+        self.assertEqual(sorted(p.name for p in Path(self.tmp.name).iterdir()),
+                         ["donnees", "feuille-archive.md", "feuille.md"])
+
+    def test_contenu(self):
+        html = self.page()
+        for th in ("veille", "base", "cas", "edition", "fiabilite"):
+            self.assertIn(th, html)
+        self.assertIn("R-10", html)
+        self.assertIn("R-24", html)
+        self.assertNotIn(">R-25<", html)
+        self.assertIn("R-10", html.split("R-30")[1].split("</li>")[0])
+        self.assertIn("Titre &lt;b&gt;gras&lt;/b&gt; &amp; co", html)
+        self.assertNotIn("<b>gras</b>", html)
+        self.assertIn("2026-10-05", html)   # semaine du lundi de R-12 (2026-10-07)
+        self.assertIn("2026-09-28", html)   # semaine de R-1
+        self.assertIn("date inconnue", html)
+
+    def test_ouverture_seulement_avec_open(self):
+        appels = []
+        orig = roadmap.ouvre
+        roadmap.ouvre = appels.append
+        try:
+            self.page()
+            self.assertEqual(appels, [])
+            self.assertEqual(self.lance("board", "--open", "--file", str(self.chemin))[0], 0)
+        finally:
+            roadmap.ouvre = orig
+        self.assertEqual(appels, [self.donnees / "feuille-de-route.html"])
+
+    def test_file_invalide(self):
+        self.ecrit(document([job(1, theme="inconnu")]))
+        self.assertEqual(self.lance("board", "--file", str(self.chemin))[0], 1)
+        self.assertFalse(self.donnees.exists())
 
 
 def paragraphes(*ids):

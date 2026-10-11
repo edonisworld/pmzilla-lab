@@ -61,9 +61,25 @@ class Voie(unittest.TestCase):
         self.assertIn("--backend sqlite", str(cm.exception))
 
     def test_connexion_sous_le_role_de_lecture(self):
-        with mock.patch.object(db, "connect", return_value=object()) as connect:
+        with mock.patch.dict(os.environ), mock.patch.object(db, "connect", return_value=object()) as connect:
+            os.environ.pop("PMZILLA_LAB_KNOWLEDGE_DBNAME", None)
             kl.default_connect()
-        connect.assert_called_once_with(role="pmzilla_knowledge_ro")
+        connect.assert_called_once_with(role="pmzilla_knowledge_ro", dbname=None)
+
+    def test_base_nommee_par_la_variable(self):
+        with mock.patch.dict(os.environ, {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"}), \
+                mock.patch.object(db, "connect", return_value=object()) as connect:
+            kl.default_connect()
+        connect.assert_called_once_with(role="pmzilla_knowledge_ro", dbname="pmzilla_eval_inventee")
+
+    def test_base_nommee_muette_sans_repli_sur_celle_de_l_installation(self):
+        with mock.patch.dict(os.environ, {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"}), \
+                mock.patch.object(db, "connect", side_effect=db.ErreurBase("Connexion à la base impossible : refusée.")) as connect:
+            with self.assertRaises(SystemExit) as cm:
+                kl.default_connect()
+        self.assertEqual(connect.call_count, 1)                               # une seule tentative, sur la base nommée
+        self.assertEqual(connect.call_args.kwargs["dbname"], "pmzilla_eval_inventee")
+        self.assertIn("Connexion à la base impossible", str(cm.exception))
 
     def test_serve_accepte_l_option_backend(self):
         with mock.patch.object(library, "serve") as serve, mock.patch.object(sys, "argv", ["x", "serve", "--backend", "postgres"]):
@@ -85,9 +101,12 @@ class ConfigurationMcp(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def args(self, **options):
+    def serveur(self, **options):
         chemin = self.essai.mcp_config(Path(self.tmp.name), **options)
-        return json.loads(chemin.read_text())["mcpServers"]["pmzilla-library"]["args"]
+        return json.loads(chemin.read_text())["mcpServers"]["pmzilla-library"]
+
+    def args(self, **options):
+        return self.serveur(**options)["args"]
 
     def test_defaut_inchange(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -100,9 +119,13 @@ class ConfigurationMcp(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PMZILLA_LAB_BACKEND": "postgres"}):
             self.assertEqual(self.args()[-2:], ["--backend", "postgres"])
 
-    def test_bibliotheque_jetable_d_un_cas_reste_sqlite(self):
-        data = Path(self.tmp.name) / "index-cas"
-        self.assertNotIn("--backend", self.args(data_dir=data, backend="postgres"))
+    def test_bibliotheque_jetable_d_un_cas_lue_dans_la_base_jetable(self):
+        for voie in (None, "sqlite", "postgres"):
+            with self.subTest(voie=voie):
+                serveur = self.serveur(knowledge_dbname="pmzilla_eval_inventee", backend=voie, label="bibliotheque-c1")
+                self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+                self.assertEqual(serveur["env"], {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"})
+                self.assertNotIn("PMZILLA_LAB_DATA", serveur["env"])
 
 
 class Forme(unittest.TestCase):

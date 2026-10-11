@@ -3,8 +3,8 @@
 Flux-Lab/noms-sensibles.txt (un nom par ligne, hors Git ; lignes vides et lignes commençant par # ignorées). Affiche le fichier et la
 ligne, jamais le nom. Tous les fichiers indexés sont examinés, quelle que soit leur
 extension, sauf les binaires (octet nul) et les fichiers de plus de 1 Mo, signalés sans
-bloquer. Sans ce fichier (ou s'il est vide), le hook ne bloque pas : il
-avertit que le garde-fou est inactif.
+bloquer. Sans ce fichier, le hook refuse le commit en le disant (jamais de passage silencieux,
+cas d'un worktree) ; si la liste est vide, il avertit que le garde-fou est inactif sans bloquer.
 
 Chaque nom est échappé, puis délimité comme mot entier par des lookarounds
 (pas \\b, qui ne délimite pas un nom commençant ou finissant par un symbole
@@ -79,8 +79,9 @@ def main():
     racine = git("rev-parse", "--show-toplevel").decode().strip()
     chemin = os.environ.get("PMZILLA_NOMS") or os.path.join(racine, "Flux-Lab", "noms-sensibles.txt")
     if not os.path.isfile(chemin):
-        print("pre-commit : garde-fou des noms inactif : liste absente", file=sys.stderr)
-        return 0
+        print("pre-commit : garde-fou des noms impossible : liste absente. Commit refusé : le garde-fou ne laisse pas passer sans liste "
+              "(worktree : Flux-Lab/ n'y est pas ; indique la liste avec PMZILLA_NOMS=<chemin>).", file=sys.stderr)
+        return 1
     motifs = charger(chemin)
     if motifs is None:
         print("pre-commit : garde-fou des noms inactif : liste vide", file=sys.stderr)

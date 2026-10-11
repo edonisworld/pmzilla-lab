@@ -352,13 +352,17 @@ def fichiers_dates(dossier: Path, prefixe: str) -> list[tuple[str, Path]]:
     return sorted(trouves)
 
 
+# séries jamais montrées : fenêtres récentes et séries de comparaison base contre CSV du suivi mensuel (tools/flow_monthly.py, suffixe « -db »)
+SERIES_IGNOREES = ("-recent", "-db")
+
+
 def series_trouvees() -> list[str]:
-    """Noms de séries d'après les fichiers flux-*.json (sans les séries « -recent », fenêtres de 10 semaines)."""
+    """Noms de séries d'après les fichiers flux-*.json (sans les séries « -recent », fenêtres de 10 semaines, ni « -db », comparaison base contre CSV)."""
     noms = set()
     if RAPPORTS.is_dir():
         for chemin in RAPPORTS.glob("flux-*.json"):
             m = re.fullmatch(rf"flux-(.+)-{DATE}\.json", chemin.name)
-            if m and not m.group(1).endswith("-recent"):
+            if m and not m.group(1).endswith(SERIES_IGNOREES):
                 noms.add(m.group(1))
     return sorted(noms)
 
@@ -370,7 +374,8 @@ def reglages() -> list[dict]:
             brut = flux_config.to_internal(charger(CONFIG.read_text(encoding="utf-8"), "flux.yaml"), "flux.yaml").get("tableaux") or {}
         except yaml.YAMLError:
             brut = {}
-    series = [dict(s) for s in (brut.get("series") or []) if isinstance(s, dict) and s.get("nom")]
+    series = [dict(s) for s in (brut.get("series") or []) if isinstance(s, dict) and s.get("nom")
+              and not str(s["nom"]).endswith(SERIES_IGNOREES)]
     return series or [{"nom": n} for n in series_trouvees()]
 
 

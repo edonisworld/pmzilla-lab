@@ -23,7 +23,7 @@ RACINE = Path(__file__).resolve().parents[2]
 TOOLS = RACINE / "tools"
 
 # scripts exécutables du lot 6 (et ceux qu'il a modifiés)
-SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "install_lab")
+SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "install_lab", "flow_monthly", "book_usage")
 # nom du module importé -> nom du paquet à déclarer
 PAQUETS = {"yaml": "pyyaml", "numpy": "numpy", "psycopg": "psycopg", "requests": "requests", "httpx": "httpx", "mcp": "mcp",
            "feedparser": "feedparser", "bs4": "beautifulsoup4", "markdownify": "markdownify", "trafilatura": "trafilatura",
@@ -32,7 +32,7 @@ ERREURS_RESEAU = ("failed to fetch", "network", "offline", "dns", "connection", 
 
 
 # Outils du dépôt privé seulement : le manifeste de l'édition les exclut, les contrôles ne les exigent donc pas dans l'arbre généré.
-PRIVES = {"build_edition", "migrate_watch"}
+PRIVES = {"build_edition", "migrate_watch", "etude_laya"}
 
 
 def presents(noms):
@@ -115,7 +115,7 @@ class Declaration(unittest.TestCase):
 
 # Scripts d'entrée de tools/ (avec « if __name__ == "__main__" ») qui ne sont pas dans SCRIPTS : ils ne sont pas contrôlés par les tests
 # ci-dessus. La liste est un cliquet : un nouveau script d'entrée doit être classé (ajouté à SCRIPTS ou ici) pour que le test passe.
-EXEMPTES = {"caption_diagnostic", "convert_books", "critic_mirror", "dashboard", "final_messages_check", "flow_board", "history_jira",
+EXEMPTES = {"caption_diagnostic", "etude_laya", "convert_books", "critic_mirror", "dashboard", "final_messages_check", "flow_board", "history_jira",
             "outside_library", "knowledge_import", "library_parity", "migrate_watch", "pmzilla_lab_library", "roadmap",
             "segment_sample", "watch_lab", "watch_triage", "identifiants_personnels", "journal_lab_messages", "sanctum_refresh",
             "select_suites", "sensitive_names", "sort_by_domain", "mapping_lab", "bmad_remplacements", "sorting_exclusions", "watch_paths"}

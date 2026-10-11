@@ -94,11 +94,13 @@ class VoieDeLaBibliotheque(PassageFictif):
     def test_sans_option_le_serveur_garde_sa_voie_par_defaut(self):
         self.assertNotIn("--backend", self.configuration())
 
-    def test_la_bibliotheque_jetable_d_un_cas_reste_en_sqlite_quelle_que_soit_la_voie(self):
-        self.lancer("--cases", "c1", "--backend", "postgres")
+    def test_la_bibliotheque_jetable_d_un_cas_est_lue_en_postgres_quelle_que_soit_la_voie(self):
+        self.lancer("--cases", "c1", "--backend", "sqlite")
         dossier = next(essai.DATA.glob("*/mcp.json")).parent
-        config = essai.mcp_config(dossier, data_dir=dossier / "index-c1", backend="postgres")
-        self.assertNotIn("--backend", json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]["args"])
+        config = essai.mcp_config(dossier, knowledge_dbname="pmzilla_eval_inventee", backend="sqlite", label="bibliotheque-c1")
+        serveur = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
+        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertEqual(serveur["env"], {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"})
 
     def test_voie_inconnue_refusee(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

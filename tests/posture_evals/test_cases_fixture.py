@@ -105,12 +105,13 @@ class EnvironnementDesSeances(AvecFixtures):
 
     def test_configuration_mcp_porte_les_deux_variables(self):
         env = essai.cases_environment(BASE_JETABLE)
-        for data in (None, self.tmp / "index-c1"):
-            config = json.loads(essai.mcp_config(self.tmp, data, cases_env=env).read_text())
+        for base_bibliotheque in (None, "pmzilla_eval_bibliotheque"):
+            config = json.loads(essai.mcp_config(self.tmp, base_bibliotheque, cases_env=env, label=base_bibliotheque).read_text())
             serveur = config["mcpServers"]["pmzilla-library"]
             self.assertEqual({k: serveur["env"][k] for k in env}, env)
-            if data:
-                self.assertEqual(serveur["env"]["PMZILLA_LAB_DATA"], str(data))
+            self.assertNotIn("PMZILLA_LAB_DATA", serveur["env"])
+            if base_bibliotheque:
+                self.assertEqual(serveur["env"]["PMZILLA_LAB_KNOWLEDGE_DBNAME"], base_bibliotheque)
 
     def test_configuration_mcp_sans_cases_env_est_inchangee(self):
         serveur = json.loads(essai.mcp_config(self.tmp).read_text())["mcpServers"]["pmzilla-library"]

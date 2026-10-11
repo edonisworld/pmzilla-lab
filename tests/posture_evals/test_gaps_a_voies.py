@@ -28,7 +28,9 @@ import test_posture_evals as socle
 import test_gaps_posture_evals as gaps
 import posture_evals as essai
 
-QUESTIONS = [("le flux de travail", None, None), ("hypothesis experiment", ["produit"], None), ("prévision", ["veille"], None)]
+QUESTIONS = [("le flux de travail", None, None), ("hypothesis experiment", ["produit"], None), ("prévision", ["watch"], None)]
+# « watch » : la bibliothèque inventée ne stocke plus « veille » depuis la fin des anciens noms (R-5) ; filtrer sur « veille » ne
+# trouvait rien sur aucune des deux voies (le test, avec base seulement, ne tournait pas dans dbtest.sh).
 
 
 class MemesResultatsSurLesDeuxVoies(gaps.PassageFictif):

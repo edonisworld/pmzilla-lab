@@ -28,7 +28,7 @@ REFERENCE = Path(__file__).resolve().parent / "reference_en.html"
 def page(root: Path, env: dict, *options) -> tuple[subprocess.CompletedProcess, str]:
     sortie = root / "page.html"
     full = {**base.without_cases_variables(os.environ), **env, "PMZILLA_LAB_TODAY": "2026-10-12"}
-    result = subprocess.run([sys.executable, str(base.SCRIPT), "--output", str(sortie), *options], capture_output=True,
+    result = subprocess.run([sys.executable, str(base.RUNNER), "--output", str(sortie), *options], capture_output=True,
                             text=True, env=full, timeout=120)
     texte = sortie.read_text(encoding="utf-8") if sortie.exists() else ""
     return result, re.sub(r"(Generated on |Généré le )\d{2,4}[/-]\d{2}[/-]\d{2,4} \d{2}:\d{2}", r"\1GENERATED", texte)

@@ -28,7 +28,7 @@ Language: this command is written in English, but serve the user in THEIR langua
 ## Stop and hand over to the user (print the command and its purpose, run nothing)
 
 - Any launch against the real Jira: `history_jira.py` (test, collect, check with a key), `export_jira_api.py` (diagnose, fields, export).
-- `flow_import.py`, `flow_compare.py`, `knowledge_import.py` (import, verify, status), the database scripts (`db.py`, `db_backup.sh`, `db_up.sh`), any calculation with the database as source (`--source db`), any database client (`psql`, `docker exec`).
+- `flow_import.py`, `flow_compare.py`, `knowledge_import.py` (import, verify, status), the indexer `pmzilla_lab_library.py` (`index`, `rename-collection`, `probe`, `status`), the database scripts (`db.py`, `db_backup.sh`, `db_up.sh`), any calculation with the database as source (`--source db`), any database client (`psql`, `docker exec`).
 - Book conversion, sorting by domain and indexing; edits of the settings file that the change assigns to the user.
 - The posture evaluation set: announce its cost first and run nothing until the user agrees.
 

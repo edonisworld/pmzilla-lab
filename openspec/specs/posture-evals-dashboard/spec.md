@@ -61,9 +61,9 @@ The system SHALL show, from the watch log, the new articles per day, sources in 
 Source: tests/dashboard/test_dashboard.py
 
 ### Requirement: Library section
-The system SHALL list books without a known author, SHALL list books to re-download one per line without domain codes or explanatory sentences with a total, and SHALL count watch articles lacking an author or site separately from those displayed with a "not stated" author. The book and passage counts of the section SHALL exclude documents of the watch collection (current and former names) and of the personal collection, matched by exact collection name.
+The system SHALL list books without a known author, SHALL list books to re-download one per line without domain codes or explanatory sentences with a total, and SHALL count watch articles lacking an author or site separately from those displayed with a "not stated" author. The book and passage counts of the section SHALL exclude documents of the watch collection (current and former names) and of the personal collection, matched by exact collection name. It SHALL read books, collections and passages from the knowledge schema of the database under the read-only role with a short connection timeout, SHALL show "no data yet" when the database holds no book, and SHALL show "unreadable source" with the error type only, never the error message, when the database does not answer, while still writing the page and exiting with success. It SHALL NOT read the SQLite library index.
 
-Source: tests/dashboard/test_dashboard.py
+Source: tests/dashboard/test_dashboard.py (with a fake database reader; database class run with `tools/dbtest.sh dashboard`)
 
 #### Scenario: Books
 - **WHEN** one book lacks an author and another has one
@@ -80,6 +80,10 @@ Source: tests/dashboard/test_dashboard.py
 #### Scenario: Exact collection names
 - **WHEN** a book belongs to a collection whose name merely contains the name of an excluded collection
 - **THEN** the book is counted
+
+#### Scenario: Database does not answer
+- **WHEN** the reader raises a connection error and a SQLite library file exists in the data folder
+- **THEN** the library sections show "unreadable source" with the error type, the SQLite file is not opened, the other sections are unchanged and the exit code is 0
 
 ### Requirement: Quality section from evaluation reports
 The system SHALL draw the pass-rate curve and a cost table from the evaluation reports, using only complete runs, report the number of partial runs excluded, show the commit of the latest run, its cost, the month's total cost including partial runs, and display the number of latest complete runs. A run is complete when its total of verifications equals the total of the most recent report; every other run is partial. The history table SHALL show the models of each run when its report names them and SHALL flag a non-validating run; a non-validating run SHALL stay out of the curve and the case matrix, and its cost SHALL count in the month's total.

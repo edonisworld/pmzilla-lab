@@ -263,6 +263,22 @@ class JiraEnBase(Base):
                          "bash tests/run_all.sh knowledge_import"):
             self.assertFalse(self.interdite(commande), commande)
 
+    def test_indexeur_interdit_a_la_session(self):
+        """pmzilla_lab_library.py index, rename-collection, probe, status écrivent ou lisent la vraie base (R-37) : jamais depuis Claude Code."""
+        for sous, lanceur, chemin in itertools.product(
+                ("index Bibliotheque-Lab Watch-Lab", "index x --recompute y", "index x --allow-empty",
+                 "rename-collection a b", "rename-collection a b --dry-run", "probe", "status"),
+                ("uv run", "uv run --with psycopg", "python", "python3", "python3 -I", ""),
+                ("tools/{s}", "./tools/{s}", "~/PMZilla-Lab/workspace/tools/{s}", "$HOME/PMZilla-Lab/workspace/tools/{s}",
+                 "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}", "~/PMZilla-Lab/{s}", "$HOME/PMZilla-Lab/{s}",
+                 "/Users/quelquun/PMZilla-Lab/{s}")):
+            commande = f"{lanceur} {chemin.format(s='pmzilla_lab_library.py')} {sous}".strip()
+            self.assertTrue(self.interdite(commande), commande)
+        for commande in ("cat tools/pmzilla_lab_library.py", "uv run tools/pmzilla_lab_library.py",
+                         "uv run tools/pmzilla_lab_library.py --help", "uv run tools/caption_diagnostic.py",
+                         "bash tests/run_all.sh pmzilla_lab_library"):
+            self.assertFalse(self.interdite(commande), commande)
+
     def test_tache_launchd_de_sauvegarde_interdite_a_la_session(self):
         """La tâche com.pmzilla.db-backup et le script qu'elle lance ne se pilotent que depuis le Terminal de l'utilisateur."""
         uid = "$(id -u)"

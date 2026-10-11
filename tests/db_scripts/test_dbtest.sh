@@ -79,11 +79,11 @@ verifie "dbtest : conteneur déjà présent, refus (code 2), ni démarré, ni su
 # --- passage nominal
 remise; lance
 verifie "dbtest : passage nominal, code 0" "$([ $code -eq 0 ]; echo $?)"
-verifie "dbtest : suites par défaut, dans l'ordre" "$([ "$(sed -n 's/^suite=\([^ ]*\) .*/\1/p' "$FX/suites" | tr '\n' ' ')" = "db flow_import flow_store flow_compare flow_views hybrid_search " ]; echo $?)"
+verifie "dbtest : suites par défaut, dans l'ordre" "$([ "$(sed -n 's/^suite=\([^ ]*\) .*/\1/p' "$FX/suites" | tr '\n' ' ')" = "db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend " ]; echo $?)"
 verifie "dbtest : conteneur publié sur 127.0.0.1:55432 seulement, nom fixe, image de docker-compose.yml" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--name pmzilla-lab-test-db' && grep '^docker run' "$FAUX_LOG" | grep -q -- '-p 127.0.0.1:55432:5432' && grep '^docker run' "$FAUX_LOG" | grep -q "$(grep -E '^[[:space:]]+image:' "$racine/docker-compose.yml" | head -1 | sed -E 's/^[[:space:]]+image:[[:space:]]*//; s/["[:space:]]//g')"; echo $?)"
 verifie "dbtest : chaque suite reçoit le port jetable, un mot de passe de 32 caractères, ni URL ni PMZILLA_NO_EVALS" "$(! grep -v 'port=55432 pw_longueur=32 url=absente noevals=absente' "$FX/suites" | grep -q .; echo $?)"
 verifie "dbtest : conteneur supprimé avec ses volumes à la fin" "$(grep -q 'docker rm -f -v pmzilla-lab-test-db' "$FAUX_LOG"; [ $? -eq 0 ] && [ ! -s "$FX/conteneurs" ]; echo $?)"
-verifie "dbtest : résumé vert, aucune suite en échec" "$(grep -q 'Suites vertes : db flow_import flow_store flow_compare flow_views hybrid_search' "$tmp/s" && grep -q 'Suites en échec : aucune' "$tmp/s"; echo $?)"
+verifie "dbtest : résumé vert, aucune suite en échec" "$(grep -q 'Suites vertes : db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend' "$tmp/s" && grep -q 'Suites en échec : aucune' "$tmp/s"; echo $?)"
 mdp="$(sed 's/^PW=//' "$FX/pw-recu" | head -1)"
 verifie "dbtest : le mot de passe donné au conteneur est celui des suites (32 caractères hexadécimaux)" "$(printf '%s' "$mdp" | grep -Eq '^[0-9a-f]{32}$' && grep -qx "PW=$mdp" "$FX/pw-vu-par-les-suites"; echo $?)"
 verifie "dbtest : le mot de passe n'apparaît ni à l'affichage ni dans les arguments de docker" "$(! grep -q -- "$mdp" "$tmp/s" && ! grep -q -- "$mdp" "$FAUX_LOG"; echo $?)"

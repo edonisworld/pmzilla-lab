@@ -24,5 +24,5 @@ Language: this command is written in English, but serve the user in THEIR langua
 - Run the branch-finishing script (`tools/finish_branch.sh`), push, or merge.
 - Archive with an unticked task that has no reason.
 - Use `--no-verify` or the owner bypass variable (`PMZILLA_SKIP_GREEN_CHECK`).
-- Launch anything reserved to the user: the real Jira tools (`history_jira.py`, `export_jira_api.py`), `flow_import.py`, `flow_compare.py`, `knowledge_import.py` (import, verify, status), the database scripts (`db.py`, `db_backup.sh`, `db_up.sh`), any calculation with the database as source (`--source db`), any database client (`psql`, `docker exec`), the posture evaluation set.
+- Launch anything reserved to the user: the real Jira tools (`history_jira.py`, `export_jira_api.py`), `flow_import.py`, `flow_compare.py`, `knowledge_import.py` (import, verify, status), the indexer `pmzilla_lab_library.py` (`index`, `rename-collection`, `probe`, `status`), the database scripts (`db.py`, `db_backup.sh`, `db_up.sh`), any calculation with the database as source (`--source db`), any database client (`psql`, `docker exec`), the posture evaluation set.
 - Read the content folders (`Bibliotheque-*`, `Watch-Lab`, `Watch-Excluded`), the sensitive files of `Flux-Lab/`, the database backups or the journal; write a person's, team's or project's name in any file.

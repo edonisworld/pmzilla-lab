@@ -5,7 +5,8 @@ Tests de l'enchaînement de tools/watch.sh avec de fausses commandes.
 
 Le script est lancé avec un faux HOME. Il place `$HOME/.local/bin` en tête du PATH : on y met un faux `uv`, un
 faux `curl` et un faux `osascript` (la notification macOS), qui notent leurs appels dans un fichier et échouent à la demande (variable ECHEC : liste de
-« script.py commande » séparés par des virgules ; CURL_CODE : code de sortie du faux curl). La vraie veille,
+« script.py commande » séparés par des virgules, préfixés par « ancien » pour l'ancien indexeur figé ; ECHEC_CODE :
+leur code de sortie ; CURL_CODE : code de sortie du faux curl). La vraie veille,
 les vrais scripts, Ollama et launchd ne sont jamais touchés.
 """
 import os
@@ -28,6 +29,7 @@ echo "$* (args complets)" >> "$APPELS_COMPLETS"
 [ "$2" = "--python" ] && set -- "$1" "$4"   # uv run --python <version> <script> : le script redevient le 2e argument
 script=$(basename "$2")
 appel="$script${3:+ $3}"
+case "$2" in */parite-sqlite/*) appel="ancien $appel";; esac   # l'ancien indexeur figé de la fenêtre de parité
 # le script jetable du contrôle : « controle_cache.py » avec le réseau, « controle_cache.py hors-ligne » avec UV_OFFLINE
 if [ "$script" = "controle_cache.py" ]; then
   [ -n "${UV_OFFLINE:-}" ] && appel="controle_cache.py hors-ligne"
@@ -97,83 +99,167 @@ class WatchSh(Base):
         resultat, appels = self.lancer()
         self.assertEqual(appels, [
             "watch_lab.py collect", "watch_triage.py score", "watch_triage.py apply", "watch_triage.py shares",
-            "watch_triage.py digest", "pmzilla_lab_library.py index", "dashboard.py"])
+            "watch_triage.py digest", "pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "dashboard.py"])
         self.assertEqual(resultat.returncode, 0)
         self.assertNotIn("erreur", resultat.stdout.lower().replace("sans erreur", ""))
         self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
         self.assertEqual(self.notifications, [])   # aucune notification quand tout va bien
 
-    def activer_synchro(self):
-        marqueur = self.home / ".pmzilla-lab" / "knowledge-sync"
-        marqueur.parent.mkdir(parents=True, exist_ok=True)
-        marqueur.write_text("")
-
-    def test_synchro_postgres_absente_tant_que_le_marqueur_n_existe_pas(self):
+    def test_aucun_appel_a_knowledge_import_sans_fenetre_de_parite(self):
         _, appels = self.lancer()
         self.assertFalse(any("knowledge_import" in a for a in appels))
+        self.assertFalse(any(a.startswith("ancien") for a in appels))
 
-    def test_synchro_postgres_apres_l_indexation_quand_activee(self):
-        self.activer_synchro()
+    def test_un_ancien_marqueur_knowledge_sync_ne_change_rien(self):
+        marqueur = self.home / ".pmzilla-lab" / "knowledge-sync"
+        marqueur.write_text("")
         resultat, appels = self.lancer()
-        self.assertEqual(appels[-4:], ["pmzilla_lab_library.py index", "knowledge_import.py import", "knowledge_import.py verify", "dashboard.py"])
+        self.assertEqual(appels[-3:], ["pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "dashboard.py"])
+        self.assertFalse(any("knowledge_import" in a for a in appels))
         self.assertEqual(resultat.returncode, 0)
         self.assertEqual(self.notifications, [])
-        complet = next(l for l in self.complets.read_text().splitlines() if "knowledge_import.py" in l)
-        self.assertIn(f"{self.home}/PMZilla-Lab/workspace/tools/knowledge_import.py import", complet)
 
-    def test_synchro_postgres_en_echec_notifie_sans_bloquer_la_veille(self):
-        self.activer_synchro()
-        resultat, appels = self.lancer(echec="knowledge_import.py import")
-        self.assertEqual(resultat.returncode, 0)                                  # la veille réussit
-        self.assertIn("dashboard.py", appels)                                     # la suite continue
-        self.assertIn("Synchronisation PostgreSQL en erreur", resultat.stdout)
-        self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
+    # Base injoignable (code 2 de l'indexeur)
+    def test_base_injoignable_nommee_dans_le_resume_et_la_notification(self):
+        repere = self.repere(contenu="1000")
+        resultat, appels = self.lancer(echec="pmzilla_lab_library.py index", ECHEC_CODE="2")
+        self.assertIn("Indexation en erreur : base PostgreSQL injoignable, la bibliothèque n'est pas à jour "
+                      "(bash tools/db_up.sh)", resultat.stdout)
+        self.assertIn("=== Veille terminée avec 1 étape(s) en échec : indexation (base injoignable) ===", resultat.stdout)
         self.assertEqual(len(self.notifications), 1)
-        self.assertIn("PostgreSQL", self.notifications[0])
+        self.assertIn("indexation (base injoignable)", self.notifications[0])
+        self.assertEqual(repere.read_text(), "1000")              # repère inchangé
+        self.assertIn("watch_triage.py digest", appels)          # liste à lire construite avant
+        self.assertIn("dashboard.py", appels)
+        self.assertNotIn("pmzilla_lab_library.py probe", appels)
+        self.assertEqual(resultat.returncode, 1)
 
-    def test_synchro_postgres_en_echec_ne_lance_pas_le_controle(self):
-        self.activer_synchro()
-        _, appels = self.lancer(echec="knowledge_import.py import")
-        self.assertNotIn("knowledge_import.py verify", appels)
+    def test_autre_code_de_l_indexeur_garde_l_etiquette_indexation(self):
+        resultat, _ = self.lancer(echec="pmzilla_lab_library.py index", ECHEC_CODE="5")
+        self.assertIn("Indexation en erreur : la bibliothèque n'est pas à jour", resultat.stdout)
+        self.assertNotIn("injoignable", resultat.stdout)
+        self.assertIn("en échec : indexation ===", resultat.stdout)
+        self.assertEqual(resultat.returncode, 1)
 
-    def test_controle_index_bm25_illisible_journalise_et_notifie_sans_bloquer(self):
-        self.activer_synchro()
-        resultat, appels = self.lancer(echec="knowledge_import.py verify", ECHEC_CODE="3")
-        self.assertEqual(resultat.returncode, 0)                                  # la veille réussit, même code de sortie qu'avant
-        self.assertIn("dashboard.py", appels)                                     # la suite continue
+    # Sonde de l'index BM25
+    def test_sonde_reussie_ne_notifie_rien(self):
+        resultat, appels = self.lancer()
+        self.assertIn("pmzilla_lab_library.py probe", appels)
+        self.assertEqual(self.notifications, [])
+        self.assertNotIn("BM25", resultat.stdout)
+        complet = next(l for l in self.complets.read_text().splitlines() if "pmzilla_lab_library.py probe" in l)
+        self.assertIn(f"{self.home}/PMZilla-Lab/pmzilla_lab_library.py probe", complet)
+
+    def test_sonde_index_bm25_illisible_journalise_et_notifie_sans_bloquer(self):
+        resultat, appels = self.lancer(echec="pmzilla_lab_library.py probe", ECHEC_CODE="3")
+        self.assertEqual(resultat.returncode, 0)
+        self.assertIn("dashboard.py", appels)
         self.assertIn("Index BM25 illisible", resultat.stdout)
         self.assertIn("Damaged BM25 index", resultat.stdout)
         self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
         self.assertEqual(len(self.notifications), 1)
         self.assertIn("BM25", self.notifications[0])
-        self.assertIn("installation.md", self.notifications[0])
+        self.assertIn("Damaged BM25 index", self.notifications[0])
 
-    def test_controle_ecart_de_copie_journalise_et_notifie_sans_bloquer(self):
-        self.activer_synchro()
-        resultat, appels = self.lancer(echec="knowledge_import.py verify", ECHEC_CODE="1")
+    def test_sonde_en_echec_autre_code_journalise_et_notifie_sans_bloquer(self):
+        resultat, appels = self.lancer(echec="pmzilla_lab_library.py probe", ECHEC_CODE="2")
         self.assertEqual(resultat.returncode, 0)
         self.assertIn("dashboard.py", appels)
-        self.assertIn("Vérification de la copie PostgreSQL en échec (code 1)", resultat.stdout)
+        self.assertIn("Sonde de l'index BM25 en échec (code 2) : voir ci-dessus", resultat.stdout)
         self.assertNotIn("Index BM25 illisible", resultat.stdout)
         self.assertEqual(len(self.notifications), 1)
-        self.assertIn("installation.md", self.notifications[0])
+        self.assertIn("Sonde de l'index BM25 en échec. Voir le journal de la veille.", self.notifications[0])
 
-    def test_controle_reussi_ne_notifie_rien(self):
-        self.activer_synchro()
-        resultat, appels = self.lancer()
-        self.assertIn("knowledge_import.py verify", appels)
-        self.assertEqual(self.notifications, [])
-        self.assertNotIn("BM25", resultat.stdout)
-
-    def test_synchro_postgres_pas_lancee_si_l_indexation_echoue(self):
-        self.activer_synchro()
+    def test_sonde_pas_lancee_si_l_indexation_echoue_ou_sans_ollama(self):
         _, appels = self.lancer(echec="pmzilla_lab_library.py index")
-        self.assertFalse(any("knowledge_import" in a for a in appels))
-
-    def test_synchro_postgres_pas_lancee_sans_ollama(self):
-        self.activer_synchro()
+        self.assertNotIn("pmzilla_lab_library.py probe", appels)
+        self.appels.unlink()
         _, appels = self.lancer(curl=7)
-        self.assertFalse(any("knowledge_import" in a for a in appels))
+        self.assertNotIn("pmzilla_lab_library.py probe", appels)
+
+    # Fenêtre de parité
+    def ouvrir_parite(self, debut: str = "2026-10-01", copie_figee: bool = True):
+        (self.home / ".pmzilla-lab" / "parite-sqlite").write_text(debut + "\n")
+        if copie_figee:
+            ancien = self.home / "PMZilla-Lab" / "parite-sqlite" / "tools"
+            ancien.mkdir(parents=True, exist_ok=True)
+            (ancien / "pmzilla_lab_library.py").write_text("raise SystemExit('jamais exécuté')\n")
+
+    def test_parite_ancien_indexeur_puis_comparaison_apres_la_sonde(self):
+        self.ouvrir_parite()
+        resultat, appels = self.lancer()
+        self.assertEqual(appels[-5:], ["pmzilla_lab_library.py index", "pmzilla_lab_library.py probe",
+                                       "ancien pmzilla_lab_library.py index", "knowledge_import.py verify", "dashboard.py"])
+        complets = self.complets.read_text().splitlines()
+        ancien = next(l for l in complets if "/parite-sqlite/" in l)
+        ws = f"{self.home}/PMZilla-Lab/workspace"
+        self.assertIn(f"{self.home}/PMZilla-Lab/parite-sqlite/tools/pmzilla_lab_library.py index "
+                      f"{ws}/Bibliotheque-Lab {ws}/Watch-Lab", ancien)
+        verif = next(l for l in complets if "knowledge_import.py" in l)
+        self.assertIn(f"{ws}/tools/knowledge_import.py verify --parity --since 2026-10-01", verif)
+        self.assertEqual(resultat.returncode, 0)
+        self.assertEqual(self.notifications, [])
+
+    def test_parite_en_ecart_journalisee_et_notifiee_sans_bloquer(self):
+        self.ouvrir_parite()
+        resultat, appels = self.lancer(echec="knowledge_import.py verify", ECHEC_CODE="1")
+        self.assertIn("Parité SQLite en écart : voir ci-dessus", resultat.stdout)
+        self.assertIn("dashboard.py", appels)
+        self.assertEqual(len(self.notifications), 1)
+        self.assertIn("Parité SQLite : écart ou mesure impossible. Voir le journal de la veille.", self.notifications[0])
+        self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_parite_copie_figee_introuvable(self):
+        self.ouvrir_parite(copie_figee=False)
+        resultat, appels = self.lancer()
+        self.assertIn("Comparaison avec l'ancienne voie impossible : copie figée introuvable", resultat.stdout)
+        self.assertFalse(any(a.startswith("ancien") or "knowledge_import" in a for a in appels))
+        self.assertEqual(len(self.notifications), 1)
+        self.assertIn("Parité SQLite : écart ou mesure impossible", self.notifications[0])
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_parite_ancien_indexeur_en_erreur(self):
+        self.ouvrir_parite()
+        resultat, appels = self.lancer(echec="ancien pmzilla_lab_library.py index")
+        self.assertIn("Comparaison avec l'ancienne voie impossible : ancien indexeur en erreur", resultat.stdout)
+        self.assertNotIn("knowledge_import.py verify", appels)
+        self.assertIn("dashboard.py", appels)
+        self.assertEqual(len(self.notifications), 1)
+        self.assertIn("Parité SQLite : écart ou mesure impossible", self.notifications[0])
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_parite_pas_lancee_si_l_indexation_echoue_ou_sans_ollama(self):
+        self.ouvrir_parite()
+        resultat, appels = self.lancer(echec="pmzilla_lab_library.py index", ECHEC_CODE="2")
+        self.assertFalse(any(a.startswith("ancien") or "knowledge_import" in a for a in appels))
+        self.assertEqual(len(self.notifications), 1)              # la seule notification de fin
+        self.assertEqual(resultat.returncode, 1)
+        self.appels.unlink()
+        self.repere(jours=1)
+        _, appels = self.lancer(curl=7)
+        self.assertFalse(any(a.startswith("ancien") or "knowledge_import" in a for a in appels))
+        self.assertEqual(self.notifications, [])
+
+    def test_parite_date_de_debut_illisible_ou_verification_en_erreur(self):
+        self.ouvrir_parite(debut="hier")
+        resultat, appels = self.lancer()
+        self.assertIn("Comparaison avec l'ancienne voie impossible : date de début illisible", resultat.stdout)
+        self.assertFalse(any(a.startswith("ancien") or "knowledge_import" in a for a in appels))
+        self.assertEqual(len(self.notifications), 1)
+        self.appels.unlink()
+        self.ouvrir_parite()
+        resultat, _ = self.lancer(echec="knowledge_import.py verify", ECHEC_CODE="2")
+        self.assertIn("Comparaison avec l'ancienne voie impossible : vérification en erreur (code 2)", resultat.stdout)
+        self.assertEqual(len(self.notifications), 1)
+        self.assertIn("Parité SQLite : écart ou mesure impossible", self.notifications[0])
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_parite_lancee_meme_si_la_sonde_echoue(self):
+        self.ouvrir_parite()
+        _, appels = self.lancer(echec="pmzilla_lab_library.py probe", ECHEC_CODE="3")
+        self.assertIn("knowledge_import.py verify", appels)
+        self.assertEqual(len(self.notifications), 1)              # celle de la sonde seulement
 
     def test_journal_horodate_et_les_deux_dossiers_indexes(self):
         resultat, _ = self.lancer()
@@ -267,19 +353,13 @@ class WatchSh(Base):
         self.lancer(curl=7)
         self.assertEqual(len(self.notifications), 1)
 
-    def test_avant_le_premier_repere_on_se_fie_a_l_index_lui_meme(self):
+    def test_sans_repere_un_fichier_sqlite_present_est_ignore(self):
         index = self.home / ".pmzilla-lab" / "library.sqlite"
-        index.parent.mkdir(parents=True, exist_ok=True)
-        index.write_text("")
-        ancien = time.time() - 6 * 86400
-        os.utime(index, (ancien, ancien))
+        index.write_text("")                                         # récent : sa date n'est jamais lue
         resultat, _ = self.lancer(curl=7)
-        self.assertIn("il y a 6 jour(s)", resultat.stdout)
+        self.assertIn("Aucune indexation réussie connue", resultat.stdout)
         self.assertEqual(len(self.notifications), 1)
-        self.appels.unlink()
-        index.touch()
-        self.lancer(curl=7)
-        self.assertEqual(self.notifications, [])                    # index récent : rien
+        self.assertIn("aucune indexation réussie connue", self.notifications[0])
 
     def test_notification_ollama_impossible_ne_change_rien(self):
         self.repere(jours=5)

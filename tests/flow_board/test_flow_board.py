@@ -613,6 +613,31 @@ class Robustesse(Base):
         _, donnees = self.page(ws=ws)
         self.assertEqual([s["name"] for s in donnees["series"]], [NOM])
 
+    def test_serie_de_comparaison_base_ignoree_sans_reglage(self):
+        ws = self.copie()
+        (ws / "Flux-Lab" / "flux.yaml").write_text("waiting_states: []\n", encoding="utf-8")
+        rap = ws / "Flux-Lab" / "rapports"
+        shutil.copy(rap / f"flux-{NOM}-2026-10-04.json", rap / f"flux-{NOM}-db-2026-10-04.json")
+        _, donnees = self.page(ws=ws)
+        self.assertEqual([s["name"] for s in donnees["series"]], [NOM])
+
+    def test_serie_de_comparaison_base_ignoree_meme_declaree(self):
+        ws = self.copie()
+        (ws / "Flux-Lab" / "flux.yaml").write_text(
+            "boards:\n  series:\n    - name: " + NOM + "\n    - name: " + NOM + "-db\n", encoding="utf-8")
+        rap = ws / "Flux-Lab" / "rapports"
+        shutil.copy(rap / f"flux-{NOM}-2026-10-04.json", rap / f"flux-{NOM}-db-2026-10-04.json")
+        _, donnees = self.page(ws=ws)
+        self.assertEqual([s["name"] for s in donnees["series"]], [NOM])
+
+    def test_suffixe_au_milieu_d_un_nom_la_serie_est_montree(self):
+        ws = self.copie()
+        (ws / "Flux-Lab" / "flux.yaml").write_text("waiting_states: []\n", encoding="utf-8")
+        rap = ws / "Flux-Lab" / "rapports"
+        shutil.copy(rap / f"flux-{NOM}-2026-10-04.json", rap / f"flux-{NOM}-db-bis-2026-10-04.json")
+        _, donnees = self.page(ws=ws)
+        self.assertEqual(sorted(s["name"] for s in donnees["series"]), sorted([NOM, NOM + "-db-bis"]))
+
     def test_le_prefixe_de_serie_est_exact(self):
         ws = self.copie()
         rap = ws / "Flux-Lab" / "rapports"

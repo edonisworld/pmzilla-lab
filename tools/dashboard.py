@@ -18,7 +18,10 @@ lus dans d'autres fichiers (logs de la veille, rapports d'essai et du flux, jour
 Sources lues (chacune peut manquer : la section affiche « pas encore de données ») :
     ~/Library/Logs/pmzilla-watch.log et pmzilla-essai.log
     _bmad-output/essais/essai-*.md, _bmad-output/pmzilla/{veille,miroir}/
-    ~/.pmzilla-lab/{library,tri,veille}.sqlite
+    ~/.pmzilla-lab/{library,tri}.sqlite (veille : nombre d'articles de la collection watch ; partages et pré-tri)
+    base de la bibliothèque (schéma knowledge : livres, collections, passages ; rôle pmzilla_knowledge_ro, délai de connexion
+    de 2 s, base nommée par PMZILLA_LAB_KNOWLEDGE_DBNAME si elle est posée) : section bibliothèque, jamais l'index SQLite.
+    Base qui ne répond pas : « source illisible » avec le seul type de l'erreur ; aucun livre : « pas encore de données »
     tools/book_catalog.yaml (pas lu directement : l'index porte déjà les auteurs),
     tools/mapping_lab.py (commentaire des livres absents), watch/tri.yaml
     Journal-Lab/journal.yaml, Flux-Lab/rapports/evolution-*.md
@@ -423,23 +426,54 @@ def section_veille() -> str:
 
 # --- 3. Bibliothèque -------------------------------------------------------------------------
 
-def livres_block() -> str:
-    db = connect("library.sqlite")
-    # exclusion par nom exact de collection (jamais par sous-chaîne)
-    exclues = {watch_paths.NEW["collection"], watch_paths.OWN_COLLECTION}
-    rows = [row for row in db.execute("SELECT b.id, b.title, b.collections, b.meta FROM books b").fetchall()
-            if not exclues & set((row["collections"] or "").split("|"))]
+KNOWLEDGE_ROLE = "pmzilla_knowledge_ro"
+KNOWLEDGE_TIMEOUT_SECONDS = CASES_TIMEOUT_SECONDS   # même délai de connexion court que la section des expérimentations
+LIBRARY_SQL = ("SELECT b.title, b.author, ARRAY(SELECT co.name FROM knowledge.book_collections bc "
+               "JOIN knowledge.collections co ON co.id = bc.collection_id WHERE bc.book_id = b.id), "
+               "(SELECT count(*) FROM knowledge.chunks c WHERE c.book_id = b.id) FROM knowledge.books b")
+
+
+def connect_knowledge():
+    """Connexion réelle : rôle de lecture seule, délai court ; base nommée par PMZILLA_LAB_KNOWLEDGE_DBNAME si elle est posée."""
+    import db
+    return db.connect(role=KNOWLEDGE_ROLE, timeout=KNOWLEDGE_TIMEOUT_SECONDS,
+                      dbname=os.environ.get("PMZILLA_LAB_KNOWLEDGE_DBNAME") or None)
+
+
+def fetch_library_books(connect=None) -> list[dict]:
+    """Lecteur réel du schéma knowledge : un dict par livre (title, author dérivé, collections, passages). Lève si la base
+    ne répond pas. `connect` est injectable (base jetable des tests) ; la connexion est toujours fermée."""
+    conn = (connect or connect_knowledge)()
+    try:
+        rows = conn.execute(LIBRARY_SQL).fetchall()
+    finally:
+        conn.close()
+    return [{"title": title, "author": author, "collections": list(names or []), "passages": int(passages)}
+            for title, author, names, passages in rows]
+
+
+def library_books(read=None) -> list[dict]:
+    """`read()` est injectable (tests) ; par défaut, fetch_library_books (cherché à l'appel). Jamais l'index SQLite."""
+    return (read or fetch_library_books)()
+
+
+WATCH_COLLECTIONS = {watch_paths.NEW["collection"], watch_paths.OLD["collection"]}
+
+
+def livres_block(read=None) -> str:
+    # exclusion par nom exact de collection (jamais par sous-chaîne) : veille (nom actuel et ancien) et collection personnelle
+    exclues = WATCH_COLLECTIONS | {watch_paths.OWN_COLLECTION}
+    rows = [row for row in library_books(read) if not exclues & set(row["collections"])]
     if not rows:
         raise PasDeDonnees
-    ids = [row["id"] for row in rows]
-    passages = sum(db.execute("SELECT COUNT(*) FROM chunks WHERE book_id = ?", (i,)).fetchone()[0] for i in ids)
+    passages = sum(row["passages"] for row in rows)
     domaines = {d: 0 for d in DOMAINES}
     sans_auteur = []
     for row in rows:
-        for name in row["collections"].split("|"):
+        for name in row["collections"]:
             if name in domaines:
                 domaines[name] += 1
-        author = json.loads(row["meta"] or "{}").get("author")
+        author = row["author"]
         if not author or "auteur non indiqué" in author:
             sans_auteur.append(row["title"])
     out = [t("books_summary", books=pb(len(rows), "book"), passages=pl(passages, "passage")),
@@ -501,14 +535,13 @@ def absents_block() -> str:
             "<ul>" + "".join(f"<li>{esc(title)}</li>" for title in titres) + "</ul>")
 
 
-def articles_sans_auteur_block() -> str:
-    db = connect("library.sqlite")
-    rows = db.execute("SELECT meta FROM books WHERE collections LIKE '%watch%'").fetchall()
+def articles_sans_auteur_block(read=None) -> str:
+    rows = [row for row in library_books(read) if WATCH_COLLECTIONS & set(row["collections"])]
     if not rows:
         raise PasDeDonnees
     sans_rien = sans_nom = 0
-    for r in rows:
-        author = (json.loads(r["meta"] or "{}").get("author") or "").strip()
+    for row in rows:
+        author = (row["author"] or "").strip()
         if not author:
             sans_rien += 1
         elif "auteur non indiqué" in author:

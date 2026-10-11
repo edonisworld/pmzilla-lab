@@ -3,9 +3,7 @@
 ## Purpose
 
 Describes the command-line tool that exports tickets from the Jira API into a CSV file in the same layout as a manual Jira export, so that the flow and dependency reports read it unchanged. The tool never asks Jira for titles, descriptions or individual data. Sources are the tests in `tests/export_jira_api/`.
-
 ## Requirements
-
 ### Requirement: Subcommands and retired subcommands
 The system SHALL offer the subcommands `diagnose`, `fields` and `export`, and SHALL refuse the retired subcommands `compare` and `teams-table` (and the former French subcommand names) with exit code 2, without a traceback, without calling Jira, and with a message that points to the replacement path.
 
@@ -221,3 +219,19 @@ Source: tests/export_jira_api/test_language.py
 #### Scenario: Unknown language
 - **WHEN** `--language de` is given
 - **THEN** the exit code is 2
+
+### Requirement: Strict option for unknown team identifiers
+The system SHALL accept on the export subcommand an opt-in strict-teams option. With it, when at least one team identifier is missing from the team table, the system SHALL write the export file and print its usual lines as without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name an identifier, a label, a key or a value. Without the option, the exit code and the output SHALL stay unchanged. Untested until implemented.
+
+#### Scenario: Unknown identifier with the option
+- **WHEN** the export runs with the strict-teams option and one identifier is missing from the team table
+- **THEN** the file is written, the output ends with "unknown team identifiers: export incomplete" in English, and the exit code is 3
+
+#### Scenario: Complete table with the option
+- **WHEN** every identifier is in the team table
+- **THEN** the exit code is 0 and the key phrase is not printed
+
+#### Scenario: Without the option
+- **WHEN** the export runs without the option and one identifier is missing
+- **THEN** the exit code is 0, as before this change
+

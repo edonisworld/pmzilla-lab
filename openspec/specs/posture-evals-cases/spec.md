@@ -60,42 +60,50 @@ Source: tests/posture_evals/test_posture_evals.py (Langue, Principal); tests/pos
 - **THEN** every case has a variant with a different question, the same number and kind of criteria, rules of the same shape, and no French fixed formula
 
 ### Requirement: Prerequisites make a case non-evaluable
-The system SHALL check the optional prerequisites of a case against the library index of the installation and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. Supported prerequisites SHALL be: a book present, a collection with a minimum number of books, and a topic that must be absent. An unreadable index or an unknown rule SHALL count as unmet.
+The system SHALL check the optional prerequisites of a case against the library database that the case's library server reads (the installation database, or the disposable one of a library case), under the read-only role, and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. Supported prerequisites SHALL be: a book present (title containing the text, case-insensitive), a collection with a minimum number of books (exact collection name), and a topic that must be absent (alternatives separated by uppercase OR, one matching passage is enough; an alternative written between double quotes is an exact expression, its words adjacent and in order, and an alternative without quotes requires all its words anywhere in the passage; case- and accent-insensitive; a passage matching several alternatives counts once). A database that does not answer or an unknown rule SHALL count as unmet. The system SHALL NOT read the SQLite library index.
+
+Source: tests/posture_evals/test_posture_evals.py (Prerequis, with a fake reader; database class run with `tools/dbtest.sh posture_evals`)
 
 #### Scenario: Satisfied prerequisites
-- WHEN the index has the book, enough books in the collection, and no passage on the absent topic
-- THEN no reason is returned
+- **WHEN** the database has the book, enough books in the collection, and no passage on the absent topic
+- **THEN** no reason is returned
 
 #### Scenario: Unmet prerequisite
-- WHEN a book is missing, a collection is too small, or the topic expected to be absent is present
-- THEN the corresponding reason is reported and the case is shown as non-evaluable with the reasons
+- **WHEN** a book is missing, a collection is too small, or the topic expected to be absent is present
+- **THEN** the corresponding reason is reported and the case is shown as non-evaluable with the reasons
 
-#### Scenario: Index not found
-- WHEN the index file cannot be opened
-- THEN the reason says the index is not found
+#### Scenario: Quoted topic is an exact phrase
+- **WHEN** the topic that must be absent is written between double quotes and a passage contains all its words but not adjacent, or adjacent but in another order
+- **THEN** that passage does not count as present, whereas a passage with the words adjacent and in order does, and the same words written without quotes match both
+
+#### Scenario: Database unavailable
+- **WHEN** the library database does not answer
+- **THEN** the reason says the library database is unreachable, and no SQLite file is opened
 
 #### Scenario: Rejudge ignores prerequisites
-- WHEN a past run is rejudged
-- THEN prerequisites are not checked
-
-Source: tests/posture_evals/test_posture_evals.py (Prerequis)
+- **WHEN** a past run is rejudged
+- **THEN** prerequisites are not checked
 
 ### Requirement: Command cases with invented files and throwaway library
-The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library index built from a given folder, without overwriting the installation's library configuration. Files SHALL NOT be placed outside the copy.
-
-#### Scenario: Files placed in the copy only
-- WHEN a case declares source and destination files
-- THEN the files are copied into the temporary copy; a destination escaping the copy is refused
-
-#### Scenario: Throwaway index
-- WHEN a case declares a library folder
-- THEN that folder is indexed into a per-case location and a separate library configuration is produced; without it the installation configuration is used unchanged
-
-#### Scenario: Command cases are separate from the standard set
-- WHEN the command-case file is read
-- THEN its cases have identifiers distinct from the standard cases and every referenced input file exists
+The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library built from a given folder, indexed into the run's disposable database (its knowledge tables emptied first) and served by a library server pointed at that database, without writing into the installation's database or overwriting the installation's library configuration. Without a disposable database, such a case SHALL be non-evaluable with the reason of design.md D11. Files SHALL NOT be placed outside the copy.
 
 Source: tests/posture_evals/test_posture_evals.py (CasDeCommandes)
+
+#### Scenario: Files placed in the copy only
+- **WHEN** a case declares source and destination files
+- **THEN** the files are copied into the temporary copy; a destination escaping the copy is refused
+
+#### Scenario: Throwaway library
+- **WHEN** a case declares a library folder and a disposable database exists
+- **THEN** that folder is indexed into the disposable database and the case's library configuration names that database and the PostgreSQL backend; without a library folder the installation configuration is used unchanged
+
+#### Scenario: No disposable database
+- **WHEN** a case declares a library folder and no disposable database could be created
+- **THEN** the case is non-evaluable with the reason that the throwaway library is unavailable, and nothing is indexed
+
+#### Scenario: Command cases are separate from the standard set
+- **WHEN** the command-case file is read
+- **THEN** its cases have identifiers distinct from the standard cases and every referenced input file exists
 
 ### Requirement: Judge inputs are guarded against unintended change
 The system SHALL provide a permanent check comparing what the judge receives (the French judge prompt and, per case, question, posture, verifications, prerequisites, judged criteria after normalization) with a reference Git state, defaulting to the last pushed state. Added cases and language blocks SHALL NOT count as differences; renamed keys SHALL NOT count as differences; a changed criterion, question, text pattern or removed case SHALL. The check SHALL be skippable only by an explicit environment switch, whose skip reason names the switch and requires the commit message to say so.
@@ -195,6 +203,17 @@ The system SHALL refuse a former French option name with an error naming the cur
 #### Scenario: Both keys present
 - **WHEN** a case has both a former and a current key
 - **THEN** loading stops with the same error
+
+### Requirement: Check prerequisites alone on request
+The system SHALL provide an option that, for every case of the chosen case file that has prerequisites, prints the case identifier and its unmet-prerequisite reasons (or that they are met) against the installation's library database, and SHALL exit 0 when every prerequisite is met and 1 otherwise. It SHALL NOT start a session, call the judge, create a disposable database or write a report.
+
+#### Scenario: All met
+- **WHEN** the option is used and every prerequisite is met
+- **THEN** each case with prerequisites is listed as met, the exit code is 0, and no session is started
+
+#### Scenario: One unmet
+- **WHEN** one case's book is absent from the database
+- **THEN** that case is listed with its reason and the exit code is 1
 
 ## Open questions
 

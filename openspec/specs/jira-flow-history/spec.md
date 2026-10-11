@@ -3,9 +3,7 @@
 ## Purpose
 
 Describes the tool that collects the status history of tickets from the Jira API into a local cache (only date, starting status and arrival status of each transition), and checks that cache against an export. It also covers the shared history-reading rules (date normalisation, chronological sorting, segments, dormant tickets) used by the flow report. Sources are the tests in `tests/history_jira/`.
-
 ## Requirements
-
 ### Requirement: Connection test
 The system SHALL provide a `test` subcommand that checks the connection to Jira and prints only "connexion OK" on success, or only the HTTP status code on failure (exit 1), never the site, account, token or any name returned by Jira. With the scoped-token mode it SHALL go through the cloud identifier of the site without printing it. Missing settings SHALL produce an error naming the missing setting, without printing any value of the settings. A non-secure remote site address SHALL be refused before any call. The token SHALL be read from the operating-system keychain; a missing token SHALL give a message without traceback.
 
@@ -201,6 +199,21 @@ Source: tests/history_jira/test_language.py
 #### Scenario: English output
 - **WHEN** `--language en` is given
 - **THEN** the output equals the English reference and contains no French
+
+### Requirement: Strict option for collection errors
+The system SHALL accept on the collect subcommand an opt-in strict option. With it, when the error count of the run is above zero, the system SHALL print its usual report, leave the cache exactly as it would without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name a key, a team or a value. An access error SHALL keep its current exit code 1. Without the option, the exit code and the output SHALL stay unchanged. Untested until implemented.
+
+#### Scenario: Persistent throttling with the option
+- **WHEN** every call answers 429 and the collection runs with the strict option
+- **THEN** the report shows the errors with their code, no cache file exists, the output ends with "collection errors: history incomplete" in English, and the exit code is 3
+
+#### Scenario: No error with the option
+- **WHEN** the collection succeeds without any error
+- **THEN** the exit code is 0 and the key phrase is not printed
+
+#### Scenario: Without the option
+- **WHEN** every call answers 429 and the option is not given
+- **THEN** the exit code is 0, as before this change
 
 ## Open questions
 

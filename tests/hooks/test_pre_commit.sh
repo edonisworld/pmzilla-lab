@@ -60,9 +60,11 @@ vide
 indexe f.md 'texte sans nom'
 if git commit -q -m t >/dev/null 2>&1; then echo "ok : git commit propre accepté"; ok=$((ok+1)); else echo "ECHEC : commit propre refusé"; ko=$((ko+1)); fi
 
-# Sans liste, le hook ne fait rien
+# Sans liste, le hook échoue en le disant (R-47) ; liste vide : avertissement seulement
 rm Flux-Lab/noms-sensibles.txt
-indexe g.md 'EquipeTest'                               ; verifie "sans liste : avertissement, sans blocage" 0 "garde-fou des noms inactif : liste absente"; vide
+indexe g.md 'texte sans nom'                           ; verifie "sans liste : le commit est refusé, en le disant" 1 "garde-fou des noms impossible : liste absente"; vide
+# export puis unset : sous sh (mode POSIX), une affectation devant une fonction persisterait après l'appel
+indexe g.md 'texte sans nom'; export PMZILLA_NOMS="$tmp/factice.txt"; verifie "chemin explicite vers une liste absente : refusé aussi" 1 "liste absente"; unset PMZILLA_NOMS; vide
 : > Flux-Lab/noms-sensibles.txt; indexe g.md 'EquipeTest'      ; verifie "liste vide : avertissement, sans blocage" 0 "garde-fou des noms inactif : liste vide"
 printf '# seulement des commentaires\n\n' > Flux-Lab/noms-sensibles.txt; indexe g.md 'EquipeTest' ; verifie "liste de commentaires seuls : traitée comme vide" 0 "garde-fou des noms inactif : liste vide"
 

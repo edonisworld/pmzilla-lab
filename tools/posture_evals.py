@@ -11,7 +11,7 @@ bibliothèque, citations, questions de contexte, intervention de Critic, aucun n
 et écrit un rapport comparé au passage précédent.
 
     uv run ~/PMZilla-Lab/posture_evals.py [--cases id1,id2] [--model M] [--judge-model M] [--keep] [--backend sqlite|postgres]
-                                           [--real-memory] [--cases-file FICHIER]
+                                           [--real-memory] [--cases-file FICHIER] [--prerequisites-only]
 
 Chaque cas tourne dans une copie temporaire du workspace (git worktree), créée à partir de l'état
 courant, modifications non commitées comprises, puis effacée : la mémoire des agents n'est jamais
@@ -27,7 +27,8 @@ Sorties :
     _bmad-output/essais/essai-AAAA-MM-JJ-HHMMSS.md   rapport : verdicts et justifications seulement
     ~/.pmzilla-lab/essais/AAAA-MM-JJ-HHMMSS/        traces brutes et resultats.json (hors du dépôt)
 
-Prérequis : Ollama lancé (la bibliothèque calcule ses vecteurs avec bge-m3).
+Prérequis : Ollama lancé (la bibliothèque calcule ses vecteurs avec bge-m3). Les prérequis d'un cas (`prerequisites`) se lisent
+dans la base de la bibliothèque, sous le rôle de lecture seule ; --prerequisites-only les vérifie seuls, sans séance ni rapport.
 Coût : une séance Claude Code par cas, plus un jugement par cas. À lancer après une modification,
 pas tous les jours.
 """
@@ -43,7 +44,6 @@ import os
 import re
 import secrets
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time
@@ -83,6 +83,16 @@ CASES_UNAVAILABLE = "cases database unavailable"
 CASES_FIXTURES = Path("tests/postures/cases")        # les fichiers de jeu d'essai restent sous ce dossier (design.md 7.2)
 CASES_TABLES = "cases.cases, cases.experiment_notes, cases.experiments"
 AUTHOR_FILE = Path(".pmzilla") / "cases.yaml"        # jamais dans la copie : l'auteur d'une séance vient de l'environnement
+# Bibliothèque lue dans la base (R-37, design.md D11) : prérequis sous le rôle de lecture seule ; bibliothèque jetable d'un cas
+# indexée dans la base jetable du passage, désignée au serveur et à l'indexeur par cette variable
+KNOWLEDGE_DBNAME_VARIABLE = "PMZILLA_LAB_KNOWLEDGE_DBNAME"
+KNOWLEDGE_READ_ROLE = "pmzilla_knowledge_ro"
+KNOWLEDGE_TABLES = "knowledge.book_collections, knowledge.chunks, knowledge.books, knowledge.collections"
+LIBRARY_UNREACHABLE = "base de la bibliothèque injoignable"
+LIBRARY_UNAVAILABLE = "bibliothèque jetable indisponible : {detail}"
+LIBRARY_NO_DATABASE = "base jetable absente"
+PREREQUISITES_MET = "prérequis satisfaits"
+INDEX_TIMEOUT = 600   # secondes pour indexer la bibliothèque jetable d'un cas
 # Mémoire figée : version neutre du vécu des postures, qui remplace le vécu réel dans la copie
 MEMOIRE_FIGEE = Path("tests/postures/memoire")
 VECU_FICHIERS = ("MEMORY.md", "BOND.md")
@@ -266,50 +276,124 @@ def prepare_memory(copy: Path, real: bool, language: str = DEFAULT_LANGUAGE) -> 
     return placed
 
 
-def library_db() -> Path:
-    return Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser() / "library.sqlite"
+class LibraryReader:
+    """Lecture des prérequis dans le schéma knowledge (connexion sous le rôle de lecture seule) : des comptes, jamais de texte ;
+    chaque requête termine sa transaction."""
+
+    def __init__(self, conn) -> None:
+        self.conn = conn
+
+    def _count(self, sql: str, params: tuple) -> int:
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                return int(cursor.fetchone()[0])
+        finally:
+            with contextlib.suppress(Exception):
+                self.conn.rollback()
+
+    def books_with_title(self, text: str) -> int:
+        """Livres dont le titre contient ce texte, sans tenir compte de la casse."""
+        return self._count("SELECT count(*) FROM knowledge.books WHERE strpos(lower(title), lower(%s)) > 0", (text,))
+
+    def books_in_collection(self, name: str) -> int:
+        """Livres de la collection de ce nom exact."""
+        return self._count("SELECT count(DISTINCT bc.book_id) FROM knowledge.book_collections bc "
+                           "JOIN knowledge.collections co ON co.id = bc.collection_id WHERE co.name = %s", (name,))
+
+    def passages_on_topic(self, alternatives: list[tuple[str, bool]]) -> int:
+        """Passages dont le plein texte (section et texte) correspond à au moins une des alternatives (voir topic_alternatives),
+        sans casse ni accents : une alternative `(texte, True)` est une expression exacte (mots voisins, dans l'ordre,
+        `phraseto_tsquery`) ; `(texte, False)` demande tous les mots (`plainto_tsquery`). Un passage compte une fois."""
+        if not alternatives:
+            return 0
+        parts = [f"{'phraseto_tsquery' if phrase else 'plainto_tsquery'}('simple', knowledge.immutable_unaccent(%s))"
+                 for _, phrase in alternatives]
+        return self._count(f"SELECT count(*) FROM knowledge.chunks WHERE search_vector @@ ({' || '.join(parts)})",
+                           tuple(text for text, _ in alternatives))
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self.conn.close()
 
 
-def unmet_prerequisites(rules: list[dict] | None, db: Path | None = None) -> list[str]:
-    """Raisons pour lesquelles un cas ne peut pas être évalué avec la bibliothèque de cette installation
-    (champ `prerequisites` de cas.yaml). Règles : `book` (un titre d'ouvrage présent dans l'index), `collection`
-    avec `minimum` (nombre de livres de la collection), `absent_topic` (la requête ne renvoie presque rien)."""
+def topic_alternatives(topic: str) -> list[tuple[str, bool]]:
+    """Alternatives d'un `absent_topic` : séparées par le mot OR en capitales, en paires `(texte, est_expression)`, guillemets
+    retirés du texte. Une alternative entièrement écrite entre guillemets est une expression exacte (mots voisins, dans l'ordre) ;
+    sans guillemets, elle demande tous ses mots, où que ce soit dans le passage. Sans casse ni accents. Le sujet est présent quand
+    une alternative correspond à un passage. Sans OR : une seule alternative."""
+    alternatives = []
+    for part in re.split(r"\s+OR\s+", topic.strip()):
+        part = part.strip()
+        phrase = len(part) > 1 and part.startswith('"') and part.endswith('"') and '"' not in part[1:-1]
+        text = " ".join(part.replace('"', " ").split())
+        if text:
+            alternatives.append((text, phrase))
+    return alternatives
+
+
+def open_library_reader(dbname: str | None = None) -> LibraryReader:
+    """La base que lit le serveur de la bibliothèque de la séance : celle de l'installation, ou la base jetable `dbname`."""
+    import db
+    return LibraryReader(db.connect(role=KNOWLEDGE_READ_ROLE, dbname=dbname))
+
+
+def unmet_prerequisites(rules: list[dict] | None, dbname: str | None = None, reader=None) -> list[str]:
+    """Raisons pour lesquelles un cas ne peut pas être évalué avec la bibliothèque que lira sa séance (champ `prerequisites` de
+    cas.yaml), lue dans la base (celle de l'installation, ou la base jetable `dbname` d'un cas à bibliothèque jetable). Règles :
+    `book` (un titre contient ce texte, sans casse), `collection` avec `minimum` (livres de la collection de ce nom exact),
+    `absent_topic` (au plus `maximum`, défaut 0, passages correspondent au sujet, sans casse ni accents ; des
+    alternatives séparées par OR en capitales, une seule suffit ; une alternative entre guillemets est une expression exacte,
+    mots voisins et dans l'ordre, sans guillemets elle demande tous ses mots). Une base
+    qui ne répond pas ou une règle inconnue comptent comme non satisfaites. `reader` : lecteur déjà ouvert (tests)."""
     rules = rules or []
     if not rules:
         return []
-    db = db or library_db()
-    try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return [f"index de la bibliothèque introuvable ({db})"]
+    own = reader is None
+    if own:
+        try:
+            reader = open_library_reader(dbname)
+        except Exception:      # ErreurBase, psycopg absent… : jamais de détail de connexion dans le rapport
+            return [LIBRARY_UNREACHABLE]
     reasons: list[str] = []
     try:
         for rule in rules:
             try:
                 if "book" in rule:
-                    n = conn.execute("SELECT COUNT(*) FROM books WHERE lower(title) LIKE ?",
-                                     (f"%{str(rule['book']).lower()}%",)).fetchone()[0]
-                    if not n:
-                        reasons.append(f"livre absent de l'index : {rule['book']}")
+                    if not reader.books_with_title(str(rule["book"])):
+                        reasons.append(f"livre absent de la bibliothèque : {rule['book']}")
                 elif "collection" in rule:
                     minimum = int(rule.get("minimum", 1))
-                    n = conn.execute("SELECT COUNT(*) FROM books WHERE '|' || collections || '|' LIKE ?",
-                                     (f"%|{rule['collection']}|%",)).fetchone()[0]
+                    n = reader.books_in_collection(str(rule["collection"]))
                     if n < minimum:
                         reasons.append(f"collection {rule['collection']} : {n} livre(s) pour {minimum} attendu(s)")
                 elif "absent_topic" in rule:
                     maximum = int(rule.get("maximum", 0))
-                    n = conn.execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH ?",
-                                     (str(rule["absent_topic"]),)).fetchone()[0]
+                    n = reader.passages_on_topic(topic_alternatives(str(rule["absent_topic"])))
                     if n > maximum:
-                        reasons.append(f"le sujet « {rule['absent_topic']} » est présent dans l'index ({n} passages)")
+                        reasons.append(f"le sujet « {rule['absent_topic']} » est présent dans la bibliothèque ({n} passages)")
                 else:
                     reasons.append(f"prérequis inconnu : {rule}")
-            except sqlite3.Error as error:
-                reasons.append(f"prérequis non vérifiable ({error})")
+            except Exception as error:
+                reasons.append(f"prérequis non vérifiable ({type(error).__name__})")
     finally:
-        conn.close()
+        if own:
+            reader.close()
     return reasons
+
+
+def check_prerequisites_only(cases: list[dict]) -> int:
+    """`--prerequisites-only` : chaque cas qui a des prérequis, avec ses raisons ou « prérequis satisfaits », contre la base de
+    l'installation. Aucune séance, aucun juge, aucune base jetable, aucun rapport. Code de sortie : 0 tout est satisfait, 1 sinon."""
+    unmet_any = False
+    checked = [case for case in cases if case.get("prerequisites")]
+    if not checked:
+        print("Aucun cas n'a de prérequis.")
+    for case in checked:
+        reasons = unmet_prerequisites(case["prerequisites"])
+        unmet_any = unmet_any or bool(reasons)
+        print(f"{case['id']} : {'; '.join(reasons) if reasons else PREREQUISITES_MET}")
+    return 1 if unmet_any else 0
 
 
 def drop_copy(target: Path) -> None:
@@ -386,7 +470,7 @@ def show_tools(source: Path) -> None:
 
 def library_backend() -> str | None:
     """Voie de la bibliothèque pour ce passage : `--backend` (posée dans l'environnement par main), sinon PMZILLA_LAB_BACKEND ;
-    None = celle du serveur (sqlite par défaut)."""
+    None = celle du serveur (postgres par défaut, sqlite sur demande jusqu'au retrait de la voie fichier)."""
     return os.environ.get("PMZILLA_LAB_BACKEND") or None
 
 
@@ -473,36 +557,66 @@ def reset_cases_database(name: str, fixture: Path | None) -> None:
         conn.close()
 
 
-def mcp_config(folder: Path, data_dir: Path | None = None, backend: str | None = None,
-               cases_env: dict[str, str] | None = None) -> Path:
-    """Configuration MCP de la bibliothèque. Avec `data_dir`, le serveur lit cet index (bibliothèque jetable d'un cas,
-    toujours SQLite) au lieu de celui de l'installation ; sinon `backend` (sqlite ou postgres, défaut : library_backend())."""
-    config = folder / ("mcp.json" if data_dir is None else f"mcp-{data_dir.name}.json")
+def mcp_config(folder: Path, knowledge_dbname: str | None = None, backend: str | None = None,
+               cases_env: dict[str, str] | None = None, label: str | None = None) -> Path:
+    """Configuration MCP de la bibliothèque. Avec `knowledge_dbname` (bibliothèque jetable d'un cas), le serveur lit cette base,
+    toujours par la voie PostgreSQL, quelle que soit la voie choisie pour le passage, et sans dossier de données ; sinon `backend`
+    (sqlite ou postgres, défaut : library_backend()). `label` nomme un fichier à part, pour ne pas écraser celui du passage."""
+    config = folder / ("mcp.json" if label is None else f"mcp-{label}.json")
     server = {"command": shutil.which("uv") or "/opt/homebrew/bin/uv",
               "args": ["run", str(TOOLS / "pmzilla_lab_library.py"), "serve"]}
-    backend = backend or library_backend()
-    if data_dir is None and backend:
+    backend = "postgres" if knowledge_dbname else (backend or library_backend())
+    if backend:
         server["args"] += ["--backend", backend]
-    if data_dir is not None:
-        server["env"] = {"PMZILLA_LAB_DATA": str(data_dir)}
+    if knowledge_dbname:
+        server["env"] = {KNOWLEDGE_DBNAME_VARIABLE: knowledge_dbname}
     if cases_env:
         server["env"] = {**server.get("env", {}), **cases_env}
     config.write_text(json.dumps({"mcpServers": {"pmzilla-library": server}}, indent=2))
     return config
 
 
-def case_library(case: dict, folder: Path, cases_env: dict[str, str] | None = None) -> Path | None:
+class LibraryUnavailable(Exception):
+    """La bibliothèque jetable d'un cas ne peut pas être préparée : le cas est non évaluable, avec ce message."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(LIBRARY_UNAVAILABLE.format(detail=detail))
+
+
+def reset_case_library(name: str) -> None:
+    """Vide les tables de la bibliothèque de la base jetable du passage (jamais celle de l'installation)."""
+    conn = connect_cases_database(name)
+    try:
+        conn.execute(f"TRUNCATE {KNOWLEDGE_TABLES} RESTART IDENTITY")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def case_library(case: dict, folder: Path, cases_env: dict[str, str] | None = None, dbname: str | None = None) -> Path | None:
     """Cas à bibliothèque jetable (`library: dossier`, relatif à la racine du workspace : un sous-dossier par collection,
-    des articles inventés) : l'indexe dans un dossier du passage et rend la configuration MCP qui le lit. Rien n'est
-    écrit dans l'index de l'installation."""
+    des articles inventés) : vide la bibliothèque de la base jetable `dbname` du passage, y indexe ce dossier par l'indexeur
+    (`pmzilla_lab_library.py index`, la base désignée par PMZILLA_LAB_KNOWLEDGE_DBNAME) et rend la configuration MCP qui la lit.
+    Rien n'est écrit dans la base de l'installation. Sans base jetable, ou si l'indexation échoue : LibraryUnavailable."""
     if not case.get("library"):
         return None
-    data = folder / f"index-{case['id']}"
-    data.mkdir(parents=True, exist_ok=True)
-    subprocess.run([shutil.which("uv") or "/opt/homebrew/bin/uv", "run", str(TOOLS / "pmzilla_lab_library.py"), "index",
-                    str(WORKSPACE / case["library"])], env={**os.environ, "PMZILLA_LAB_DATA": str(data)},
-                   check=True, capture_output=True, text=True, timeout=600)
-    return mcp_config(folder, data, cases_env=cases_env)
+    if not dbname:
+        raise LibraryUnavailable(LIBRARY_NO_DATABASE)
+    try:
+        reset_case_library(dbname)
+    except Exception as error:
+        raise LibraryUnavailable(f"vidage impossible ({type(error).__name__})") from None
+    try:
+        done = subprocess.run([shutil.which("uv") or "/opt/homebrew/bin/uv", "run", str(TOOLS / "pmzilla_lab_library.py"), "index",
+                               str(WORKSPACE / case["library"])], env={**os.environ, KNOWLEDGE_DBNAME_VARIABLE: dbname},
+                              capture_output=True, text=True, timeout=INDEX_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise LibraryUnavailable(f"indexation interrompue après {INDEX_TIMEOUT} s") from None
+    if done.returncode != 0:
+        lines = ((done.stderr or "") + "\n" + (done.stdout or "")).strip().splitlines()
+        last = lines[-1].strip() if lines else ""
+        raise LibraryUnavailable(f"indexation en échec (code {done.returncode})" + (f" : {last[:200]}" if last else ""))
+    return mcp_config(folder, knowledge_dbname=dbname, cases_env=cases_env, label=f"bibliotheque-{case['id']}")
 
 
 def place_files(case: dict, copy: Path) -> None:
@@ -1215,7 +1329,8 @@ def main() -> None:
                                               "rejuge les traces d'un passage avec ce juge")
     parser.add_argument("--keep", action="store_true", help="garder les copies temporaires pour inspection")
     parser.add_argument("--backend", choices=("sqlite", "postgres"),
-                        help="voie de la bibliothèque lue par le serveur MCP (défaut : PMZILLA_LAB_BACKEND, puis sqlite)")
+                        help="voie de la bibliothèque lue par le serveur MCP (défaut : PMZILLA_LAB_BACKEND, puis celle du serveur, "
+                             "postgres) ; la bibliothèque jetable d'un cas est toujours lue dans la base jetable du passage")
     parser.add_argument("--real-memory", action="store_true",
                         help="tester avec la mémoire réelle des postures au lieu de la mémoire figée de tests/postures/memoire/")
     parser.add_argument("--retries", type=int, default=2, metavar="N",
@@ -1236,6 +1351,9 @@ def main() -> None:
                         help="tester le dernier commit, sans les modifications en cours (lancement automatique)")
     parser.add_argument("--with-bash", action="store_true",
                         help="autoriser Bash pendant les séances (si le rapport signale des refus de Bash)")
+    parser.add_argument("--prerequisites-only", action="store_true",
+                        help="vérifier seulement les prérequis des cas du fichier choisi contre la base de l'installation : "
+                             "aucune séance, aucun juge, aucun rapport ; code de sortie 0 si tous sont satisfaits, 1 sinon")
     parser.add_argument("--language", choices=LANGUAGES, default=DEFAULT_LANGUAGE,
                         help="langue des cas : fr (défaut, comportement d'avant) ou en (ne rejoue que les cas qui ont une variante `en:`)")
     args = parser.parse_args(check_options(sys.argv[1:]))
@@ -1275,6 +1393,10 @@ def main() -> None:
             print(f"Aucun cas n'a de variante {language} : rien à rejouer.")
             return
 
+    if args.prerequisites_only:      # aucune séance, aucune base jetable, aucun rapport
+        if check_prerequisites_only(cases):
+            raise SystemExit(1)
+        return
     check_fixtures(cases)
     cases_db = None if args.rejudge else create_cases_database()    # un rejugement ne crée aucune base
     try:
@@ -1315,8 +1437,10 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
     results = []
     sanctum_before = None if source else sanctum_digest()
 
-    def evaluate(case: dict, attempt: int = 0) -> dict | None:
-        """Une séance du cas (ou son rejeu numéro `attempt`) et ses vérifications ; None sans trace à rejuger."""
+    def evaluate(case: dict, attempt: int = 0, library_mcp: Path | None = None) -> dict | None:
+        """Une séance du cas (ou son rejeu numéro `attempt`) et ses vérifications ; None sans trace à rejuger. `library_mcp` :
+        configuration de la bibliothèque jetable déjà indexée pour la première séance ; un rejeu la réindexe (un autre cas a pu
+        remplir la base jetable entre-temps)."""
         nonlocal sanctum_before
         label = case["id"] + (f".rejeu{attempt}" if attempt else "")
         technical = False      # exception de préparation ou de séance : un incident, pas une variation du modèle
@@ -1334,7 +1458,9 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
                 place_files(case, copy)
                 if cases_db:
                     reset_cases_database(cases_db, WORKSPACE / case["cases_fixture"] if case.get("cases_fixture") else None)
-                events = run_session(case["question"], copy, case_library(case, folder, cases_env) or mcp, args.model,
+                if library_mcp is None:
+                    library_mcp = case_library(case, folder, cases_env, cases_db)
+                events = run_session(case["question"], copy, library_mcp or mcp, args.model,
                                      folder / f"{label}.jsonl",
                                      args.with_bash, language, env=cases_env)
                 trace = read_trace(events)
@@ -1372,7 +1498,14 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
     for number, case in enumerate(cases, 1):
         print(f"[{number}/{len(cases)}] {case['id']} …", flush=True)
         started = time.time()
-        unmet = [] if source else unmet_prerequisites(case.get("prerequisites"))
+        unmet, library_mcp = [], None
+        if not source and case.get("library"):     # la bibliothèque jetable d'abord : ses prérequis se lisent dans la base jetable
+            try:
+                library_mcp = case_library(case, folder, cases_env, cases_db)
+            except LibraryUnavailable as error:
+                unmet = [str(error)]
+        if not source and not unmet:
+            unmet = unmet_prerequisites(case.get("prerequisites"), dbname=cases_db if case.get("library") else None)
         if not source and case.get("cases_fixture") and not cases_db:
             unmet = [*unmet, CASES_UNAVAILABLE]
         if unmet:
@@ -1381,7 +1514,7 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
                             "cost": None, "turns": None, "error": False, "fichiers_ecrits": [], "refus": [],
                             "non_evaluable": unmet, "bloquantes_attendues": blocking_count(case)})
             continue
-        entry = evaluate(case)
+        entry = evaluate(case, library_mcp=library_mcp)
         if entry is None:
             continue
         results.append(entry)

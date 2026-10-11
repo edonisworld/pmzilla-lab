@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Modèle : __HOME__ est remplacé par le dossier personnel à l'installation (voir docs/pmzilla/installation.md, section 14). Installé et chargé par l'utilisateur, jamais par une session Claude Code. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pmzilla.offsite-restore-test</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/PMZilla-Lab/workspace/tools/offsite_backup.sh</string>
+    <string>restore-test</string>
+  </array>
+  <!-- Chaque jour à 8 h 45, après la copie hors du Mac (8 h 15). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+  <!-- Aussi à chaque montage d'un volume : le disque branché déclenche le passage. Le test ne travaille que s'il est dû (aucun test réussi ce mois-ci) : sinon il sort sans rien faire. -->
+  <key>StartOnMount</key>
+  <true/>
+  <!-- OFFSITE_NOTIFIER=1 : notification macOS en cas d'échec ou de refus, et d'absence prolongée du disque. Aucun mot de passe dans ce fichier : le script n'en utilise pas. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OFFSITE_NOTIFIER</key>
+    <string>1</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/pmzilla-offsite-restore-test.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/pmzilla-offsite-restore-test.log</string>
+</dict>
+</plist>

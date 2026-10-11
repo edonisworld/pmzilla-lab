@@ -16,7 +16,7 @@ C'est la source des CSV : flux_jira.py, dependencies_jira.py et flow_import.py l
         texte (sans tenir compte de la casse) : de quoi retrouver le customfield_NNNNN de « [G] Team/s » pour le
         réglage export_team_field. Aucune valeur de champ, aucun ticket n'est lu.
 
-    uv run tools/export_jira_api.py export [--output <fichier.csv>]
+    uv run tools/export_jira_api.py export [--output <fichier.csv>] [--strict-teams]
         Exécute la requête JQL du réglage jql_export (Flux-Lab/flux.yaml), pagination complète (nextPageToken), et écrit
         un CSV (par défaut Flux-Lab/exports/api-AAAA-MM-JJ.csv, permissions 600) : Issue key, Issue Type, Status,
         Status Category, Created, Resolved, Resolution, Status Category Changed, Parent key, Updated (toujours écrite :
@@ -31,6 +31,9 @@ C'est la source des CSV : flux_jira.py, dependencies_jira.py et flow_import.py l
         sont listés, triés, pour compléter le fichier. Les clés « conflits » et « appuis » des anciennes tables sont
         ignorées. Sans table, rien n'est écrit : le script s'arrête et dit comment la créer (diagnose montre la forme du
         champ). Un ticket à plusieurs équipes a une colonne d'équipe par équipe.
+        --strict-teams (suivi mensuel en une commande) : quand au moins un identifiant d'équipe manque dans la table, le
+        fichier est écrit et les lignes habituelles s'affichent, puis la phrase « identifiants d'équipe inconnus : export
+        incomplet » et la sortie avec le code 3 (sans l'option, le code reste 0).
 
 Les sous-commandes teams-table et compare (qui reposaient sur l'export manuel CSV) sont retirées : les lancer affiche
 la voie à suivre. Flux-Lab/equipes-assets.yaml se complète à la main ; la comparaison base contre CSV est dans
@@ -502,6 +505,11 @@ def choisir_requetes(requetes: list[tuple[str | None, str]], nom: str | None) ->
     return choisies
 
 
+def nom_fichier_export(nom: str | None, jour: str) -> str:
+    """Nom du CSV écrit par défaut : api-[NOM-]AAAA-MM-JJ.csv (tools/flow_monthly.py construit les mêmes chemins, un test les épingle)."""
+    return f"api-{nom + '-' if nom else ''}{jour}.csv"
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     settings, requetes, champ, entete = reglages_export()
     fuseau = fuseau_export(settings)       # réglage invalide : arrêt avant tout appel à Jira
@@ -512,6 +520,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         raise Arret(t("output_single_query"))
     client = hj.construire_client(settings)
     table = charger_table()
+    equipes_inconnues = False
     for nom, jql in requetes:
         etiquette = f"[{nom}] " if nom else ""
         tickets, pages = interroger(client, jql, CHAMPS_DE_BASE + ([champ] if champ else [])
@@ -519,7 +528,7 @@ def cmd_export(args: argparse.Namespace) -> None:
                                     + champ_points)
         lignes, effectifs = construire_csv(tickets, champ, entete, table, fuseau, champ_verification,
                                            entete_verification, champ_points)
-        fichier = f"api-{nom + '-' if nom else ''}{dt.date.today().isoformat()}.csv"
+        fichier = nom_fichier_export(nom, dt.date.today().isoformat())
         sortie = Path(args.sortie).expanduser() if args.sortie else hj.FLUX_DIR / "exports" / fichier
         ecrire_csv(sortie, lignes)
         hj.afficher(t("export_summary", label=etiquette, tickets=len(tickets), pages=pages, columns=effectifs["colonnes"],
@@ -539,11 +548,15 @@ def cmd_export(args: argparse.Namespace) -> None:
             if effectifs["points_invalides"]:
                 hj.afficher(t("export_points_invalid", label=etiquette, count=effectifs["points_invalides"]))
         if effectifs["inconnus_tickets"]:
+            equipes_inconnues = True
             hj.afficher(t("export_unknown_teams", label=etiquette, identifiers=effectifs["inconnus_distincts"],
                           tickets=effectifs["inconnus_tickets"], unknown=EQUIPE_INCONNUE, table=NOM_TABLE))
             hj.afficher(t("export_unknown_ids", label=etiquette, table=NOM_TABLE,
                           ids=t("list_separator").join(effectifs["inconnus_ids"])))
         hj.afficher(t("export_written", label=etiquette, name=sortie.name))
+    if args.strict_equipes and equipes_inconnues:        # option stricte (orchestrateur du suivi mensuel) : le fichier est écrit, le mois est incomplet
+        hj.afficher(t("export_strict_teams"))
+        sys.exit(3)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -556,6 +569,8 @@ def main(argv: list[str] | None = None) -> None:
     export.add_argument("--query", dest="requete", metavar="NOM", help="ne lance que cette requête de jql_exports (par défaut : toutes)")
     export.add_argument("--output", dest="sortie", help="fichier CSV à écrire, avec une seule requête (par défaut "
                                          "Flux-Lab/exports/api-[NOM-]AAAA-MM-JJ.csv)")
+    export.add_argument("--strict-teams", dest="strict_equipes", action="store_true",
+                        help="identifiants d'équipe absents de la table : écrit le fichier puis sort avec le code 3")
     for retiree in RETIREES:        # déclarées pour répondre par la voie à suivre, cachées de l'aide
         sous = commandes.add_parser(retiree)          # sans help : absente de la liste de l'aide
         sous.add_argument("ignores", nargs="*")

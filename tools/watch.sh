@@ -7,7 +7,11 @@
 # ne comptent pas comme des échecs. Mais si Ollama est absent et que la dernière indexation réussie date de plus de
 # PMZILLA_INDEXATION_MAX_JOURS jours (3 par défaut ; à régler dans le .plist, clé EnvironmentVariables), une
 # notification macOS le dit, sans changer le code de sortie. La date de la dernière indexation réussie est dans
-# $PMZILLA_LAB_DATA/derniere-indexation (par défaut ~/.pmzilla-lab).
+# $PMZILLA_LAB_DATA/derniere-indexation (par défaut ~/.pmzilla-lab) ; c'est la seule source de cette date.
+# L'indexation écrit directement dans la base PostgreSQL ; si la base ne répond pas, l'étape en échec est
+# « indexation (base injoignable) ». Après une indexation réussie : sonde de l'index BM25, puis, pendant la fenêtre
+# de parité (fichier $PMZILLA_LAB_DATA/parite-sqlite), comparaison avec l'ancienne voie ; ni l'une ni l'autre ne
+# compte comme un échec.
 set -u
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 TOOLS="$HOME/PMZilla-Lab"
@@ -33,9 +37,7 @@ notifier() {   # un échec de notification ne change jamais le code de sortie
 # Ollama absent : prévenir seulement si l'index n'est plus à jour depuis trop longtemps
 verifier_fraicheur_index() {
   local derniere=""
-  if [[ -f "$STAMP" ]]; then derniere=$(<"$STAMP")
-  elif [[ -f "$DATA/library.sqlite" ]]; then derniere=$(stat -f %m "$DATA/library.sqlite")   # avant le premier repère
-  fi
+  [[ -f "$STAMP" ]] && derniere=$(<"$STAMP")   # le repère seul : la date d'un fichier d'index n'est jamais lue
   if [[ "$derniere" != <-> ]]; then
     echo "Aucune indexation réussie connue : index peut-être obsolète"
     notifier "Ollama absent et aucune indexation réussie connue. Lancer Ollama pour mettre la bibliothèque à jour."
@@ -48,33 +50,51 @@ verifier_fraicheur_index() {
   fi
 }
 
-# Copie PostgreSQL de la bibliothèque (lot 4) : après une indexation réussie, si l'utilisateur l'a activée (fichier
-# $DATA/knowledge-sync, créé après le premier import réussi). Jamais bloquante : un échec est journalisé et notifié,
-# il ne compte pas parmi les étapes en échec de la veille et ne change pas le code de sortie.
-synchroniser_postgres() {
-  [[ -f "$DATA/knowledge-sync" ]] || return 0
-  if ! uv run "$WORKSPACE/tools/knowledge_import.py" import; then
-    echo "Synchronisation PostgreSQL en erreur : la copie de la bibliothèque n'est pas à jour (base arrêtée ? bash tools/db_up.sh)"
-    notifier "Base PostgreSQL injoignable ou synchronisation en erreur : la copie de la bibliothèque n'est pas à jour."
-  else
-    controler_copie_postgres
-  fi
-}
-
-# Contrôle quotidien de la copie, après un import réussi : « knowledge_import.py verify » compare les deux côtés et sonde l'index BM25 (code 3 :
-# index illisible, « bitmap intersection stream … claimed twice »). Jamais bloquant ni réparateur : un échec est journalisé et notifié, la veille
-# continue, le code de sortie ne change pas. La reconstruction (REINDEX) se fait en superutilisateur, par l'utilisateur seul (installation.md).
-controler_copie_postgres() {
+# Sonde de l'index BM25 de la base, après une indexation réussie (« pmzilla_lab_library.py probe » ; code 3 : index
+# illisible, « bitmap intersection stream … claimed twice »). Jamais bloquante ni réparatrice : un échec est journalisé
+# et notifié, la veille continue, le code de sortie ne change pas. La reconstruction (REINDEX) se fait en
+# superutilisateur, par l'utilisateur seul (installation.md).
+sonder_index_bm25() {
   local code=0
-  uv run "$WORKSPACE/tools/knowledge_import.py" verify || code=$?
+  uv run "$TOOLS/pmzilla_lab_library.py" probe || code=$?
   (( code == 0 )) && return 0
   if (( code == 3 )); then
     echo "Index BM25 illisible : la recherche plein texte de la base peut échouer. Procédure : docs/pmzilla/installation.md, « Damaged BM25 index »"
     notifier "Index BM25 de la base illisible. Voir installation.md, « Damaged BM25 index »."
   else
-    echo "Vérification de la copie PostgreSQL en échec (code $code) : voir ci-dessus ; docs/pmzilla/installation.md, section 14.3"
-    notifier "Vérification de la copie PostgreSQL en échec. Voir le journal et installation.md, section 14.3."
+    echo "Sonde de l'index BM25 en échec (code $code) : voir ci-dessus"
+    notifier "Sonde de l'index BM25 en échec. Voir le journal de la veille."
   fi
+  return 0
+}
+
+# Fenêtre de parité (design D7, D9) : seulement si le fichier $DATA/parite-sqlite existe (sa ligne : la date de début,
+# AAAA-MM-JJ). L'ancien indexeur, figé dans le worktree $TOOLS/parite-sqlite, nourrit library.sqlite sur les deux
+# mêmes dossiers, puis « knowledge_import.py verify --parity » compare les deux côtés (lecture seule de la base).
+# Jamais bloquante : un écart ou une mesure impossible est journalisé et notifié une fois, sans étape en échec ni
+# changement du code de sortie.
+comparer_ancienne_voie() {
+  local marqueur="$DATA/parite-sqlite"
+  [[ -f "$marqueur" ]] || return 0
+  local ancien="$TOOLS/parite-sqlite/tools/pmzilla_lab_library.py" debut code=0
+  debut=$(head -n 1 "$marqueur" 2>/dev/null | tr -d '[:space:]')
+  if [[ ! -f "$ancien" ]]; then
+    echo "Comparaison avec l'ancienne voie impossible : copie figée introuvable"
+  elif [[ "$debut" != [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] ]]; then
+    echo "Comparaison avec l'ancienne voie impossible : date de début illisible dans $marqueur"
+  elif ! uv run "$ancien" index "$WORKSPACE/Bibliotheque-Lab" "$WATCH_LAB"; then
+    echo "Comparaison avec l'ancienne voie impossible : ancien indexeur en erreur"
+  else
+    uv run "$WORKSPACE/tools/knowledge_import.py" verify --parity --since "$debut" || code=$?
+    (( code == 0 )) && return 0
+    if (( code == 1 )); then
+      echo "Parité SQLite en écart : voir ci-dessus"
+    else
+      echo "Comparaison avec l'ancienne voie impossible : vérification en erreur (code $code)"
+    fi
+  fi
+  notifier "Parité SQLite : écart ou mesure impossible. Voir le journal de la veille."
+  return 0
 }
 
 # Cache de uv (R-13) : une mise à jour de uv ou du Python qu'il choisit vide le cache des dépendances des scripts à
@@ -140,12 +160,19 @@ if curl -s --max-time 5 http://localhost:11434/api/tags >/dev/null; then
     uv run "$TOOLS/watch_lab.py" digest || { echo "Liste à lire en erreur"; FAILED+=("liste à lire"); }
   fi
   # Toujours les deux dossiers : un fichier absent des deux est retiré de l'index
-  if ! uv run "$TOOLS/pmzilla_lab_library.py" index "$WORKSPACE/Bibliotheque-Lab" "$WATCH_LAB"; then
+  # L'indexeur écrit directement dans la base PostgreSQL (code 2 : la base ne répond pas).
+  code_index=0
+  uv run "$TOOLS/pmzilla_lab_library.py" index "$WORKSPACE/Bibliotheque-Lab" "$WATCH_LAB" || code_index=$?
+  if (( code_index == 2 )); then
+    echo "Indexation en erreur : base PostgreSQL injoignable, la bibliothèque n'est pas à jour (bash tools/db_up.sh)"
+    FAILED+=("indexation (base injoignable)")
+  elif (( code_index != 0 )); then
     echo "Indexation en erreur : la bibliothèque n'est pas à jour"
     FAILED+=("indexation")
   else
     mkdir -p "$DATA" && date +%s > "$STAMP"
-    synchroniser_postgres
+    sonder_index_bm25
+    comparer_ancienne_voie
   fi
 else
   uv run "$TOOLS/watch_lab.py" digest || { echo "Liste à lire en erreur"; FAILED+=("liste à lire"); }

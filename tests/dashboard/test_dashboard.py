@@ -6,8 +6,14 @@ Tests du tableau de bord (tools/dashboard.py) sur des données fictives.
 Trois vérifications : la page se génère avec toutes les sources, puis sans aucune, puis avec des sources
 illisibles ; dans tous les cas elle ne contient aucun extrait d'article ni de livre, aucun JavaScript
 et aucune adresse réseau.
+
+La section bibliothèque lit le schéma knowledge de la base par un lecteur injecté : la page est générée par
+run_with_fake_library.py (faux lecteur décrit par un fichier JSON, jamais de vraie base). La classe sur base
+jetable est dans test_dashboard_db.py.
 """
+import contextlib
 import datetime
+import io
 import json
 import os
 import sqlite3
@@ -19,6 +25,7 @@ import unittest.mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "dashboard.py"
+RUNNER = Path(__file__).resolve().parent / "run_with_fake_library.py"   # dashboard.py avec le faux lecteur de la bibliothèque
 SECTIONS = ["a-faire", "experimentations", "veille", "bibliotheque", "qualite", "flux", "critic"]
 # textes qui ne doivent jamais se retrouver dans la page
 SENTINELLES = ["SENTINELLE_ARTICLE_TEXTE", "SENTINELLE_LIVRE_TEXTE", "SENTINELLE_PASSAGE_ARTICLE",
@@ -114,6 +121,10 @@ Ollama ne répond pas : pré-tri et indexation reportés au prochain passage
         lib.execute("INSERT INTO chunks (book_id, position, section, text) VALUES (?,?,?,?)", (id_, 0, "s", text))
     lib.commit()
     lib.close()
+    # le même contenu pour le faux lecteur de la base (section bibliothèque) ; library.sqlite ne sert plus qu'au compte de la veille
+    fake = root / "fake-library.json"
+    write_fake(fake, [{"title": title, "author": meta.get("author"), "collections": coll.split("|"), "passages": 1}
+                      for _, _, title, coll, meta in rows])
     tri = sqlite3.connect(data / "tri.sqlite")
     tri.executescript("""CREATE TABLE shared (file TEXT PRIMARY KEY, url TEXT, post_date TEXT, found TEXT);
         CREATE TABLE picks (day TEXT NOT NULL, file TEXT NOT NULL, PRIMARY KEY (day, file));
@@ -122,18 +133,29 @@ Ollama ne répond pas : pré-tri et indexation reportés au prochain passage
         INSERT INTO shared VALUES ('f2.md', 'u2', '2026-10-09T11:00:00', '2026-10-10');""")
     tri.commit()
     tri.close()
-    return {"PMZILLA_LAB_WORKSPACE": str(ws), "PMZILLA_LAB_DATA": str(data), "PMZILLA_LAB_LOGS": str(logs)}
+    return {"PMZILLA_LAB_WORKSPACE": str(ws), "PMZILLA_LAB_DATA": str(data), "PMZILLA_LAB_LOGS": str(logs),
+            "PMZILLA_TEST_FAKE_LIBRARY": str(fake)}
+
+
+def write_fake(path: Path, books: list[dict] | None = None, error: str | None = None) -> None:
+    write(path, json.dumps({"raise": error} if error else {"books": books or []}))
+
+
+def read_fake(path: Path) -> list[dict]:
+    return json.loads(path.read_text(encoding="utf-8"))["books"]
 
 
 def without_cases_variables(environ) -> dict:
-    """Sans l'auteur ni la base des cas de l'utilisateur : la septième section est « pas encore de données », sans connexion."""
-    return {k: v for k, v in environ.items() if k not in ("PMZILLA_LAB_CASES_AUTHOR", "PMZILLA_LAB_CASES_DBNAME")}
+    """Sans l'auteur ni la base des cas de l'utilisateur : la septième section est « pas encore de données », sans connexion.
+    Sans faux lecteur hérité non plus : la bibliothèque est vide sauf si le test en décrit une."""
+    return {k: v for k, v in environ.items()
+            if k not in ("PMZILLA_LAB_CASES_AUTHOR", "PMZILLA_LAB_CASES_DBNAME", "PMZILLA_TEST_FAKE_LIBRARY")}
 
 
 def generer(root: Path, env_dirs: dict) -> tuple[subprocess.CompletedProcess, str]:
     sortie = root / "page.html"
     env = {**without_cases_variables(os.environ), **env_dirs, "PMZILLA_LAB_TODAY": "2026-10-12"}
-    result = subprocess.run([sys.executable, str(SCRIPT), "--output", str(sortie)], capture_output=True, text=True, env=env, timeout=120)
+    result = subprocess.run([sys.executable, str(RUNNER), "--output", str(sortie)], capture_output=True, text=True, env=env, timeout=120)
     return result, sortie.read_text(encoding="utf-8") if sortie.exists() else ""
 
 
@@ -153,7 +175,7 @@ class TableauDeBord(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sortie = Path(tmp) / "ancien.html"
             env = {**without_cases_variables(os.environ), **donnees_completes(Path(tmp)), "PMZILLA_LAB_TODAY": "2026-10-12"}
-            r = subprocess.run([sys.executable, str(SCRIPT), "--sortie", str(sortie)], capture_output=True, text=True,
+            r = subprocess.run([sys.executable, str(RUNNER), "--sortie", str(sortie)], capture_output=True, text=True,
                                env=env, timeout=120)
             self.assertEqual(r.returncode, 2, r.stderr)
             self.assertFalse(sortie.exists())
@@ -275,33 +297,168 @@ class TableauDeBord(unittest.TestCase):
             env = donnees_completes(root)
             (root / "data" / "library.sqlite").write_bytes(b"pas une base sqlite")
             write(root / "workspace" / "Journal-Lab" / "journal.yaml", "- [pas: {valide")
+            write_fake(Path(env["PMZILLA_TEST_FAKE_LIBRARY"]), error="ConnectionError")   # la base ne répond pas
             result, page = generer(root, env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.verifier_commun(page)
             self.assertIn("source illisible", page)
+            bibliotheque = page[page.index('<section id="bibliotheque">'):page.index('<section id="qualite">')]
+            self.assertEqual(bibliotheque.count("source illisible (ConnectionError)"), 2)   # livres et articles sans auteur
+            self.assertIn("<li>Livre Absent Un (Auteur)</li>", bibliotheque)                # les livres à re-télécharger restent
+            self.assertNotIn("message secret", page)                                         # le type de l'erreur, jamais le message
 
 
 class ExclusionCollections(unittest.TestCase):
-    """La section bibliothèque exclut par nom exact `watch` et OWN_COLLECTION."""
+    """La section bibliothèque exclut par nom exact `watch`, son ancien nom `veille` et OWN_COLLECTION."""
 
     def test_comptes_par_nom_exact(self):
         sys.path.insert(0, str(SCRIPT.parent))
         import watch_paths
-        exclues = ["watch", watch_paths.OWN_COLLECTION]
+        exclues = ["watch", "veille", watch_paths.OWN_COLLECTION]
         # noms qui contiennent un mot exclu sans l'être : ces livres sont comptés
-        comptees = ["produit|watch-notes", "notes-" + watch_paths.OWN_COLLECTION, "prewatch", "veille"]
+        comptees = ["produit|watch-notes", "notes-" + watch_paths.OWN_COLLECTION, "prewatch", "veille-notes"]
         with tempfile.TemporaryDirectory() as tmp:
             env = donnees_completes(Path(tmp))
-            lib = sqlite3.connect(Path(env["PMZILLA_LAB_DATA"]) / "library.sqlite")
+            fake = Path(env["PMZILLA_TEST_FAKE_LIBRARY"])
+            books = read_fake(fake)
             for i, coll in enumerate(exclues + ["flow|" + watch_paths.OWN_COLLECTION] + comptees, start=10):
-                lib.execute("INSERT INTO books VALUES (?,?,?,?,?,?,?,?)", (i, f"x{i}.md", f"Titre {i}", "x", coll, "m", 0, "{}"))
-                lib.execute("INSERT INTO chunks (book_id, position, section, text) VALUES (?,?,?,?)", (i, 0, "s", "SENTINELLE_PASSAGE_LIVRE"))
-            lib.commit()
-            lib.close()
+                books.append({"title": f"Titre {i}", "author": None, "collections": coll.split("|"), "passages": 1})
+            write_fake(fake, books)
             result, page = generer(Path(tmp), env)
             self.assertEqual(result.returncode, 0, result.stderr)
-            # 2 livres de départ + 4 comptés ajoutés ; 3 exclus (dont un livre « flow|own »)
+            # 2 livres de départ + 4 comptés ajoutés ; 4 exclus (dont un livre « flow|own »)
             self.assertIn("<b>6</b> livres, 6 passages", page)
+            # articles de la veille (nom actuel et ancien, par nom exact) : 2 de départ + « watch » + « veille »
+            self.assertIn("Articles de la veille sur 4 :", page)
+
+
+class LecteurBibliotheque(unittest.TestCase):
+    """Section bibliothèque (design.md D10) : un lecteur injecté, jamais l'index SQLite, jamais une vraie base."""
+
+    BOOKS = [{"title": "Livre Avec Auteur", "author": "Auteur Un", "collections": ["produit"], "passages": 3},
+             {"title": "Livre Sans Auteur", "author": "b.pdf (auteur non indiqué)", "collections": ["flow", "tech"], "passages": 2},
+             {"title": "Livre Inconnu", "author": None, "collections": ["facilitation"], "passages": 1},
+             {"title": "Article", "author": "site.example (auteur non indiqué)", "collections": ["watch"], "passages": 4},
+             {"title": "Ancien article", "author": None, "collections": ["veille"], "passages": 4},
+             {"title": "Article personnel", "author": "Auteur Local", "collections": ["own-articles", "watch"], "passages": 4}]
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import dashboard
+        cls.dashboard = dashboard
+
+    def setUp(self):
+        self.dashboard.set_language("fr")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        patcher = unittest.mock.patch.multiple(self.dashboard, WORKSPACE=self.root / "ws", DATA=self.root / "data",
+                                               LOGS=self.root / "logs")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        write(self.root / "ws" / "tools" / "mapping_lab.py", "MAPPING = {}\n")   # aucun livre à re-télécharger
+
+    def test_livres_depuis_le_lecteur(self):
+        html = self.dashboard.livres_block(lambda: self.BOOKS)
+        self.assertIn("<b>3</b> livres, 6 passages", html)            # veille, ancien nom et collection personnelle exclus
+        self.assertIn("<li>Livre Inconnu</li><li>Livre Sans Auteur</li>", html)   # sans auteur, triés
+        self.assertNotIn("Livre Avec Auteur", html)
+        self.assertIn("<td>flow</td><td>1</td>", html)
+        self.assertIn("<td>facilitation</td><td>1</td>", html)
+
+    def test_articles_sans_auteur_depuis_le_lecteur(self):
+        html = self.dashboard.articles_sans_auteur_block(lambda: self.BOOKS)
+        self.assertIn("Articles de la veille sur 3 : <b>1</b> sans auteur ni site, <b>1</b> affichés", html)
+
+    def test_lecteur_par_defaut_cherche_a_l_appel(self):
+        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", lambda: self.BOOKS):
+            html = self.dashboard.section_bibliotheque()
+        self.assertIn("<b>3</b> livres", html)
+
+    def test_base_vide(self):
+        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", lambda: []):
+            html = self.dashboard.section_bibliotheque()
+        self.assertEqual(html.count("pas encore de données"), 3)     # livres, à re-télécharger (aucun), articles
+
+    def test_base_qui_ne_repond_pas_sans_ouvrir_library_sqlite(self):
+        # un library.sqlite valide existe dans le dossier des données : il n'est jamais ouvert par la section
+        (self.root / "data").mkdir()
+        lib = sqlite3.connect(self.root / "data" / "library.sqlite")
+        lib.executescript("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, collections TEXT, meta TEXT);"
+                          "INSERT INTO books VALUES (1, 'Livre SQLite', 'produit', '{}');")
+        lib.commit()
+        lib.close()
+
+        def fetch():
+            raise ConnectionError("hôte secret injoignable")
+        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", fetch), \
+                unittest.mock.patch.object(self.dashboard.sqlite3, "connect", side_effect=AssertionError("SQLite ouvert")) as ouvert:
+            html = self.dashboard.section_bibliotheque()
+        ouvert.assert_not_called()
+        self.assertEqual(html.count("source illisible (ConnectionError)"), 2)
+        self.assertNotIn("hôte secret", html)
+        self.assertNotIn("Livre SQLite", html)
+
+    def test_page_ecrite_et_code_zero_quand_la_base_ne_repond_pas(self):
+        def fetch():
+            raise ConnectionError("hôte secret")
+        sortie = self.root / "page.html"
+        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", fetch), \
+                unittest.mock.patch.object(self.dashboard, "fetch_running_experiments", fetch), \
+                unittest.mock.patch.dict(os.environ, without_cases_variables(os.environ), clear=True):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = self.dashboard.main(["--output", str(sortie)])
+        self.assertEqual(code, 0)
+        page = sortie.read_text(encoding="utf-8")
+        self.assertIn("source illisible (ConnectionError)", page)
+        self.assertIn('<section id="qualite">', page)
+
+    def test_connexion_role_lecture_delai_court_et_base_nommee(self):
+        import db
+        appels = []
+
+        class Conn:
+            closed = False
+
+            def execute(self, sql, params=()):
+                appels.append(sql)
+                return self
+
+            def fetchall(self):
+                return [("Livre", "Auteur", ["produit", "flow"], 5)]
+
+            def close(self):
+                Conn.closed = True
+
+        def connect(**kwargs):
+            appels.append(kwargs)
+            return Conn()
+        with unittest.mock.patch.object(db, "connect", connect), \
+                unittest.mock.patch.dict(os.environ, {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_test_nommee"}):
+            rows = self.dashboard.fetch_library_books()
+        self.assertEqual(appels[0], {"role": "pmzilla_knowledge_ro", "timeout": self.dashboard.CASES_TIMEOUT_SECONDS,
+                                     "dbname": "pmzilla_test_nommee"})
+        self.assertIn("knowledge.books", appels[1])
+        self.assertTrue(Conn.closed)
+        self.assertEqual(rows, [{"title": "Livre", "author": "Auteur", "collections": ["produit", "flow"], "passages": 5}])
+        environ = {k: v for k, v in os.environ.items() if k != "PMZILLA_LAB_KNOWLEDGE_DBNAME"}
+        with unittest.mock.patch.object(db, "connect", connect), unittest.mock.patch.dict(os.environ, environ, clear=True):
+            self.dashboard.fetch_library_books()
+        self.assertIsNone(appels[2]["dbname"])
+
+    def test_connexion_fermee_meme_si_la_lecture_echoue(self):
+        class Conn:
+            closed = False
+
+            def execute(self, sql, params=()):
+                raise RuntimeError("lecture refusée")
+
+            def close(self):
+                Conn.closed = True
+        with self.assertRaises(RuntimeError):
+            self.dashboard.fetch_library_books(connect=Conn)
+        self.assertTrue(Conn.closed)
 
 
 class Experimentations(unittest.TestCase):

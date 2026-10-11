@@ -57,34 +57,42 @@ The system SHALL deny reading the watch content folders and the excluded folder,
 Source: tests/settings_deny/test_settings_deny.py (DossiersDeLaVeille, test_dossiers_de_contenu_refuses_aux_commandes_de_lecture)
 
 ### Requirement: Database access is denied to the session
-The system SHALL deny the Jira import and comparison scripts, any calculation using the database as source, direct database clients, container exec and copy commands, dump and restore tools, reads of the backup folder (including through binary and compressed readers), the database administration, backup, startup, restore-test and throwaway-database test-launcher scripts, the library import script's import, verify and status subcommands, and the control of the backup launchd job, whatever launcher and path form.
-
-#### Scenario: Database-reading calculation
-- WHEN a flow or dependency calculation is run with the database as source
-- THEN it is denied, while the same calculation from CSV files is allowed
-
-#### Scenario: Direct clients
-- WHEN a command runs a database client, container exec or a dump tool
-- THEN it is denied
-
-#### Scenario: Backup control
-- WHEN a command loads, unloads, starts or inspects the backup job, or runs the backup script with options
-- THEN it is denied
-
-#### Scenario: Restore test
-- WHEN a command launches the restore-test script with any supported launcher and path form
-- THEN it is denied, while reading it and running its shell test suite are not
+The system SHALL deny the Jira import and comparison scripts, any calculation using the database as source, direct database clients, container exec and copy commands, dump and restore tools, reads of the backup folder (including through binary and compressed readers), the database administration, backup, startup, restore-test and throwaway-database test-launcher scripts, the library import script's import, verify and status subcommands, the library indexer's index, rename-collection, probe and status subcommands (through the tools folder and through the linked tools folder), and the control of the backup launchd job, whatever launcher and path form.
 
 Source: tests/settings_deny/test_settings_deny.py (JiraEnBase)
 
-### Requirement: Permitted database-related commands remain allowed
-The system SHALL not deny reading the database scripts' text, running the database script tests through the shell or test runner, reading aggregated views, container status or logs, and the help of the database and library import scripts.
+#### Scenario: Database-reading calculation
+- **WHEN** a flow or dependency calculation is run with the database as source
+- **THEN** it is denied, while the same calculation from CSV files is allowed
 
-#### Scenario: View listing
-- WHEN the session lists or shows the aggregated views
-- THEN the command is not denied
+#### Scenario: Direct clients
+- **WHEN** a command runs a database client, container exec or a dump tool
+- **THEN** it is denied
+
+#### Scenario: Backup control
+- **WHEN** a command loads, unloads, starts or inspects the backup job, or runs the backup script with options
+- **THEN** it is denied
+
+#### Scenario: Restore test
+- **WHEN** a command launches the restore-test script with any supported launcher and path form
+- **THEN** it is denied, while reading it and running its shell test suite are not
+
+#### Scenario: Indexer writing or reading the database
+- **WHEN** a command runs the indexer's index, rename-collection, probe or status subcommand with any supported launcher and path form, including the linked tools folder
+- **THEN** it is denied
+
+### Requirement: Permitted database-related commands remain allowed
+The system SHALL not deny reading the database scripts' text, running the database script tests through the shell or test runner, reading aggregated views, container status or logs, the help of the database and library import scripts, reading the indexer's text, running the indexer without arguments (help) and the caption diagnostic.
 
 Source: tests/settings_deny/test_settings_deny.py (test_ce_que_la_session_garde, test_lecture_et_test_du_script_de_restauration_non_interdits)
+
+#### Scenario: View listing
+- **WHEN** the session lists or shows the aggregated views
+- **THEN** the command is not denied
+
+#### Scenario: Indexer help and diagnostic
+- **WHEN** the session reads the indexer, runs it without arguments, or runs the caption diagnostic
+- **THEN** no deny rule matches
 
 ### Requirement: Backup folder unreadable
 The system SHALL deny reading the local backup folder through the Read tool.
@@ -166,6 +174,36 @@ The system SHALL deny the session every launch of the install script's bootstrap
 #### Scenario: Allowed commands
 - **WHEN** the session reads the script files, runs the install-script test suite, or runs the test runner filtered on that suite
 - **THEN** no deny rule matches
+
+### Requirement: The monthly-run orchestrator is denied to the session
+The system SHALL deny the session every launch of the monthly-run orchestrator, whatever the launcher and path form. The launchers are the Python launcher, the Python interpreters and direct execution. The path forms are relative, absolute, home-relative and bare. The denial SHALL cover the dry-run option, the help option, the resume options and a command line that sets the orchestrator's test environment variables. The deny rules are those of design D14, added to the settings file by the author. The session SHALL NOT edit the settings file, and writes only the test cases, before the author's edit. The system SHALL NOT deny reading the orchestrator's file, running its test suite directly, or running the test runner. Untested until implemented.
+
+#### Scenario: Launch forms
+- **WHEN** a command launches the orchestrator with any supported launcher and path form, with or without the dry-run, help or resume options
+- **THEN** a deny rule matches it
+
+#### Scenario: Test variables on a command line
+- **WHEN** a command line sets one of the orchestrator's test environment variables
+- **THEN** a deny rule matches it
+
+#### Scenario: Allowed commands
+- **WHEN** the session reads the orchestrator's file, runs its test suite, or runs the test runner filtered on that suite
+- **THEN** no deny rule matches
+
+### Requirement: The off-site copies, the off-site script and its jobs are denied to the session
+The system SHALL deny the session the reading and listing of any path inside the fixed off-site folder, through the Read tool and through terminal reader, listing and copy commands, in every path form (relative, absolute, home-relative). It SHALL deny every launch of the off-site backup script other than its help, with every supported launcher and path form, and the loading, unloading, starting and inspecting of its two launchd jobs. It SHALL NOT deny reading the script's source, running its test suite, or reading the off-site reports and status file of the lab data folder, which hold counts only. Untested until implemented.
+
+#### Scenario: Reading an off-site copy
+- **WHEN** a reader or listing command, or the Read tool, targets a path inside the off-site folder
+- **THEN** it is denied
+
+#### Scenario: Launching the script
+- **WHEN** the off-site script is launched with the copy, setup or restore-test subcommand, by any launcher and path form
+- **THEN** it is denied, while its help, the reading of its source and the run of its test suite are not
+
+#### Scenario: Job control
+- **WHEN** a command loads, unloads, starts or inspects one of the two off-site jobs
+- **THEN** it is denied
 
 ## Open questions
 1. The deny rules are enforced by Claude Code, not by this repository; only the matching of rules to sample commands is tested.

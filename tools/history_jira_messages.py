@@ -35,6 +35,7 @@ CATALOGS = {
         "error_detail_item": "HTTP {code} : {count}",
         "collect_summary": "Mode : {mode}. Tickets traités : {processed} ; transitions de statut : {transitions} ; "
                            "erreurs : {errors}{detail}.",
+        "collect_strict": "erreurs de collecte : historique incomplet",
         "collect_stopped": "Arrêt : HTTP {code} (accès refusé : vérifier le jeton et ses droits). "
                            "Le cache garde ce qui a été collecté.",
         # check
@@ -95,6 +96,7 @@ CATALOGS = {
         "error_detail_item": "HTTP {code}: {count}",
         "collect_summary": "Mode: {mode}. Tickets processed: {processed}; status transitions: {transitions}; "
                            "errors: {errors}{detail}.",
+        "collect_strict": "collection errors: history incomplete",
         "collect_stopped": "Stopped: HTTP {code} (access denied: check the token and its permissions). "
                            "The cache keeps what was collected.",
         "list_separator": "; ",

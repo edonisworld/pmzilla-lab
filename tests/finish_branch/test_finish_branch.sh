@@ -100,6 +100,12 @@ code_et "code 3 : tête détachée" 3 "finish_branch : aucune branche à termine
 SORTIE=$(cd "$tmp" && bash "$script" 2>&1); CODE=$?
 code_et "code 3 : hors dépôt" 3 "finish_branch : aucune branche à terminer"
 
+# --- code 3 : branche spike/* refusée (une préversion fusionnée par erreur, R-47)
+nouveau; sur_branche spike/essai; valide tools/outil.sh un "essai"; avant=$(etat_main)
+lance
+code_et "code 3 : branche spike/* refusée" 3 "spike/"
+[ "$(etat_main)" = "$avant" ] && [ "$(git rev-parse --abbrev-ref HEAD)" = spike/essai ]; verifie "spike/* : rien n'est fusionné, branche inchangée" $?
+
 # --- code 4 : arbre non propre
 nouveau; sur_branche feat/sale; valide tools/outil.sh quatre "code"; echo x > nouveau.txt
 lance

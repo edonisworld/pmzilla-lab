@@ -7,7 +7,7 @@
 #     bash tools/finish_branch.sh --help   affiche ce que le script vérifie et fait
 #
 # Les vérifications se font dans l'ordre de la table des codes ; la première qui refuse arrête le script avant tout changement de branche.
-# Codes : 0 terminé ; 1 tests en échec ; 2 usage ; 3 aucune branche à terminer ; 4 arbre non propre ; 5 change OpenSpec non archivé ;
+# Codes : 0 terminé ; 1 tests en échec ; 2 usage ; 3 aucune branche à terminer (ou branche spike/*) ; 4 arbre non propre ; 5 change OpenSpec non archivé ;
 #         6 jeu d'essai validant absent ; 7 main pas à jour ; 8 la branche ne contient pas main ;
 #         9 fusion impossible (annulée) ; 10 push refusé ; 11 branche non supprimée (le travail est fusionné).
 # Les codes 9 à 11 arrivent après un changement et disent l'état laissé.
@@ -43,7 +43,7 @@ aide() {
 $NOM : usage : bash tools/finish_branch.sh [--help]
 Termine la branche courante, depuis le workspace, dans le Terminal. Aucun autre argument.
 Vérifications, dans cet ordre (la première qui refuse arrête le script, sans rien changer) :
-  3  il y a une branche à terminer (ni main, ni tête détachée, ni hors dépôt)
+  3  il y a une branche à terminer (ni main, ni tête détachée, ni hors dépôt, ni branche spike/*)
   4  l'arbre de travail est propre (fichiers non ignorés compris)
   5  aucun change OpenSpec lié à la branche n'est resté non archivé (une branche qui ne change que openspec/ est une branche de spécification)
   6  un jeu d'essai validant est enregistré pour le sommet de la branche si CLAUDE.md, une posture, Critic, le vocabulaire ou la mémoire figée ont changé
@@ -69,6 +69,9 @@ cd "$RACINE" || refus 3 "aucune branche à terminer" "Dépôt introuvable."
 BRANCHE=$(git symbolic-ref --short -q HEAD 2>/dev/null) || BRANCHE=""
 [ -n "$BRANCHE" ] || refus 3 "aucune branche à terminer" "La tête est détachée."
 [ "$BRANCHE" != "$PRINCIPALE" ] || refus 3 "aucune branche à terminer" "La branche courante est $PRINCIPALE."
+case "$BRANCHE" in
+  spike/*) refus 3 "branche spike/* refusée" "$BRANCHE est une préversion (spike), jamais fusionnée dans $PRINCIPALE : écarte-la ou renomme-la si elle doit vraiment être livrée." ;;
+esac
 
 # 4. arbre propre
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then

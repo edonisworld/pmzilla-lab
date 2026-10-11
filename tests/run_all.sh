@@ -94,7 +94,7 @@ for dossier in tests/*/; do
   fi
 done
 
-for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/hooks/test_post_commit.sh:post-commit:sh tests/hooks/test_commit_msg.sh:commit-msg:sh tests/hooks/test_pre_commit_green.sh:pre-commit-green:sh tests/hooks/test_pre_push.sh:pre-push:sh tests/evals_auto/test_evals_auto.sh:evals_auto:sh tests/installation/test_install_links.sh:installation:zsh tests/installation/test_install_hooks.sh:install_hooks:sh tests/db_scripts/test_db_scripts.sh:db_scripts:bash tests/db_scripts/test_dbtest.sh:dbtest:bash tests/finish_branch/test_finish_branch.sh:finish_branch:bash; do
+for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/hooks/test_post_commit.sh:post-commit:sh tests/hooks/test_commit_msg.sh:commit-msg:sh tests/hooks/test_pre_commit_green.sh:pre-commit-green:sh tests/hooks/test_pre_push.sh:pre-push:sh tests/evals_auto/test_evals_auto.sh:evals_auto:sh tests/installation/test_install_links.sh:installation:zsh tests/installation/test_install_hooks.sh:install_hooks:sh tests/db_scripts/test_db_scripts.sh:db_scripts:bash tests/db_scripts/test_dbtest.sh:dbtest:bash tests/offsite_backup/test_offsite_backup.sh:offsite_backup:bash tests/finish_branch/test_finish_branch.sh:finish_branch:bash; do
   chemin=${test%%:*}; reste=${test#*:}; nom=${reste%%:*}; interprete=${reste#*:}
   voulue "$nom" || continue
   if [ ! -f "$chemin" ]; then

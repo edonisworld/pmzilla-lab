@@ -3,17 +3,20 @@ PMZilla Lab : la bibliothèque lue dans PostgreSQL (schéma knowledge, lot 4 de 
 
 `PostgresLibrary` a la même interface publique que `pmzilla_lab_library.Library` (voie SQLite) : `search`, `read`, `collections`,
 `books`, `check_types`, `refresh`, et les mêmes formes de réponse, pour que les quatre outils MCP restent
-inchangés. Choisie par `serve --backend postgres` (ou PMZILLA_LAB_BACKEND=postgres) ; la voie SQLite reste la voie par défaut.
+inchangés. C'est la voie par défaut de `serve` ; la voie SQLite reste disponible sur demande (`serve --backend sqlite`, ou
+PMZILLA_LAB_BACKEND=sqlite) jusqu'à son retrait.
 
 Connexion : `db.connect(role="pmzilla_knowledge_ro")` (lecture seule ; mot de passe lu dans le Trousseau, service
-pmzilla-lab-db-pmzilla_knowledge_ro, ou dans PMZILLA_LAB_DB_PASSWORD_PMZILLA_KNOWLEDGE_RO ; jamais affiché). Si la base ne répond
+pmzilla-lab-db-pmzilla_knowledge_ro, ou dans PMZILLA_LAB_DB_PASSWORD_PMZILLA_KNOWLEDGE_RO ; jamais affiché), sur la base de
+l'installation, ou sur celle que nomme PMZILLA_LAB_KNOWLEDGE_DBNAME (base jetable du jeu d'essai, tests). Si la base ne répond
 pas, le serveur s'arrête avec un message clair : il ne bascule jamais en silence sur SQLite (c'est un choix explicite de
-l'utilisateur : `--backend sqlite`). La question est transformée en vecteur par la même fonction que la voie SQLite
+l'utilisateur : `--backend sqlite`), ni d'une base nommée sur celle de l'installation. La question est transformée en vecteur par la même fonction que la voie SQLite
 (`pmzilla_lab_library.embed`, bge-m3 par Ollama) ; la recherche elle-même est celle de hybrid_search.py.
 """
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 from pathlib import Path
 
@@ -27,10 +30,13 @@ NAMES_SQL = ("ARRAY(SELECT co.name FROM knowledge.book_collections bc JOIN knowl
              "WHERE bc.book_id = b.id)")
 
 
+DBNAME_VARIABLE = "PMZILLA_LAB_KNOWLEDGE_DBNAME"     # base à lire à la place de celle de l'installation (jeu d'essai, tests)
+
+
 def default_connect():
     import db
     try:
-        return db.connect(role="pmzilla_knowledge_ro")
+        return db.connect(role="pmzilla_knowledge_ro", dbname=os.environ.get(DBNAME_VARIABLE) or None)
     except db.ErreurBase as error:
         raise SystemExit(f"{error} Pour utiliser l'ancienne voie : --backend sqlite.") from None
 

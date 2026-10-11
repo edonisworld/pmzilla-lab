@@ -1,7 +1,7 @@
 #!/bin/bash
 # PMZilla Lab : lance les suites de tests qui ont besoin d'une base PostgreSQL, sur une instance JETABLE (installation.md, 14.5).
 #
-#     bash tools/dbtest.sh                          les suites par défaut : db flow_import flow_store flow_compare flow_views hybrid_search
+#     bash tools/dbtest.sh                          les suites par défaut : db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend
 #     bash tools/dbtest.sh flow_store flow_compare  seulement ces suites (noms de tests/<suite>/)
 #     bash tools/dbtest.sh --port 55433             port de l'hôte du conteneur (défaut 55432 ; jamais 5432 ni celui de la vraie base)
 #     bash tools/dbtest.sh --help
@@ -30,7 +30,7 @@ cd "$RACINE" || exit 2
 NOM="pmzilla-lab-test-db"
 ATTENTE="${DBTEST_ATTENTE:-120}"
 LANCEUR="${DBTEST_RUN_ALL:-tests/run_all.sh}"
-SUITES_PAR_DEFAUT=(db flow_import flow_store flow_compare flow_views hybrid_search)
+SUITES_PAR_DEFAUT=(db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend)
 
 PORT="55432"
 SUITES=()

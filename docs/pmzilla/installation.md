@@ -4,6 +4,8 @@ This file starts from a brand-new Mac and ends with a first session, a watch tha
 
 All commands are typed in the **Terminal**, except those that start with `/`, which are typed in **Claude Code**. Claude Code's `!` prefix cannot write outside the workspace: anything that touches `~/PMZilla-Lab`, `~/.pmzilla-lab`, `~/Library` or `~/.Trash` is done in a regular Terminal.
 
+**Supported platform: macOS on Apple Silicon. Windows (through WSL2) is planned, not supported yet.**
+
 The rest of the repository is described in the [README](../../README.md); the history of changes is in the [CHANGELOG](../../CHANGELOG.md).
 
 ## Contents
@@ -190,7 +192,7 @@ Then commit with the BMAD version in the message: the `pre-commit` hook must pas
    ```bash
    uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab
    ```
-   Always pass both folders, even if `Watch-Lab` is still empty: a file missing from both is removed from the index. The index is written to `~/.pmzilla-lab/library.sqlite`. Titles and authors come from `tools/book_catalog.yaml` (see section 12).
+   Always pass both folders, even if `Watch-Lab` is still empty: a file missing from both is removed from the index. The index is written directly into the PostgreSQL database, schema `knowledge` (the database of section 14 must be running; if it does not answer, the indexer stops with exit code 2 before any embedding: `bash tools/db_up.sh`). Titles and authors come from `tools/book_catalog.yaml` (see section 12).
 
 4. **Connect the library to Claude Code**, for all projects:
    ```bash
@@ -305,7 +307,7 @@ From then on, `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-La
 
 **Check**: `launchctl list | grep com.pmzilla.watch` shows one line (the second number, `0`, is the exit code of the last run). `tail -20 ~/Library/Logs/pmzilla-watch.log` shows collection, pre-triage and indexing without errors (last line: `=== Veille terminée sans erreur ===`, watch finished with no error; otherwise `=== Veille terminée avec N étape(s) en échec : … ===`, watch finished with N failed step(s), exit code 1 and a macOS notification), and `ls -l Watch-Lab/_to-read.md` shows a modification at the launch time.
 
-**Stale index (Ollama absent).** A run without Ollama is not a failure: pre-triage and indexing are postponed. But `watch.sh` records the date of each successful indexing in `~/.pmzilla-lab/derniere-indexation` and, if Ollama is absent and that date is more than 3 days old, sends a macOS notification (and writes it to the log), without changing the exit code. With no reference point (first time), it relies on the date of `~/.pmzilla-lab/library.sqlite`; with nothing known, it notifies. To change the threshold, add to the `.plist` (before `</dict>`): `<key>EnvironmentVariables</key><dict><key>PMZILLA_INDEXATION_MAX_JOURS</key><string>5</string></dict>`, then reload the task (`launchctl unload` then `load`). A value that is not an integer resets it to 3.
+**Stale index (Ollama absent).** A run without Ollama is not a failure: pre-triage and indexing are postponed. But `watch.sh` records the date of each successful indexing in `~/.pmzilla-lab/derniere-indexation` and, if Ollama is absent and that date is more than 3 days old, sends a macOS notification (and writes it to the log), without changing the exit code. With no reference point (first time, or the file missing or unreadable), the date is unknown and it notifies; no other file is used as a fallback. To change the threshold, add to the `.plist` (before `</dict>`): `<key>EnvironmentVariables</key><dict><key>PMZILLA_INDEXATION_MAX_JOURS</key><string>5</string></dict>`, then reload the task (`launchctl unload` then `load`). A value that is not an integer resets it to 3.
 
 **Pre-triage settings of lot 5b (already installed watch).**
 
@@ -347,13 +349,14 @@ cd ~/PMZilla-Lab/workspace/Watch-Lab && mkdir -p own-articles && mv <FORMER>/*.m
 ls -A <FORMER>                                  # nothing, or .DS_Store only; move anything else by hand
 rm -f <FORMER>/.DS_Store && rmdir <FORMER>
 ls -d ~/PMZilla-Lab/workspace/Bibliotheque-Lab/<FORMER>   # "No such file or directory" expected; otherwise repeat the moves there
-uv run ~/PMZilla-Lab/workspace/tools/knowledge_import.py status          # note C, the number of collections
+uv run ~/PMZilla-Lab/pmzilla_lab_library.py status          # note C, the number of collections
 uv run ~/PMZilla-Lab/pmzilla_lab_library.py rename-collection <FORMER> own-articles --dry-run
-uv run ~/PMZilla-Lab/pmzilla_lab_library.py rename-collection <FORMER> own-articles   # then "Vectors recomputed: 0."
-uv run ~/PMZilla-Lab/workspace/tools/knowledge_import.py import --dry-run
-uv run ~/PMZilla-Lab/workspace/tools/knowledge_import.py import
-uv run ~/PMZilla-Lab/workspace/tools/knowledge_import.py verify          # same C; if exit code 1: import --deep, then verify again
+uv run ~/PMZilla-Lab/pmzilla_lab_library.py rename-collection <FORMER> own-articles   # then "Vectors recomputed: 0." and "Index: database, schema knowledge"
+uv run ~/PMZilla-Lab/pmzilla_lab_library.py status          # same C
+uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe           # "BM25 index readable", exit code 0
 ```
+
+During the parity window (section 14.3), run the same `rename-collection` in the frozen copy too (`uv run ~/PMZilla-Lab/parite-sqlite/tools/pmzilla_lab_library.py rename-collection <FORMER> own-articles`), otherwise restart the window (new date in the marker).
 
 Then name `own-articles` in the "Collection personnelle" section of `.pmzilla/contexte.md`, and in `.claude/settings.json` replace the ten `deny` rules on `Watch-Lab/<FORMER>` (one `Read`, nine `Bash`) by the ten on `Watch-Lab/own-articles` (`Read(./Watch-Lab/own-articles/**)` and `cat`, `head`, `tail`, `less`, `more`, `grep`, `awk`, `sed`, `cp`). Check the JSON with `python3 -m json.tool .claude/settings.json > /dev/null`. Replay the evaluation set (section 9) afterwards: the search tool description and two files read by the model changed.
 
@@ -590,7 +593,7 @@ Tests, on a fake server and invented data: `uv run --with pyyaml --with requests
          project_dependencies: <nom>    # same with --by project, optional
          baseline: "AAAA-MM-JJ"         # date of a pilot's reference report, optional
    ```
-   Without this setting, all the series found in `Flux-Lab/rapports/` are displayed (series ending in `…-recent` are ignored). Series names stay in `Flux-Lab/`.
+   Without this setting, all the series found in `Flux-Lab/rapports/` are displayed (series ending in `…-recent`, and the `…-db` comparison series of the monthly run, are ignored). Series names stay in `Flux-Lab/`.
 3. **Produce the Aging WIP points**: add `--points` to the flow `compute` (writes `Flux-Lab/tableaux/points-<série>-AAAA-MM-JJ.json`, one point per in-progress ticket, without key; the reports stay aggregates). The CFD, the time per segment, the delivery lead time and the efficiency require `--history`; the active, waiting and dormant breakdown requires `--dormant-from-history` (or `waiting_states` in `flux.yaml`). A view whose data is missing says so instead of being empty.
 4. **Generate**: `uv run tools/flow_board.py` writes `Flux-Lab/tableaux/tableau-flux-AAAA-MM-JJ.html`. Options: `--language en|fr` (`en` by default; the French file carries `-fr`), `--anonymous` (shareable version, see below), `--output <fichier>`, `--open`. Without the library, the command stops and gives the download command.
 
@@ -602,7 +605,50 @@ Tests, on a fake server and invented data: `uv run --with pyyaml --with requests
 
 **Tests** (invented data, temporary folder): `uv run --with pyyaml --with numpy --with requests python -m unittest discover -s tests/flow_board -v`. They run the page's JavaScript under Node in a fake DOM; once the library is installed, they also render each chart with the real ECharts (light, dark, French, English). `Flux-Lab/tableaux/` is forbidden to Claude Code (reading and common commands).
 
+### Monthly run in one command
+
+`tools/flow_monthly.py` chains the monthly commands in a fixed order and stops at the first gap. It adds no calculation: it only passes paths and options to the tools below, which open the data. **You run it yourself in the Terminal**, from `~/PMZilla-Lab/workspace`: `uv run tools/flow_monthly.py`. Claude Code cannot launch it (`deny` rules, and the script itself refuses to start when the `CLAUDECODE` variable that Claude Code sets in its shells is present). It is not the Claude Code command `/monthly-flow`, which only reads the reports afterwards.
+
+**Once: declare the series.** Add a top-level block `monthly_run` to `Flux-Lab/flux.yaml` (the file stays outside Git; this document gives its structure with generic names only). The export queries are read from the existing `jql_exports` (or `jql_export`) setting, never from the block.
+
+```yaml
+monthly_run:
+  series:                      # at least one; each item has:
+    - name: <série>            #   required: the --name of the reports (letters, digits, - and _), not ending with "-db"
+      scope: <clés>            #   optional: the --scope (project keys separated by commas, or "tous"); absent = every project of the exports
+      dependencies: team       #   optional: team (default), project, both or none
+  dashboard: both              # optional: full, anonymous or both (default)
+```
+
+Any other key, an empty list, a series without a name, two series with the same name or a name ending with `-db` is refused before any step (exit code 3), with the key path and the line number, never a value. The block is ignored by the other tools that read `flux.yaml`.
+
+**The steps, in this order** (identifiers are in English whatever the language): `export` (`export_jira_api.py export --strict-teams`), `history` (`history_jira.py collect --strict`), `import` (`flow_import.py --history`), `flow` (`flux_jira.py compute`, per series, with `--history --dormant-from-history --points`), `dependencies` (`dependencies_jira.py compute`, per series and per configured map), `compare-data` (`flow_compare.py data --history`), `compare-reports` (per series: `flux_jira.py compute --source db` under the name `<série>-db`, with `--no-comparison` and without `--points`, then `flow_compare.py reports` on the CSV report and the database report) and `dashboard` (`flow_board.py`, full and anonymous versions according to `dashboard`). It runs no dry run of the import, no migration or backup (the daily backup job exists), no history check, no segment sample, no ticket inspection. The dashboard ignores the `-db` series.
+
+**Strict options.** Two tools used to exit with 0 while the month was incomplete. `export_jira_api.py export --strict-teams` writes its file as usual, then prints "identifiants d'équipe inconnus : export incomplet" ("unknown team identifiers: export incomplete") and exits with 3 when a team identifier is missing from the team table. `history_jira.py collect --strict` keeps the cache as it would be without the option, then prints "erreurs de collecte : historique incomplet" ("collection errors: history incomplete") and exits with 3 when requests failed (for example under throttling). Without the options both tools behave as before; the orchestrator always passes them.
+
+**Options.**
+
+| Option | Effect |
+|---|---|
+| `--dry-run` | the same checks as a real run, then one line per call with placeholders (`<export 1>`, `<série 1>`, `<périmètre 1>`); no tool is run, no summary is written |
+| `--from <step>` | runs that step and the following ones, with the exports of the run date; the steps that passed earlier the same day are kept in the summary |
+| `--date AAAA-MM-JJ` | run date of the export paths and report names (resume the next day with the exports of the first day); a future date is refused, and `--from export` accepts only today |
+| `--force` | runs even if a summary of the current month is already complete (`--from` does not bypass the refusal) |
+| `--verbose` | streams the tools' output after a warning: it can hold series, query or team names |
+| `--language fr\|en` | language of the messages and of every tool (French by default) |
+| `--open` | opens the dashboards |
+
+**Output and summary.** By default the tools' output is captured in memory and written nowhere; on a failure only the failing tool's error output is printed, then the step, its exit code and the resume command (`Pour reprendre : uv run tools/flow_monthly.py --from <step>`, with `--date` when the run date is not today). Its own lines hold only step identifiers, series ranks (`série 1`), counts, exit codes and durations. Each run also writes `Flux-Lab/rapports/suivi-mensuel-AAAA-MM-JJ.md` (permissions 600): per step and series rank, `passed`, `failed`, `gap` or `not run` with the exit code and the duration, the number of report files of the run date, and the final status (`complete` or `stopped at <step>`). Claude Code may read this folder, so `/monthly-flow` can use the summary.
+
+**Exit codes.** 0 complete; 1 a step failed; 2 usage error; 3 prerequisite refused (settings file, export query or `monthly_run` block missing or invalid, run under Claude Code); 4 the data or the report comparison found a difference between the database and the CSV; 5 a summary of the current month is already complete (`--force` to run again).
+
+**What stays manual.** Completing `Flux-Lab/equipes-assets.yaml` when the export lists unknown identifiers (then `--from export`), the reading in Claude Code (`/monthly-flow <série>`, `/dependencies <série>`; the orchestrator prints these commands at the end), and the history check from time to time (step 8 below). The step-by-step procedure that follows stays the reference to run one step by hand.
+
+**Tests**, with fake tools and invented settings (no Jira, no database): `uv run --with pyyaml python -W ignore -m unittest discover -s tests/flow_monthly -q`. They also check that the script opens nothing but the settings file and the reports folder, and that nothing it prints or writes carries a series, query or scope name.
+
 ### Monthly procedure through the API
+
+The steps below are the reference to run one step by hand; the whole sequence is one command (see "Monthly run in one command" just above).
 
 A **series** is a follow-up over time: a `--name` (and possibly a `--scope`), with its own reports `flux-<nom>-…`, `evolution-<nom>-…` and `dependances-<nom>-…`. You can follow several, for example a product-scale series (all teams) and a series for a pilot domain (a `--scope` of a few projects). Series, team and domain names stay in `Flux-Lab/` and in the ignored folders of `_bmad-output/`; this document gives only generic examples (`<série>`).
 
@@ -618,6 +664,15 @@ A **series** is a follow-up over time: a `--name` (and possibly a `--scope`), wi
 6. **Have Claude Code read it**: `/monthly-flow <série>` (flow, comparison and questions for the teams), then `/dependencies <série>` (dependency map). "Keep this diagnostic" writes the reading into `_bmad-output/pmzilla/flux/` or `dependances/` (folders ignored by Git).
 7. **Generate the visual dashboard**: `uv run tools/flow_board.py --open` (full version, for you) and `uv run tools/flow_board.py --anonymous --open` (shareable version), see "Visual flow dashboard".
 8. **Check from time to time**: `uv run tools/history_jira.py check Flux-Lab/exports/api-produit-A-AAAA-MM-JJ.csv Flux-Lab/exports/api-produit-B-AAAA-MM-JJ.csv` (cache consistent with the state of the tickets, history not truncated), on **both batches**: with a single batch, the tickets of the other are not checked.
+
+### Book usage by the postures (`tools/book_usage.py`)
+
+Which books the postures receive, read and cite, which are never used, and how often each posture writes "outside the library": aggregated counts only (job R-52). The library server keeps no record of its calls, so the tool reads the **Claude Code session transcripts of the workspace** project folder (`~/.claude/projects/<workspace path>`, other project folders and the disposable copies of the evaluation set are not read). Two subcommands, run by you in the Terminal from `~/PMZilla-Lab/workspace`; Claude Code cannot run them (`deny` rules in `.claude/settings.json`, `--help` included), because the transcripts hold every conversation:
+
+1. `uv run tools/book_usage.py collect` appends to the local ledger `~/.pmzilla-lab/usage-livres/registre.jsonl` (owner-only permissions) one record per completed turn not yet counted: day, posture bucket, per book the passages returned, the passages read and whether the answer cited it, and the number of "outside the library" formulas. No text, query, passage identifier or session identifier is written; the ledger keeps the counts after Claude Code deletes old transcripts. A transcript modified less than 600 seconds ago is left for the next run (`--delay`). The summary reads `Transcriptions lues : …, tours ajoutés : …, déjà comptés : …, illisibles : …`.
+2. `uv run tools/book_usage.py report [--since AAAA-MM-JJ] [--until AAAA-MM-JJ]` reads the ledger and the book list of the library database (read-only role, 2 s timeout) and writes a French Markdown report `_bmad-output/pmzilla/usage-livres/usage-livres-AAAA-MM-JJ.md` (a second report the same day replaces the first). Sections: per book, per posture, books never cited, books never read nor cited, never-cited books of each posture's library domains, gaps per posture. Books only: the watch and personal collections are neither counted nor listed. The report folder is **not tracked by Git** (it shows your working rhythm and is rebuilt from the ledger); write lasting conclusions by hand in `docs/pmzilla/bibliotheque-lacunes.md`.
+
+Exit codes: 0 done, 1 usage error (unknown option, invalid date, start after end), 2 unusable source (transcripts folder missing, ledger unreadable, database down). Claude Code reads the report, never a transcript or the ledger. Nothing about the library is changed automatically: read the report before any acquisition or removal. Tests (synthetic transcripts): `uv run --with pyyaml --with "psycopg[binary]" python -m unittest discover -s tests/book_usage -v`; the book-list reader on a throwaway database: `bash tools/dbtest.sh book_usage`.
 
 ## 11. First session
 
@@ -672,11 +727,11 @@ Do this in a **regular Terminal**: Claude Code's `!` cannot write outside the wo
    uv run tools/convert_books.py ~/Downloads/"Livres - Ressources" "Bibliotheque-MD/Livres - Ressources" --redo-figures "@$HOME/PMZilla-Lab/pilote-figures.txt"
    # 3. read the report (Bibliotheque-MD/Livres - Ressources/_rapport_figures.txt: blocks and images per book), then copy into the domains
    python3 tools/sort_by_domain.py Bibliotheque-MD Bibliotheque-Lab
-   # 4. precaution: copy the index, then reindex (only the five changed books are recomputed; the index migration is automatic and lossless)
-   [ -e ~/.pmzilla-lab/library.sqlite.avant-figures ] || cp ~/.pmzilla-lab/library.sqlite ~/.pmzilla-lab/library.sqlite.avant-figures   # restore point from before the pilot: never overwritten
+   # 4. precaution: labelled database backup (restore point, outside the rotation, never deleted), then reindex (only the five changed books are recomputed)
+   DB_BACKUP_DATE=$(date +%Y-%m-%d)-avantfigures bash tools/db_backup.sh
    uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab
    ```
-   For each of the five books, the indexing output says "dont N figures, M légendes du texte de page retirées" (of which N figures, M captions removed from the page text); the other books are "unchanged". To test the search without going through Claude (Ollama running): `uv run --with numpy --with httpx --with pyyaml python -c "import sys; sys.path.insert(0, 'tools'); import pmzilla_lab_library as l; [print(h['book'], '|', h['ref'].get('label'), '| p.', h['ref'].get('page'), '|', h['ref'].get('image'), '|', h['text'][:70].replace(chr(10), ' / ')) for h in l.Library().search('cumulative flow diagram', None, 8, types=['figure'])]"`: each line gives the book, the label, the page and the image path, which you open with `open <path>` from the workspace. Then, after restarting the Claude Code session (the server reloads the new code), ask for example: "Search for figures on the cumulative flow diagram (`types ["figure"]`) and cite them". To roll back: put `library.sqlite.avant-figures` back, put the `.md.avant-figures` files back in place, and reindex.
+   For each of the five books, the indexing output says "dont N figures, M légendes du texte de page retirées" (of which N figures, M captions removed from the page text); the other books are "unchanged". To test the search without going through Claude (Ollama running): `uv run --with numpy --with httpx --with pyyaml python -c "import sys; sys.path.insert(0, 'tools'); import pmzilla_lab_library as l; [print(h['book'], '|', h['ref'].get('label'), '| p.', h['ref'].get('page'), '|', h['ref'].get('image'), '|', h['text'][:70].replace(chr(10), ' / ')) for h in l.Library().search('cumulative flow diagram', None, 8, types=['figure'])]"`: each line gives the book, the label, the page and the image path, which you open with `open <path>` from the workspace. Then, after restarting the Claude Code session (the server reloads the new code), ask for example: "Search for figures on the cumulative flow diagram (`types ["figure"]`) and cite them". This test reads the SQLite fallback index (`library.sqlite`, fed by the former path only during the parity window of section 14.3). To roll back: restore the `knowledge` dump of the labelled backup (section 14.3, "Restore the library from a labelled backup"), put the `.md.avant-figures` files back in place, and reindex.
 
    **Generalize to the books that have retained figures.** Each command on a single line, from `~/PMZilla-Lab/workspace`, in order:
    ```bash
@@ -684,8 +739,8 @@ Do this in a **regular Terminal**: Claude Code's `!` cannot write outside the wo
    uv run tools/convert_books.py --figure-statistics ~/Downloads/"Livres - Ressources" Bibliotheque-MD
    # 2. dry run: source -> Markdown and route (name or MAPPING), all matching errors; nothing is converted or written
    uv run tools/convert_books.py ~/Downloads/"Livres - Ressources" "Bibliotheque-MD/Livres - Ressources" --redo-figures "@$HOME/PMZilla-Lab/figures-a-refaire.txt" --dry-run
-   # 3. index backup, without overwriting an existing file (never library.sqlite.avant-figures)
-   [ -e ~/.pmzilla-lab/library.sqlite.avant-generalisation ] || cp ~/.pmzilla-lab/library.sqlite ~/.pmzilla-lab/library.sqlite.avant-generalisation
+   # 3. labelled database backup (label of lowercase letters and digits; a labelled folder is outside the rotation and never overwritten)
+   DB_BACKUP_DATE=$(date +%Y-%m-%d)-avantgeneralisation bash tools/db_backup.sh
    # 4. reconversion (the old Markdown stays as ".md.avant-figures")
    uv run tools/convert_books.py ~/Downloads/"Livres - Ressources" "Bibliotheque-MD/Livres - Ressources" --redo-figures "@$HOME/PMZilla-Lab/figures-a-refaire.txt"
    # 5. filing by domain
@@ -699,7 +754,7 @@ Do this in a **regular Terminal**: Claude Code's `!` cannot write outside the wo
 
    **A book never converted** (no Markdown): first add its line to `MAPPING` (in an old folder, for example `Books/`, with its domains), then `--convert-book "<book>" --to "Books/<Name>.md"` converts this one book and writes its Markdown at that path without overwriting anything; then `sort_by_domain.py`, the catalog entry (from the copyright page) and the indexing.
 
-   **Recomputing books whose Markdown has not changed** (for example after a change in the passage format, such as `ref.legende` and `ref.texte_alternatif`): the indexer skips a book whose content is unchanged; `--recompute` forces the recomputation of the designated books (name with or without extension, path, or `@list.txt`), the others stay "unchanged". An unknown or ambiguous book stops everything before the index is touched; the option makes no backup. A useful backup beforehand: `[ -e ~/.pmzilla-lab/library.sqlite.avant-ref ] || cp ~/.pmzilla-lab/library.sqlite ~/.pmzilla-lab/library.sqlite.avant-ref` (never `avant-figures`, which remains the restore point from before the pilot). Command line: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab --recompute "@$HOME/PMZilla-Lab/pilote-figures.txt"`.
+   **Recomputing books whose Markdown has not changed** (for example after a change in the passage format, such as `ref.legende` and `ref.texte_alternatif`): the indexer skips a book whose content is unchanged; `--recompute` forces the recomputation of the designated books (name with or without extension, path, or `@list.txt`), the others stay "unchanged". An unknown or ambiguous book stops everything before the index is touched; the indexer never makes a backup, of a file or of the database. Before a forced recompute of more than a few books, take a labelled database backup: `DB_BACKUP_DATE=$(date +%Y-%m-%d)-<label> bash tools/db_backup.sh` (label of lowercase letters and digits, for example `avantrecalcul`; labelled folders are outside the rotation, so the restore point survives). Every forced recompute starts by printing the reminder `Restore point: a labelled database backup taken before this run (DB_BACKUP_DATE=YYYY-MM-DD-<label> bash tools/db_backup.sh).`; the indexer does not check that the backup exists. To go back: section 14.3, "Restore the library from a labelled backup", then run the indexer, which re-embeds only the articles collected since the backup. During the parity window, run the same `--recompute` in the frozen copy too (section 14.3), otherwise restart the window. Command line: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab --recompute "@$HOME/PMZilla-Lab/pilote-figures.txt"`.
 
 4. **File it in `MAPPING`** (`tools/mapping_lab.py`): one line per `.md` file, with its domains (`P`, `D`, `O`, `F`, `T`). **Translations and dual formats are not indexed**: a line set to `""`, with a comment saying why ("French duplicate of …", "EPUB kept, PDF ignored"). A book indexed twice brings the same passages up twice and muddles the citations. Books discarded for another reason (off topic, concise version) also get `""` and a comment. The script checks all the codes before copying (an unknown code stops it, nothing is copied) and flags two books with the same file name without overwriting either: the second is not copied, so one of the two must be renamed.
 
@@ -716,9 +771,9 @@ Do this in a **regular Terminal**: Claude Code's `!` cannot write outside the wo
 
 7. **Check.**
    ```bash
-   sqlite3 ~/.pmzilla-lab/library.sqlite "select count(*) from books where collections not like '%veille%' and collections not like '%watch%' and collections not like '%own-articles%'"
+   uv run ~/PMZilla-Lab/pmzilla_lab_library.py status
    ```
-   The number must go up by the number of books added (110 today). Then search for a passage of the book with `search_library` in a session: the author returned must be the one in the catalog. (`own-articles` is the personal collection of published articles.)
+   One line `database: {b} books · {p} passages · {f} figures · {c} collections` (counts only; `b` includes the watch and own articles): the number of books must go up by the number of books added. Then search for a passage of the book with `search_library` in a session: the author returned must be the one in the catalog. (`own-articles` is the personal collection of published articles.)
 
 8. **Keep it up to date.** If the book fills a topic listed in `docs/pmzilla/bibliotheque-lacunes.md`, update that file. Add the CHANGELOG line, then `/update-readme` aligns the README counts (number of books, domains). The postures only cite a book if it is in the library.
 
@@ -751,7 +806,7 @@ Sixteen short commands, to run from `~/PMZilla-Lab/workspace`. Each gives the ex
 |---|---|
 | `ollama list` | `bge-m3:latest` and `gemma4:26b` appear in the list |
 | `claude mcp get pmzilla-library` | `Status: ✔ Connected`, with `Command: /opt/homebrew/bin/uv` and a path to `~/PMZilla-Lab/pmzilla_lab_library.py` |
-| `sqlite3 ~/.pmzilla-lab/library.sqlite "select count(*) from books where collections not like '%veille%' and collections not like '%watch%' and collections not like '%own-articles%'"` | the number of books in your library (110 for the author's) |
+| `uv run ~/PMZilla-Lab/pmzilla_lab_library.py status` | (only once the database is installed, step 14) one line `database: … books · … passages · … figures · … collections`, exit code 0; the books count includes the watch and own articles. Exit code 2: the database does not answer (`bash tools/db_up.sh`) |
 | `for a in discovery delivery scaling facilitation; do uv run .claude/skills/pmzilla-$a-bmad/scripts/wake.py ~/PMZilla-Lab/workspace \| head -1; done` | four `MODE: WAKING` lines (`MODE: FIRST_BREATH`: the posture has never had its first session) |
 | `(cd tools/vendor && shasum -a 256 -c echarts.sha256)` | `echarts.min.js: OK`: the dashboard library is installed and intact (otherwise: `zsh tools/vendor/telecharger_echarts.sh`) |
 | `zsh tools/install_links.sh --verify` | "Tous les liens sont en place" (All links are in place): the scripts in `~/PMZilla-Lab/` are links to `tools/` |
@@ -762,7 +817,7 @@ Sixteen short commands, to run from `~/PMZilla-Lab/workspace`. Each gives the ex
 | `ls -l .git/hooks/commit-msg` | a link to `../../tools/hooks/commit-msg` |
 | `uv run tools/dashboard.py` | a line `Tableau de bord : …/PMZilla-Lab/tableau-de-bord.html` (Dashboard: …), no error |
 | `bash tests/run_all.sh` | `TOTAL : N tests dans M suites · tous réussis` (TOTAL: N tests in M suites, all passed) and exit code 0: all the test suites pass on your machine (no network or paid calls; `bash tests/run_all.sh watch_lab` runs just one, `-v` shows everything) |
-| `uv run tools/knowledge_import.py verify` | (only once the database is installed, step 14.3) compares counts (books, passages, figures, collections) and the content fingerprint of every book between the SQLite index and the `knowledge` copy: exit code 0 when they match, 1 and the names of the books that differ otherwise (`status` prints the counts of both sides) |
+| `uv run tools/knowledge_import.py verify --parity --since $(cat ~/.pmzilla-lab/parite-sqlite)` | (only during the parity window, section 14.3; `watch.sh` runs it every morning) the parity comparator between the `library.sqlite` fed by the former path and the database: `Parité SQLite : identique` and exit code 0, or `Parité SQLite : écart`, the names of the books that differ and exit code 1. Outside the window, nothing to run |
 | `docker compose ps` | (only once the database is installed, step 14) the `db` service is `Up … (healthy)`, on `127.0.0.1:5432->5432/tcp` |
 | `git status --short` | nothing about `Bibliotheque-MD`, `Bibliotheque-Lab`, `Bibliotheque-Images`, `Watch-Lab`, `Watch-Excluded`, `Flux-Lab` or `Journal-Lab`: their content is properly excluded from Git |
 
@@ -936,6 +991,8 @@ Exit code 0: the restore works (row gaps possible); 1: restore failed, table mis
 
 What the test does not cover: the contents of the rows (counts only), the roles and their passwords (rebuilt by the migrations, the password of the views role is set by hand), a restore into the real container, and the integrity of the Docker volume itself.
 
+A monthly restore test of the off-site copy, on the external disk, complements this quarterly local test: see 14.7.
+
 **Troubleshooting (section 14)**
 
 | Symptom | Likely cause |
@@ -950,7 +1007,7 @@ What the test does not cover: the contents of the rows (counts only), the roles 
 
 ### 14.3 The library in the database (lot 4)
 
-The library (books, figures, watch and own articles) can be copied from the SQLite index `~/.pmzilla-lab/library.sqlite` into the schema `knowledge`, without converting the books again and without recomputing a vector (bge-m3). **PostgreSQL is the default since the switch of the lot 4 (SQLite stays available for one month as a fallback)**: the four MCP tools are the same on both routes, `serve --backend sqlite|postgres` (or `PMZILLA_LAB_BACKEND`) chooses. Nothing below changes what the postures read.
+The library (books, figures, watch and own articles) lives in the schema `knowledge`. **Since change R-37 the indexer writes there directly**: `pmzilla_lab_library.py index` (section 4, step 3, and the daily watch run) reads the stored books, re-embeds only what changed (content hash, model, or `--recompute`), updates collections, title and metadata without re-embedding, removes the books whose file disappeared, and commits one transaction per book, so an interruption leaves complete books only and the next run resumes. There is no import and no copy any more: `knowledge_import.py import` is refused (`import retiré : l'indexeur écrit directement dans la base (pmzilla_lab_library.py index)`), and the `~/.pmzilla-lab/knowledge-sync` marker is gone (a leftover marker is ignored). The four MCP tools read PostgreSQL by default; `serve --backend sqlite|postgres` (or `PMZILLA_LAB_BACKEND`) still offers the SQLite fallback until change R-27, and `library.sqlite` is then fed only by the frozen former path during the parity window below. Nothing below changes what the postures read.
 
 1. **Back up, then migrate** (migration `0004_knowledge_library.sql`: tables, full-text column, indexes, no data):
    ```bash
@@ -960,24 +1017,82 @@ The library (books, figures, watch and own articles) can be copied from the SQLi
    ```bash
    uv run tools/db.py role-password pmzilla_knowledge_ro
    ```
-3. **Import, then verify** (counts and file names only, no text of a book; incremental by `sha256` of each book, so it can be rerun at any time):
+3. **Index, then check** (counts only, no text of a book):
    ```bash
-   uv run tools/knowledge_import.py import --dry-run && uv run tools/knowledge_import.py import && uv run tools/knowledge_import.py verify
+   uv run ~/PMZilla-Lab/pmzilla_lab_library.py index ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab
+   uv run ~/PMZilla-Lab/pmzilla_lab_library.py status
+   uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe
    ```
-   `verify` compares the counts (books, passages, figures, collections) and the content fingerprint of every book on both sides; exit code 1 names the books that differ. `import --deep` also rereads every vector of the database (slower). `verify --vectors N` also rereads N random vectors from PostgreSQL, compares them with SQLite and prints only the maximum gap, the minimum cosine, the extreme norms and the number of null vectors (use a large N, for example 5000, to look for null vectors).
-4. **Keep the copy up to date.** The daily watch run still writes the SQLite index (the watch moves to PostgreSQL at lot 5). Once the first import has succeeded, switch the synchronisation on: `watch.sh` then runs `knowledge_import.py import` after each successful indexing.
-   ```bash
-   touch ~/.pmzilla-lab/knowledge-sync
-   ```
-   It never blocks the watch: if the database does not answer, the log says `Synchronisation PostgreSQL en erreur` and a macOS notification is sent (start the database with `bash tools/db_up.sh`); the watch exit code does not change. After a good import, `watch.sh` also runs `verify`, which probes the BM25 index (section 14.6). Remove the file to switch it off.
-5. **Parity** (right after an import, so that both routes hold the same passages; the report goes to the Terminal only and holds identifiers and counts, never a text):
+   `status` prints one line `database: {b} books · {p} passages · {f} figures · {c} collections`. `probe` reads the BM25 index twice under the read-only role and prints `BM25 index readable` (section 14.6). Exit codes of the indexer:
+
+   | Situation | Exit code | Message |
+   |---|---|---|
+   | Success | 0 | `Indexed: {n} · unchanged: {m} · passages in the index: {t}`, then `Index: database, schema knowledge` |
+   | Folder missing, unknown or ambiguous `--recompute`, embedding failure, wrong vector size | 1 | `Not a folder`, `--recompute: nothing was indexed.`, or the error |
+   | Another indexing run holds the lock | 1 | `Another indexing run is in progress: nothing was indexed.` |
+   | No book found in the folders while the database holds some, without `--allow-empty` | 1 | `No book found in the folders while the database holds {n}: nothing was removed (--allow-empty empties the library).` |
+   | The database does not answer | 2 | `Database unreachable: nothing was indexed. Start it: bash tools/db_up.sh` (checked before any embedding call) |
+   | Forced recompute (printed first, not an error) | - | `Restore point: a labelled database backup taken before this run (DB_BACKUP_DATE=YYYY-MM-DD-<label> bash tools/db_backup.sh).` |
+
+   `rename-collection` ends with `Index: database, schema knowledge` and uses exit code 2 with the same message when the database does not answer; `status` and `probe` too (`probe`: `nothing was probed`).
+4. **Daily run.** `watch.sh` runs the indexer on both folders: a success writes `~/.pmzilla-lab/derniere-indexation`, then runs `probe` (section 14.6), then the parity step if the window is open. If the database does not answer, the log says `Indexation en erreur : base PostgreSQL injoignable, la bibliothèque n'est pas à jour (bash tools/db_up.sh)` and the failed step is `indexation (base injoignable)`; another failure keeps `Indexation en erreur : la bibliothèque n'est pas à jour` and the step `indexation`. Either way the date file is left as it was, the run ends with exit code 1 and one notification, the reading list and the dashboard are still produced.
+5. **Parity** (right after a scheduled run, so that both routes were fed the same morning; the report goes to the Terminal only and holds identifiers and counts, never a text):
    ```bash
    uv run tools/library_parity.py
    ```
    It runs the frozen set of 42 queries (French and English, `tests/parity/queries.yaml`) on both routes and prints a summary: per query the overlap of the first 8 results (pairs file and position), a verdict and the latency of each route, then the mean, the minimum, the queries under 0.5 and the mean and p95 latency of each route. `--details` adds the file:position of the results that only one route returns. `--component vector|text|hybrid` measures one way alone (similarity only, full text only, or both merged, the default): run the three when the overlap is low, the component that fails is the cause. Proposed threshold: mean at least 0.85, no query under 0.5, at least 7 of 8 for the queries marked `rare`. Options: `--scan ann|exact` (HNSW index, the default, or the exact scan) and `--ef-search N` (`hnsw.ef_search` of the ann scan, 1 to 1000, 400 by default; pgvector's own default, 40, is below the 50 candidates of the vector way and left some queries under 3 of 8), `--rank-norm 0|1|2` (length normalisation of `ts_rank_cd`: none, divided by 1 + log of the length, divided by the length; only with `--fulltext tsvector`), `--collections watch,own-articles`, `--limit`, `--threshold`. `--fulltext tsvector|bm25` chooses the full-text ranking of the PostgreSQL route (`bm25` by default, `tsvector` to compare). `--explain ID` runs no parity: it prints the `EXPLAIN (ANALYZE, BUFFERS)` plan of the query `ID` on the PostgreSQL route, with no literal (no word of the query, no collection, no date, no vector), to understand a latency.
-6. **Try the SQLite fallback route** (PostgreSQL is already the default): `PMZILLA_LAB_BACKEND=sqlite` in the environment of the MCP server (`claude mcp add` with `serve --backend sqlite`), or for the evaluation set `--backend sqlite` (`posture_evals.py`).
+6. **Try the SQLite fallback route** (PostgreSQL is already the default; until change R-27, and fed only by the frozen former path during the parity window): `PMZILLA_LAB_BACKEND=sqlite` in the environment of the MCP server (`claude mcp add` with `serve --backend sqlite`), or for the evaluation set `--backend sqlite` (`posture_evals.py`).
 
-The search is the same hybrid as before, written in SQL (`tools/hybrid_search.py`): 50 semantic candidates and 50 full-text candidates, reciprocal rank fusion (constant 60), freshness bonus for the watch collection. The similarity is the dot product, like the SQLite route. The full text is BM25 (pg_search, migration `0005`), with the same OR of words as FTS5 and the same number of candidates: the 200 best passages first (filtered only by the kind of passage), then the collection and date filters, then the first 50. As on the SQLite route, a collection filter therefore applies after the limit of 200. The index uses the `pdb.simple` tokenizer with `ascii_folding`, which is equivalent to FTS5 `unicode61 remove_diacritics 2` for French and English: split on non-alphanumeric characters (the apostrophe and the underscore split), lowercase, accents removed, no stemming, no stop words (the equivalence is written at the top of the migration). The old ranking, `ts_rank_cd` on a `tsvector`, ignores the rarity of words, so a query made of common words was ranked by its stop words (measured overlap with SQLite: 0.09): `--fulltext tsvector` keeps it only to compare. Rollback is immediate: SQLite and its index are untouched; `serve --backend sqlite` (or removing `PMZILLA_LAB_BACKEND`).
+The search is the same hybrid as before, written in SQL (`tools/hybrid_search.py`): 50 semantic candidates and 50 full-text candidates, reciprocal rank fusion (constant 60), freshness bonus for the watch collection. The similarity is the dot product, like the SQLite route. The full text is BM25 (pg_search, migration `0005`), with the same OR of words as FTS5 and the same number of candidates: the 200 best passages first (filtered only by the kind of passage), then the collection and date filters, then the first 50. As on the SQLite route, a collection filter therefore applies after the limit of 200. The index uses the `pdb.simple` tokenizer with `ascii_folding`, which is equivalent to FTS5 `unicode61 remove_diacritics 2` for French and English: split on non-alphanumeric characters (the apostrophe and the underscore split), lowercase, accents removed, no stemming, no stop words (the equivalence is written at the top of the migration). The old ranking, `ts_rank_cd` on a `tsvector`, ignores the rarity of words, so a query made of common words was ranked by its stop words (measured overlap with SQLite: 0.09): `--fulltext tsvector` keeps it only to compare. Fallback of the reading route: `serve --backend sqlite` (or `PMZILLA_LAB_BACKEND=sqlite`), as long as `library.sqlite` is fed by the frozen former path (parity window, until change R-27).
+
+**Parity window with the former path (until change R-27).** `library.sqlite` stays fed during the window, by the former SQLite indexer frozen in a detached Git worktree of `main` taken before the merge, `~/PMZilla-Lab/parite-sqlite`; it writes `library.sqlite` exactly as before, and the new indexer never writes it. The window is open while the marker `~/.pmzilla-lab/parite-sqlite` exists; its single line is the start date (`YYYY-MM-DD`). Every morning, after a successful direct indexing and the probe, `watch.sh` runs the frozen indexer on the same two folders, then `uv run tools/knowledge_import.py verify --parity --since <start date>`. That comparator reads `library.sqlite` read-only and the database under the read-only role, and writes nothing in the database: counts on both sides (books, passages, figures, collections), per book the title, metadata, collections, content hash and model, a content fingerprint without vector bytes, and, for the books re-embedded by both paths since the start date, every vector (minimum cosine against a tolerance of 0.9999, byte-identical books, zero or non-finite vectors). It prints `Parité SQLite : identique` (exit code 0) or `Parité SQLite : écart` (exit code 1, the names of the books that differ go to the watch log), then `jours identiques consécutifs : {n}`, and appends one line of numbers and words to `~/.pmzilla-lab/parite-sqlite.log` (date, verdict, the four counts, re-embedded books, byte-identical books, minimum cosine; never a file name). In the watch log: `Comparaison avec l'ancienne voie impossible : copie figée introuvable`, `Comparaison avec l'ancienne voie impossible : ancien indexeur en erreur` or `Parité SQLite en écart : voir ci-dessus`, with one notification `Parité SQLite : écart ou mesure impossible. Voir le journal de la veille.`; the step never fails the run and never runs when the direct indexing failed or Ollama is absent. Without the marker, no comparison. A `rename-collection` or a `--recompute` run during the window is also run in the frozen copy (`uv run ~/PMZilla-Lab/parite-sqlite/tools/pmzilla_lab_library.py …`), otherwise restart the window (new date in the marker).
+
+**Criterion before change R-27 deletes `library.sqlite`** (measured by you, recorded in R-27): (1) the last line of `parite-sqlite.log` gives at least 7 consecutive `identique` days from scheduled runs, whose lines add up to at least 20 books re-embedded on both paths; (2) on each of those days the minimum cosine reached the tolerance and no vector was zero or non-finite (byte identity instead, if the first week shows every re-embedded book byte-identical); (3) right after a scheduled run, `uv run tools/library_parity.py --fulltext bm25 --scan ann --ef-search 400` exits 0 with a mean overlap not below the lot 4 hybrid result recorded in `docs/pmzilla/application.md`, and the same with `--component text` not below the lot 4 BM25 result; (4) one French run of the evaluation set and one run of the command-case file pass under the acceptance rule of `docs/pmzilla/application.md` section 10 (each run is paid).
+
+**Switch-over to direct indexing** (once, between the 7:10 run of a day D, and its 7:45 backup, and 7:10 on D+1; steps 1 to 4 on `main` before the merge, from `~/PMZilla-Lab/workspace`):
+
+1. The day's watch log shows the indexation, the PostgreSQL synchronisation and its verification succeeded. Otherwise: `uv run tools/knowledge_import.py import`, then `uv run tools/knowledge_import.py verify --vectors 200`, exit code 0 required.
+2. `DB_BACKUP_DATE=$(date +%Y-%m-%d)-avantindexdirect bash tools/db_backup.sh`: exit code 0.
+3. `uv run tools/db.py migrate --dry-run`: nothing pending (this change has no migration).
+4. `git worktree add --detach ~/PMZilla-Lab/parite-sqlite main` (the frozen former path).
+5. Merge `feat/db-direct-indexing` into `main` with the usual finishing script. The launchd property list does not change: no reload.
+6. `rm -f ~/.pmzilla-lab/knowledge-sync` and `date +%Y-%m-%d > ~/.pmzilla-lab/parite-sqlite`.
+7. First direct run: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab`. Expected: no `removed:` line, `Indexed:` at most the articles collected since step 1 (often 0), `unchanged:` the rest. If it re-embeds many books, stop (Ctrl+C) and roll back.
+8. `uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe`: `BM25 index readable`, exit code 0.
+9. `uv run ~/PMZilla-Lab/parite-sqlite/tools/pmzilla_lab_library.py index ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab`, then `uv run tools/knowledge_import.py verify --parity --since $(cat ~/.pmzilla-lab/parite-sqlite)`: `Parité SQLite : identique`.
+10. `uv run tools/dashboard.py --open`: the library section shows counts.
+11. On D+1 after 7:10: the watch log ends with `Veille terminée sans erreur` and holds the parity line.
+
+**Rollback** (possible until change R-27: the frozen worktree and `library.sqlite`, never written by the new path, keep the former path whole):
+
+1. `git revert -m 1 <merge commit>` on `main`: the former `watch.sh`, indexer and `knowledge_import.py import` come back.
+2. `touch ~/.pmzilla-lab/knowledge-sync` and `rm ~/.pmzilla-lab/parite-sqlite`.
+3. `uv run tools/knowledge_import.py import --deep`, then `uv run tools/knowledge_import.py verify`: the database becomes again a copy of `library.sqlite`.
+
+The labelled backup of step 2 of the switch-over is needed only if the `knowledge` schema itself is damaged (procedure below). If step 7 or 8 fails and the revert is not done before 7:10 on D+1, the 7:10 run reports the step `indexation` as failed and notifies; the digest and the dashboard are produced, and no day of collection is lost.
+
+**Restore the library from a labelled backup** (you alone, in your Terminal, from `~/PMZilla-Lab/workspace`; it replaces the whole schema `knowledge` of the real database by the one of the backup, and touches neither `cases` nor `flow`):
+
+1. **Stop the watch job** for the duration, so that no indexing writes during the restore (and close the Claude Code sessions, so that no search runs):
+   ```bash
+   launchctl bootout gui/$(id -u)/com.pmzilla.watch
+   ```
+2. **Check the folder** (labelled folders are named `db-AAAA-MM-JJ-<label>`, outside the rotation):
+   ```bash
+   ls -l ~/.pmzilla-lab/sauvegardes/db-AAAA-MM-JJ-<label>/knowledge.dump
+   ```
+3. **Restore the `knowledge` dump** into the real database, in one transaction that stops at the first error (read `pg_restore --help` first if in doubt):
+   ```bash
+   docker compose exec -T db pg_restore -U postgres -d pmzilla --clean --if-exists --single-transaction --exit-on-error < ~/.pmzilla-lab/sauvegardes/db-AAAA-MM-JJ-<label>/knowledge.dump
+   ```
+4. **Check**: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py status` (the counts of the backup day) and `uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe` (`BM25 index readable`).
+5. **Bring the library up to date**: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab` re-embeds only what was collected or changed since the backup.
+6. **Start the watch job again**:
+   ```bash
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pmzilla.watch.plist
+   ```
+
+A backup older than a migration may not restore onto the migrated database: `pg_restore` then fails and, with `--single-transaction`, leaves the schema as it was; take a more recent labelled backup.
 
 ### 14.4 The cases module (lot 2)
 
@@ -1044,7 +1159,7 @@ bash tools/dbtest.sh --port 55433             # another host port (default 55432
 
 **Symptom.** A text search on the PostgreSQL route fails with `psycopg.errors.InternalError_: bitmap intersection stream (consumer 0, segment …) claimed twice` (pg_search, ParadeDB 0.26.0), typically on queries filtered by passage type (`types: ["figure"]`); the vector component and unfiltered text queries may still work. The error always names the same segment: the index `knowledge.chunks_bm25` is damaged (a disposable database, with a fresh index, does not show it). Setting `enable_bitmapscan = off` does not help.
 
-**Detection.** The daily watch run checks it: after a successful library import, `watch.sh` runs `uv run tools/knowledge_import.py verify`, which also reads the BM25 index twice (without and with the passage-type filter) under the read-only role. On failure the log says `Index BM25 illisible` and a macOS notification points here. `verify` then exits with code 3 (1: difference between the copies; 2: database unreachable). The watch itself is never blocked and its exit code does not change. Nothing is repaired automatically.
+**Detection.** The daily watch run checks it: after a successful indexing, `watch.sh` runs `uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe`, which reads the BM25 index twice (without and with the passage-type filter) under the read-only role, writes nothing and prints no text of a book. On failure the probe prints `BM25 index unreadable ({variant}: {error type})` and `Procedure: docs/pmzilla/installation.md, "Damaged BM25 index"`, and exits with code 3 (2: database unreachable); the watch log then says `Index BM25 illisible` and a macOS notification points here. Any other non-zero code gives `Sonde de l'index BM25 en échec (code {n}) : voir ci-dessus` and the notification `Sonde de l'index BM25 en échec. Voir le journal de la veille.` The watch itself is never blocked, the probe is never a failed step and the exit code of the run does not change. Nothing is repaired automatically. `knowledge_import.py verify` no longer probes.
 
 **Rebuild** (you alone, as superuser, in your Terminal; Claude Code does not run it):
 
@@ -1054,9 +1169,47 @@ SET max_parallel_maintenance_workers = 0;
 REINDEX INDEX knowledge.chunks_bm25;
 ```
 
-The operation rebuilds the index only: no passage, vector or book is touched or lost, and the SQLite index is not involved. It reads the table and rewrites the index, so allow a few minutes on the whole library, and run it while no search is running.
+The operation rebuilds the index only: no passage, vector or book is touched or lost, and `library.sqlite` is not involved. It reads the table and rewrites the index, so allow a few minutes on the whole library, and run it while no search is running.
 
-**Check.** `uv run tools/knowledge_import.py verify` must end with `index BM25 lisible` (exit code 0), then `uv run tools/library_parity.py` must pass again (section 14.3, step 5). Until then the SQLite route stays the fallback: `PMZILLA_LAB_BACKEND=sqlite` (section 14.3, step 6).
+**Check.** `uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe` must print `BM25 index readable` (exit code 0), then `uv run tools/library_parity.py` must pass again (section 14.3, step 5). Until then the SQLite route stays the fallback, until change R-27: `PMZILLA_LAB_BACKEND=sqlite` (section 14.3, step 6).
+
+### 14.7 Off-site backup (encrypted external disk)
+
+Every backup of 14.2 lives on the Mac itself, next to the data it protects: a failed internal disk, a stolen Mac or a `colima delete` followed by a disk failure loses both. The sanctums (`_bmad/memory/`) are no longer in Git, so their backups are their only copy. `tools/offsite_backup.sh` copies the newest backups to **one** encrypted external disk, with a checksum manifest, and tests the restore of that copy every month.
+
+> **Warning: keep the disk password outside the Mac as well** (a password manager, or on paper kept elsewhere). macOS may remember it in your login Keychain so that the disk unlocks when plugged in, but if the Mac is lost with the only copy of the password, the off-site copy is lost with it. The script never reads, asks for, stores or prints a password and never calls the Keychain.
+
+**Nothing leaves for an online service.** The script has no network command and refuses a destination inside a cloud-synced folder (iCloud Drive, Dropbox, OneDrive and similar), a network volume and a Git work tree. A test of the suite `tests/offsite_backup` scans its source for network commands.
+
+**What is copied, and what is not.** For the database (`db-AAAA-MM-JJ`) and for the sanctums (`bmad-memory-AAAA-MM-JJ`), the newest *plain* dated backup of the local backups folder, if the disk does not hold it yet. Not copied: backups with a label (`db-AAAA-MM-JJ-matin`, restore points before an operation), the other folders of the backups folder, and the other personal data (library, watch, journal, local context, flow folder; the migration bundle of `install-migrate` covers them). The sanctum backup that the local rotation never deletes is copied once, on request only: `copy --include-protected`. The sanctum backup itself is still made by hand (`bash tools/sauvegarde_sanctum.sh`): the off-site copy is only as recent as the last manual run.
+
+**One-time setup (in a regular Terminal).**
+
+1. Format the disk as **APFS (Encrypted)** in Disk Utility, choose a password and store it outside the Mac (warning above). Plug it in and unlock it.
+2. Record it: `bash tools/offsite_backup.sh setup /Volumes/<disk name>`. The script checks that the volume is encrypted, external, local and outside a synced folder or Git work tree, shows the volume name and asks `y/N`. On `y`, it records the **volume identifier** (not the name) in `~/.pmzilla-lab/offsite/configuration` (owner-only) and creates the folder `pmzilla-offsite` at the volume root. From then on the disk is found by its identifier only: another disk with the same name receives nothing.
+3. First copy, then first test, by hand: `bash tools/offsite_backup.sh copy`, then `bash tools/offsite_backup.sh restore-test --force`. Expected: one copy per series on the disk, `test de restauration hors du Mac : OK`, and a report in `~/.pmzilla-lab/offsite/rapports/` (the real database must be running for the test: `bash tools/db_up.sh`).
+
+**Copy.** Each copy is written into `.partiel-<name>` with a manifest (SHA-256 and size of every file), verified on the disk, then renamed: a half-written copy is never taken for a complete one, and a leftover temporary folder is removed at the next run. Folders are `700` and files `600`. The run is idempotent (`déjà présente : <name>`). Not enough free space gives `place insuffisante sur le disque` (exit 1) and nothing is written. After a verified copy, a rotation keeps in each series the 7 newest copies plus the newest copy of each of the 12 most recent months (`OFFSITE_GARDER_RECENTES`, `OFFSITE_GARDER_MOIS`, integers of at least 1, otherwise exit 2 and nothing is touched); it deletes only folders it wrote, one `copie supprimée : <name>` line each, and never the newest copy.
+
+**Absent or locked disk.** The run is deferred: `disque absent ou verrouillé : copie reportée`, exit 3, nothing written, no notification while the last successful copy is less than 7 days old (`OFFSITE_AGE_MAX_JOURS`). Older, or never: one macOS notification per day, `aucune copie hors du Mac depuis <n> jours`. A refusal (unencrypted volume, internal disk, network volume, synced folder or Git work tree: exit 2) and a failure (exit 1) notify under the scheduler; a run by hand never notifies. Exit codes: 0 done, already present or test not due; 1 failure; 2 usage or environment refused; 3 deferred.
+
+**Monthly restore test.** `restore-test` works only when no successful test exists for the current month (`test du mois déjà fait` otherwise; `--force` skips the check). It (1) checks the manifest of the newest copy of each series (every file present, same size and checksum, nothing extra); (2) restores the newest off-site database copy through `tools/db_restore_test.sh --backup <copy>` into a throwaway container, never into the real database, which is read in counts only; (3) compares the file count of the newest sanctum copy with its manifest. The real database must be running, otherwise the test is deferred (`vraie base indisponible : test reporté`, exit 3): the script never starts it. This test complements the quarterly local test of 14.2 (b): it proves that the copy kept away from the Mac restores.
+
+**Report and status.** One report per month, `~/.pmzilla-lab/offsite/rapports/restore-AAAA-MM.txt` (owner-only, the 12 newest kept), holding only counts: run date, copy names (dates), checksum result per series, table names with their two counts and status, sanctum file counts, result and exit code. `bash tools/offsite_backup.sh status` prints the status file (last success and last result of the copy and of the test, newest copy of each series) and its age, without mounting or writing anything. Nothing is written in the repository.
+
+**Scheduling (optional, you alone).** Two templates, like the database backup: `tools/com.pmzilla.offsite-copy.plist` (every day at 8:15, after the 7:45 backup, and at every volume mount) and `tools/com.pmzilla.offsite-restore-test.plist` (every day at 8:45 and at every volume mount; the subcommand works only when the test is due). Neither runs at load, neither keeps alive. Install and load them in a regular Terminal:
+
+```bash
+for job in offsite-copy offsite-restore-test; do
+  sed "s|__HOME__|$HOME|g" ~/PMZilla-Lab/workspace/tools/com.pmzilla.$job.plist > ~/Library/LaunchAgents/com.pmzilla.$job.plist
+  xattr -c ~/Library/LaunchAgents/com.pmzilla.$job.plist
+  launchctl print gui/$(id -u)/com.pmzilla.$job >/dev/null 2>&1 || launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pmzilla.$job.plist
+done
+```
+
+Logs: `~/Library/Logs/pmzilla-offsite-copy.log` and `~/Library/Logs/pmzilla-offsite-restore-test.log`. To uninstall: `launchctl bootout gui/$(id -u)/com.pmzilla.offsite-copy` (and `...offsite-restore-test`), then remove the two files from `~/Library/LaunchAgents/`. Claude Code is not allowed to run `launchctl` on these jobs, nor the script, nor to read the `pmzilla-offsite` folder: `.claude/settings.json` denies them (the rules are yours to add). The reports and the status file stay readable to it, since they hold counts only.
+
+**Limits.** The copy is in clear text while the disk is mounted (the encryption protects the disk at rest): unplug it when you do not need it, which is also why the copy job waits for the next mount. A Python one-liner is not blocked by the deny rules; the rule of conduct and the counts-only output remain the guard. Properties of the disk utility (`diskutil info -plist`) that tell "encrypted", "internal", "network" and "locked" apart are read in one place of the script and can be overridden by environment variables (`OFFSITE_CLES_CHIFFRE`, `OFFSITE_CLE_INTERNE`, `OFFSITE_CLE_RESEAU`, `OFFSITE_CLE_VERROUILLE`, see the header of the script); confirm them on your macOS version at the first `setup`.
 
 ## 15. Repository audit (`/audit`)
 

@@ -502,6 +502,9 @@ def cmd_collect(args: argparse.Namespace) -> None:
     if arret is not None:
         afficher(t("collect_stopped", code=arret))
         sys.exit(1)
+    if args.strict and erreurs:          # option stricte (orchestrateur du suivi mensuel) : le cache est resté comme sans l'option
+        afficher(t("collect_strict"))
+        sys.exit(3)
 
 
 def tranches() -> tuple[str, ...]:
@@ -620,6 +623,8 @@ def main(argv: list[str] | None = None) -> None:
     collecte.add_argument("--team", dest="equipe", help="ne collecter que cette équipe (nom donné seulement ici)")
     collecte.add_argument("--refresh", dest="rafraichir", action="store_true",
                           help="réinterroger tous les tickets retenus, en ignorant le cache")
+    collecte.add_argument("--strict", action="store_true",
+                          help="erreurs de collecte (hors accès refusé) : rapport habituel puis sortie avec le code 3")
     controle = commandes.add_parser("check", help="compare le cache à l'état de l'export (effectifs seulement)")
     controle.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (avec la colonne Status)")
     controle.add_argument("--dormants", nargs="?", const="", default=None, help=argparse.SUPPRESS)   # supprimée : refusée avec un message

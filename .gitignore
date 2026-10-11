@@ -34,6 +34,9 @@ __pycache__/
 # Diagnostics de flux gardés : noms d'équipes, jamais dans Git
 /_bmad-output/pmzilla/flux/
 
+# Rapports d'usage des livres par les postures (tools/book_usage.py) : rythme de travail, régénérés depuis le registre local
+/_bmad-output/pmzilla/usage-livres/
+
 # Messages rédigés : noms d'équipes possibles, jamais dans Git
 /_bmad-output/pmzilla/messages/
 

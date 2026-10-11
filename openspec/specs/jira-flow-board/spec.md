@@ -3,9 +3,7 @@
 ## Purpose
 
 Describes the visual flow dashboard: a single self-contained HTML page generated from the flow and dependency reports already written, with a product view and one view per team, charts for throughput, cumulative flow, time per segment, ageing work in progress, work-in-progress breakdown, lead times, flow efficiency and a dependency map, available in English (default) and French, with an anonymous variant. Sources are the tests in `tests/flow_board/`.
-
 ## Requirements
-
 ### Requirement: Self-contained offline page
 The system SHALL write a single HTML file that embeds the charting library, the data (as JSON) and the page code and style, SHALL contain no network address, external link, network call, image tag or external script source, SHALL be written readable only by its owner in an owner-only folder, and SHALL ship page code, style and template that themselves contain no network call. The embedded data SHALL contain no ticket key and no file name, and SHALL not be able to close its enclosing script element.
 
@@ -121,6 +119,17 @@ Source: tests/flow_board/test_flow_board.py (Anonyme, AnonymeJavaScript)
 #### Scenario: Labels beyond Z
 - **WHEN** labels for index 26, 27 and 702 are produced
 - **THEN** they are AA, AB and AAA
+
+### Requirement: Database comparison series ignored
+The system SHALL ignore every series whose name ends with the database suffix of the monthly run (design D6), whether or not series are configured, so that no report of such a series appears in the page data, the page or the file name. It SHALL NOT ignore a series whose name merely contains the suffix elsewhere. Untested until implemented.
+
+#### Scenario: Comparison series present
+- **WHEN** the reports folder holds the reports of a series and of the same series with the database suffix
+- **THEN** the page data holds only the first series
+
+#### Scenario: Suffix inside a name
+- **WHEN** a series name contains the suffix text without ending with it
+- **THEN** the series is shown
 
 ## Open questions
 

@@ -8,24 +8,46 @@ PMZilla Lab — library server.
 Gives Claude Code access to the digital library (Markdown files produced by
 convert_books.py and sorted by ventiler_collections.py) through an MCP server.
 
-Two commands:
+Commands:
 
     uv run pmzilla_lab_library.py index <collections_dir> [<collections_dir> ...]
-        Builds or updates the local index (incremental: only new or changed
-        books are re-embedded). Each <collections_dir> holds one sub-folder per
-        collection, e.g. ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab. Always pass every
-        folder: a file missing from all of them is removed from the index.
+        Builds or updates the library in the PostgreSQL schema `knowledge` (role pmzilla_knowledge), directly: no
+        library.sqlite is created, opened or read. Incremental: only new or changed books are re-embedded, a change of
+        collections, title or metadata only updates the book, and each book is written in one transaction (an interrupted
+        run leaves complete books only). Each <collections_dir> holds one sub-folder per collection, e.g.
+        ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab. Always pass every folder: a file missing
+        from all of them is removed from the database. A folder with the former watch name is stored under the current
+        name, with a warning. A book that cannot be written is named and the run exits with code 1 after the others.
+        Exit codes: 0 done; 1 folder missing, bad --recompute, embedding failure, wrong vector size, a book not written,
+        another run in progress (session advisory lock) or folders without any book while the database holds some; 2 the
+        database does not answer (nothing is embedded: start it with bash tools/db_up.sh).
+
+    uv run pmzilla_lab_library.py index <collections_dir> [...] --allow-empty
+        Same, and accepts folders without any book: every book of the database is then removed, each one named.
 
     uv run pmzilla_lab_library.py index <collections_dir> [...] --recompute <book> [<book> ...]
         Same, and re-embeds the designated books even when their Markdown is unchanged (e.g. after the
         passage format changed). A book is a file name with or without extension, or a path ending with
         one; "@list.txt" reads a list (one book per line, # = comment). An unknown or ambiguous book
-        stops everything before the index is touched. It makes no backup of the index.
+        stops everything before the database is touched. It first prints a reminder: the restore point is a labelled
+        database backup that the user takes before the run (DB_BACKUP_DATE=YYYY-MM-DD-<label> bash tools/db_backup.sh);
+        the indexer takes no backup, of a file or of the database, and does not check that one exists.
 
     uv run pmzilla_lab_library.py rename-collection <old> <new> [--dry-run]
-        Renames a collection inside the index, in place, in one transaction, without touching a vector (the
-        file name, the hash and the passages do not change; the full-text table does not hold collections).
+        Renames a collection in the database, in place, in one transaction, without touching a vector (the file
+        name, the hash and the passages do not change); the former collection is deleted when no book uses it.
         Prints the counts; --dry-run only prints them. Idempotent. Example: rename-collection veille watch.
+        Exit codes: 0 done; 1 another run in progress; 2 the database does not answer. No SQLite file is opened.
+
+    uv run pmzilla_lab_library.py probe
+        Reads the BM25 index of the database like the search does (role pmzilla_knowledge_ro): one full-text query on
+        common words without a filter, one filtered on figure passages, each ending its transaction. Nothing is repaired
+        or written, no book text is printed. Exit codes: 0 "BM25 index readable"; 3 "BM25 index unreadable (variant: error
+        type)", with the procedure (installation.md, "Damaged BM25 index"); 2 the database does not answer.
+
+    uv run pmzilla_lab_library.py status
+        One line of counts of the database (role pmzilla_knowledge_ro): books, passages, figures, collections. Exit 0, or 2
+        when the database does not answer.
 
     uv run pmzilla_lab_library.py serve [--backend sqlite|postgres]
         Starts the MCP server on stdio (Claude Code launches it itself). The backend is the PostgreSQL schema `knowledge`
@@ -34,7 +56,7 @@ Two commands:
         library tools are the same on both. Three more tools, read-only, serve the cases module (search_cases,
         search_experiments, list_due_reviews): seven tools in all. They answer from the cases database (schema
         `cases`, role pmzilla_cases_ro, database PMZILLA_LAB_CASES_DBNAME when set), opened at the first call; they return
-        an error object on the SQLite backend or when that database does not answer, and the four library tools never depend on it. `index` and `rename-collection` always work on the SQLite index.
+        an error object on the SQLite backend or when that database does not answer, and the four library tools never depend on it.
 
 Search is hybrid: semantic (bge-m3 embeddings through Ollama, computed on this
 Mac) and keyword (SQLite FTS5), merged by reciprocal rank fusion. Only the
@@ -42,7 +64,8 @@ passages returned by a search ever reach Claude.
 
 Environment variables (all optional):
     PMZILLA_LAB_BACKEND   sqlite | postgres       (default postgres since lot 4; sqlite = fallback for one month; the `serve --backend` option wins)
-    PMZILLA_LAB_DATA      index folder            (default ~/.pmzilla-lab)
+    PMZILLA_LAB_KNOWLEDGE_DBNAME  database of the library (default: the installation database; set by the evaluation and the tests)
+    PMZILLA_LAB_DATA      folder of the SQLite index read by `serve --backend sqlite` (default ~/.pmzilla-lab)
     PMZILLA_LAB_OLLAMA    Ollama base URL         (default http://localhost:11434)
     PMZILLA_LAB_MODEL     embedding model         (default bge-m3)
     PMZILLA_LAB_CATALOGUE book catalogue          (default ~/PMZilla-Lab/workspace/tools/book_catalog.yaml)
@@ -78,7 +101,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from watch_paths import OWN_COLLECTION
+from watch_paths import NEW as NEW_NAMES, OLD as OLD_NAMES, OWN_COLLECTION
 
 DATA_DIR = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser()
 DB_PATH = DATA_DIR / "library.sqlite"
@@ -492,8 +515,242 @@ def select_forced(names: list[str], found: dict[str, dict]) -> set[str]:
     return wanted
 
 
-def index(collections_dirs: list[Path], force: list[str] | None = None) -> None:
+# ---------------------------------------------------------------------------
+# Store: the knowledge schema of the database (design.md D1 of db-direct-indexing)
+# ---------------------------------------------------------------------------
+
+KNOWLEDGE_DBNAME_VARIABLE = "PMZILLA_LAB_KNOWLEDGE_DBNAME"   # another database of the instance (evaluation, tests)
+WRITE_ROLE = "pmzilla_knowledge"
+READ_ROLE = "pmzilla_knowledge_ro"
+DIMENSIONS = 1024                  # halfvec(1024) of knowledge.chunks (bge-m3)
+STORE_KINDS = {"texte": "text", "figure": "figure"}
+INDEX_TARGET = "Index: database, schema knowledge"
+RESTORE_POINT_REMINDER = ("Restore point: a labelled database backup taken before this run "
+                          "(DB_BACKUP_DATE=YYYY-MM-DD-<label> bash tools/db_backup.sh).")
+LOCK_KEY = 7_303_120_037          # session advisory lock of the knowledge library: one writing run at a time
+
+
+class StoreUnavailable(Exception):
+    """The database does not answer (or refuses the connection). The message is an error type, never a secret."""
+
+
+def unreachable(what: str) -> str:
+    """Message of a database that does not answer: no secret, no connection string (design.md D2)."""
+    return f"Database unreachable: nothing was {what}. Start it: bash tools/db_up.sh"
+
+
+def open_store(store, what: str) -> None:
+    """Opens the store, then takes the lock of the library. Database down: exit 2; lock held by another run: exit 1."""
+    try:
+        store.open()
+    except StoreUnavailable:
+        print(unreachable(what), file=sys.stderr)
+        raise SystemExit(2) from None
+    try:
+        locked = store.try_lock()
+    except Exception:
+        store.close()
+        print(unreachable(what), file=sys.stderr)
+        raise SystemExit(2) from None
+    if not locked:
+        store.close()
+        raise SystemExit(f"Another indexing run is in progress: nothing was {what}.")
+
+
+@dataclass(frozen=True)
+class StoredBook:
+    file_name: str
+    sha256: str
+    model: str
+    title: str
+    meta: dict
+    collections: frozenset
+
+
+@dataclass(frozen=True)
+class BookRecord:
+    file_name: str
+    title: str
+    meta: dict
+    sha256: str
+    model: str
+    collections: frozenset
+
+
+@dataclass(frozen=True)
+class PassageRow:
+    position: int
+    section: str
+    text: str
+    kind: str                      # "text" or "figure"
+    ref: dict
+    vector: np.ndarray             # float16, L2-normalised
+
+
+def knowledge_dbname() -> str | None:
+    return os.environ.get(KNOWLEDGE_DBNAME_VARIABLE) or None
+
+
+def canonical_json(value) -> str:
+    return json.dumps(value if value is not None else {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def halfvec_literal(vector: np.ndarray) -> str:
+    """Exact halfvec literal of a float16 vector (9 significant digits bring the float16 value back unchanged)."""
+    return "[" + ",".join("%.9g" % float(v) for v in np.asarray(vector, dtype=np.float16).astype(np.float32)) + "]"
+
+
+class KnowledgeStore:
+    """The library in the PostgreSQL schema `knowledge`, written under the role pmzilla_knowledge. `connect` returns a new
+    connection of the cluster (default: db.connect on PMZILLA_LAB_KNOWLEDGE_DBNAME, else the installation database). Every write
+    is one transaction: a book is written whole or not at all."""
+
+    dimensions = DIMENSIONS
+
+    def __init__(self, connect=None) -> None:
+        self._connect = connect
+        self.conn = None
+
+    def open(self) -> None:
+        try:
+            if self._connect is None:
+                import db
+                conn = db.connect(dbname=knowledge_dbname())
+            else:
+                conn = self._connect()
+            conn.execute(f"SET ROLE {WRITE_ROLE}")
+            conn.commit()              # the role stays for the session, after every later commit or rollback
+        except Exception as error:     # no message of the driver: it may name the server
+            raise StoreUnavailable(type(error).__name__) from None
+        self.conn = conn
+
+    def close(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
+
+    def try_lock(self) -> bool:
+        """Session advisory lock: held until the connection closes, whatever the transactions do."""
+        try:
+            return bool(self.conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0])
+        finally:
+            self.conn.commit()
+
+    def _read(self, sql: str, params=()) -> list:
+        try:
+            return self.conn.execute(sql, params).fetchall()
+        finally:
+            self.conn.rollback()
+
+    def _write(self, steps) -> None:
+        try:
+            steps(self.conn)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def stored_books(self) -> dict[str, StoredBook]:
+        rows = self._read(
+            "SELECT b.file_name, b.sha256, b.model, b.title, b.meta, ARRAY(SELECT c.name FROM knowledge.book_collections bc "
+            "JOIN knowledge.collections c ON c.id = bc.collection_id WHERE bc.book_id = b.id) FROM knowledge.books b")
+        return {r[0]: StoredBook(r[0], r[1], r[2], r[3], r[4] or {}, frozenset(r[5] or ())) for r in rows}
+
+    def passage_count(self) -> int:
+        return int(self._read("SELECT count(*) FROM knowledge.chunks")[0][0])
+
+    def passage_counts(self) -> dict[str, int]:
+        return {r[0]: int(r[1]) for r in self._read(
+            "SELECT b.file_name, count(c.id) FROM knowledge.books b LEFT JOIN knowledge.chunks c ON c.book_id = b.id "
+            "GROUP BY b.file_name")}
+
+    @staticmethod
+    def _memberships(conn, book_id: int, collections) -> None:
+        for name in sorted(collections):
+            collection_id = conn.execute(
+                "INSERT INTO knowledge.collections (name) VALUES (%s) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name "
+                "RETURNING id", (name,)).fetchone()[0]
+            conn.execute("INSERT INTO knowledge.book_collections (book_id, collection_id) VALUES (%s, %s)",
+                         (book_id, collection_id))
+
+    def replace_book(self, record: BookRecord, rows: list[PassageRow]) -> None:
+        def steps(conn):
+            conn.execute("DELETE FROM knowledge.books WHERE file_name = %s", (record.file_name,))   # passages cascade
+            book_id = conn.execute(
+                "INSERT INTO knowledge.books (file_name, title, meta, sha256, model, indexed_at) "
+                "VALUES (%s, %s, %s::jsonb, %s, %s, now()) RETURNING id",
+                (record.file_name, record.title, canonical_json(record.meta), record.sha256, record.model)).fetchone()[0]
+            self._memberships(conn, book_id, record.collections)
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    "INSERT INTO knowledge.chunks (book_id, position, section, text, embedding, kind, ref) "
+                    "VALUES (%s, %s, %s, %s, %s::halfvec, %s, %s::jsonb)",
+                    [(book_id, r.position, r.section, r.text, halfvec_literal(r.vector), r.kind, canonical_json(r.ref))
+                     for r in rows])
+        self._write(steps)
+
+    def update_book(self, file_name: str, title: str, meta: dict, collections) -> None:
+        def steps(conn):
+            book_id = conn.execute("UPDATE knowledge.books SET title = %s, meta = %s::jsonb WHERE file_name = %s RETURNING id",
+                                   (title, canonical_json(meta), file_name)).fetchone()[0]
+            conn.execute("DELETE FROM knowledge.book_collections WHERE book_id = %s", (book_id,))
+            self._memberships(conn, book_id, collections)
+        self._write(steps)
+
+    def delete_book(self, file_name: str) -> None:
+        self._write(lambda conn: conn.execute("DELETE FROM knowledge.books WHERE file_name = %s", (file_name,)))
+
+    @staticmethod
+    def _delete_orphans(conn) -> list[str]:
+        return sorted(r[0] for r in conn.execute(
+            "DELETE FROM knowledge.collections c WHERE NOT EXISTS "
+            "(SELECT 1 FROM knowledge.book_collections bc WHERE bc.collection_id = c.id) RETURNING c.name").fetchall())
+
+    def delete_orphan_collections(self) -> list[str]:
+        removed: list[str] = []
+        self._write(lambda conn: removed.extend(self._delete_orphans(conn)))
+        return removed
+
+    def set_collections(self, changes: dict[str, frozenset]) -> None:
+        """New memberships of several books, then the orphan collections deleted, in one transaction (rename-collection)."""
+        def steps(conn):
+            for file_name, names in sorted(changes.items()):
+                book_id = conn.execute("SELECT id FROM knowledge.books WHERE file_name = %s", (file_name,)).fetchone()[0]
+                conn.execute("DELETE FROM knowledge.book_collections WHERE book_id = %s", (book_id,))
+                self._memberships(conn, book_id, names)
+            self._delete_orphans(conn)
+        self._write(steps)
+
+
+# ---------------------------------------------------------------------------
+# Indexing
+# ---------------------------------------------------------------------------
+
+def collection_of(folder: str, warned: set[str]) -> str:
+    """Current name of a collection folder: the former watch name is stored under the current one, with a warning (once)."""
+    if folder == OLD_NAMES["collection"]:
+        if folder not in warned:
+            warned.add(folder)
+            print(f"Warning: the folder '{folder}' carries the former name of the collection '{NEW_NAMES['collection']}': "
+                  f"its books are stored under '{NEW_NAMES['collection']}'.", file=sys.stderr)
+        return NEW_NAMES["collection"]
+    return folder
+
+
+def index(collections_dirs: list[Path], force: list[str] | None = None, store=None, allow_empty: bool = False) -> None:
+    """Indexes the folders into the knowledge schema of the database (design.md D1): unchanged books are skipped, a book whose
+    collections, title or metadata changed is updated without re-embedding, a new or changed book is replaced whole, in one
+    transaction. No SQLite file is created, opened or read. A book that cannot be written is named and the run ends with
+    exit code 1 after the other books. Order (design.md D1): folders and --recompute checked, store opened (database down:
+    exit 2, before any embedding call), lock taken (another run: exit 1), stored books read, empty-scan guard (folders
+    without any book against a filled database: exit 1 unless `allow_empty`), removals, books, orphan collections."""
+    if force:   # a reminder only: the indexer never takes a backup and never reads the backup folder (design.md D5)
+        print(RESTORE_POINT_REMINDER)
     found: dict[str, dict] = {}
+    warned: set[str] = set()
     for collections_dir in collections_dirs:
         collections_dir = collections_dir.expanduser().resolve()
         if not collections_dir.is_dir():
@@ -502,38 +759,45 @@ def index(collections_dirs: list[Path], force: list[str] | None = None) -> None:
         print(f"{len(books)} files found in {collections_dir}")
         for file_name, info in books.items():
             entry = found.setdefault(file_name, {"path": info["path"], "collections": set()})
-            entry["collections"] |= info["collections"]
-    forced = select_forced(force, found) if force else set()   # checked before the index is touched
-    db = connect()
-    catalogue = load_catalogue()
+            entry["collections"] |= {collection_of(name, warned) for name in info["collections"]}
+    forced = select_forced(force, found) if force else set()   # checked before the database is touched
+    store = store if store is not None else KnowledgeStore()
+    open_store(store, "indexed")
+    try:
+        _index_into(store, found, forced, allow_empty)
+    finally:
+        store.close()
 
-    known = {row[0]: row for row in db.execute(
-        "SELECT file_name, sha256, collections, model, meta, title FROM books")}
-    for file_name in set(known) - set(found):
-        db.execute("DELETE FROM books WHERE file_name = ?", (file_name,))
+
+def _index_into(store, found: dict[str, dict], forced: set[str], allow_empty: bool) -> None:
+    known = store.stored_books()
+    if not found and known and not allow_empty:
+        raise SystemExit(f"No book found in the folders while the database holds {len(known)}: nothing was removed "
+                         "(--allow-empty empties the library).")
+    catalogue = load_catalogue()
+    for file_name in sorted(set(known) - set(found)):
+        store.delete_book(file_name)
         print(f"  removed: {file_name}")
-    db.commit()
 
     started = time.time()
     done = skipped = 0
+    failed: list[str] = []
     for number, (file_name, info) in enumerate(sorted(found.items()), 1):
         text = info["path"].read_text(encoding="utf-8", errors="replace")
         digest = hashlib.sha256(text.encode()).hexdigest()
-        collections = "|".join(sorted(info["collections"]))
+        collections = frozenset(info["collections"])
         title, body = read_title(text, Path(file_name).stem)
-        meta_dict = read_meta(text)
+        meta = read_meta(text)
         entry = catalogue.get(unicodedata.normalize("NFC", file_name))
         if entry:  # the catalogue wins over what the file says
             title = str(entry.get("titre") or title)
-            meta_dict["author"] = (", ".join(str(a) for a in entry["auteurs"])
-                                   if entry.get("auteurs") else "auteur non indiqué")
-        meta = json.dumps(meta_dict, ensure_ascii=False, sort_keys=True)
+            meta["author"] = (", ".join(str(a) for a in entry["auteurs"])
+                              if entry.get("auteurs") else "auteur non indiqué")
         previous = known.get(file_name)
-        if previous and previous[1] == digest and previous[3] == EMBED_MODEL and file_name not in forced:
-            if previous[2] != collections or previous[4] != meta or previous[5] != title:  # no re-embedding needed
-                db.execute("UPDATE books SET collections = ?, meta = ?, title = ? WHERE file_name = ?",
-                           (collections, meta, title, file_name))
-                db.commit()
+        if previous and previous.sha256 == digest and previous.model == EMBED_MODEL and file_name not in forced:
+            if (previous.collections != collections or canonical_json(previous.meta) != canonical_json(meta)
+                    or previous.title != title):   # no re-embedding needed
+                store.update_book(file_name, title, meta, collections)
             skipped += 1
             continue
 
@@ -546,61 +810,149 @@ def index(collections_dirs: list[Path], force: list[str] | None = None) -> None:
         for start in range(0, len(passages), EMBED_BATCH):
             batch = passages[start:start + EMBED_BATCH]
             vectors.append(embed([f"{title}\n{p.section}\n{p.text}" for p in batch]))
-        matrix = np.vstack(vectors) if vectors else np.zeros((0, 1), dtype=np.float32)
-
-        db.execute("DELETE FROM books WHERE file_name = ?", (file_name,))
-        cursor = db.execute(
-            "INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (file_name, title, digest, collections, EMBED_MODEL, time.time(), meta),
-        )
-        db.executemany(
-            "INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (cursor.lastrowid, position, p.section, p.text, matrix[position].astype(np.float16).tobytes(),
-                 p.kind, json.dumps(p.ref or {}, ensure_ascii=False, sort_keys=True))
-                for position, p in enumerate(passages)
-            ],
-        )
-        db.commit()  # one book at a time: an interrupted run resumes where it stopped
+        matrix = np.vstack(vectors) if vectors else np.zeros((0, store.dimensions), dtype=np.float32)
+        if matrix.shape[0] != len(passages) or (passages and matrix.shape[1] != store.dimensions):
+            print(f"  not indexed: {file_name}: {matrix.shape[0]} vectors of {matrix.shape[1]} dimensions for "
+                  f"{len(passages)} passages, {store.dimensions} dimensions expected", file=sys.stderr)
+            failed.append(file_name)
+            continue
+        rows = [PassageRow(position, p.section, p.text, STORE_KINDS.get(p.kind, p.kind), dict(p.ref or {}),
+                           matrix[position].astype(np.float16))
+                for position, p in enumerate(passages)]
+        record = BookRecord(file_name, title, meta, digest, EMBED_MODEL, collections)
+        try:
+            store.replace_book(record, rows)   # one book at a time: an interrupted run resumes where it stopped
+        except Exception as error:
+            print(f"  not indexed: {file_name}: {type(error).__name__}, nothing was written for this book", file=sys.stderr)
+            failed.append(file_name)
+            continue
         done += 1
 
-    total = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    store.delete_orphan_collections()
+    total = store.passage_count()
     print(
         f"\nIndexed: {done} · unchanged: {skipped} · passages in the index: {total} · "
-        f"{(time.time() - started) / 60:.1f} min\nIndex: {DB_PATH}"
+        f"{(time.time() - started) / 60:.1f} min\n{INDEX_TARGET}"
     )
+    if failed:
+        raise SystemExit(f"Not indexed ({len(failed)}): {', '.join(failed)}")
 
 
-def rename_collection(old: str, new: str, dry_run: bool = False) -> dict[str, int]:
-    """Renames a collection in the index, in place: only books.collections changes (one transaction). The
-    vectors, the passages, the hash and the file name are untouched, and chunks_fts holds the text and the
-    section only, so nothing is recomputed. Idempotent: a second run finds nothing to rename."""
+def rename_collection(old: str, new: str, dry_run: bool = False, store=None) -> dict[str, int]:
+    """Renames a collection in the database, in place, under the writing role and in one transaction: only the memberships
+    change (a book that already holds the new name keeps one membership), the former collection is deleted when no book uses
+    it. Passages, vectors, hashes and file names are untouched, so nothing is recomputed. Idempotent: a second run finds
+    nothing to rename. Database down: exit 2; another run in progress: exit 1. No SQLite file is opened."""
     if not old or not new or "|" in old or "|" in new:
         raise SystemExit("rename-collection needs two collection names, without '|'.")
-    if not DB_PATH.exists():
-        raise SystemExit(f"No index at {DB_PATH}. Run the 'index' command first.")
-    db = connect()
-    books = passages = both = 0
-    changes = []
-    for book_id, names in db.execute("SELECT id, collections FROM books"):
-        parts = names.split("|")
-        if old not in parts:
-            continue
-        renamed = "|".join(sorted({new if part == old else part for part in parts}))
-        both += new in parts
-        books += 1
-        passages += db.execute("SELECT COUNT(*) FROM chunks WHERE book_id = ?", (book_id,)).fetchone()[0]
-        changes.append((renamed, book_id))
-    if not dry_run and changes:
-        with db:   # one transaction
-            db.executemany("UPDATE books SET collections = ? WHERE id = ?", changes)
+    store = store if store is not None else KnowledgeStore()
+    open_store(store, "renamed")
+    try:
+        counts = store.passage_counts()
+        books = passages = both = 0
+        changes: dict[str, frozenset] = {}
+        for file_name, book in sorted(store.stored_books().items()):
+            if old not in book.collections:
+                continue
+            both += new in book.collections
+            books += 1
+            passages += counts.get(file_name, 0)
+            changes[file_name] = frozenset(new if name == old else name for name in book.collections)
+        if not dry_run and changes:
+            store.set_collections(changes)   # one transaction, orphan collections included
+    finally:
+        store.close()
     verb = "would be renamed" if dry_run else "renamed"
     print(f"Collection '{old}' -> '{new}': {books} books ({passages} passages) {verb}"
           + (f", of which {both} already in '{new}'" if both else "")
           + ("." if books else " (nothing to do)."))
-    print("Vectors recomputed: 0. Index: " + str(DB_PATH))
+    print(f"Vectors recomputed: 0. {INDEX_TARGET}")
     return {"books": books, "passages": passages, "already": both}
+
+
+# ---------------------------------------------------------------------------
+# Probe of the BM25 index and counts (read-only role; design.md D3, D4)
+# ---------------------------------------------------------------------------
+
+PROBE_WORDS = "the flux flow"   # common words (an OR of words, like the search): the probe reads the index, not a rare case
+BM25_UNREADABLE = 3
+DAMAGED_PROCEDURE = 'Procedure: docs/pmzilla/installation.md, "Damaged BM25 index"'
+
+
+def _read_connection(connect, what: str):
+    """A connection under the read-only role pmzilla_knowledge_ro (database PMZILLA_LAB_KNOWLEDGE_DBNAME when set), or None
+    after printing the unreachable message (no secret, no connection string)."""
+    try:
+        if connect is None:
+            import db
+            return db.connect(role=READ_ROLE, dbname=knowledge_dbname())
+        return connect()
+    except Exception:
+        print(unreachable(what), file=sys.stderr)
+        return None
+
+
+def bm25_probe(conn) -> str | None:
+    """Reads the BM25 index like the search does: without a filter, then filtered on figure passages. None when both queries
+    succeed; otherwise "variant: error type". Each query ends its transaction; nothing is repaired or written, and the error
+    message itself is never returned (no book text can reach the output)."""
+    variants = (("no filter", ""), ("figure kind", " AND c.kind = ANY(%s::text[])"))
+    try:
+        for name, kind_filter in variants:
+            params = (PROBE_WORDS,) + ((["figure"],) if kind_filter else ())
+            try:
+                conn.execute("SELECT c.id FROM knowledge.chunks c WHERE c.fts_text ||| %s" + kind_filter +
+                             " ORDER BY pdb.score(c.id) DESC LIMIT 50", params).fetchall()
+            except Exception as error:      # InternalError of a damaged index, but also any other error of the probe
+                return f"{name}: {type(error).__name__}"
+            finally:
+                conn.rollback()             # ends the transaction, also after an error
+    except Exception as error:              # rollback impossible: the probe cannot conclude
+        return f"probe impossible: {type(error).__name__}"
+    return None
+
+
+def probe(connect=None) -> int:
+    """`probe`: 0 readable, 3 unreadable (with the procedure), 2 the database does not answer."""
+    conn = _read_connection(connect, "probed")
+    if conn is None:
+        return 2
+    try:
+        failure = bm25_probe(conn)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if failure:
+        print(f"BM25 index unreadable ({failure})")
+        print(DAMAGED_PROCEDURE)
+        return BM25_UNREADABLE
+    print("BM25 index readable")
+    return 0
+
+
+def status(connect=None) -> int:
+    """`status`: one line of counts (books, passages, figures, collections), never a title, a file name or a text."""
+    conn = _read_connection(connect, "read")
+    if conn is None:
+        return 2
+    try:
+        books, passages, figures, collections = conn.execute(
+            "SELECT (SELECT count(*) FROM knowledge.books), (SELECT count(*) FROM knowledge.chunks), "
+            "(SELECT count(*) FROM knowledge.chunks WHERE kind = 'figure'), (SELECT count(*) FROM knowledge.collections)"
+        ).fetchone()
+        conn.rollback()
+    except Exception:
+        print(unreachable("read"), file=sys.stderr)
+        return 2
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    print(f"database: {books} books · {passages} passages · {figures} figures · {collections} collections")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -953,11 +1305,14 @@ def serve(backend: str | None = None) -> None:
     server.run()
 
 
-def main() -> None:
+def main(store=None, connect=None) -> None:
+    """Command line. `store` replaces the database store and `connect` the read-only connection (tests only)."""
     import flux_config
     sys.argv[1:] = flux_config.refuse_old_options(sys.argv[1:], {"--recalculer": "--recompute"})
     if len(sys.argv) >= 3 and sys.argv[1] == "index":
         args = sys.argv[2:]
+        allow_empty = "--allow-empty" in args
+        args = [arg for arg in args if arg != "--allow-empty"]
         force = None
         if "--recompute" in args:
             position = args.index("--recompute")
@@ -966,12 +1321,16 @@ def main() -> None:
                 sys.exit("--recompute needs at least one book (or @list.txt).")
         if not args:
             sys.exit("index needs at least one collections folder before --recompute.")
-        index([Path(arg) for arg in args], force)
+        index([Path(arg) for arg in args], force, store=store, allow_empty=allow_empty)
     elif len(sys.argv) in (4, 5) and sys.argv[1] == "rename-collection":
         extra = sys.argv[4:]
         if extra not in ([], ["--dry-run"]):
             sys.exit("Usage: rename-collection <old> <new> [--dry-run]")
-        rename_collection(sys.argv[2], sys.argv[3], bool(extra))
+        rename_collection(sys.argv[2], sys.argv[3], bool(extra), store=store)
+    elif len(sys.argv) >= 2 and sys.argv[1] in ("probe", "status"):
+        if len(sys.argv) != 2:
+            sys.exit(f"Usage: {sys.argv[1]} (no argument)")
+        sys.exit((probe if sys.argv[1] == "probe" else status)(connect))
     elif len(sys.argv) >= 2 and sys.argv[1] == "serve":
         extra = sys.argv[2:]
         if extra and not (len(extra) == 2 and extra[0] == "--backend"):

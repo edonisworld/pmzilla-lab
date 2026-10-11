@@ -143,7 +143,7 @@ Source: `tests/library_backend/test_backend.py` (Forme.test_meme_dictionnaire_qu
 - **THEN** the same positions and the same field values are returned, except the backend-specific identifiers
 
 ### Requirement: Forward the backend choice to the evaluation configuration
-The system SHALL leave the MCP server arguments unchanged when no backend is chosen, SHALL pass the chosen backend (option or environment variable) to the server arguments, and SHALL keep a disposable per-case library on SQLite whatever backend is chosen.
+The system SHALL leave the MCP server arguments unchanged when no backend is chosen, SHALL pass the chosen backend (option or environment variable) to the server arguments, and SHALL serve a disposable per-case library from the run's disposable database with the PostgreSQL backend and the database-name variable, whatever backend is chosen for the other cases. It SHALL NOT serve a disposable per-case library from a SQLite file.
 
 Source: `tests/library_backend/test_backend.py` (ConfigurationMcp)
 
@@ -152,8 +152,8 @@ Source: `tests/library_backend/test_backend.py` (ConfigurationMcp)
 - **THEN** the server is started with only its serve argument
 
 #### Scenario: Disposable library
-- **WHEN** a case provides its own data directory
-- **THEN** no backend option is passed and SQLite is used
+- **WHEN** a case provides its own library
+- **THEN** the server configuration carries the PostgreSQL backend and the disposable database name, and no data folder for a SQLite index
 
 ### Requirement: Expose exactly seven read-only tools without image access
 The system SHALL expose exactly seven tools to the assistant: the four library tools (search, read a passage, list collections, list books) and the three cases tools (search cases, search running experiments, list due reviews). It SHALL let the library search tool take a passage-type argument, SHALL NOT include any capability to open, read, encode or display an image file, and SHALL NOT include any tool that writes to the database.
@@ -191,6 +191,17 @@ The system SHALL treat the former watch collection name like any unknown collect
 #### Scenario: Index still storing the former name
 - **WHEN** an index stores the former name and has not been renamed
 - **THEN** the counts show the stored name and the current name finds nothing from those books
+
+### Requirement: Read the library from a named database on request
+The system SHALL let a configurable database-name variable choose the database that the PostgreSQL library backend and the indexer connect to, the installation database being used when it is unset, so that a disposable database can serve a throwaway library. It SHALL NOT fall back to the installation database when the named database does not answer.
+
+#### Scenario: Variable set
+- **WHEN** the database-name variable names a disposable database
+- **THEN** both the library backend and the indexer connect to that database
+
+#### Scenario: Named database down
+- **WHEN** the named database does not answer
+- **THEN** the server stops with its connection message and does not connect to the installation database
 
 ## Open questions
 

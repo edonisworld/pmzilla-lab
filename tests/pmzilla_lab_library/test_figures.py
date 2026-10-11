@@ -7,7 +7,9 @@ aucun accès aux images.
         --with beautifulsoup4 python -m unittest discover -s tests/pmzilla_lab_library -v
 
 Livres Markdown inventés dans un dossier temporaire ; l'embedding d'Ollama est remplacé par un plongement
-déterministe. Jamais Bibliotheque-MD, Bibliotheque-Images ni le vrai index. (Le test d'intégration sur un vrai PDF
+déterministe ; l'indexeur écrit dans un faux magasin en mémoire (fake_store.FakeStore) ; les tests de la voie de
+lecture SQLite (`Library`) le recopient dans un index SQLite temporaire. Jamais Bibliotheque-MD,
+Bibliotheque-Images, le vrai index ni la vraie base. (Le test d'intégration sur un vrai PDF
 fabriqué est ignoré quand PyMuPDF n'est pas installé.)
 """
 import ast
@@ -30,6 +32,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pmzilla_lab_library as library  # noqa: E402
+from fake_store import FakeStore, export_sqlite  # noqa: E402
 from test_pmzilla_lab_library import fake_embed  # noqa: E402
 
 TEXTE = ("Un paragraphe de texte courant assez long pour former un passage : le flux, la limite de travail en "
@@ -99,6 +102,7 @@ class Base(unittest.TestCase):
         self.racine = self.tmp / "collections"
         self.embedded: list[str] = []
         self.calls = 0
+        self.store = FakeStore()
 
         def embed(texts):
             self.calls += 1
@@ -123,23 +127,19 @@ class Base(unittest.TestCase):
     def indexer(self) -> str:
         sortie = io.StringIO()
         with contextlib.redirect_stdout(sortie):
-            library.index([self.racine])
+            library.index([self.racine], store=self.store)
         return sortie.getvalue()
 
-    def chunks(self, fichier: str | None = None, kind: str | None = None) -> list[sqlite3.Row]:
-        db = library.connect()
-        db.row_factory = sqlite3.Row
-        requete = "SELECT c.*, b.file_name FROM chunks c JOIN books b ON b.id = c.book_id"
-        conditions, valeurs = [], []
-        if fichier:
-            conditions.append("b.file_name = ?")
-            valeurs.append(fichier)
-        if kind:
-            conditions.append("c.kind = ?")
-            valeurs.append(kind)
-        if conditions:
-            requete += " WHERE " + " AND ".join(conditions)
-        return db.execute(requete + " ORDER BY b.file_name, c.position", valeurs).fetchall()
+    def chunks(self, fichier: str | None = None, kind: str | None = None) -> list[dict]:
+        """Passages stockés (faux magasin), dans l'ordre du fichier puis de la position ; `ref` en JSON trié, comme en base."""
+        return [dict(p, file_name=nom, ref=json.dumps(p["ref"], ensure_ascii=False, sort_keys=True))
+                for nom, b in sorted(self.store.books.items()) if fichier in (None, nom)
+                for p in sorted(b["passages"], key=lambda p: p["position"]) if kind in (None, p["kind"])]
+
+    def bibliotheque(self) -> "library.Library":
+        """La voie de lecture SQLite (Library) sur le contenu du faux magasin."""
+        export_sqlite(self.store)
+        return library.Library()
 
 
 class Livres(Base):
@@ -153,7 +153,7 @@ class Livres(Base):
 
 class PassagesFigure(Livres):
     def test_le_commentaire_n_est_jamais_du_texte_courant(self):
-        for ligne in self.chunks(kind="texte"):
+        for ligne in self.chunks(kind="text"):
             for interdit in ("<!--", "-->", "figure id=", "Bibliotheque-Images", "Légende :", "Texte alternatif :"):
                 self.assertNotIn(interdit, ligne["text"], interdit)
 
@@ -169,7 +169,7 @@ class PassagesFigure(Livres):
 
     def test_un_bloc_est_un_passage_a_part_a_sa_place(self):
         pdf = self.chunks("pdf-livre.md")
-        self.assertEqual([r["kind"] for r in pdf], ["texte", "figure", "texte", "figure", "texte"])
+        self.assertEqual([r["kind"] for r in pdf], ["text", "figure", "text", "figure", "text"])
         self.assertEqual([r["position"] for r in pdf], list(range(len(pdf))))
         self.assertEqual([r["section"] for r in pdf if r["kind"] == "figure"],
                          ["Partie un > Le flux", "Partie un > Les limites"])
@@ -205,7 +205,7 @@ class PassagesFigure(Livres):
         epub = [json.loads(r["ref"]) for r in self.chunks("epub-livre.md", "figure")]
         self.assertEqual(epub[1], {"id": "fig-0002", "section": "Les équipes", "source": "epub",   # alt seul : ni libellé, ni page, ni image
                                    "texte_alternatif": "Courbe montrant le lead time par semaine"})
-        for r in self.chunks(kind="texte"):
+        for r in self.chunks(kind="text"):
             self.assertEqual(r["ref"], "{}")
 
     def test_origine_du_texte_legende_et_texte_alternatif_chacun_dans_son_champ(self):
@@ -263,7 +263,7 @@ class Recalcul(Livres):
         sortie = io.StringIO()
         with mock.patch.object(sys, "argv", ["pmzilla_lab_library.py", "index", str(self.racine), *args]), \
                 contextlib.redirect_stdout(sortie):
-            library.main()
+            library.main(store=self.store)
         return sortie.getvalue()
 
     def test_sans_option_rien_n_est_recalcule(self):
@@ -288,10 +288,10 @@ class Recalcul(Livres):
         self.assertIn("Indexed: 2 · unchanged: 1", self.avec_args("--recompute", f"@{liste}"))
 
     def test_ref_enrichi_apres_recalcul(self):
-        db = library.connect()                     # un index d'avant : le ref d'une figure sans origine
-        db.execute("UPDATE chunks SET ref = '{}' WHERE kind = 'figure'")
-        db.commit()
-        db.close()
+        for b in self.store.books.values():        # un index d'avant : le ref d'une figure sans origine
+            for p in b["passages"]:
+                if p["kind"] == "figure":
+                    p["ref"] = {}
         self.assertIn("Indexed: 0", self.indexer())                             # sans l'option, il reste ancien
         self.assertEqual({r["ref"] for r in self.chunks(kind="figure")}, {"{}"})
         self.avec_args("--recompute", "pdf-livre", "epub-livre")
@@ -318,16 +318,27 @@ class Recalcul(Livres):
             self.avec_args("--recompute")
         with self.assertRaises(SystemExit), mock.patch.object(
                 sys, "argv", ["pmzilla_lab_library.py", "index", "--recompute", "pdf-livre"]):
-            library.main()
+            library.main(store=self.store)
 
-    def test_aucune_sauvegarde_de_l_index(self):
-        dossier = library.DB_PATH.parent
-        avant_figures = dossier / "library.sqlite.avant-figures"
-        avant_figures.write_bytes(b"point de retour d'avant le pilote")
+    def test_aucun_fichier_dans_le_dossier_de_donnees(self):
+        dossier = self.tmp / "data"
+        dossier.mkdir(exist_ok=True)
         self.avec_args("--recompute", "pdf-livre")
-        self.assertEqual(avant_figures.read_bytes(), b"point de retour d'avant le pilote")
-        self.assertEqual({p.name for p in dossier.iterdir() if p.name.startswith("library.sqlite")},
-                         {"library.sqlite", "library.sqlite.avant-figures"})
+        self.assertEqual(list(dossier.iterdir()), [])
+
+    RAPPEL = ("Restore point: a labelled database backup taken before this run "
+              "(DB_BACKUP_DATE=YYYY-MM-DD-<label> bash tools/db_backup.sh).")
+
+    def test_le_rappel_du_point_de_retour_vient_en_premier(self):
+        sortie = self.avec_args("--recompute", "pdf-livre")
+        self.assertEqual(sortie.splitlines()[0], self.RAPPEL)
+        sortie = io.StringIO()
+        with contextlib.redirect_stdout(sortie):
+            library.index([self.racine], ["epub-livre"], store=self.store)
+        self.assertEqual(sortie.getvalue().splitlines()[0], self.RAPPEL)
+
+    def test_pas_de_rappel_sans_recalcul_force(self):
+        self.assertNotIn("Restore point", self.indexer())
 
 
 class LegendePdfSansDoublon(Livres):
@@ -337,12 +348,12 @@ class LegendePdfSansDoublon(Livres):
         self.assertEqual(sum("Courbe du délai de livraison inventée" in t for t in tout), 1)
         figure = self.chunks("pdf-livre.md", "figure")
         self.assertIn("Un tableau kanban inventé", figure[0]["text"])
-        for r in self.chunks("pdf-livre.md", "texte"):
+        for r in self.chunks("pdf-livre.md", "text"):
             self.assertNotIn("Un tableau kanban inventé", r["text"])
             self.assertNotIn("Courbe du délai", r["text"])
         # le reste du paragraphe qui contenait la légende est conservé
         self.assertTrue(any("Un second paragraphe de la page trois." in r["text"]
-                            for r in self.chunks("pdf-livre.md", "texte")))
+                            for r in self.chunks("pdf-livre.md", "text")))
 
     def test_compteur_de_copies_retirees(self):
         stats: dict = {}
@@ -447,7 +458,7 @@ class PhraseDeRenvoi(unittest.TestCase):
 class Types(Livres):
     def setUp(self):
         super().setUp()
-        self.biblio = library.Library()
+        self.biblio = self.bibliotheque()
 
     def test_texte_seul_par_defaut(self):
         hits = self.biblio.search("tableau kanban limite de travail", None, 10)
@@ -489,7 +500,7 @@ class Types(Livres):
         sections = "".join(f"## Section {n}\n\n{TEXTE}kanban kanban kanban numéro {n}.\n\n" for n in range(260))
         self.ecrire("flow/long.md", "# Long\n\n" + sections)
         self.indexer()
-        hits = library.Library().search("kanban", None, 10, types=["figure"])
+        hits = self.bibliotheque().search("kanban", None, 10, types=["figure"])
         self.assertEqual({h["kind"] for h in hits}, {"figure"})
         self.assertGreaterEqual(len(hits), 1)
 
@@ -553,7 +564,7 @@ class Types(Livres):
                 pile.enter_context(mock.patch.object(Path, nom, surveille_methode(getattr(Path, nom))))
             self.ecrire("flow/autre.md", LIVRE_PDF.replace("Livre PDF inventé", "Autre livre"))
             self.indexer()
-            biblio = library.Library()
+            biblio = self.bibliotheque()
             for hit in biblio.search("tableau kanban", None, 10, types=["texte", "figure"]):
                 biblio.read(hit["passage_id"], 2, 2)
         self.assertEqual(acces, [])
@@ -626,13 +637,6 @@ class Migration(Base):
         self.assertEqual(hits[0]["book"], "Ancien livre")
         self.assertEqual(biblio.search("kanban", None, 5, types=["figure"]), [])
         self.assertEqual(biblio.books(None)[0]["figures"], 0)
-
-    def test_indexer_un_livre_a_figures_dans_un_index_migre_garde_l_ancien_livre(self):
-        self.ancien_index()
-        self.ecrire("flow/pdf-livre.md", LIVRE_PDF)
-        sortie = self.indexer()                      # l'ancien livre n'est pas dans le dossier : il est retiré, comme avant
-        self.assertIn("removed: ancien.md", sortie)
-        self.assertEqual(len(self.chunks("pdf-livre.md", "figure")), 2)
 
     def test_un_index_neuf_a_les_colonnes_et_l_index_kind(self):
         db = library.connect()

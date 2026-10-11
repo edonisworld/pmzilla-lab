@@ -1389,52 +1389,243 @@ class SanctumReelProtege(Base):
         essai.lock_pass(self.tmp / "essais").close()      # libéré à la fin du premier passage
 
 
+def _sans_accents(texte: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", texte.lower()) if unicodedata.category(c) != "Mn")
+
+
+class FauxLecteur:
+    """Lecteur de prérequis inventé : mêmes réponses que LibraryReader (titres sans casse, collection exacte, tous les mots du
+    sujet sans casse ni accents), sans base. `close` est compté."""
+
+    def __init__(self, livres=(("The Principles of Product Development Flow", ("flow",)), ("Un article", ("watch",)),
+                               ("Autre", ("watch",))), passages=("S le goulot du flux", "S Les équipes et le délai")):
+        self.livres, self.passages, self.fermetures, self.erreur = list(livres), list(passages), 0, None
+
+    def books_with_title(self, texte):
+        return sum(texte.lower() in titre.lower() for titre, _ in self.livres)
+
+    def books_in_collection(self, nom):
+        return sum(nom in collections for _, collections in self.livres)
+
+    def passages_on_topic(self, alternatives):
+        if self.erreur:
+            raise self.erreur
+        self.alternatives = list(alternatives)
+
+        def correspond(passage, alternative):
+            texte, expression = alternative
+            mots = re.findall(r"\w+", _sans_accents(texte))
+            lus = re.findall(r"\w+", _sans_accents(passage))
+            if expression:          # mots voisins, dans l'ordre
+                return bool(mots) and any(lus[i:i + len(mots)] == mots for i in range(len(lus)))
+            return bool(mots) and all(m in lus for m in mots)
+        return sum(any(correspond(p, a) for a in alternatives) for p in self.passages)
+
+    def close(self):
+        self.fermetures += 1
+
+
 class Prerequis(unittest.TestCase):
-    """Champ `prerequisites` de cas.yaml : un cas dont la bibliothèque manque est « non évaluable ici »."""
+    """Champ `prerequisites` de cas.yaml, lu dans la base de la bibliothèque (lecteur inventé ici ; classe avec base dans
+    test_prerequis_base.py) : un cas dont la bibliothèque manque est « non évaluable ici »."""
 
     def setUp(self):
-        import sqlite3
-        self.temp = tempfile.TemporaryDirectory()
-        self.db = Path(self.temp.name) / "library.sqlite"
-        conn = sqlite3.connect(self.db)
-        conn.execute("CREATE TABLE books(id INTEGER, title TEXT, collections TEXT)")
-        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(text, section)")
-        conn.executemany("INSERT INTO books VALUES (?,?,?)", [(1, "The Principles of Product Development Flow", "flow"),
-                                                              (2, "Un article", "veille"), (3, "Autre", "veille")])
-        conn.execute("INSERT INTO chunks_fts VALUES ('le goulot du flux', 'S')")
-        conn.commit()
-        conn.close()
+        self.lecteur = FauxLecteur()
 
-    def tearDown(self):
-        self.temp.cleanup()
+    def manque(self, regles):
+        return essai.unmet_prerequisites(regles, reader=self.lecteur)
 
-    def test_sans_prerequis_rien_a_dire(self):
-        self.assertEqual(essai.unmet_prerequisites(None, self.db), [])
+    def test_sans_prerequis_rien_a_dire_et_aucune_connexion(self):
+        with mock.patch.object(essai, "open_library_reader", side_effect=AssertionError("aucune connexion attendue")):
+            self.assertEqual(essai.unmet_prerequisites(None), [])
+            self.assertEqual(essai.unmet_prerequisites([]), [])
 
     def test_prerequis_satisfaits(self):
-        regles = [{"book": "product development flow"}, {"collection": "veille", "minimum": 2},
+        regles = [{"book": "product development flow"}, {"collection": "watch", "minimum": 2},
                   {"absent_topic": "prototypage"}]
-        self.assertEqual(essai.unmet_prerequisites(regles, self.db), [])
+        self.assertEqual(self.manque(regles), [])
 
     def test_livre_manquant(self):
-        self.assertEqual(len(essai.unmet_prerequisites([{"book": "Inconnu"}], self.db)), 1)
+        raisons = self.manque([{"book": "Inconnu"}])
+        self.assertEqual(len(raisons), 1)
+        self.assertIn("Inconnu", raisons[0])
 
-    def test_collection_trop_petite(self):
-        self.assertIn("1", essai.unmet_prerequisites([{"collection": "flow", "minimum": 5}], self.db)[0])
+    def test_collection_par_nom_exact_et_minimum(self):
+        self.assertIn("1", self.manque([{"collection": "flow", "minimum": 5}])[0])
+        self.assertIn("0 livre", self.manque([{"collection": "wat"}])[0])           # pas de correspondance partielle
 
     def test_sujet_present_alors_qu_il_doit_etre_absent(self):
-        self.assertIn("présent", essai.unmet_prerequisites([{"absent_topic": "goulot"}], self.db)[0])
+        self.assertIn("présent", self.manque([{"absent_topic": "goulot"}])[0])
 
-    def test_index_introuvable(self):
-        self.assertIn("introuvable", essai.unmet_prerequisites([{"book": "x"}], Path(self.temp.name) / "non.sqlite")[0])
+    def test_sujet_absent_demande_tous_les_mots_sans_casse_ni_accents(self):
+        self.assertIn("présent", self.manque([{"absent_topic": "GOULOT flux"}])[0])
+        self.assertIn("présent", self.manque([{"absent_topic": "equipes delai"}])[0])   # accents ignorés
+        self.assertEqual(self.manque([{"absent_topic": "goulot prototypage"}]), [])     # un mot manque : absent
+
+    def test_alternatives_or_une_seule_suffit(self):
+        self.assertEqual(essai.topic_alternatives('"prototypage génératif" OR "generative prototyping"'),
+                         [("prototypage génératif", True), ("generative prototyping", True)])
+        self.assertEqual(essai.topic_alternatives("goulot flux"), [("goulot flux", False)])
+        self.assertEqual(essai.topic_alternatives("or et argent"), [("or et argent", False)])   # « or » en minuscules : un mot
+        self.assertEqual(essai.topic_alternatives('prototypage OR "équipes délai"'),
+                         [("prototypage", False), ("équipes délai", True)])
+        self.assertIn("présent", self.manque([{"absent_topic": '"prototypage génératif" OR "le goulot"'}])[0])
+        self.assertEqual(self.lecteur.alternatives, [("prototypage génératif", True), ("le goulot", True)])
+        self.assertIn("présent", self.manque([{"absent_topic": 'prototypage OR "équipes et le délai"'}])[0])
+        self.assertEqual(self.manque([{"absent_topic": '"prototypage génératif" OR "generative prototyping"'}]), [])
+        self.assertEqual(self.manque([{"absent_topic": '"goulot prototypage" OR "flux generative"'}]), [])   # aucune complète
+        self.assertEqual(self.manque([{"absent_topic": '"goulot flux" OR "équipes délai"'}]), [])   # mots présents mais non voisins
+
+    def test_expression_entre_guillemets_mots_voisins_dans_l_ordre(self):
+        self.assertIn("présent", self.manque([{"absent_topic": '"le goulot"'}])[0])         # voisins, dans l'ordre
+        self.assertEqual(self.manque([{"absent_topic": '"goulot flux"'}]), [])              # mots du passage, pas voisins
+        self.assertEqual(self.manque([{"absent_topic": '"flux goulot"'}]), [])              # voisins mais pas dans l'ordre
+        self.assertIn("présent", self.manque([{"absent_topic": "goulot flux"}])[0])         # sans guillemets : tous les mots
+
+    def test_sujet_tolere_jusqu_au_maximum(self):
+        self.assertEqual(self.manque([{"absent_topic": "goulot", "maximum": 1}]), [])
+
+    def test_base_injoignable(self):
+        import db
+        with mock.patch.object(db, "connect", side_effect=db.ErreurBase("Connexion à la base impossible : refusée.")):
+            self.assertEqual(essai.unmet_prerequisites([{"book": "x"}]), ["base de la bibliothèque injoignable"])
+        with mock.patch.object(essai, "open_library_reader", side_effect=RuntimeError("secret")):
+            self.assertEqual(essai.unmet_prerequisites([{"book": "x"}], dbname="pmzilla_eval_x"),
+                             ["base de la bibliothèque injoignable"])
+
+    def test_lecture_sous_le_role_de_lecture_seule_de_la_base_designee(self):
+        import db
+        for dbname in (None, "pmzilla_eval_inventee"):
+            with self.subTest(dbname=dbname), mock.patch.object(db, "connect", return_value=mock.MagicMock()) as connect:
+                essai.open_library_reader(dbname)
+                connect.assert_called_once_with(role="pmzilla_knowledge_ro", dbname=dbname)
+
+    def test_le_lecteur_ouvert_ici_est_ferme(self):
+        with mock.patch.object(essai, "open_library_reader", return_value=self.lecteur) as ouvrir:
+            essai.unmet_prerequisites([{"book": "flow"}], dbname="pmzilla_eval_x")
+        ouvrir.assert_called_once_with("pmzilla_eval_x")
+        self.assertEqual(self.lecteur.fermetures, 1)
+
+    def test_requete_en_echec_non_verifiable_sans_detail(self):
+        self.lecteur.erreur = RuntimeError("texte de la base")
+        raison = self.manque([{"absent_topic": "goulot"}])[0]
+        self.assertIn("non vérifiable (RuntimeError)", raison)
+        self.assertNotIn("texte de la base", raison)
 
     def test_regle_inconnue(self):
-        self.assertIn("inconnu", essai.unmet_prerequisites([{"bizarre": 1}], self.db)[0])
+        self.assertIn("inconnu", self.manque([{"bizarre": 1}])[0])
+
+    def test_plus_d_index_sqlite(self):
+        self.assertFalse(hasattr(essai, "library_db"))
+        self.assertFalse(hasattr(essai, "sqlite3"))
+        self.assertNotIn("library.sqlite", Path(essai.__file__).read_text(encoding="utf-8"))
+
+    def test_lecteur_reel_compte_et_termine_chaque_transaction(self):
+        conn = mock.MagicMock()
+        curseur = conn.cursor.return_value.__enter__.return_value
+        curseur.fetchone.return_value = (3,)
+        lecteur = essai.LibraryReader(conn)
+        self.assertEqual(lecteur.passages_on_topic([("équipe délai", False)]), 3)
+        sql, parametres = curseur.execute.call_args.args
+        self.assertIn("plainto_tsquery('simple', knowledge.immutable_unaccent(%s))", sql)
+        self.assertEqual(parametres, ("équipe délai",))
+        lecteur.passages_on_topic([("a b", False), ("c", False)])
+        sql, parametres = curseur.execute.call_args.args
+        self.assertEqual(sql.count("plainto_tsquery"), 2)
+        self.assertIn(" || ", sql)
+        self.assertEqual(parametres, ("a b", "c"))
+        self.assertEqual(lecteur.books_in_collection("watch"), 3)
+        self.assertIn("co.name = %s", curseur.execute.call_args.args[0])
+        self.assertEqual(lecteur.books_with_title("Flow"), 3)
+        self.assertIn("lower(title)", curseur.execute.call_args.args[0])
+        self.assertEqual(conn.rollback.call_count, 4)
+
+    def test_requete_expression_exacte_phraseto_tsquery_mots_sans_guillemets(self):
+        conn = mock.MagicMock()
+        curseur = conn.cursor.return_value.__enter__.return_value
+        curseur.fetchone.return_value = (1,)
+        lecteur = essai.LibraryReader(conn)
+        lecteur.passages_on_topic(essai.topic_alternatives('"a b" OR c d OR "e f"'))
+        sql, parametres = curseur.execute.call_args.args
+        parties = sql.split(" || ")
+        self.assertEqual(len(parties), 3)                   # une partie par alternative
+        self.assertIn("phraseto_tsquery('simple', knowledge.immutable_unaccent(%s))", parties[0])
+        self.assertIn("plainto_tsquery('simple', knowledge.immutable_unaccent(%s))", parties[1])
+        self.assertNotIn("phraseto", parties[1])
+        self.assertIn("phraseto_tsquery", parties[2])
+        self.assertEqual(parametres, ("a b", "c d", "e f"))   # aucun guillemet transmis
+        self.assertNotIn('"', "".join(parametres))
+
+    def test_sujet_du_cas_reel_deux_expressions_exactes(self):
+        cas = yaml.safe_load(CAS_REEL.read_text(encoding="utf-8"))
+        sujets = [r["absent_topic"] for c in cas for r in c.get("prerequisites") or [] if "absent_topic" in r]
+        self.assertIn('"prototypage génératif" OR "generative prototyping"', sujets)
+        self.assertEqual(essai.topic_alternatives('"prototypage génératif" OR "generative prototyping"'),
+                         [("prototypage génératif", True), ("generative prototyping", True)])
+        conn = mock.MagicMock()
+        curseur = conn.cursor.return_value.__enter__.return_value
+        curseur.fetchone.return_value = (0,)
+        essai.LibraryReader(conn).passages_on_topic(essai.topic_alternatives(sujets[sujets.index(
+            '"prototypage génératif" OR "generative prototyping"')]))
+        self.assertEqual(curseur.execute.call_args.args[0].count("phraseto_tsquery"), 2)
 
     def test_cas_reels_n_utilisent_que_des_regles_connues(self):
         for cas in yaml.safe_load(CAS_REEL.read_text(encoding="utf-8")):
             for regle in cas.get("prerequisites") or []:
                 self.assertTrue({"book", "collection", "absent_topic"} & set(regle), (cas["id"], regle))
+
+
+class PrerequisSeuls(Base):
+    """--prerequisites-only : identifiant et raisons (ou « prérequis satisfaits ») de chaque cas à prérequis ; aucune séance,
+    aucun juge, aucune base jetable, aucun rapport ; code de sortie 0 ou 1."""
+
+    CAS = [{"id": "c1", "question": "Q1 ?", "posture": "Delivery", "prerequisites": [{"book": "flow"}]},
+           {"id": "c2", "question": "Q2 ?", "posture": "Delivery"},
+           {"id": "c3", "question": "Q3 ?", "posture": "Delivery", "prerequisites": [{"book": "Inconnu"}]}]
+
+    def lancer(self, cas, *arguments):
+        essai.CASES_FILE.write_text(yaml.safe_dump(cas, allow_unicode=True), encoding="utf-8")
+        sortie, self.code = io.StringIO(), 0
+        lecteurs = []
+
+        def ouvrir(dbname=None):
+            lecteurs.append(dbname)
+            return FauxLecteur()
+
+        with mock.patch.object(essai, "open_library_reader", ouvrir), \
+                mock.patch.object(essai, "create_cases_database", side_effect=AssertionError("aucune base jetable")), \
+                mock.patch.object(essai, "run_session", side_effect=AssertionError("aucune séance")), \
+                mock.patch.object(essai, "lock_pass", side_effect=AssertionError("aucun verrou")), \
+                mock.patch.object(sys, "argv", ["posture_evals.py", "--prerequisites-only", *arguments]), \
+                contextlib.redirect_stdout(sortie):
+            try:
+                essai.main()
+            except SystemExit as fin:
+                self.code = fin.code
+        self.lecteurs = lecteurs
+        return sortie.getvalue()
+
+    def test_un_prerequis_manquant_sort_1(self):
+        sortie = self.lancer(self.CAS)
+        self.assertEqual(self.code, 1)
+        self.assertIn("c1 : prérequis satisfaits", sortie)
+        self.assertRegex(sortie, r"c3 : livre absent .*Inconnu")
+        self.assertNotIn("c2", sortie)                                          # sans prérequis : pas listé
+        self.assertEqual(self.lecteurs, [None, None])                           # la base de l'installation
+        self.assertEqual(self.commandes, [])                                    # ni séance ni juge
+        self.assertFalse(essai.REPORT_DIR.exists() and any(essai.REPORT_DIR.iterdir()))
+        self.assertFalse(essai.DATA.exists() and any(essai.DATA.iterdir()))
+
+    def test_tout_satisfait_sort_0(self):
+        sortie = self.lancer(self.CAS[:2])
+        self.assertEqual(self.code, 0)
+        self.assertEqual(sortie.strip(), "c1 : prérequis satisfaits")
+
+    def test_selection_de_cas(self):
+        sortie = self.lancer(self.CAS, "--cases", "c3")
+        self.assertEqual(self.code, 1)
+        self.assertNotIn("c1", sortie)
 
 
 class SanctumsEtContexte(unittest.TestCase):
@@ -1518,14 +1709,47 @@ class CasDeCommandes(Base):
             essai.place_files({"files": [{"from": "fx/a.md", "to": "../dehors.md"}]}, copie)
         essai.place_files({}, copie)          # sans `files` : rien à faire
 
-    def test_case_library_indexe_dans_le_dossier_du_passage(self):
+    def bibliotheque(self, base="pmzilla_eval_inventee", **options):
+        """case_library avec le vidage enregistré dans self.vidages ; les options de subprocess.run dans self.options."""
+        self.vidages, self.options = [], []
+        reel = essai.subprocess.run
+
+        def run(commande, **opts):
+            self.options.append(opts)
+            return reel(commande, **opts)
+
+        with mock.patch.object(essai, "reset_case_library", lambda nom: self.vidages.append(nom)), \
+                mock.patch.object(essai.subprocess, "run", run):
+            return essai.case_library({"id": "c", "library": "fx/collections"}, self.tmp, dbname=base, **options)
+
+    def test_case_library_vide_puis_indexe_dans_la_base_jetable(self):
         self.assertIsNone(essai.case_library({"id": "c"}, self.tmp))
-        config = essai.case_library({"id": "c", "library": "fx/collections"}, self.tmp)
+        config = self.bibliotheque()
+        self.assertEqual(self.vidages, ["pmzilla_eval_inventee"])
         commande = self.commandes[0]
-        self.assertEqual(commande[-2:], ["index", str(self.tmp / "workspace" / "fx" / "collections")])
+        self.assertEqual(commande[-3:], [str(essai.TOOLS / "pmzilla_lab_library.py"), "index",
+                                         str(self.tmp / "workspace" / "fx" / "collections")])
+        self.assertEqual(self.options[0]["env"]["PMZILLA_LAB_KNOWLEDGE_DBNAME"], "pmzilla_eval_inventee")
         serveur = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
-        self.assertEqual(serveur["env"], {"PMZILLA_LAB_DATA": str(self.tmp / "index-c")})
+        self.assertEqual(serveur["env"], {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"})
+        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
         self.assertNotEqual(config.name, "mcp.json")         # la configuration de l'installation n'est pas écrasée
+
+    def test_case_library_sans_base_jetable_n_indexe_rien(self):
+        with self.assertRaises(essai.LibraryUnavailable) as erreur:
+            self.bibliotheque(base=None)
+        self.assertEqual(str(erreur.exception), "bibliothèque jetable indisponible : base jetable absente")
+        self.assertEqual((self.vidages, self.commandes), ([], []))
+
+    def test_case_library_indexation_en_echec(self):
+        for code in (1, 2):
+            with self.subTest(code=code):
+                self.commandes.clear()
+                self.reponses.append(self.termine("", code, "Database unreachable: nothing was indexed."))
+                with self.assertRaises(essai.LibraryUnavailable) as erreur:
+                    self.bibliotheque()
+                self.assertIn(f"bibliothèque jetable indisponible : indexation en échec (code {code})", str(erreur.exception))
+                self.assertIn("Database unreachable", str(erreur.exception))
 
     def test_mcp_config_sans_index_jetable_garde_l_installation(self):
         serveur = json.loads(essai.mcp_config(self.tmp).read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
@@ -1542,6 +1766,83 @@ class CasDeCommandes(Base):
                 self.assertTrue(any(collections.glob("*/*.md")), c["library"])
         ids_reels = {c["id"] for c in yaml.safe_load(CAS_REEL.read_text(encoding="utf-8"))}
         self.assertFalse(ids_reels & {c["id"] for c in cas})
+
+
+class PassageAvecBibliothequeJetable(Base):
+    """main() sur un cas `library:` : la bibliothèque jetable est indexée dans la base jetable du passage, ses prérequis y sont lus,
+    sa séance lit cette base ; sans base jetable, le cas est non évaluable et rien n'est indexé. Séances et indexeur simulés."""
+
+    CAS = [{"id": "lib", "question": "Question lib ?", "posture": "Delivery", "library": "fx/collections",
+            "prerequisites": [{"book": "flow"}]},
+           {"id": "std", "question": "Question std ?", "posture": "Delivery", "prerequisites": [{"book": "flow"}]}]
+
+    def setUp(self):
+        super().setUp()
+        self.seances, self.vidages, self.lecteurs = [], [], []
+
+        def seance(question, copie, mcp, model, trace, *a, **k):
+            self.seances.append((question, Path(mcp)))
+            return [assistant(texte("[Posture : Delivery] réponse")), fin("[Posture : Delivery] réponse")]
+
+        def ouvrir(dbname=None):
+            self.lecteurs.append(dbname)
+            return FauxLecteur()
+
+        for patch in (mock.patch.object(essai, "git", lambda *a, **k: ""),
+                      mock.patch.object(essai, "make_copy", lambda *a, **k: None),
+                      mock.patch.object(essai, "prepare_memory", lambda *a, **k: {}),
+                      mock.patch.object(essai, "drop_copy"),
+                      mock.patch.object(essai, "run_session", seance),
+                      mock.patch.object(essai, "open_library_reader", ouvrir),
+                      mock.patch.object(essai, "reset_cases_database", lambda *a: None),
+                      mock.patch.object(essai, "drop_cases_database", lambda *a: None),
+                      mock.patch.object(essai, "reset_case_library", lambda nom: self.vidages.append(nom))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        essai.CASES_FILE.write_text(yaml.safe_dump(self.CAS, allow_unicode=True), encoding="utf-8")
+
+    def lancer(self, base_jetable):
+        sortie, self.code = io.StringIO(), 0
+        with mock.patch.object(essai, "create_cases_database", lambda: base_jetable), \
+                mock.patch.object(sys, "argv", ["posture_evals.py", "--retries", "0"]), contextlib.redirect_stdout(sortie):
+            try:
+                essai.main()
+            except SystemExit as fin_passage:
+                self.code = fin_passage.code
+        return {c["id"]: c for c in json.loads(max(essai.DATA.glob("*/resultats.json")).read_text(encoding="utf-8"))["cas"]}
+
+    def test_sans_base_jetable_le_cas_est_non_evaluable_et_rien_n_est_indexe(self):
+        resultats = self.lancer(None)
+        self.assertEqual(resultats["lib"]["non_evaluable"], ["bibliothèque jetable indisponible : base jetable absente"])
+        self.assertNotIn("non_evaluable", resultats["std"])
+        self.assertEqual([q for q, _ in self.seances], ["Question std ?"])
+        self.assertFalse(any("index" in commande for commande in self.commandes))
+        self.assertEqual(self.vidages, [])
+        self.assertEqual(self.lecteurs, [None])                                   # le cas standard lit la base de l'installation
+        self.assertEqual(self.code, essai.EXIT_NOT_VALIDATING)
+
+    def test_avec_base_jetable_indexation_prerequis_et_seance_sur_cette_base(self):
+        resultats = self.lancer("pmzilla_eval_inventee")
+        self.assertNotIn("non_evaluable", resultats["lib"])
+        self.assertEqual(self.vidages, ["pmzilla_eval_inventee"])
+        index = [c for c in self.commandes if "index" in c]
+        self.assertEqual(len(index), 1)
+        self.assertEqual(index[0][-1], str(essai.WORKSPACE / "fx" / "collections"))
+        self.assertEqual(self.lecteurs, ["pmzilla_eval_inventee", None])          # prérequis du cas lib : la base jetable
+        mcp = dict(self.seances)
+        serveur = json.loads(mcp["Question lib ?"].read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
+        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertEqual(serveur["env"]["PMZILLA_LAB_KNOWLEDGE_DBNAME"], "pmzilla_eval_inventee")
+        self.assertNotIn("PMZILLA_LAB_DATA", serveur["env"])
+        standard = json.loads(mcp["Question std ?"].read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
+        self.assertNotIn("PMZILLA_LAB_KNOWLEDGE_DBNAME", standard.get("env", {}))
+        self.assertEqual(mcp["Question std ?"].name, "mcp.json")
+
+    def test_indexation_en_echec_rend_le_cas_non_evaluable(self):
+        self.reponses.append(self.termine("", 2, "Database unreachable: nothing was indexed."))
+        resultats = self.lancer("pmzilla_eval_inventee")
+        self.assertIn("indexation en échec (code 2)", resultats["lib"]["non_evaluable"][0])
+        self.assertEqual([q for q, _ in self.seances], ["Question std ?"])
 
 
 class ChoixDuModele(Base):

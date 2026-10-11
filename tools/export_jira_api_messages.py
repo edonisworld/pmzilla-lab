@@ -63,6 +63,7 @@ CATALOGS = {
                                 "{tickets} ticket(s) concerné(s), écrits « {unknown} ».",
         "export_unknown_ids": "{label}Complétez {table} (equipes: identifiant -> libellé) avec ces identifiants : {ids}.",
         "export_written": "{label}Fichier écrit : {name} (permissions 600).",
+        "export_strict_teams": "identifiants d'équipe inconnus : export incomplet",
         # sous-commandes retirées
         "retired_teams_table": "la sous-commande teams-table est retirée. Flux-Lab/equipes-assets.yaml se complète à la main "
                                "(equipes: identifiant -> libellé) ; `export_jira_api.py export` liste les identifiants inconnus.",
@@ -123,6 +124,7 @@ CATALOGS = {
                                 "{tickets} ticket(s) affected, written \"{unknown}\".",
         "export_unknown_ids": "{label}Complete {table} (equipes: identifier -> label) with these identifiers: {ids}.",
         "export_written": "{label}File written: {name} (permissions 600).",
+        "export_strict_teams": "unknown team identifiers: export incomplete",
         "retired_teams_table": "the teams-table subcommand is retired. Flux-Lab/equipes-assets.yaml is completed by hand "
                                "(equipes: identifier -> label); `export_jira_api.py export` lists the unknown identifiers.",
         "retired_compare": "the compare subcommand is retired (the manual CSV export is no longer a route). Use "

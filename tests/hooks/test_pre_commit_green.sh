@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test du garde-fou « lancement vert » du hook pre-commit : dépôt Git temporaire, hook installé, aucune liste de noms.
+# Test du garde-fou « lancement vert » du hook pre-commit : dépôt Git temporaire, hook installé, liste de noms factice.
 # Lancement à la main : sh tests/hooks/test_pre_commit_green.sh
 set -u
 unset PMZILLA_SKIP_GREEN_CHECK
@@ -9,7 +9,8 @@ trap 'rm -rf "$tmp"' EXIT
 cd "$tmp" || exit 1
 git init -q . && git config user.email t@example.org && git config user.name test
 mkdir -p .git/hooks && ln -sf "$hook" .git/hooks/pre-commit
-export PMZILLA_NOMS="$tmp/absente.txt"
+printf 'NomFactice\n' > "$tmp/noms.txt"   # liste factice : sans liste, le garde-fou des noms refuse (R-47)
+export PMZILLA_NOMS="$tmp/noms.txt"
 ok=0; ko=0
 verifie() { # description commande-attendue-en-échec|succès (0/1) ; reste : commande
   desc=$1; attendu=$2; shift 2

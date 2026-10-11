@@ -20,9 +20,9 @@ Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Indexation.test
 - **THEN** the file is ignored, respectively the command stops with an error
 
 ### Requirement: Recompute only what changed
-The system SHALL recompute embeddings only for added or modified books, SHALL replace the passages of a modified book entirely (including its keyword index), SHALL remove a book whose file disappeared (naming it), SHALL recompute everything when the embedding model changes, and SHALL NOT call the embedding model when nothing changed.
+The system SHALL compare each book found in the folders with the book stored in the database under the same file name, SHALL recompute embeddings only for added or modified books (content hash or embedding model different, or book forced), SHALL replace the passages of a modified book entirely (including what the keyword index finds), SHALL remove from the database a book whose file disappeared (naming it), SHALL recompute everything when the embedding model changes, and SHALL NOT call the embedding model when nothing changed. A book already stored by the former import, with the same content hash, model, title, metadata and collections, SHALL count as unchanged and SHALL NOT be re-embedded.
 
-Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Indexation.test_inchange_ne_recalcule_rien, test_ajout, test_modification_remplace_les_passages, test_fichier_supprime_sort_de_l_index, test_changement_de_modele_reindexe)
+Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Indexation.test_inchange_ne_recalcule_rien, test_ajout, test_modification_remplace_les_passages, test_fichier_supprime_sort_de_l_index, test_changement_de_modele_reindexe), to be moved onto the fake store and the database class.
 
 #### Scenario: Unchanged run
 - **WHEN** indexing is run twice on the same files
@@ -34,7 +34,11 @@ Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Indexation.test
 
 #### Scenario: Deleted file
 - **WHEN** a file is deleted from the folders
-- **THEN** its book and passages leave the index and the report names it
+- **THEN** its book and passages leave the database and the report names it
+
+#### Scenario: Book stored by the former import
+- **WHEN** the database holds a book with the hash, model, title, metadata and collections that the indexer computes for its file
+- **THEN** the book is reported unchanged and no embedding call is made
 
 ### Requirement: Update collections, title and author without recomputing embeddings
 The system SHALL update a book's collections when its file moves to another collection folder, SHALL record all collections of a book present in several folders while indexing it once, and SHALL apply catalogue changes of title and authors, without recomputing embeddings.
@@ -190,9 +194,9 @@ Source: `tests/pmzilla_lab_library/test_figures.py` (PassagesFigure.test_un_bloc
 - **THEN** it has the same number of figure passages as before, not twice as many
 
 ### Requirement: Force recomputation of named books
-The system SHALL accept a recompute option naming books (by name with or without extension, by path, in any letter case, or by a list file with comments and blank lines) and SHALL recompute only those books even if their Markdown is unchanged. It SHALL refuse the option without a book or without a folder, and SHALL stop before touching the index, saying nothing was indexed, when a name is unknown or ambiguous. It SHALL NOT create any backup of the index.
+The system SHALL accept a recompute option naming books (by name with or without extension, by path, in any letter case, or by a list file with comments and blank lines) and SHALL recompute only those books even if their Markdown is unchanged. It SHALL refuse the option without a book or without a folder, and SHALL stop before touching the database, saying nothing was indexed, when a name is unknown or ambiguous. It SHALL print, before recomputing, the restore-point reminder of design.md D2 naming a labelled database backup. It SHALL NOT create any backup, neither a file in the data folder nor a database backup, and SHALL NOT read the backup folder.
 
-Source: `tests/pmzilla_lab_library/test_figures.py` (Recalcul)
+Source: `tests/pmzilla_lab_library/test_figures.py` (Recalcul), to be moved onto the fake store.
 
 #### Scenario: One book
 - **WHEN** one book is designated
@@ -204,24 +208,20 @@ Source: `tests/pmzilla_lab_library/test_figures.py` (Recalcul)
 
 #### Scenario: Unknown or ambiguous name
 - **WHEN** one designated name does not exist or matches two files
-- **THEN** the command stops, says nothing was indexed, makes no embedding call and leaves the index unchanged
+- **THEN** the command stops, says nothing was indexed, makes no embedding call and leaves the database unchanged
 
-#### Scenario: Reference record enriched
-- **WHEN** an old index has figure reference records without origin and the books are recomputed
-- **THEN** each figure then records a caption or an alternative text
-
-#### Scenario: No backup
+#### Scenario: Reminder and no backup
 - **WHEN** books are recomputed
-- **THEN** no new index backup file appears and an existing one is untouched
+- **THEN** the output first names a labelled database backup as restore point, and no new file appears in the data folder
 
 ### Requirement: Rename a collection in place
-The system SHALL rename a collection in the stored index without recomputing anything, SHALL support a dry run that changes nothing and says what would be renamed, SHALL be idempotent (saying there is nothing to do), SHALL deduplicate a book that already holds the new name, and SHALL keep passages, keyword index and other books intact. While indexing, a folder that carries a former collection name SHALL be stored under the new name with a warning and without recomputation.
+The system SHALL rename a collection in the database, under the writing role and in one transaction, without recomputing anything, SHALL support a dry run that changes nothing and says what would be renamed, SHALL be idempotent (saying there is nothing to do), SHALL deduplicate a book that already holds the new name, SHALL remove the former collection when no book uses it, and SHALL keep passages, vectors and other books intact. It SHALL exit 2 with the unreachable message when the database does not answer, and SHALL NOT open any SQLite file. While indexing, a folder that carries a former collection name SHALL be stored under the new name with a warning and without recomputation.
 
-Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Renommage.test_rename_collection_en_place_sans_recalcul, test_rename_collection_dry_run_et_idempotence, test_rename_collection_dedoublonne, test_rename_collection_en_ligne_de_commande, test_dossier_ancien_nom_indexe_sous_le_nouveau, test_deplacement_de_dossier_ne_recalcule_rien)
+Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Renommage), to be moved onto the fake store and the database class.
 
 #### Scenario: Rename
 - **WHEN** a collection is renamed from its former to its current name
-- **THEN** the stored name changes, the report counts the books, and passages, vectors and the keyword index are unchanged
+- **THEN** the stored membership changes, the report counts the books, and passages and vectors are unchanged
 
 #### Scenario: Dry run and repeat
 - **WHEN** the rename is run with the dry-run option, then for real, then again
@@ -230,23 +230,6 @@ Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Renommage.test_
 #### Scenario: Folder with former name
 - **WHEN** the watch folder is renamed to its former name and indexing is run
 - **THEN** the books stay under the current name, a warning names the former name and nothing is recomputed
-
-### Requirement: Migrate an old index without loss
-The system SHALL add the passage kind and reference columns to an index created before figures existed, SHALL give existing passages the text kind and an empty reference, SHALL keep texts, vectors, keyword index and book table intact, SHALL be idempotent, and SHALL let an old index be searched immediately (text hits, no figures). A new index SHALL have the columns and a kind index from the start.
-
-Source: `tests/pmzilla_lab_library/test_figures.py` (Migration)
-
-#### Scenario: Old index
-- **WHEN** an old index is opened
-- **THEN** every passage is kind text with an empty reference, and the keyword search still finds the old words
-
-#### Scenario: Open twice
-- **WHEN** the migration runs twice
-- **THEN** the result is the same and searches still work
-
-#### Scenario: Old book removed
-- **WHEN** a book with figures is indexed in a migrated index and the old book is absent from the folders
-- **THEN** the old book is reported removed and the new book has its figure passages
 
 ### Requirement: Diagnose PDF captions that were not removed from page text
 The system SHALL provide a command that replays the caption removal on one converted Markdown book and classifies each PDF caption not removed by cause (too far from the block, glued to other words, split over several lines or paragraphs, different form, not found), SHALL print only counts, never book text, caption, title or path, SHALL NOT modify or write any file, and SHALL ignore EPUB figures and figures without a caption.
@@ -271,6 +254,69 @@ The system SHALL refuse the former French name of the recompute option with an e
 #### Scenario: Former name
 - **WHEN** the index command is given the former option name and a book
 - **THEN** it stops with an error naming the current option and nothing is recomputed
+
+### Requirement: Store the index in the knowledge schema of the database
+The system SHALL write the library index of the `index` command directly into the knowledge schema of the database under the knowledge writing role: books with their title, metadata, content hash, model and indexing time, their collection memberships under the current collection names, and their passages in position order with kind text or figure, reference record and half-precision vector. It SHALL write each added or replaced book in one transaction, so that an interrupted run leaves only complete books and a failing book leaves no book row and no orphan passage. It SHALL delete a collection no longer used by any book at the end of the run. It SHALL refuse a vector whose size differs from the model's with an error that mentions dimensions and no text. It SHALL NOT create, open or read any SQLite file when indexing, renaming, probing or reporting status. Tests: `tests/pmzilla_lab_library` (fake store, and database class run with `tools/dbtest.sh`).
+
+#### Scenario: First indexing into an empty database
+- **WHEN** five invented books, two of them with figures, are indexed into an empty disposable database
+- **THEN** the database holds five books, their passages with kinds text and figure, their collections, and no SQLite file exists in the data folder
+
+#### Scenario: Failing book
+- **WHEN** one book fails while its passages are written
+- **THEN** that book is absent, no orphan passage remains, the other books are stored and the command exits with code 1 naming the file
+
+#### Scenario: Orphan collection
+- **WHEN** the only book of a collection moves to another collection folder and indexing runs
+- **THEN** the former collection no longer exists in the database and no embedding call is made
+
+#### Scenario: Wrong vector size
+- **WHEN** the embedding service returns a vector of the wrong size
+- **THEN** the book is not written and the error mentions dimensions and no book text
+
+### Requirement: Stop before any work when the database does not answer or another run is indexing
+The system SHALL connect to the database before any embedding call and SHALL stop with exit code 2 and the unreachable message of design.md D2, pointing to the database start script and holding no secret, when it does not answer. It SHALL take an exclusive lock for the duration of a run and SHALL stop with exit code 1 and the "in progress" message of design.md D2 when another run holds it. In both cases it SHALL write nothing and SHALL NOT call the embedding service.
+
+#### Scenario: Database down
+- **WHEN** indexing runs while the database does not answer
+- **THEN** the command exits with code 2, says nothing was indexed, names the start script and makes no embedding call
+
+#### Scenario: Concurrent run
+- **WHEN** a second indexing run starts while a first one holds the lock
+- **THEN** the second exits with code 1, says another run is in progress and changes nothing
+
+### Requirement: Refuse an empty scan against a filled database
+The system SHALL refuse, with exit code 1 and the message of design.md D2 that names the allow-empty option, to index folders that contain no book while the database holds books, and SHALL remove every book only when that option is given. It SHALL NOT delete any book before this check.
+
+#### Scenario: Empty folders
+- **WHEN** the collection folders are empty and the database holds books
+- **THEN** the command exits with code 1, nothing is removed and the output names the allow-empty option
+
+#### Scenario: With the option
+- **WHEN** the same run is made with the allow-empty option
+- **THEN** every book is removed and the report names them
+
+### Requirement: Probe the BM25 index on request
+The system SHALL provide a probe command that reads the BM25 index like the search does, under the read-only role: one full-text query on common words without a filter and one filtered on figure passages, each ending its transaction. It SHALL print "BM25 index readable" and exit 0 when both succeed; SHALL print "BM25 index unreadable" with the failing variant and the error type, point to the "Damaged BM25 index" section of the installation guide and exit 3 when either fails, for an internal error of a damaged index as for any other probe error; and SHALL exit 2 with the unreachable message when the database does not answer. It SHALL NOT repair anything, SHALL NOT write, and its output SHALL hold no book text.
+
+#### Scenario: Readable index
+- **WHEN** both probe queries succeed
+- **THEN** the output says the index is readable and the exit code is 0
+
+#### Scenario: Damaged index
+- **WHEN** the filtered probe query raises an internal error
+- **THEN** the output names the unreadable BM25 index, the filtered variant, the error type and the guide section, and the exit code is 3
+
+#### Scenario: No repair
+- **WHEN** the probe fails
+- **THEN** no statement other than the two read queries and the transaction ends is sent
+
+### Requirement: Report database counts on request
+The system SHALL provide a status command that prints, under the read-only role, one line with the numbers of books, passages, figures and collections of the database, and nothing else, and SHALL exit 2 with the unreachable message when the database does not answer. It SHALL NOT print titles, file names or passage text.
+
+#### Scenario: Status
+- **WHEN** the status command runs on a database with five books
+- **THEN** one line gives five books and the passage, figure and collection counts, and no title appears
 
 ## Note on the BM25 index
 

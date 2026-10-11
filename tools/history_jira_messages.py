@@ -1,0 +1,130 @@
+"""PMZilla Lab : messages de tools/history_jira.py par langue (plan de la version anglaise, lot 3, étape 2).
+
+Le français reproduit à l'octet près les textes du script avant le lot 3. Aucun message ne contient de jeton, de titre
+ni de donnée individuelle : seulement des effectifs, des codes HTTP et des noms de réglages. Les noms d'états de Jira,
+les noms de segments des réglages et les noms de colonnes d'export ne sont pas traduits (données).
+"""
+
+CATALOGS = {
+    "fr": {
+        # réglages, jeton, réseau
+        "settings_missing": "réglages manquants dans {file} : {names}",
+        "token_type_invalid": "jira_token_type doit valoir « scoped » ou « classic ».",
+        "url_not_https": "jira_site doit commencer par https:// (http n'est accepté que pour la machine locale).",
+        "token_command_failed": "jeton introuvable : la commande security n'a pas pu être lancée.",
+        "token_not_found": "jeton introuvable dans le Trousseau (service {service}).",
+        "network_error": "erreur réseau",
+        "http_code": "HTTP {code}",
+        "network_short": "réseau",
+        "response_unreadable": "réponse de Jira illisible.",
+        "cloud_id_not_found": "cloudId introuvable sur le site Jira.",
+        # export et cache
+        "key_column_not_found": "colonne de clé introuvable dans l'export (voir les noms de colonnes de flux.yaml). Seuls les CSV de export_jira_api.py sont lus (uv run tools/export_jira_api.py export).",
+        "cache_unreadable": "le cache de l'historique est illisible : le déplacer avant de relancer.",
+        "connection_ok": "connexion OK",
+        "team_no_column": "--team : aucune colonne d'équipe dans l'export.",
+        "team_no_match": "--team : aucun ticket de l'export ne correspond.",
+        # collect
+        "collect_read": "Tickets lus : {read} ; écartés (types de portefeuille, projets exclus) : {discarded}.",
+        "collect_read_team": "Tickets lus : {read} ; écartés (types de portefeuille, projets exclus) : {discarded}"
+                             " ; hors équipe demandée : {off_team}.",
+        "collect_cache_ignored": "Cache ignoré (--refresh) : à interroger : {todo}.",
+        "collect_cached": "Déjà en cache et terminés (non réinterrogés) : {cached} ; à interroger : {todo}.",
+        "mode_bulk": "groupé",
+        "mode_single": "ticket par ticket",
+        "error_detail_item": "HTTP {code} : {count}",
+        "collect_summary": "Mode : {mode}. Tickets traités : {processed} ; transitions de statut : {transitions} ; "
+                           "erreurs : {errors}{detail}.",
+        "collect_stopped": "Arrêt : HTTP {code} (accès refusé : vérifier le jeton et ses droits). "
+                           "Le cache garde ce qui a été collecté.",
+        # check
+        "list_separator": " ; ",
+        "bucket_item": "{bucket} : {count}",
+        "bucket_10_plus": "10 et plus",
+        "unknown_state": "(inconnu)",
+        "no_segment": "(aucun segment)",
+        "ticket_not_in_cache": "ticket absent du cache.",
+        "ticket_transitions": "{ticket} : {count} transition(s) de statut dans le cache.",
+        "ticket_start": "  départ            {state}",
+        "ticket_export_state": "  état de l'export : {state}",
+        "check_needs_export": "check : donner au moins un export (ou --key).",
+        "no_status_column": "aucune colonne d'état (Status) dans l'export.",
+        "check_retained": "Tickets de l'export retenus : {retained} ; absents du cache : {missing}.",
+        "check_consistency": "Dernier état de l'historique égal à l'état de l'export : cohérents {consistent} ; "
+                             "incohérents {inconsistent} ; non comparables (aucune transition) {not_comparable}.",
+        "check_buckets": "Transitions par ticket : {buckets}.",
+        "check_delivered": "Tickets livrés (date de résolution) : {delivered} ; "
+                           "livrés sans aucune transition : {delivered_without}.",
+        "check_unreadable_dates": "Dates de transition illisibles : {count}.",
+        "check_unreadable_dates_flux": "Dates de transition illisibles : {count} "
+                                       "(le calcul de flux_jira.py ne peut pas ranger ces transitions).",
+        "delivered_header": "Tickets livrés ({count}) : lecture de l'historique.",
+        "delivered_start_states": "  État de départ de la première transition connue : {states}.",
+        "delivered_none": "aucun",
+        "delivered_buckets": "  Transitions par ticket livré : {buckets}.",
+        "delivered_segments": "  Segments traversés (tickets livrés passés par le segment) : {segments}.",
+        "delivered_states": "  États traversés (tickets livrés) : {states}.",
+        "dormants_removed": "--dormants (export CSV des dormants) n'existe plus : les dormants se déduisent de l'historique des états. Utilise flux_jira.py compute --dormant-from-history.",
+        # erreurs de main
+        "error_line": "Erreur : {message}",
+        "unexpected_error": "Erreur inattendue ({name}).",
+    },
+    "en": {
+        "settings_missing": "missing settings in {file}: {names}",
+        "token_type_invalid": "jira_token_type must be \"scoped\" or \"classic\".",
+        "url_not_https": "jira_site must start with https:// (http is only accepted for the local machine).",
+        "token_command_failed": "token not found: the security command could not be started.",
+        "token_not_found": "token not found in the Keychain (service {service}).",
+        "network_error": "network error",
+        "http_code": "HTTP {code}",
+        "network_short": "network",
+        "response_unreadable": "unreadable response from Jira.",
+        "cloud_id_not_found": "cloudId not found on the Jira site.",
+        "key_column_not_found": "key column not found in the export (see the column names in flux.yaml). Only the CSV files of export_jira_api.py are read (uv run tools/export_jira_api.py export).",
+        "cache_unreadable": "the history cache is unreadable: move it aside before running again.",
+        "connection_ok": "connection OK",
+        "team_no_column": "--team: no team column in the export.",
+        "team_no_match": "--team: no ticket in the export matches.",
+        "collect_read": "Tickets read: {read}; discarded (portfolio types, excluded projects): {discarded}.",
+        "collect_read_team": "Tickets read: {read}; discarded (portfolio types, excluded projects): {discarded}"
+                             "; outside the requested team: {off_team}.",
+        "collect_cache_ignored": "Cache ignored (--refresh): to query: {todo}.",
+        "collect_cached": "Already cached and finished (not queried again): {cached}; to query: {todo}.",
+        "mode_bulk": "bulk",
+        "mode_single": "ticket by ticket",
+        "error_detail_item": "HTTP {code}: {count}",
+        "collect_summary": "Mode: {mode}. Tickets processed: {processed}; status transitions: {transitions}; "
+                           "errors: {errors}{detail}.",
+        "collect_stopped": "Stopped: HTTP {code} (access denied: check the token and its permissions). "
+                           "The cache keeps what was collected.",
+        "list_separator": "; ",
+        "bucket_item": "{bucket}: {count}",
+        "bucket_10_plus": "10 or more",
+        "unknown_state": "(unknown)",
+        "no_segment": "(no segment)",
+        "ticket_not_in_cache": "ticket not in the cache.",
+        "ticket_transitions": "{ticket}: {count} status transition(s) in the cache.",
+        "ticket_start": "  start             {state}",
+        "ticket_export_state": "  export status: {state}",
+        "check_needs_export": "check: give at least one export (or --key).",
+        "no_status_column": "no status column (Status) in the export.",
+        "check_retained": "Export tickets kept: {retained}; missing from the cache: {missing}.",
+        "check_consistency": "Last state in the history equal to the export state: consistent {consistent}; "
+                             "inconsistent {inconsistent}; not comparable (no transition) {not_comparable}.",
+        "check_buckets": "Transitions per ticket: {buckets}.",
+        "check_delivered": "Delivered tickets (resolution date): {delivered}; "
+                           "delivered with no transition at all: {delivered_without}.",
+        "check_unreadable_dates": "Unreadable transition dates: {count}.",
+        "check_unreadable_dates_flux": "Unreadable transition dates: {count} "
+                                       "(the flux_jira.py computation cannot place these transitions).",
+        "delivered_header": "Delivered tickets ({count}): reading of the history.",
+        "delivered_start_states": "  Starting state of the first known transition: {states}.",
+        "delivered_none": "none",
+        "delivered_buckets": "  Transitions per delivered ticket: {buckets}.",
+        "delivered_segments": "  Segments crossed (delivered tickets that went through the segment): {segments}.",
+        "delivered_states": "  States crossed (delivered tickets): {states}.",
+        "dormants_removed": "--dormants (dormant tickets CSV export) no longer exists: dormant items are inferred from the status history. Use flux_jira.py compute --dormant-from-history.",
+        "error_line": "Error: {message}",
+        "unexpected_error": "Unexpected error ({name}).",
+    },
+}

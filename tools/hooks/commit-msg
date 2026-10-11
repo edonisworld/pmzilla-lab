@@ -1,0 +1,17 @@
+#!/bin/sh
+# Garde-fou : refuse un commit dont le message contient un identifiant personnel de l'auteur (nom d'utilisateur, chemin
+# /Users/<nom>, chemin du workspace, .pmzilla/identifiants.txt). Les lignes de commentaire (#) ne comptent pas.
+# N'affiche jamais l'identifiant ni le texte du message. Installation : ln -sf ../../tools/hooks/commit-msg .git/hooks/commit-msg
+set -u
+racine=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+scanner="$racine/tools/identifiants_personnels.py"
+copie=$(mktemp) || exit 1
+trap 'rm -f "$copie"' EXIT
+grep -v '^#' "$1" > "$copie"
+python3 "$scanner" --racine "$racine" --fichier "$copie" > /dev/null 2>&1
+code=$?
+case $code in
+  0) exit 0 ;;
+  1) echo "commit-msg : le message contient un identifiant personnel (chemin, nom d'utilisateur) ; commit refusé. Reformule le message sans l'identifiant." >&2; exit 1 ;;
+  *) echo "commit-msg : le message n'a pas pu être vérifié (scanner en erreur, code $code) ; commit refusé." >&2; exit 1 ;;
+esac

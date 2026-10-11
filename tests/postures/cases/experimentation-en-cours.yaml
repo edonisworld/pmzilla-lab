@@ -1,0 +1,17 @@
+# Jeu d'essai inventé (db-lot2, design.md 7.3). Aucun nom de personne, d'équipe ou de projet.
+# Expérimentation 1 = la cible : l'expérimentation en cours de l'auteur de la séance. Aucun cas.
+experiments:
+  - author: agile-lead-test
+    started_on: 2026-09-01
+    status: running
+    problem: "Les refinements de l'équipe A durent plus de deux heures sans aboutir à une décision."
+    context: {team_type: "équipe A", team_size: "6", phase: "régime établi"}
+    hypotheses:
+      - "Sans temps limité ni décision attendue, le refinement s'étire."
+    chosen_path: "Chaque refinement est limité à une heure et se termine par une décision par élément traité."
+    tested: "Pendant quatre refinements, la durée est notée et chaque élément sort avec une décision ou une question nommée."
+    expected_signal: "La durée tombe sous une heure et chaque élément reçoit une décision."
+    success_criterion: "Quatre refinements de moins d'une heure, avec une décision par élément."
+    review_due: 2028-01-31
+    notes:
+      - {noted_on: 2026-09-15, note: "Le premier refinement a duré une heure vingt, deux éléments sont restés sans décision."}

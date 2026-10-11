@@ -1,0 +1,247 @@
+# Jeu d'essai des postures de PMZilla Lab
+#
+# Rejoué par ~/PMZilla-Lab/posture_evals.py après chaque modification de CLAUDE.md, d'une posture
+# ou d'une commande. Chaque cas tourne dans une copie temporaire du workspace : la mémoire des
+# agents n'est jamais touchée.
+#
+# Champs d'un cas :
+#   id            identifiant court, stable (sert à comparer deux passages)
+#   question      la demande, telle que l'utilisateur la poserait
+#   posture       posture attendue dans la balise [Posture : …] ; « aucune » = pas de balise ;
+#                 absent = non vérifié
+#   verifications vérifications automatiques, lues dans la trace de la séance :
+#                   tool: search_library          l'outil a été appelé
+#                   collections: [watch]          … avec au moins une de ces collections
+#                   critic: true | false          le sous-agent pmzilla-critic a été appelé ou non
+#                   text: "regex"                 la réponse contient ce motif (sans casse)
+#                   without_text: "regex"         la réponse ne contient pas ce motif
+#                   memory_without: "regex"       aucun fichier modifié par la séance ne contient ce motif
+#                   ends_with_sources: true       la section « Sources » est la dernière : rien ne suit sa liste
+#                   dates_in_sources: true        toute date du texte est la date d'une ligne de « Sources »
+#                   sources_cited: true           chaque ligne de « Sources » est citée dans le texte
+#                   non_blocking: true            (avec n'importe quelle règle) indicateur : rapporté à part, hors du décompte
+#   judgements    un critère est un texte, ou `text: …` suivi de `non_blocking: true` (indicateur jugé, hors du décompte)
+#   prerequisites ce que la bibliothèque de l'installation doit contenir pour que le cas ait un sens ; sinon
+#                 le cas est rapporté « non évaluable ici » au lieu d'échouer :
+#                   book: "titre"                 un livre dont le titre contient ce texte est indexé
+#                   collection: watch, minimum: N    la collection contient au moins N livres
+#                   absent_topic: "requête FTS"   la requête ne renvoie aucun passage (cas « hors bibliothèque »)
+#   judgements    critères qui demandent une lecture, jugés par Claude avec une justification
+#
+# en              (facultatif) variante anglaise du cas, jouée par --language en : `question`, `judgements` (même forme que le cas),
+#                 `text` (motif de la règle `text` des vérifications) ; sans bloc `en:`, le cas n'est pas joué en anglais.
+#
+# Les anciens noms de clés (outil, texte, sans_texte, memoire_sans, jugements, prerequis, livre, sujet_absent) sont
+# refusés : le chargement s'arrête en nommant le cas et la clé actuelle.
+#
+# Aucun contenu interne à une entreprise ; le seul nom propre (Paul) est fictif.
+
+- id: discovery-cadrage
+  question: "On veut ajouter un module de prescription mobile, on commence par quoi ?"
+  posture: Discovery
+  judgements:
+    - "Pose des questions sur les utilisateurs concernés et sur le problème à résoudre avant de proposer une solution."
+    - "Ne propose ni fonctionnalités ni roadmap pour le module avant d'avoir cadré le problème."
+  en:
+    question: "We want to add a mobile prescribing module, where do we start?"
+    judgements:
+      - "Asks questions about the users concerned and about the problem to solve before proposing a solution."
+      - "Proposes neither features nor a roadmap for the module before the problem has been framed."
+
+- id: delivery-estimation
+  question: "Nos équipes tiennent rarement leurs engagements de sprint, et la réponse habituelle est de mieux estimer."
+  posture: Delivery
+  verifications:
+    - tool: search_library
+  prerequisites:
+    - book: "Principles of Product Development Flow"
+  judgements:
+    - "Ne recommande pas « mieux estimer » comme remède et oriente l'analyse vers le flux (WIP, cycle time ou lead time, taille des lots, variabilité ou contrainte)."
+    - "Cite au moins un livre de la bibliothèque au format Auteur, Titre."
+  en:
+    question: "Our teams rarely keep their sprint commitments, and the usual answer is to estimate better."
+    judgements:
+      - "Does not recommend \"estimating better\" as the remedy and steers the analysis towards flow (WIP, cycle time or lead time, batch size, variability or constraint)."
+      - "Cites at least one book of the library in the format Author, Title."
+
+- id: scaling-safe
+  question: "On veut passer à SAFe pour coordonner 8 équipes."
+  posture: Scaling
+  judgements:
+    - "Ne recommande pas SAFe par défaut : demande ou propose d'abord un diagnostic (dépendances, flux de valeur, topologie des équipes)."
+    - "Pose au moins une question sur le contexte avant de conclure."
+  en:
+    question: "We want to move to SAFe to coordinate 8 teams."
+    judgements:
+      - "Does not recommend SAFe by default: first asks for or proposes a diagnosis (dependencies, value stream, team topology)."
+      - "Asks at least one question about the context before concluding."
+
+- id: facilitation-retro
+  question: "Prépare-moi une rétro pour une équipe démotivée."
+  posture: Facilitation
+  judgements:
+    - "Clarifie l'intention de la rétrospective et le contexte du groupe avant de proposer un format."
+    - "Ne livre pas un template générique sans contexte."
+  en:
+    question: "Prepare a retro for me for a demotivated team."
+    judgements:
+      - "Clarifies the intent of the retrospective and the context of the group before proposing a format."
+      - "Does not deliver a generic template without context."
+
+- id: routage-ambigu
+  question: "Comment on s'améliore ?"
+  posture: aucune
+  judgements:
+    - "Pose une question de clarification au lieu de deviner une posture ou de répondre."
+  en:
+    question: "How do we improve?"
+    judgements:
+      - "Asks a clarifying question instead of guessing a posture or answering."
+
+- id: refus-generique
+  question: "Donne-moi les bonnes pratiques agiles."
+  judgements:
+    - "Refuse de donner une liste générique de bonnes pratiques et demande du contexte."
+  en:
+    question: "Give me the agile best practices."
+    judgements:
+      - "Refuses to give a generic list of best practices and asks for context."
+
+- id: citation-reinertsen
+  question: "Que dit Reinertsen sur le coût du délai ?"
+  verifications:
+    - tool: search_library
+  prerequisites:
+    - book: "Principles of Product Development Flow"
+  judgements:
+    - "Cite Reinertsen et le titre du livre (The Principles of Product Development Flow)."
+    - "Chaque section ou chapitre cité figure dans les sections renvoyées par la bibliothèque ou dans les chapitres nommés dans les passages lus, ou la réponse cite le passage sans section : aucune section ni aucun numéro de chapitre inventé."
+  en:
+    question: "What does Reinertsen say about the cost of delay?"
+    judgements:
+      - "Cites Reinertsen and the title of the book (The Principles of Product Development Flow)."
+      - "Every section or chapter cited appears in the sections returned by the library or in the chapters named in the passages read, or the answer cites the passage without a section: no section and no chapter number is invented."
+
+- id: hors-bibliotheque
+  question: "Comment utiliser le prototypage génératif en discovery ?"
+  verifications:
+    - tool: search_library
+    - text: "hors biblioth[eè]que"
+  prerequisites:
+    - absent_topic: '"prototypage génératif" OR "generative prototyping"'
+  judgements:
+    - "Distingue ce qui vient de la bibliothèque (avec citation) de ce qui n'en vient pas : une déduction est marquée « J'en déduis » ou « Hypothèse » ; un constat que la bibliothèque est muette, ou un apport de culture générale, est marqué « hors bibliothèque » au moins une fois, à l'endroit du constat."
+  en:
+    question: "How do I use generative prototyping in discovery?"
+    text: "outside (of )?the library"
+    judgements:
+      - "Distinguishes what comes from the library (with a citation) from what does not: an inference is marked \"I infer\" or \"Hypothesis\"; a finding that the library is silent, or a contribution from general knowledge, is marked \"outside the library\" at least once, at the place of the finding."
+
+- id: veille-goulot
+  question: "Que disent les auteurs de la veille sur le goulot après l'IA ?"
+  verifications:
+    - tool: search_library
+      collections: [watch]
+    # structure de la réponse : vérifications déterministes, bloquantes
+    - ends_with_sources: true
+    - dates_in_sources: true
+    - sources_cited: true
+  prerequisites:
+    - collection: watch
+      minimum: 10
+  judgements:
+    - text: "Chaque paragraphe de la réponse qui affirme quelque chose en s'appuyant sur un article de la veille contient un renvoi court complet (auteur ou site, et date) qui désigne cet article ; un paragraphe qui affirme quelque chose sans source commence par « J'en déduis » ou « Hypothèse » ; une phrase de transition ou une question n'a pas besoin de renvoi. Un texte connu seulement par un article de la veille (une newsletter qui le résume, par exemple) peut être mentionné s'il est rattaché explicitement à l'article qui le cite. Quand la bibliothèque ne renvoie pas d'auteur, le site suivi de \"(auteur non indiqué)\" vaut auteur. Chaque ligne de « Sources » donne auteur ou site, titre, date et lien."
+      non_blocking: true
+    - "Ne donne pas à un article de veille le poids d'un livre : les confronte à la bibliothèque ou signale leur statut."
+  en:
+    question: "What do the watch authors say about the bottleneck after AI?"
+    judgements:
+      - text: "Every paragraph of the answer that states something relying on a watch article contains a complete short reference (author or site, and date) that designates that article; a paragraph that states something without a source starts with \"I infer\" or \"Hypothesis\"; a transition sentence or a question needs no reference. A text known only through a watch article (a newsletter that summarizes it, for example) may be mentioned if it is explicitly attached to the article that cites it. When the library returns no author, the site followed by \"(auteur non indiqué)\" counts as the author. Each line of \"Sources\" gives author or site, title, date and link."
+        non_blocking: true
+      - "Does not give a watch article the weight of a book: confronts them with the library or flags their status."
+
+- id: delivery-diagnostic-critic
+  # Contexte complet et demande de garder le livrable : la posture doit produire le diagnostic
+  # (livrable structurant, donc Critic) au lieu de s'arrêter aux questions de cadrage.
+  question: >-
+    Diagnostic de flux pour une équipe de 6 développeurs sur un logiciel métier, en Scrum avec des
+    sprints de deux semaines : lead time moyen de 40 jours, 25 éléments en cours, environ 3 éléments
+    terminés par semaine, la moitié des éléments en cours attendent une validation métier. Paul, le
+    responsable métier, bloque les décisions. Fais le diagnostic avec ces éléments, et garde-le.
+  posture: Delivery
+  verifications:
+    - tool: search_library
+    - critic: true
+    - memory_without: "\\bPaul\\b"
+  judgements:
+    - "Produit un diagnostic de flux qui s'appuie sur les chiffres donnés (par exemple WIP par personne, loi de Little)."
+    - "Traite le blocage des décisions comme un problème de système ou de rôle, sans jugement sur la personne."
+    - "Intègre ou résume la contestation de Critic."
+  en:
+    question: >-
+      Flow diagnosis for a team of 6 developers on a business application, in Scrum with two-week
+      sprints: average lead time of 40 days, 25 items in progress, about 3 items finished per week,
+      half of the items in progress are waiting for a business validation. Paul, the business owner,
+      blocks the decisions. Make the diagnosis with these elements, and keep it.
+    judgements:
+      - "Produces a flow diagnosis that relies on the figures given (for example WIP per person, Little's law)."
+      - "Treats the blocking of decisions as a problem of system or role, without judging the person."
+      - "Integrates or summarizes Critic's challenge."
+
+# Cas du module de cas (db-lot2, design.md 7.3) : fixtures inventées sous tests/postures/cases/, un seul critère bloquant par cas,
+# pas de champ `posture` (ce serait une vérification bloquante), le reste en indicateurs non bloquants.
+- id: cas-proche-reussi
+  question: "Dans mon équipe, les parties prenantes ne viennent plus aux revues de sprint. Comment je m'y prends ?"
+  cases_fixture: tests/postures/cases/cas-proche-reussi.yaml
+  verifications:
+    - tool: search_cases
+      non_blocking: true
+  judgements:
+    - "Présente le cas n°1 comme une piste, citée avec son numéro, son auteur, sa date et son résultat, comme un témoignage et non comme une référence, et dit ce qui diffère ou reste à vérifier par rapport à la situation décrite."
+    - text: "Ne présente pas le cas n°2 comme une piste."
+      non_blocking: true
+  en:
+    question: "In my team, stakeholders no longer attend sprint reviews. How do I go about it?"
+    cases_fixture: tests/postures/cases/cas-proche-reussi.en.yaml
+    judgements:
+      - "Presents case no. 1 as a lead, cited with its number, author, date and outcome, as a testimony and not as a reference, and says what differs or remains to be checked against the situation described."
+      - text: "Does not present case no. 2 as a lead."
+        non_blocking: true
+
+- id: cas-proche-echoue
+  question: "Je veux imposer une limite de WIP à une équipe qui a trop de travail en cours. Bonne idée ?"
+  cases_fixture: tests/postures/cases/cas-proche-echoue.yaml
+  verifications:
+    - tool: search_cases
+      non_blocking: true
+  judgements:
+    - "Présente le cas n°1 comme un chemin déjà tenté qui a échoué, à éviter ou à adapter, avec ce qui a coincé, sans en faire une preuve générale."
+    - text: "Confronte le cas à au moins un livre de la bibliothèque, ou indique son statut de témoignage."
+      non_blocking: true
+  en:
+    question: "I want to impose a WIP limit on a team that has too much work in progress. Good idea?"
+    cases_fixture: tests/postures/cases/cas-proche-echoue.en.yaml
+    judgements:
+      - "Presents case no. 1 as a path already tried that failed, to avoid or adapt, with what got stuck, without turning it into a general proof."
+      - text: "Confronts the case with at least one library book, or states its testimony status."
+        non_blocking: true
+
+- id: experimentation-en-cours
+  question: "Les refinements de mon équipe s'éternisent sans décision. Tu me proposes une expérimentation ?"
+  cases_fixture: tests/postures/cases/experimentation-en-cours.yaml
+  verifications:
+    - tool: search_experiments
+      non_blocking: true
+  judgements:
+    - "Mentionne l'expérimentation n°1 en cours de l'utilisateur et propose d'y ajouter une note plutôt que d'en lancer une nouvelle ; dire qu'on n'en propose pas une deuxième sur le même problème remplit ce point."
+    - "Ne donne aucun avis sur le chemin de cette expérimentation et ne la présente pas comme un résultat ; lister ce qu'elle enregistre (problème, chemin, critère de succès, notes) est attendu."
+    - text: "Ne lance aucune nouvelle expérimentation sans l'accord de l'utilisateur."
+      non_blocking: true
+  en:
+    question: "My team's refinements drag on without a decision. Can you suggest an experiment?"
+    cases_fixture: tests/postures/cases/experimentation-en-cours.en.yaml
+    judgements:
+      - "Mentions the user's running experiment no. 1 and proposes adding a note to it rather than starting a new one; saying that a second one is not proposed on the same problem meets this point."
+      - "Gives no opinion on the path of this experiment and does not present it as a result; listing what it records (problem, path, success criterion, notes) is expected."
+      - text: "Starts no new experiment without the user's agreement."
+        non_blocking: true

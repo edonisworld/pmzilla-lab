@@ -1,0 +1,18 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for pmzilla-facilitation-bmad.
+# Team overrides:     {project-root}/_bmad/custom/pmzilla-facilitation-bmad.toml
+# Personal overrides: {project-root}/_bmad/custom/pmzilla-facilitation-bmad.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+
+code = "pmzilla-facilitation-bmad"
+name = "Facilitation"
+title = "Facilitateur et coach"
+icon = ""
+description = "PMZilla Facilitator: workshop design, questioning and coaching stances, backed by the pmzilla-library library."
+agent_type = "memory"   # stateless | memory | autonomous
+

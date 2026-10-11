@@ -1,0 +1,39 @@
+schema: spec-driven
+
+context: |
+  Scope: OpenSpec describes WHAT PMZilla Lab does (observable behavior). The
+  WHY and the roadmap stay in docs/pmzilla/application.md.
+  - openspec/specs/ describes the existing system (baseline).
+  - openspec/changes/ describes evolutions (proposal, design, tasks, delta specs).
+
+  Language: all specs, proposals, designs and tasks are written in English.
+
+  Confidentiality (specs are tracked by Git):
+  - No team, project or person names (use roles or generic designations).
+  - No ticket keys, no personal identifiers.
+  - No excerpts from books or watch articles.
+
+  Behavior, not configuration: describe what the system does, never the values
+  found in configuration files (thresholds, paths, credentials, parameters).
+
+  Spec conventions (decided when the baseline open questions were resolved):
+  - Configuration values (thresholds, merge constants, role names, keychain
+    services, models, schedules, accounts, sizes) are never written. The spec
+    says "configurable" and describes the effect.
+  - Report wording: only the key phrases verified by tests.
+  - Test fixtures and vendored libraries are not specified.
+  - Data model: the database-* capabilities describe entities and guarantees
+    (roles, grants, masking under 5), not columns.
+  - Counts frozen in tests are snapshots, not requirements.
+  - Behavior read in code but not tested stays a requirement, marked
+    "untested". The gap is listed in openspec/test-gaps.md.
+
+rules:
+  specs:
+    - Write requirements as "The system SHALL ...", each with at least one "#### Scenario:" in WHEN/THEN form.
+    - Keep the language free of names, ticket keys, personal identifiers and book excerpts.
+    - Describe behavior only; never copy configuration values.
+  proposal:
+    - State the user-visible change and its motivation briefly; link to docs/pmzilla/application.md for the roadmap rationale instead of repeating it.
+  tasks:
+    - Keep tasks small and verifiable; each one names the test suite that covers it when one exists.

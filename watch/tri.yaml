@@ -1,0 +1,18 @@
+# Watch triage settings (watch_triage.py)
+mode: observation        # observation: nothing leaves the library; filtre: discarded articles leave it
+model: gemma4:26b        # Ollama model that fills in the substance grid
+to_read: 5               # articles highlighted every day
+language: en             # language of the prompts that score the articles: fr or en
+days: 7                  # period covered by _to-read.md
+substance_threshold: 3   # minimum number of criteria met out of 5
+relevance_threshold: 0   # minimum relevance out of 100 for the articles of the period (0: no relevance filter)
+# Your Bluesky handle goes in tri.local.yaml, next to this file, not tracked by Git.
+themes:
+  - product discovery and experimentation
+  - flow, flow metrics and predictability
+  - product operating model and product transformation
+  - multi-team organisation, team topologies, dependencies
+  - OKRs, prioritisation, product strategy
+  - internal platforms and developer experience
+  - agile coaching, facilitation, the Scrum Master stance
+  - AI in product work

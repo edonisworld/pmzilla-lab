@@ -1,0 +1,56 @@
+# Cas des commandes slash de PMZilla Lab (lot 4 de la version anglaise), rejoués à part du jeu d'essai principal :
+#
+#     uv run tools/posture_evals.py --cases-file tests/postures/cas-commandes.yaml
+#
+# Ils ne comptent pas dans le total de tests/postures/cas.yaml (34) : ils sont rapportés séparément et ne
+# deviendront bloquants qu'après avoir montré leur stabilité, avec l'accord de l'utilisateur.
+# Mêmes champs que cas.yaml, plus deux champs propres à ces cas :
+#   files    [{from, to}]  fichiers inventés copiés dans la copie temporaire (`from` : racine du workspace)
+#   library  dossier       bibliothèque jetable (un sous-dossier par collection, articles inventés), indexée dans le
+#                          dossier du passage : ni l'index, ni Flux-Lab/, ni les exports de l'utilisateur ne servent
+#
+# Données inventées de bout en bout : rapports de flux calculés sur tests/flux_jira/ancien_export.csv, articles fictifs.
+
+- id: cmd-monthly-flow
+  question: "/monthly-flow serie-x"
+  posture: Delivery
+  files:
+    - {from: tests/postures/fixtures/monthly-flow/flux-serie-x-2026-09-04.md, to: Flux-Lab/rapports/flux-serie-x-2026-09-04.md}
+    - {from: tests/postures/fixtures/monthly-flow/flux-serie-x-2026-10-04.md, to: Flux-Lab/rapports/flux-serie-x-2026-10-04.md}
+    - {from: tests/postures/fixtures/monthly-flow/evolution-serie-x-2026-10-04.md, to: Flux-Lab/rapports/evolution-serie-x-2026-10-04.md}
+  verifications:
+    - critic: true
+    - without_text: "Flux-Lab/exports"
+  judgements:
+    - "Lit le rapport d'évolution et décrit ce qui a bougé entre les deux rapports, en trois à cinq points au plus, avec au moins une explication possible par point, formulée comme une hypothèse à vérifier."
+    - "Pose des questions concrètes à poser aux équipes (dans le corps de la réponse ou à la fin) et dit ce qui reste stable, sans classer ni comparer les équipes entre elles."
+    - "La réponse est en français et porte la balise de posture au format français."
+
+- id: cmd-watch-digest
+  question: >-
+    /watch-digest 3650
+
+    Contexte du test : le script d'inventaire ne peut pas être lancé ici. Le fichier Watch-Lab/_semaine.md est déjà
+    préparé pour toute la période : pars de ce fichier sans attendre d'approbation, et mentionne seulement la période
+    du titre telle que le fichier la donne.
+  files:
+    - {from: tests/postures/fixtures/watch-digest/files/_semaine.md, to: Watch-Lab/_semaine.md}
+  library: tests/postures/fixtures/watch-digest/collections
+  verifications:
+    - tool: search_library
+      collections: [watch]
+    - critic: true
+    # structure de la réponse finale (message unique de la commande : synthèse, Critic, lecture, Sources en dernier) ;
+    # les dates d'un titre (période de la synthèse) ne comptent pas pour dates_in_sources
+    - ends_with_sources: true
+      non_blocking: true
+    - dates_in_sources: true
+    - sources_cited: true
+      non_blocking: true
+  judgements:
+    - text: "Chaque paragraphe qui affirme quelque chose en s'appuyant sur un article contient un renvoi court complet (auteur ou site, et date) ; un paragraphe sans source commence par « J'en déduis » ou « Hypothèse » ; la synthèse s'ouvre par un renvoi nommé et daté ou par « J'en déduis »."
+      non_blocking: true
+    - "Distingue un écho (même source reprise, newsletter qui résume un billet) d'une convergence d'auteurs indépendants, et n'écrit pas « convergence » sans preuve d'indépendance."
+    - "Écrit « hors bibliothèque » pour ce que la bibliothèque jetable ne couvre pas (livres, articles de l'utilisateur) au lieu de l'inventer."
+    - "Le message final est unique et suit l'ordre : la synthèse (chemin du fichier et trois lignes), puis une section [Posture : Critic] qui résume les objections, puis « Ma lecture de cette critique », puis « Sources » en dernière section."
+    - "La synthèse est en français."

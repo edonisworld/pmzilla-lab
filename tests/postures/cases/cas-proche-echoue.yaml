@@ -1,0 +1,17 @@
+# Jeu d'essai inventé (db-lot2, design.md 7.3). Aucun nom de personne, d'équipe ou de projet.
+# Cas 1 = cible de la question de cas-proche-echoue.
+cases:
+  - author: agile-lead-b
+    launched_on: 2026-01-12
+    reviewed_on: 2026-03-02
+    problem: "Une équipe a trop de travail en cours, et la direction lui impose une limite de WIP sans l'avoir construite avec elle."
+    context: {team_type: "équipe de développement", team_size: "8", phase: "régime établi"}
+    hypotheses:
+      - "Limiter le travail en cours suffit à faire circuler le travail, quelle que soit la façon dont la limite est décidée."
+    chosen_path: "Une limite de WIP est fixée par la direction pour chaque colonne du tableau, puis appliquée telle quelle."
+    tested: "Pendant six semaines, la limite imposée est affichée sur le tableau et rappelée à chaque point d'équipe."
+    expected_signal: "Le nombre d'éléments en cours baisse et le temps de traversée diminue."
+    success_criterion: "Le nombre d'éléments en cours reste sous la limite pendant six semaines."
+    outcome: failed
+    what_got_stuck: "Le travail a contourné le tableau : les éléments urgents étaient traités hors tableau, et la limite n'a plus rien mesuré."
+    confidence: medium

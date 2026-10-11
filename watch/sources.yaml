@@ -1,0 +1,12 @@
+# Watch sources of PMZilla Lab (empty in this edition: add your own).
+# - active: true   -> the source is collected every day; false -> ignored.
+# - feed           -> RSS or Atom feed. feed_ok: false = feed not found, to be completed by hand.
+# - include / exclude (optional) -> keywords searched in the title and the categories;
+#   useful for a broad publication (keep only "product", "discovery"...).
+# - shared         -> number of links from this source you already shared.
+# - note           -> free text (for example the reason for a deactivation). It is kept when a script rewrites this
+#   file; YAML comments are lost at every rewrite, so write the reason in note.
+# Running "watch_lab.py sources" adds new sources without touching your settings.
+# - Personal sources (your own articles): in sources.local.yaml, next to this file, not tracked by Git; never rewritten by a script.
+
+sources: []

@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Garde-fou : refuse un commit dont un fichier indexé contient un nom listé dans
+Flux-Lab/noms-sensibles.txt (un nom par ligne, hors Git ; lignes vides et lignes commençant par # ignorées). Affiche le fichier et la
+ligne, jamais le nom. Tous les fichiers indexés sont examinés, quelle que soit leur
+extension, sauf les binaires (octet nul) et les fichiers de plus de 1 Mo, signalés sans
+bloquer. Sans ce fichier (ou s'il est vide), le hook ne bloque pas : il
+avertit que le garde-fou est inactif.
+
+Chaque nom est échappé, puis délimité comme mot entier par des lookarounds
+(pas \\b, qui ne délimite pas un nom commençant ou finissant par un symbole
+comme « A&B »). La casse est ignorée, sauf pour les noms de 3 caractères ou moins et
+pour les sigles entièrement en majuscules, comparés en respectant la casse. PMZILLA_NOMS remplace le chemin de la liste
+(utilisé par les tests).
+
+Second garde-fou : le commit est refusé si l'index n'est pas celui qu'un lancement réussi de tests/run_all.sh a enregistré
+(git write-tree). Sur main ou une tête détachée : seule l'empreinte du lancement complet (.git/pmzilla-run-all-ok) compte. Sur toute
+autre branche : l'empreinte complète ou l'empreinte du lancement ciblé (bash tests/run_all.sh --staged, .git/pmzilla-run-targeted-ok).
+Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP_GREEN_CHECK=1 git commit ... ; les tests du hook le posent.
+Il ne saute que ce garde-fou : celui des noms s'applique toujours."""
+import os
+import subprocess
+import sys
+
+TAILLE_MAX = 1_000_000
+
+# Les règles de la liste (lecture, lignes « # » ignorées, correspondance) vivent dans tools/sensitive_names.py, partagées avec le
+# module des cas. Le hook est installé en lien relatif (tools/install_hooks.sh) : le dossier tools/ se retrouve par realpath.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), ""))
+import sensitive_names  # noqa: E402
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, check=True).stdout
+
+
+def charger(chemin):
+    with open(chemin, encoding="utf-8-sig") as f:
+        noms = sensitive_names.parse_names(f.read())
+    if not noms:
+        return None
+    return sensitive_names.patterns(noms)
+
+
+def branche_de_travail():
+    """True sur une branche autre que main ; False sur main et sur une tête détachée."""
+    fait = subprocess.run(["git", "symbolic-ref", "-q", "--short", "HEAD"], capture_output=True)
+    return fait.returncode == 0 and fait.stdout.decode().strip() not in ("", "main")
+
+
+def empreinte_egale_a_l_index(arbre, nom):
+    try:
+        chemin = git("rev-parse", "--git-path", nom).decode().strip()
+        with open(chemin, encoding="utf-8") as f:
+            return f.read().strip() == arbre
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
+def verifie_lancement_vert():
+    """True si l'empreinte écrite par run_all.sh correspond à l'index courant (la ciblée n'est admise que hors main)."""
+    if os.environ.get("PMZILLA_SKIP_GREEN_CHECK"):
+        return True
+    try:
+        arbre = git("write-tree").decode().strip()
+    except subprocess.CalledProcessError:
+        return False
+    if empreinte_egale_a_l_index(arbre, "pmzilla-run-all-ok"):
+        return True
+    return branche_de_travail() and empreinte_egale_a_l_index(arbre, "pmzilla-run-targeted-ok")
+
+
+def main():
+    if not verifie_lancement_vert():
+        if branche_de_travail():
+            print("pre-commit : lance d'abord bash tests/run_all.sh --staged (après git add) : l'index n'a pas de lancement réussi.", file=sys.stderr)
+        else:
+            print("pre-commit : lance d'abord bash tests/run_all.sh (après git add) : l'index n'a pas de lancement complet réussi.", file=sys.stderr)
+        return 1
+    racine = git("rev-parse", "--show-toplevel").decode().strip()
+    chemin = os.environ.get("PMZILLA_NOMS") or os.path.join(racine, "Flux-Lab", "noms-sensibles.txt")
+    if not os.path.isfile(chemin):
+        print("pre-commit : garde-fou des noms inactif : liste absente", file=sys.stderr)
+        return 0
+    motifs = charger(chemin)
+    if motifs is None:
+        print("pre-commit : garde-fou des noms inactif : liste vide", file=sys.stderr)
+        return 0
+
+    fichiers = git("diff", "--cached", "--name-only", "--diff-filter=ACM", "-z").decode().split("\0")
+    echec = False
+    for f in filter(None, fichiers):
+        if int(git("cat-file", "-s", f":{f}")) > TAILLE_MAX:
+            print(f"pre-commit : {f} dépasse 1 Mo, non examiné", file=sys.stderr)
+            continue
+        octets = git("show", f":{f}")
+        if b"\0" in octets:  # binaire détecté par son contenu, pas par l'extension
+            continue
+        contenu = octets.decode("utf-8", errors="ignore")
+        for numero, ligne in enumerate(contenu.splitlines(), 1):
+            if sensitive_names.line_matches(motifs, ligne):
+                print(f"pre-commit : nom sensible dans {f}, ligne {numero}", file=sys.stderr)
+                echec = True
+    if echec:
+        print("Commit refusé : remplace ces noms par une désignation générique (voir CLAUDE.md, Confidentialité).", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

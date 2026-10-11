@@ -1,0 +1,46 @@
+# PMZilla Lab : base de données (lot 1, voir docs/pmzilla/application.md).
+#
+#     bash tools/db_up.sh          # lit le mot de passe dans le Trousseau macOS puis lance ce fichier
+#
+# Image : ParadeDB (PostgreSQL 18 avec pgvector et pg_search), version fixée, jamais « latest ».
+# Version 0.26.0-pg18, vérifiée en arm64 le 2026-10-08.
+# Digest de l'index multi-architecture tiré : sha256:52fc9c95fdfd462201168d1d82334ed61f85cbd921957cab083ec39800a217ac
+# Une montée de version se teste avant adoption (tests et parité), puis ce tag et ce digest sont mis à jour ensemble.
+#
+# Aucun secret dans ce fichier : POSTGRES_PASSWORD vient de l'environnement du processus (db_up.sh), et seulement pour la
+# première initialisation du volume.
+# Port : PMZILLA_LAB_DB_PORT change le port de l'hôte (5432 par défaut), toujours sur 127.0.0.1.
+# Volume : PostgreSQL 18 range ses données dans /var/lib/postgresql/18/docker ; le volume se monte donc sur
+# /var/lib/postgresql (et non sur /var/lib/postgresql/data, disposition des versions 17 et antérieures).
+# `docker compose down` garde le volume ; `docker compose down -v` ou `colima delete` effacent les données.
+name: pmzilla-lab
+
+services:
+  db:
+    image: paradedb/paradedb:0.26.0-pg18
+    restart: unless-stopped
+    environment:
+      # Le mot de passe ne sert qu'à la première initialisation du volume : il n'est pas exigé à l'interpolation, pour que
+      # docker compose ps, port, exec ou db_backup.sh fonctionnent sans lui. Une première initialisation sans mot de passe
+      # échoue (PostgreSQL refuse de démarrer) ; db_up.sh le vérifie avant docker compose up.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
+      POSTGRES_DB: pmzilla
+    # /dev/shm du conteneur : 64 Mo par défaut. PostgreSQL y met la mémoire partagée dynamique des opérations parallèles, dont la construction de
+    # l'index BM25 de la migration 0005, qui a demandé un segment de 383 818 880 octets (366 Mio) et échoué avec « No space left on device ».
+    # 1 Go laisse environ 2,7 fois cette marge pour la bibliothèque qui grossit et pour d'autres opérations parallèles. C'est un plafond, pas une
+    # réservation : le tmpfs n'occupe de la mémoire que lorsqu'il est utilisé (la machine Colima en a 6 Go). Changer cette valeur recrée le conteneur
+    # au prochain `bash tools/db_up.sh` ; le volume, lui, est gardé.
+    shm_size: 1gb
+    ports:
+      - "127.0.0.1:${PMZILLA_LAB_DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pmzilla"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  pgdata:

@@ -1,0 +1,17 @@
+# Invented fixture (db-lot2, design.md 7.3). No person, team or project name.
+# Experiment 1 = the target: the running experiment of the session's author. No case.
+experiments:
+  - author: agile-lead-test
+    started_on: 2026-09-01
+    status: running
+    problem: "Refinements of team A last over two hours without ending in a decision."
+    context: {team_type: "team A", team_size: "6", phase: "steady state"}
+    hypotheses:
+      - "Without a time limit or an expected decision, refinement drags on."
+    chosen_path: "Each refinement is limited to one hour and ends with one decision per item handled."
+    tested: "For four refinements, the duration is noted and each item leaves with a decision or a named question."
+    expected_signal: "The duration falls under one hour and each item gets a decision."
+    success_criterion: "Four refinements under one hour, with one decision per item."
+    review_due: 2028-01-31
+    notes:
+      - {noted_on: 2026-09-15, note: "The first refinement lasted one hour twenty, two items were left without a decision."}

@@ -1,0 +1,27 @@
+# Invented fixture (db-lot2, design.md 7.3). No person, team or project name.
+# Case 1 = target of the cas-proche-reussi question; case 2 = unrelated subject.
+cases:
+  - author: agile-lead-b
+    launched_on: 2026-03-02
+    reviewed_on: 2026-04-13
+    problem: "In a product team, stakeholders no longer attend sprint reviews: the room empties, and feedback comes too late."
+    context: {team_type: "product team", team_size: "7", phase: "steady state"}
+    hypotheses:
+      - "The review looks like a demonstration of everything that was done, with nothing at stake for those watching it."
+    chosen_path: "The review is built around two decisions the stakeholders must take, announced in the invitation."
+    tested: "For three reviews, each invitation named the two expected decisions, and the review ended once they were taken."
+    expected_signal: "The stakeholders concerned come back, and a decision is taken at each review."
+    success_criterion: "At least four stakeholders out of six present at each of the three reviews, with a decision taken."
+    outcome: worked
+    confidence: medium
+  - author: agile-lead-b
+    launched_on: 2026-02-02
+    reviewed_on: 2026-03-16
+    problem: "The time to put a fix into production exceeds a week, even for a one-line change."
+    context: {team_type: "platform team", team_size: "5", phase: "growth"}
+    chosen_path: "The fix goes through a shortened deployment pipeline, with a single approval."
+    tested: "On ten fixes, measurement of the time between merging the code and going into production."
+    expected_signal: "The median time drops below two days."
+    success_criterion: "Median time under two days over ten fixes."
+    outcome: partly
+    confidence: low

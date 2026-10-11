@@ -1,0 +1,18 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for pmzilla-scaling-bmad.
+# Team overrides:     {project-root}/_bmad/custom/pmzilla-scaling-bmad.toml
+# Personal overrides: {project-root}/_bmad/custom/pmzilla-scaling-bmad.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+
+code = "pmzilla-scaling-bmad"
+name = "Scaling"
+title = "Spécialiste Scaling"
+icon = ""
+description = "PMZilla Scaling specialist: organisational design, multi-team coordination and internal platforms, backed by the pmzilla-library library."
+agent_type = "memory"   # stateless | memory | autonomous
+

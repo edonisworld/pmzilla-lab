@@ -1,0 +1,63 @@
+
+# Contenus sous droits d'auteur : seuls les dossiers sont suivis (fichier .gitkeep), jamais leur contenu
+/Bibliotheque-MD/*
+!/Bibliotheque-MD/.gitkeep
+# images extraites des livres (convert_books.py) : hors Git, illisibles par Claude Code
+/Bibliotheque-Images/
+/Bibliotheque-Lab/*
+!/Bibliotheque-Lab/.gitkeep
+# dossiers de la veille
+/Watch-Lab/*
+!/Watch-Lab/.gitkeep
+/Watch-Excluded/*
+!/Watch-Excluded/.gitkeep
+
+# macOS
+.DS_Store
+
+# Métriques de flux : exports Jira et rapports tirés de données d'entreprise, jamais sur GitHub
+/Flux-Lab/*
+!/Flux-Lab/.gitkeep
+/Journal-Lab/*
+!/Journal-Lab/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+
+# Synthèses de veille : livrables locaux, jamais dans Git (la commande /watch-digest n'enregistre rien dans Git)
+/_bmad-output/pmzilla/veille/synthese-*.md
+
+# Lectures de la carte des dépendances : noms d'équipes, jamais dans Git
+/_bmad-output/pmzilla/dependances/
+
+# Diagnostics de flux gardés : noms d'équipes, jamais dans Git
+/_bmad-output/pmzilla/flux/
+
+# Messages rédigés : noms d'équipes possibles, jamais dans Git
+/_bmad-output/pmzilla/messages/
+
+# Rapports du jeu d'essai des postures : sorties générées, peuvent contenir des extraits de livres
+/_bmad-output/essais/
+
+# Sanctum des postures : créé par init-sanctum.py au premier lancement (gabarits du skill), vécu de l'utilisateur
+/_bmad/memory/
+
+# Contexte local de l'utilisateur, importé par CLAUDE.md
+/.pmzilla/
+*.sqlite
+.env
+*.avant-migration
+
+# Livrables locaux de _bmad-output/pmzilla (avant : seulement dans .git/info/exclude, donc absents d'un nouveau clone)
+/_bmad-output/pmzilla/essais/
+/_bmad-output/pmzilla/indexer-un-livre.sh
+/_bmad-output/pmzilla/relecture-lot-*.md
+
+# Sources de veille personnelles de l'utilisateur, à côté de watch/sources.yaml, jamais réécrites par un script
+/watch/sources.local.yaml
+/watch/tri.local.yaml
+
+# Réponses d'installation BMAD personnelles (nom de l'utilisateur) et surcharges personnelles
+/_bmad/config.user.toml
+/_bmad/custom/*.user.toml

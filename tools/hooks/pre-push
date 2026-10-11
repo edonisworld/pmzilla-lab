@@ -1,0 +1,34 @@
+#!/bin/sh
+# Garde-fou du push de main : le remote main ne reçoit qu'un arbre dont un lancement COMPLET et réussi de tests/run_all.sh
+# a enregistré l'empreinte (git write-tree, dans .git/pmzilla-run-all-ok). Jamais l'empreinte du lancement ciblé.
+#
+# Pour chaque référence poussée vers refs/heads/main :
+#   - l'empreinte complète égale l'arbre du commit poussé : le push passe, sans lancer de test ;
+#   - sinon, si l'arbre de travail est propre et que HEAD est le commit poussé : le hook lance lui-même le lanceur complet
+#     (bash tests/run_all.sh) et accepte seulement s'il réussit ;
+#   - sinon : refus « pre-push : main exige une exécution complète réussie de l'arbre poussé ».
+# Les autres références (branches de travail, étiquettes) passent sans contrôle ; la suppression de main aussi.
+# Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP_GREEN_CHECK=1 git push ...
+# Le hook ne lance jamais de test sur un arbre autre que celui qui est poussé.
+# PRE_PUSH_RUNNER remplace la commande du lanceur (tests de ce hook).
+[ -n "${PMZILLA_SKIP_GREEN_CHECK:-}" ] && exit 0
+zero=0000000000000000000000000000000000000000
+refuse=0
+while read -r ref_locale sha_local ref_distante sha_distant; do
+  [ "$ref_distante" = "refs/heads/main" ] || continue
+  [ "$sha_local" = "$zero" ] && continue
+  arbre=$(git rev-parse "$sha_local^{tree}" 2>/dev/null) || { refuse=1; continue; }
+  fichier=$(git rev-parse --git-path pmzilla-run-all-ok)
+  if [ -f "$fichier" ] && [ "$(cat "$fichier")" = "$arbre" ]; then continue; fi
+  if [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$sha_local" ]; then
+    racine=$(git rev-parse --show-toplevel)
+    echo "pre-push : aucune empreinte complète pour l'arbre poussé : lancement complet des tests" >&2
+    if (cd "$racine" && env -u PMZILLA_NO_EVALS sh -c "${PRE_PUSH_RUNNER:-bash tests/run_all.sh}" >&2); then continue; fi
+  fi
+  refuse=1
+done
+if [ "$refuse" -ne 0 ]; then
+  echo "pre-push : main exige une exécution complète réussie de l'arbre poussé" >&2
+  exit 1
+fi
+exit 0

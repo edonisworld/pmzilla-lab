@@ -1,0 +1,71 @@
+# Vocabulaire des postures, par langue : les formules que le jeu d'essai (tools/posture_evals.py) et le miroir de
+# Critic (tools/critic_mirror.py) reconnaissent. Une seule source : les deux outils lisent ce fichier.
+# La langue par défaut est le français ; une réponse qui porte la balise de l'autre langue échoue à la vérification
+# de posture (garde contre la dérive de formule). CLAUDE.md reprend les formules de ce fichier dans une table courte (lot 7), qu'un test
+# compare à ces valeurs. Les valeurs de `en` sont fixées (relecture de l'anglais du 8 octobre, lots 1, 4 et 6).
+#
+# posture_tag            format écrit de la balise de posture ({posture} : le nom de la posture)
+# posture_tag_pattern    expression régulière qui la reconnaît (un groupe : le nom de la posture) ; l'espace avant les
+#                        deux-points est de règle en français, interdit en anglais : c'est ce qui les distingue
+# out_of_library         mention d'une source absente de la bibliothèque, telle que la posture l'écrit
+# out_of_library_pattern expression régulière qui la reconnaît
+# source_separation      formules qui séparent ce que dit la source de ce que la posture en déduit
+# hypothesis            mot qui ouvre un paragraphe affirmé sans source (avec « J'en déduis », deuxième formule de source_separation)
+# case_citation          formule de citation d'un cas du module de cas ({number}, {author}, {date}, {outcome} ; {date} est la date de revue)
+# critic_final_title     titre de la lecture de la critique, dans le message final
+# critic_plain_start     début (expression régulière) d'une section de Critic écrite en ligne simple
+# critic_plain_end       début (expression régulière) d'une ligne qui termine une telle section
+#
+# posture_names (hors des langues, commun aux deux) : les noms exacts des postures, ceux de la table des postures de
+# CLAUDE.md (un test compare) ; une balise dont le nom n'est pas exactement l'un d'eux (accentué, traduit, autre casse)
+# fait échouer la vérification de posture (lot 5b).
+
+posture_names: [Discovery, Delivery, Scaling, Facilitation, Critic]
+
+fr:
+  posture_tag: "[Posture : {posture}]"
+  posture_tag_pattern: '\[\s*Posture[ \xa0\u202f]:\s*([^\]]+?)\s*\]'
+  out_of_library: "hors bibliothèque"
+  out_of_library_pattern: 'hors biblioth[eè]que'
+  source_separation:
+    - "la source dit"
+    - "J'en déduis"
+    - "transposition par analogie, non portée par l'auteur"
+  hypothesis: "Hypothèse"
+  case_citation: "Cas n°{number}, soumis par {author}, {date}, résultat : {outcome}"
+  critic_final_title: "Ma lecture de cette critique"
+  critic_plain_start:
+    - 'Ce que Critic (conteste|a relevé|relève)'
+    - 'Objections de Critic'
+    - 'Revue de Critic'
+  critic_plain_end:
+    - 'Corrections faites'
+    - 'Points? non corrigés?'
+    - 'Second passage'
+    - "Rien n['’]est enregistré"
+    - "Ce que j['’]en retiens"
+    - 'Prochaines étapes'
+
+en:
+  posture_tag: "[Posture: {posture}]"
+  posture_tag_pattern: '\[\s*Posture:\s*([^\]]+?)\s*\]'
+  out_of_library: "outside the library"
+  out_of_library_pattern: 'outside the library'
+  source_separation:
+    - "the source says"
+    - "I infer"
+    - "transposition by analogy, not made by the author"
+  hypothesis: "Hypothesis"
+  case_citation: "Case no. {number}, submitted by {author}, {date}, outcome: {outcome}"
+  critic_final_title: "My reading of this critique"
+  critic_plain_start:
+    - 'What Critic (challenges|raised|flags)'
+    - "Critic['’]s objections"
+    - "Critic['’]s review"
+  critic_plain_end:
+    - 'Corrections made'
+    - 'Points? not corrected'
+    - 'Second pass'
+    - 'Nothing is saved'
+    - 'What I take (from it|from this|away)'
+    - 'Next steps'

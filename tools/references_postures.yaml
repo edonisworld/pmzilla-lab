@@ -1,0 +1,80 @@
+# Ouvrages et documents que les règles et les références de chaque posture citent (socle partageable).
+# `tools/outside_library.py` les compare au catalogue de la personne (`book_catalog.yaml`, ou la
+# variable PMZILLA_LAB_CATALOGUE) et en tire la liste « hors bibliothèque » que wake.py imprime à chaque
+# réveil : plus aucune liste écrite à la main dans les CREED, CAPABILITIES et références.
+#
+# titre     titre court tel que les règles le citent
+# auteurs   noms de famille (au moins un doit figurer parmi les auteurs du catalogue)
+# alias     autres titres sous lesquels le livre peut figurer au catalogue
+# document  true : document officiel ou boîte à outils, pas un livre. Traité comme un livre (titre du catalogue) : hors
+#           bibliothèque tant qu'aucune entrée du catalogue ne porte son titre ou un de ses alias, donc dès qu'il est indexé
+# relations liens entre ouvrages que la posture ne doit pas confondre, imprimés par wake.py sous le bloc HORS BIBLIOTHÈQUE
+#           (que l'ouvrage soit dans la bibliothèque ou non). Chaque lien : type (commente | ne_pas_confondre | supplee_par),
+#           avec (titre de l'autre ouvrage), note (facultatif)
+
+delivery:
+  - {titre: Accelerate, auteurs: [Forsgren, Humble, Kim]}
+  - {titre: The Principles of Product Development Flow, auteurs: [Reinertsen]}
+  - {titre: Project to Product, auteurs: [Kersten]}
+  - {titre: The Goal, auteurs: [Goldratt]}
+  - {titre: Kanban, auteurs: [Anderson]}
+  - {titre: The Art of Agile Development, auteurs: [Shore, Warden]}
+  - {titre: Agile Retrospectives, auteurs: [Derby, Larsen]}
+  - {titre: Clean Agile, auteurs: [Martin]}
+  - {titre: Agile Coaching, auteurs: [Davies, Sedley]}
+  - {titre: Agile Estimating and Planning, auteurs: [Cohn]}
+  - {titre: Extreme Programming Explained, auteurs: [Beck, Andres]}
+  - {titre: Scrum Guide, document: true}
+
+discovery:
+  - {titre: Continuous Discovery Habits, auteurs: [Torres]}
+  - {titre: Testing Business Ideas, auteurs: [Bland, Osterwalder]}
+  - {titre: Competing Against Luck, auteurs: [Christensen]}
+  - {titre: Jobs to be Done, auteurs: [Ulwick]}
+  - {titre: The Lean Startup, auteurs: [Ries]}
+  - {titre: User Story Mapping, auteurs: [Patton]}
+  - {titre: Crossing the Chasm, auteurs: [Moore]}
+  - {titre: The Product-Minded Engineer, auteurs: [Hoskins]}
+  - {titre: Lean UX, auteurs: [Gothelf, Seiden]}
+  - {titre: INSPIRED, auteurs: [Cagan]}
+  - {titre: Introducing EventStorming, auteurs: [Brandolini]}
+
+scaling:
+  - {titre: Team Topologies, auteurs: [Skelton, Pais]}
+  - {titre: Architecture for Flow, auteurs: [Kaiser], relations: [{type: commente, avec: Team Topologies}]}
+  - {titre: SAFe Coaches Handbook, auteurs: [Wilmshurst, Quick], relations: [{type: ne_pas_confondre, avec: Documentation officielle SAFe, note: "guide de mise en œuvre par des coachs SAFe, pas une évaluation externe du framework ni la documentation officielle, que le guide ne couvre que partiellement"}]}
+  - {titre: Measure What Matters, auteurs: [Doerr]}
+  - {titre: Radical Focus, auteurs: [Wodtke]}
+  - {titre: The OKRs Field Book, auteurs: [Lamorte]}
+  - {titre: Project to Product, auteurs: [Kersten]}
+  - {titre: Kanban, auteurs: [Anderson]}
+  - {titre: The Fifth Discipline, auteurs: [Senge]}
+  - {titre: Designing Organizations, auteurs: [Muster]}
+  - {titre: Practices for Scaling Lean & Agile Development, auteurs: [Larman, Vodde]}
+  - {titre: Leading Change, auteurs: [Kotter]}
+  - {titre: Leadership Agility, auteurs: [Joiner, Josephs]}
+  - {titre: The Lean Tech Manifesto, auteurs: [Bernhard]}
+  - {titre: Documentation officielle SAFe, document: true}
+
+facilitation:
+  - {titre: The Surprising Power of Liberating Structures, auteurs: [Lipmanowicz, McCandless], alias: [Liberating Structures]}
+  - {titre: The Fearless Organization, auteurs: [Edmondson]}
+  - {titre: Les mots sont des fenêtres, auteurs: [Rosenberg]}
+  - {titre: Coaching for Meaning, auteurs: [Lenhardt], alias: [Les responsables porteurs de sens]}
+  - {titre: "Coaching d'équipe", auteurs: [Cardon]}
+  - {titre: Gamestorming, auteurs: [Gray, Brown, Macanufo]}
+  - {titre: Agile Coaching, auteurs: [Davies, Sedley]}
+  - {titre: Coaching Agile Teams, auteurs: [Adkins]}
+  - {titre: Behind Closed Doors, auteurs: [Rothman, Derby]}
+  - {titre: Leadership Agility, auteurs: [Joiner, Josephs]}
+  - {titre: Agile Retrospectives, auteurs: [Derby, Larsen]}
+  - {titre: Scrum Mastery, auteurs: [Watts]}
+  - {titre: "The Professional ScrumMaster's Handbook", auteurs: [Viscardi]}
+  - {titre: The Sketchnote Handbook, auteurs: [Rohde]}
+  - {titre: "Qu'est-ce que la confiance ?", auteurs: [Origgi]}
+  - {titre: The Five Dysfunctions of a Team, auteurs: [Lencioni]}
+  - {titre: Mindset, auteurs: [Dweck]}
+  - {titre: "Gaming, sociologie du jeu vidéo", auteurs: [Dubrulle]}
+  - {titre: Comment se faire des amis, auteurs: [Carnegie]}
+  - {titre: Introducing EventStorming, auteurs: [Brandolini]}
+  - {titre: Toolbox Hyper Island, document: true}

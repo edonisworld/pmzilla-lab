@@ -1,0 +1,17 @@
+# Invented fixture (db-lot2, design.md 7.3). No person, team or project name.
+# Case 1 = target of the cas-proche-echoue question.
+cases:
+  - author: agile-lead-b
+    launched_on: 2026-01-12
+    reviewed_on: 2026-03-02
+    problem: "A team has too much work in progress, and management imposes a WIP limit on it without having built it with the team."
+    context: {team_type: "development team", team_size: "8", phase: "steady state"}
+    hypotheses:
+      - "Limiting work in progress is enough to make work flow, however the limit is decided."
+    chosen_path: "A WIP limit is set by management for each column of the board, then applied as is."
+    tested: "For six weeks, the imposed limit is displayed on the board and recalled at every team meeting."
+    expected_signal: "The number of items in progress goes down and the cycle time shrinks."
+    success_criterion: "The number of items in progress stays under the limit for six weeks."
+    outcome: failed
+    what_got_stuck: "Work bypassed the board: urgent items were handled off the board, and the limit no longer measured anything."
+    confidence: medium

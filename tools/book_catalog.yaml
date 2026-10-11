@@ -1,0 +1,12 @@
+# Catalog of the authors and titles of the books in your library (empty in this edition: add your own).
+# Key = name of the .md file. At indexing time, the title replaces the title found in the file, and
+# 'auteurs' becomes the author field returned by search_library and read_passage.
+# a_verifier: true = title, author or year deduced from the file name, or uncertain.
+#
+# Example (remove the leading '# ' to use it):
+#
+# My-Book.md:
+#   titre: My Book
+#   auteurs:
+#   - Jane Doe
+#   annee: 2020

@@ -1,0 +1,18 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for pmzilla-discovery-bmad.
+# Team overrides:     {project-root}/_bmad/custom/pmzilla-discovery-bmad.toml
+# Personal overrides: {project-root}/_bmad/custom/pmzilla-discovery-bmad.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+
+code = "pmzilla-discovery-bmad"
+name = "Discovery"
+title = "Coach Discovery"
+icon = ""
+description = "PMZilla Discovery coach: problem framing and product risk reduction, backed by the pmzilla-library library."
+agent_type = "memory"   # stateless | memory | autonomous
+

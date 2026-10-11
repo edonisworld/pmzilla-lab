@@ -1,0 +1,50 @@
+# Jeu figé de requêtes pour mesurer la parité des deux voies de la bibliothèque (SQLite et PostgreSQL), lot 4 de la base.
+# Formulations courtes écrites pour la mesure : aucun extrait de livre, aucun nom d'équipe, de projet ni de personne.
+# Champs : id (unique), lang (fr ou en), query ; facultatifs : collections (liste), types (liste : texte, figure),
+# rare (true : requête à mot rare, recouvrement d'au moins 7 sur 8 exigé).
+# Ne pas modifier sans refaire la mesure : un jeu qui change ne permet plus de comparer deux passages.
+queries:
+  - {id: discovery-hypothese-fr, lang: fr, query: "comment formuler une hypothèse de discovery testable"}
+  - {id: discovery-hypothesis-en, lang: en, query: "how to write a testable product hypothesis"}
+  - {id: discovery-entretiens-fr, lang: fr, query: "mener des entretiens utilisateurs pour comprendre un besoin"}
+  - {id: discovery-interviews-en, lang: en, query: "customer interviews to learn about user needs"}
+  - {id: discovery-experience-fr, lang: fr, query: "choisir l'expérience la moins chère pour réduire un risque"}
+  - {id: discovery-experiment-en, lang: en, query: "cheapest experiment to reduce product risk"}
+  - {id: discovery-dualtrack-en, lang: en, query: "dual-track agile discovery and delivery", rare: true}
+  - {id: opportunite-arbre-fr, lang: fr, query: "arbre d'opportunités et résultats attendus"}
+  - {id: okr-priorisation-fr, lang: fr, query: "OKR et priorisation entre équipes"}
+  - {id: okr-alignment-en, lang: en, query: "objectives and key results for strategic alignment"}
+  - {id: strategie-produit-fr, lang: fr, query: "stratégie produit et choix de ce qu'on ne fait pas"}
+  - {id: product-strategy-en, lang: en, query: "product strategy and product vision"}
+  - {id: flux-delai-fr, lang: fr, query: "mesurer le délai de bout en bout et l'âge du travail en cours"}
+  - {id: flow-cycle-time-en, lang: en, query: "cycle time and work item age"}
+  - {id: flux-little-fr, lang: fr, query: "loi de Little, file d'attente et travail en cours", rare: true}
+  - {id: flow-wip-en, lang: en, query: "limiting work in progress improves flow"}
+  - {id: previsibilite-fr, lang: fr, query: "prévoir une date de livraison à partir du débit"}
+  - {id: forecasting-en, lang: en, query: "probabilistic forecasting with throughput", rare: true}
+  - {id: goulot-fr, lang: fr, query: "repérer le goulot d'étranglement d'un système"}
+  - {id: bottleneck-en, lang: en, query: "constraint and bottleneck in a delivery system"}
+  - {id: dora-fr, lang: fr, query: "indicateurs DORA et stabilité opérationnelle", rare: true}
+  - {id: dora-en, lang: en, query: "deployment frequency and change failure rate", rare: true}
+  - {id: qualite-fr, lang: fr, query: "qualité intégrée et dette technique"}
+  - {id: engineering-practices-en, lang: en, query: "continuous delivery and trunk-based development"}
+  - {id: scrum-rituels-fr, lang: fr, query: "rôle du Scrum Master et rituels de l'équipe"}
+  - {id: kanban-en, lang: en, query: "kanban board policies and service level expectations"}
+  - {id: topologies-fr, lang: fr, query: "équipes alignées sur le flux et charge cognitive", rare: true}
+  - {id: team-topologies-en, lang: en, query: "stream-aligned teams and interaction modes", rare: true}
+  - {id: dependances-fr, lang: fr, query: "réduire les dépendances entre équipes"}
+  - {id: scaling-frameworks-en, lang: en, query: "scaling frameworks compared for many teams"}
+  - {id: plateforme-fr, lang: fr, query: "plateforme interne vue comme un produit"}
+  - {id: platform-dx-en, lang: en, query: "internal platform and developer experience"}
+  - {id: transformation-fr, lang: fr, query: "passer d'une organisation par projets à une organisation produit"}
+  - {id: change-leadership-en, lang: en, query: "leading organisational change step by step"}
+  - {id: atelier-fr, lang: fr, query: "concevoir un atelier et poser de bonnes questions"}
+  - {id: facilitation-en, lang: en, query: "facilitating a workshop with a group"}
+  - {id: coaching-fr, lang: fr, query: "posture de coach et accompagnement d'une équipe"}
+  - {id: coaching-stance-en, lang: en, query: "coaching stance and powerful questions"}
+  - {id: retrospective-fr, lang: fr, query: "animer une rétrospective qui change quelque chose"}
+  - {id: decision-fr, lang: fr, query: "prendre une décision en groupe sans perdre du temps"}
+  - {id: ai-product-fr, lang: fr, query: "intelligence artificielle dans le travail produit", collections: [watch]}
+  - {id: ai-product-en, lang: en, query: "using AI in product management work", collections: [watch]}
+  - {id: figure-flux-fr, lang: fr, query: "schéma du délai selon le travail en cours", types: [figure]}
+  - {id: figure-topology-en, lang: en, query: "diagram of team interaction modes", types: [figure]}

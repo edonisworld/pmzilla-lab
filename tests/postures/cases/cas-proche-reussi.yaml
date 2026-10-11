@@ -1,0 +1,27 @@
+# Jeu d'essai inventé (db-lot2, design.md 7.3). Aucun nom de personne, d'équipe ou de projet.
+# Cas 1 = cible de la question de cas-proche-reussi ; cas 2 = sujet sans rapport.
+cases:
+  - author: agile-lead-b
+    launched_on: 2026-03-02
+    reviewed_on: 2026-04-13
+    problem: "Dans une équipe produit, les parties prenantes ne viennent plus aux revues de sprint : la salle se vide, et les retours arrivent trop tard."
+    context: {team_type: "équipe produit", team_size: "7", phase: "régime établi"}
+    hypotheses:
+      - "La revue ressemble à une démonstration de tout ce qui a été fait, sans enjeu pour ceux qui la regardent."
+    chosen_path: "La revue est construite autour de deux décisions que les parties prenantes doivent prendre, annoncées dans l'invitation."
+    tested: "Pendant trois revues, chaque invitation nommait les deux décisions attendues, et la revue s'arrêtait quand elles étaient prises."
+    expected_signal: "Les parties prenantes concernées reviennent, et une décision est prise à chaque revue."
+    success_criterion: "Au moins quatre parties prenantes sur six présentes à chacune des trois revues, avec une décision prise."
+    outcome: worked
+    confidence: medium
+  - author: agile-lead-b
+    launched_on: 2026-02-02
+    reviewed_on: 2026-03-16
+    problem: "Le délai de mise en production d'un correctif dépasse une semaine, même pour une ligne modifiée."
+    context: {team_type: "équipe plateforme", team_size: "5", phase: "croissance"}
+    chosen_path: "Le correctif passe par une chaîne de déploiement raccourcie, avec une validation unique."
+    tested: "Sur dix correctifs, mesure du temps entre la fusion du code et la mise en production."
+    expected_signal: "Le délai médian passe sous deux jours."
+    success_criterion: "Délai médian inférieur à deux jours sur dix correctifs."
+    outcome: partly
+    confidence: low

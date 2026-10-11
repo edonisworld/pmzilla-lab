@@ -1,0 +1,12 @@
+# BMB Module Configuration
+# Neutral template of the English edition: communication in English, generic user name.
+
+bmad_builder_output_folder: "{project-root}/skills"
+bmad_builder_reports: "{project-root}/skills/reports"
+
+# Core Configuration Values
+project_name: PMZilla Lab
+document_output_language: English
+output_folder: "{project-root}/_bmad-output"
+user_name: BMad
+communication_language: English

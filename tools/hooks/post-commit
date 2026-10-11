@@ -1,0 +1,46 @@
+#!/bin/zsh
+# PMZilla Lab : après un commit qui touche CLAUDE.md, une posture, un agent, une commande, les cas
+# d'essai, leur vocabulaire (balise de posture), la mémoire figée des postures ou le serveur de bibliothèque, lance en arrière-plan le jeu d'essai
+# (tools/evals_auto.sh), mais SEULEMENT si on le demande au commit :
+#     PMZILLA_AFTER_COMMIT=evals git commit ...    jeu d'essai seul
+#     PMZILLA_AFTER_COMMIT=all   git commit ...    jeu d'essai, puis mise à jour du README par une session claude -p
+# Sans cette variable, le hook ne fait rien : le jeu d'essai et le README se lancent à la demande
+# (tools/evals_auto.sh [--readme], voir docs/pmzilla/installation.md, étape 9). PMZILLA_NO_EVALS=1 l'emporte.
+# Anciens noms (PMZILLA_APRES_COMMIT avec ses valeurs essai et tout, PMZILLA_SANS_ESSAI) : refusés. Le hook
+# affiche sur stderr et ajoute au journal un message qui nomme le nom actuel, et ne lance rien. Il tourne après
+# le commit : le refus ne peut pas l'annuler, le hook se termine donc par un code 0.
+# Le commit rend la main tout de suite. Installation : voir README, « Vérifier les postures ».
+
+LOG="$HOME/Library/Logs/pmzilla-essai.log"
+refuser() {   # message : sur stderr (visible au commit) et dans le journal du hook, puis sortie sans rien lancer
+  print "PMZilla Lab, refus : $1" >&2
+  mkdir -p "${LOG:h}" 2>/dev/null && print "$(date '+%Y-%m-%d %H:%M:%S') refus : $1" >> "$LOG"
+  exit 0
+}
+[[ -n "${PMZILLA_SANS_ESSAI:-}" ]] && refuser "la variable PMZILLA_SANS_ESSAI n'est plus acceptée : utiliser PMZILLA_NO_EVALS."
+[[ -n "${PMZILLA_APRES_COMMIT:-}" ]] && refuser "la variable PMZILLA_APRES_COMMIT n'est plus acceptée : utiliser PMZILLA_AFTER_COMMIT."
+MODE="${PMZILLA_AFTER_COMMIT:-}"
+case "$MODE" in
+  essai) refuser "la valeur essai n'est plus acceptée : utiliser PMZILLA_AFTER_COMMIT=evals." ;;
+  tout)  refuser "la valeur tout n'est plus acceptée : utiliser PMZILLA_AFTER_COMMIT=all." ;;
+esac
+
+[[ -n "${PMZILLA_NO_EVALS:-}" ]] && exit 0
+case "$MODE" in
+  evals) OPTIONS=() ;;
+  all)   OPTIONS=(--readme) ;;
+  *)     exit 0 ;;
+esac
+ROOT=$(git rev-parse --show-toplevel) || exit 0
+# Les copies temporaires du jeu d'essai partagent les hooks du dépôt : on ne réagit qu'au vrai workspace
+[[ "$ROOT" == "$HOME/PMZilla-Lab/workspace" ]] || exit 0
+
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD)
+# règles, postures, agents, commandes, cas d'essai, et le serveur de bibliothèque (la recherche
+# change ce que les postures trouvent)
+WATCHED=$(print -r -- "$CHANGED" | grep -E '^(CLAUDE\.md|\.claude/(skills/pmzilla-|agents/|commands/)|tests/postures/(cas\.yaml|vocabulaire\.yaml|memoire/)|tools/pmzilla_lab_library\.py)')
+[[ -z "$WATCHED" ]] && exit 0
+
+nohup "$ROOT/tools/evals_auto.sh" "${OPTIONS[@]}" >> "$LOG" 2>&1 &!
+print "PMZilla Lab : jeu d'essai lancé en arrière-plan (journal : ~/Library/Logs/pmzilla-essai.log)"
+exit 0

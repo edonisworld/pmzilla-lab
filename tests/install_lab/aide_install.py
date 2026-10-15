@@ -40,6 +40,7 @@ CHANGEMENTS = (
     ("git", "clone"), ("curl",), ("xattr", "-c"), ("chmod",),
 )
 SCRIPTS_SANS_VERIFICATION = ("install_hooks.sh", "install_links.sh")
+SOUS_COMMANDES_QUI_CHANGENT = ("create", "update")   # run_worktree.sh : status ne change rien
 
 
 class Passage:
@@ -90,7 +91,7 @@ class Decor:
         (tools / "db.py").write_text(
             'SERVICE_TROUSSEAU = "pmzilla-test-db"\nROLES_AVEC_MOT_DE_PASSE = ("roles_test_a", "roles_test_b")\n', encoding="utf-8")
         # modèles launchd réels (le rendu est testé sur les vrais gabarits)
-        for gabarit in ("com.pmzilla.watch.plist", "com.pmzilla.db-backup.plist"):
+        for gabarit in ("com.pmzilla.watch.plist", "com.pmzilla.watch-catchup.plist", "com.pmzilla.db-backup.plist", "com.pmzilla.doctor.plist"):
             shutil.copy(TOOLS_REELS / gabarit, tools / gabarit)
         for nom in ("watch.sh", "db_backup.sh", "install_hooks.sh", "install_links.sh", "db_up.sh"):
             (tools / nom).write_text("#!/bin/sh\n", encoding="utf-8")
@@ -98,6 +99,20 @@ class Decor:
         self._script_depot("install_hooks.sh", "hooks-ok")
         self._script_depot("install_links.sh", "links-ok")
         self._ecrire_db_up()
+        self._ecrire_run_worktree()
+        self.drapeau("runtree-ok")                       # machine avec dossier d'exécution propre ; un test le retire ou pose runtree-retard
+
+    def _ecrire_run_worktree(self) -> None:
+        """run_worktree.sh factice : status rend 0 (runtree-ok), 8 (runtree-retard) ou 4 (rien) ; create pose runtree-ok sauf runtree-create-echec."""
+        corps = (
+            "#!/bin/sh\n"
+            'echo "run_worktree.sh $*" >> "$INSTALL_LAB_APPELS"\n'
+            'case "$1" in\n'
+            '  status) [ -e "$INSTALL_LAB_ETAT/runtree-retard" ] && exit 8; [ -e "$INSTALL_LAB_ETAT/runtree-ok" ] && exit 0; exit 4 ;;\n'
+            '  create) [ -e "$INSTALL_LAB_ETAT/runtree-create-echec" ] && exit 1; : > "$INSTALL_LAB_ETAT/runtree-ok"; exit 0 ;;\n'
+            '  *) exit 2 ;;\n'
+            'esac\n')
+        self._ecrire_executable(self.racine / "tools" / "run_worktree.sh", corps)
 
     def _script_depot(self, nom: str, drapeau: str) -> None:
         corps = (
@@ -154,7 +169,7 @@ class Decor:
     def environnement(self, extra: dict | None = None, sans_terminal_ok: bool = True) -> dict:
         env = {
             "PATH": f"{self.simulacres}:/usr/bin:/bin", "HOME": str(self.maison), "USER": "testeur", "TMPDIR": str(self.tmp),
-            "INSTALL_LAB_ROOT": str(self.racine), "INSTALL_LAB_APPELS": str(self.appels), "INSTALL_LAB_ETAT": str(self.etat),
+            "INSTALL_LAB_ROOT": str(self.racine), "INSTALL_LAB_APPLICATIONS": str(self.tmp / "Applications"), "INSTALL_LAB_APPELS": str(self.appels), "INSTALL_LAB_ETAT": str(self.etat),
             "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
         }
         if sans_terminal_ok:
@@ -212,6 +227,8 @@ class Decor:
             return "--verify" not in mots
         if mots[0] == "db_up.sh":
             return True
+        if mots[0] == "run_worktree.sh":
+            return len(mots) > 1 and mots[1] in SOUS_COMMANDES_QUI_CHANGENT
         if mots[0] == "uv" and "migrate" in mots:
             return "--dry-run" not in mots
         return False

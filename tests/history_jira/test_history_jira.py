@@ -7,6 +7,7 @@ cache, ni dans aucun fichier écrit ; l'auteur et les champs autres que status n
 """
 import base64
 import contextlib
+import datetime as dt
 import importlib.util
 import io
 import json
@@ -60,7 +61,12 @@ class FauxJira:
         self.toujours_429 = False
         self.introuvables = set()    # clés dont l'historique ticket par ticket répond 404
         self.appels = []
-        self.prefixe = ""
+        self.prefixe = f"/ex/jira/{CLOUD_ID}"     # la passerelle : le seul chemin des appels authentifiés
+        self.cloud_site = CLOUD_ID   # le cloudId que le site donne sans authentification
+        self.refus = {}              # famille de ressource (search, history, fields) -> code HTTP à répondre
+        self.params = []             # (famille, paramètres de la requête) des appels de sonde
+        self.hors_passerelle = []    # chemins appelés avec authentification en dehors de la passerelle
+        self.auth_sur_tenant = False # la lecture du cloudId a reçu un en-tête d'authentification
         self.attendu = "Basic " + base64.b64encode(f"{EMAIL}:{JETON}".encode()).decode()
 
     def ajouter(self, cle: str):
@@ -91,16 +97,30 @@ def fabriquer_serveur(faux: FauxJira):
                 corps = json.loads(self.rfile.read(taille) or b"{}")
             if chemin.path == "/_edge/tenant_info":
                 faux.appels.append((methode, chemin.path))
-                return self.repondre(200, {"cloudId": CLOUD_ID, "site": "Nom Fictif"})
+                faux.auth_sur_tenant = faux.auth_sur_tenant or "Authorization" in self.headers
+                return self.repondre(200, {"cloudId": faux.cloud_site, "site": "Nom Fictif"})
+            if "Authorization" in self.headers and not chemin.path.startswith(faux.prefixe + "/"):
+                faux.hors_passerelle.append(chemin.path)
+                return self.repondre(404)
             if self.headers.get("Authorization") != faux.attendu:
                 return self.repondre(401, {"message": "Nom Fictif"})
             api = chemin.path[len(faux.prefixe):] if chemin.path.startswith(faux.prefixe) else chemin.path
             faux.appels.append((methode, api))
+            famille = ("search" if api == "/rest/api/3/search/jql" and methode == "GET" else
+                       "history" if api.endswith("/changelog") or api.endswith("/changelog/bulkfetch") else
+                       "fields" if api == "/rest/api/3/field/search" else None)
+            if famille:
+                faux.params.append((famille, {k: v[0] for k, v in parse_qs(chemin.query).items()}))
+            if famille in faux.refus:
+                return self.repondre(faux.refus[famille], {"message": "Nom Fictif"})
+            if api == "/rest/api/3/field/search":
+                return self.repondre(200, {"values": [{"id": "customfield_99999", "name": "Champ Secret"}], "total": 1})
             if faux.toujours_429 or faux.limite_429 > 0:
                 faux.limite_429 -= 1
                 return self.repondre(429, {}, {"Retry-After": "1"})
             if api == "/rest/api/3/search/jql" and methode == "GET":
-                return self.repondre(200, {"issues": [], "owner": "Nom Fictif"})
+                premiers = [{"id": ident, "key": cle} for cle, (ident, _) in list(faux.tickets.items())[:1]]
+                return self.repondre(200, {"issues": premiers, "owner": "Nom Fictif"})
             if api == "/rest/api/3/search/jql" and methode == "POST":
                 cles = corps["jql"][len("key in ("):-1].split(",")
                 trouves = [{"id": faux.tickets[c][0], "key": c, "fields": {"summary": "Titre secret"}}
@@ -187,19 +207,29 @@ class Base(unittest.TestCase):
         p = mock.patch.object(hj.time, "sleep", lambda s: self.attentes.append(s))
         p.start()
         self.addCleanup(p.stop)
-        self.ecrire_reglages("classique")
+        self.ecrire_reglages("scopes")
 
-    def ecrire_reglages(self, mode: str, extra: str = ""):
+    def ecrire_reglages(self, mode: str | None = "scopes", extra: str = "", cloud: str | None = CLOUD_ID,
+                        expiration: str | None = "2099-12-31"):
+        """Réglages de Jira. mode : « scopes », « classique » (refusé par l'outil) ou None (réglage absent) ; cloud et
+        expiration : None retire le réglage."""
         nouveau = {"scopes": "scoped", "classique": "classic"}.get(mode, mode)
-        (self.ws / "Flux-Lab" / "flux.yaml").write_text(
-            f"jira_site: {self.url}\njira_email: {EMAIL}\njira_token_type: {nouveau}\n{extra}", encoding="utf-8")
-        self.faux.prefixe = f"/ex/jira/{CLOUD_ID}" if mode == "scopes" else ""
+        lignes = [f"jira_site: {self.url}", f"jira_email: {EMAIL}"]
+        if nouveau is not None:
+            lignes.append(f"jira_token_type: {nouveau}")
+        if cloud is not None:
+            lignes.append(f"jira_cloud_id: {cloud}")
+        if expiration is not None:
+            lignes.append(f"jira_token_expires: {expiration}")
+        (self.ws / "Flux-Lab" / "flux.yaml").write_text("\n".join(lignes) + "\n" + extra, encoding="utf-8")
 
     def ecrire_export(self, lignes, nom="export.csv") -> str:
         """lignes : (clé, type, équipe, terminé). Les titres ne sont jamais écrits."""
         chemin = self.ws / nom
+        # résolu il y a 30 jours : sous la durée de conservation, quelle que soit la date du jour
+        resolu = (hj.aujourd_hui() - dt.timedelta(days=30)).strftime("%d/%b/%Y") + " 10:00"
         chemin.write_text("Issue key,Issue Type,Status,Resolved,Team\n" + "".join(
-            f"{c},{t},{'Done' if f else 'Open'},{'10/Sep/2026 10:00' if f else ''},{e}\n" for c, t, e, f in lignes),
+            f"{c},{t},{'Done' if f else 'Open'},{resolu if f else ''},{e}\n" for c, t, e, f in lignes),
             encoding="utf-8")
         return str(chemin)
 
@@ -232,7 +262,8 @@ class Base(unittest.TestCase):
 class Connexion(Base):
     def test_connexion_ok_sans_rien_afficher_d_autre(self):
         code, sortie = self.lancer("test")
-        self.assertEqual((code, sortie.strip()), (0, "connexion OK"))
+        self.assertEqual(code, 0)
+        self.assertEqual(sortie.splitlines(), ["connexion OK", "accès search : OK", "accès history : OK", "accès fields : OK"])
 
     def test_code_http_seulement(self):
         self.faux.attendu = "Basic autre"
@@ -242,11 +273,11 @@ class Connexion(Base):
             self.assertNotIn(interdit, sortie)
 
     def test_mode_scopes_passe_par_le_cloud_id(self):
-        self.ecrire_reglages("scopes")
         code, sortie = self.lancer("test")
-        self.assertEqual((code, sortie.strip()), (0, "connexion OK"))
+        self.assertEqual(code, 0)
         self.assertIn(("GET", "/_edge/tenant_info"), self.faux.appels)
         self.assertNotIn(CLOUD_ID, sortie)
+        self.assertEqual(self.faux.hors_passerelle, [])
 
     def test_reglages_manquants_ne_montrent_aucune_valeur(self):
         (self.ws / "Flux-Lab" / "flux.yaml").write_text("jira_email: a@example.org\n", encoding="utf-8")
@@ -257,7 +288,8 @@ class Connexion(Base):
 
     def test_http_distant_refuse(self):
         (self.ws / "Flux-Lab" / "flux.yaml").write_text(
-            f"jira_site: http://exemple.atlassian.net\njira_email: {EMAIL}\njira_token_type: classic\n", encoding="utf-8")
+            f"jira_site: http://exemple.atlassian.net\njira_email: {EMAIL}\njira_token_type: scoped\n"
+            f"jira_cloud_id: {CLOUD_ID}\n", encoding="utf-8")
         code, sortie = self.lancer("test")
         self.assertEqual(code, 1)
         self.assertIn("https://", sortie)
@@ -312,7 +344,9 @@ class AnciensNoms(Base):
 
     def test_nouveaux_noms_sans_avertissement(self):
         code, sortie = self.lancer("test")
-        self.assertEqual((code, sortie.strip()), (0, "connexion OK"))
+        self.assertEqual(code, 0)
+        self.assertEqual(sortie.splitlines()[0], "connexion OK")
+        self.assertNotIn("n'existe plus", sortie)
 
     def test_anciens_noms_de_sous_commandes_refuses(self):
         for ancien in ("collecte", "controle"):
@@ -321,10 +355,10 @@ class AnciensNoms(Base):
             self.assertEqual(self.faux.appels, [])
 
     def test_message_du_reglage_manquant_donne_le_nouveau_nom(self):
-        (self.ws / "Flux-Lab" / "flux.yaml").write_text(f"jira_site: {self.url}\njira_email: {EMAIL}\n", encoding="utf-8")
+        (self.ws / "Flux-Lab" / "flux.yaml").write_text(f"jira_email: {EMAIL}\n", encoding="utf-8")
         code, sortie = self.lancer("test")
         self.assertEqual(code, 1)
-        self.assertIn("jira_token_type", sortie)
+        self.assertIn("jira_site", sortie)
         self.assertNotIn("jira_jeton", sortie)
 
 
@@ -336,7 +370,7 @@ class Collecte(Base):
         cache = self.cache()
         self.assertEqual(len(cache), 5)
         for entree in cache.values():
-            self.assertEqual(set(entree), {"termine", "transitions"})
+            self.assertEqual(set(entree), {"termine", "transitions", "resolu", "vu_le"})
             self.assertEqual(len(entree["transitions"]), 2)           # le changement d'assigné est écarté
             for transition in entree["transitions"]:
                 self.assertEqual(len(transition), 3)
@@ -470,7 +504,7 @@ class Collecte(Base):
         self.assertEqual(self.faux.appels, [])
 
     def test_portefeuille_et_projets_exclus_ne_sont_pas_interroges(self):
-        self.ecrire_reglages("classique", "portfolio_types: [Epic]\nexcluded_projects: [BUG]\n")
+        self.ecrire_reglages("scopes", "portfolio_types: [Epic]\nexcluded_projects: [BUG]\n")
         lignes = self.inventer(3)
         for cle in ("EPI-1", "BUG-1"):
             self.faux.ajouter(cle)
@@ -660,6 +694,24 @@ class FluxSurCacheReel(Base):
         code, sortie = self.lancer("check", self.ecrire_export_etat_reel())
         self.assertIn("Dates de transition illisibles : 0.", sortie)
 
+    def test_ancien_cache_sans_les_nouvelles_cles_lu_par_le_rapport_de_flux_et_par_check(self):
+        """Un cache d'avant R-58 (ni resolu, ni vu_le, ni versions, ni etiquettes) donne les mêmes chiffres que le cache étendu."""
+        export = self.ecrire_export(self.inventer_reels())
+        self.assertEqual(self.lancer("collect", export)[0], 0)
+        etendu = self.cache()
+        self.assertTrue(all({"resolu", "vu_le"} <= set(v) for v in etendu.values()))
+        ancien = {cle: {"termine": v["termine"], "transitions": v["transitions"]} for cle, v in etendu.items()}
+        chemin = self.ws / "Flux-Lab" / "historique" / "transitions.json"
+        chemin.write_text(json.dumps(ancien), encoding="utf-8")
+        ts, _ = self.calcul_flux()
+        self.verifier(ts)
+        code, sortie = self.lancer("check", self.ecrire_export_etat_reel())
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("Dates de transition illisibles : 0.", sortie)
+        code, sortie = self.lancer("check", "--key", "ABC-1")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("6 transition(s)", sortie)
+
     def ecrire_export_etat_reel(self) -> str:
         chemin = self.ws / "etat.csv"
         chemin.write_text("Issue key,Issue Type,Status,Resolved,Team\n" + "".join(
@@ -800,7 +852,7 @@ class Controle(Base):
         self.faux.ajouter("ABC-1")
         export = self.ecrire_export_etat([("ABC-1", "Done", True)])
         self.lancer("collect", export)
-        self.ecrire_reglages("classique", "segments:\n  fin: [In Progress]\n")
+        self.ecrire_reglages("scopes", "segments:\n  fin: [In Progress]\n")
         code, sortie = self.lancer("check", export)
         self.assertIn("Segments traversés (tickets livrés passés par le segment) : fin 1.", sortie)
 

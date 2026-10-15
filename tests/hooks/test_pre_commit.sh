@@ -2,6 +2,7 @@
 # Test du hook pre-commit : dépôt Git temporaire, liste factice, aucun appel à Claude.
 # Lancement à la main : sh tests/hooks/test_pre_commit.sh
 set -u
+unset PMZILLA_NOMS PMZILLA_LAB_SENSITIVE_NAMES   # la séance (worktree) peut les porter : le test vise sa liste factice
 export PMZILLA_SKIP_GREEN_CHECK=1   # ce test vise le garde-fou des noms ; celui du lancement vert a son test (test_pre_commit_green.sh)
 hook="$(cd "$(dirname "$0")/../../tools/hooks" && pwd)/pre-commit"
 tmp=$(mktemp -d) || exit 1
@@ -59,6 +60,50 @@ if git commit -q -m t >/dev/null 2>&1; then echo "ECHEC : git commit aurait dû 
 vide
 indexe f.md 'texte sans nom'
 if git commit -q -m t >/dev/null 2>&1; then echo "ok : git commit propre accepté"; ok=$((ok+1)); else echo "ECHEC : commit propre refusé"; ko=$((ko+1)); fi
+
+# Dossier d'exécution (change run-worktree, D6) : refus avant tout autre garde-fou, contournement du propriétaire compris ; aucun refus
+# dans le dépôt principal ni dans un worktree de branche de travail. Le dossier d'exécution est PMZILLA_LAB_RUN, sinon ~/PMZilla-Lab/run.
+CLE="pre-commit : commit refusé dans le dossier d'exécution"
+git branch -q -f base HEAD
+git worktree add -q --detach "$tmp/run" HEAD
+git worktree add -q -b travail-test "$tmp/wt" HEAD
+verifie_dans() { # description attendu dossier motif [absent] : lance le hook dans le dossier donné, comme le fait git commit
+  desc=$1; attendu=$2; dossier=$3; motif=$4; absent=${5:-}
+  sortie=$(cd "$dossier" && python3 "$hook" 2>&1); code=$?
+  if [ "$code" -ne "$attendu" ]; then echo "ECHEC : $desc (code $code, attendu $attendu) $sortie"; ko=$((ko+1)); return; fi
+  if [ -n "$motif" ] && ! printf '%s' "$sortie" | grep -q -- "$motif"; then echo "ECHEC : $desc (sortie sans « $motif »)"; ko=$((ko+1)); return; fi
+  if [ -n "$absent" ] && printf '%s' "$sortie" | grep -q -- "$absent"; then echo "ECHEC : $desc (sortie avec « $absent »)"; ko=$((ko+1)); return; fi
+  echo "ok : $desc"; ok=$((ok+1))
+}
+empreinte() { (cd "$1" && git write-tree > "$(git rev-parse --git-path pmzilla-run-all-ok)"); }   # ce que fait run_all.sh
+echo propre > "$tmp/run/r.md"; git -C "$tmp/run" add r.md
+empreinte "$tmp/run"
+export PMZILLA_LAB_RUN="$tmp/run"
+export PMZILLA_NOMS="$tmp/Flux-Lab/noms-sensibles.txt"   # les worktrees n'ont pas Flux-Lab/ (hors Git) : la liste du dépôt principal
+unset PMZILLA_SKIP_GREEN_CHECK
+verifie_dans "dossier d'exécution, empreinte complète valide : refusé" 1 "$tmp/run" "$CLE"
+export PMZILLA_SKIP_GREEN_CHECK=1
+verifie_dans "dossier d'exécution, contournement du propriétaire : refusé aussi" 1 "$tmp/run" "$CLE"
+echo "une EquipeTest ici" > "$tmp/run/r.md"; git -C "$tmp/run" add r.md
+verifie_dans "dossier d'exécution : refus avant le garde-fou des noms" 1 "$tmp/run" "$CLE" "nom sensible"
+git -C "$tmp/run" reset -q; rm -f "$tmp/run/r.md"
+echo propre > "$tmp/wt/w.md"; git -C "$tmp/wt" add w.md
+verifie_dans "worktree de branche de travail : pas de refus du dossier d'exécution" 0 "$tmp/wt" "" "dossier d'exécution"
+echo propre > "$tmp/run-voisin.md"
+verifie_dans "dépôt principal : pas de refus du dossier d'exécution" 0 "$tmp" "" "dossier d'exécution"
+# Sans PMZILLA_LAB_RUN : le dossier par défaut est ~/PMZilla-Lab/run
+unset PMZILLA_LAB_RUN
+mkdir -p "$tmp/home/PMZilla-Lab"; git worktree add -q --detach "$tmp/home/PMZilla-Lab/run" HEAD
+echo propre > "$tmp/home/PMZilla-Lab/run/d.md"; git -C "$tmp/home/PMZilla-Lab/run" add d.md
+sortie=$(cd "$tmp/home/PMZilla-Lab/run" && HOME="$tmp/home" python3 "$hook" 2>&1); code=$?
+if [ "$code" -eq 1 ] && printf '%s' "$sortie" | grep -q -- "$CLE"; then echo "ok : dossier par défaut ~/PMZilla-Lab/run refusé"; ok=$((ok+1)); else echo "ECHEC : dossier par défaut (code $code) $sortie"; ko=$((ko+1)); fi
+# Un commit réel, hook installé : refusé dans le dossier d'exécution (sans --no-verify), accepté dans le worktree de travail
+export PMZILLA_LAB_RUN="$tmp/run"
+echo reel > "$tmp/run/c.md"; git -C "$tmp/run" add c.md
+if git -C "$tmp/run" commit -q -m t >/dev/null 2>&1; then echo "ECHEC : git commit dans le dossier d'exécution aurait dû être refusé"; ko=$((ko+1)); else echo "ok : git commit refusé dans le dossier d'exécution"; ok=$((ok+1)); fi
+if git -C "$tmp/wt" commit -q -m t >/dev/null 2>&1; then echo "ok : git commit accepté dans le worktree de travail"; ok=$((ok+1)); else echo "ECHEC : commit refusé dans le worktree de travail"; ko=$((ko+1)); fi
+unset PMZILLA_LAB_RUN PMZILLA_NOMS
+git -C "$tmp/run" reset -q; rm -f "$tmp/run/c.md" "$tmp/run-voisin.md"
 
 # Sans liste, le hook échoue en le disant (R-47) ; liste vide : avertissement seulement
 rm Flux-Lab/noms-sensibles.txt

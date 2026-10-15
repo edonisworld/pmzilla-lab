@@ -4,7 +4,9 @@
 Search of closed cases and running experiments (hybrid search, similarity threshold, hit contents), the provisional calibration of the threshold, and the three read-only cases tools of the library server.
 
 Source of truth: `tests/cases_store/test_cases_store.py`, `tests/cases_store/test_cases_calibration.py`, `tests/pmzilla_lab_library/test_cases_tools.py`, `tools/cases_store.py`, `tools/cases_calibration.py`, `tools/pmzilla_lab_library.py`.
+
 ## Requirements
+
 ### Requirement: Cases and running experiments are searched with the library's hybrid search
 The system SHALL search cases and running experiments with the same hybrid search as the library (semantic list and BM25 keyword list fused by reciprocal rank, approximate vector scan with the library's default breadth, same candidate count and tie-breaking), through table specifications only, without a second implementation of the fusion. Every hit SHALL receive the neutral freshness bonus, and no collection, date or passage-type filter SHALL be generated. An empty question SHALL be refused, an unavailable embedding service SHALL be reported as such, and a search SHALL never write and SHALL leave no transaction open.
 
@@ -92,7 +94,7 @@ Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Inventaire, Reponses.te
 - **THEN** only the first is listed, flagged as requiring a decision
 
 ### Requirement: Cases tools answer errors without stopping the server
-The system SHALL answer a cases tool call with an error object, and keep the server running, when the cases database does not answer (no secret in the message), when the server uses the SQLite backend, when the question is empty, when the similarity threshold is not calibrated, or, for the due-review tool, when no author is configured. The four library tools SHALL answer as before whatever the state of the cases connection. An empty question and the SQLite backend SHALL be answered without creating the cases reader; an empty result SHALL stay an empty list.
+The system SHALL answer a cases tool call with an error object, and keep the server running, when the cases database does not answer (no secret in the message), when the question is empty, when the similarity threshold is not calibrated, or, for the due-review tool, when no author is configured. The four library tools SHALL answer as before whatever the state of the cases connection. An empty question SHALL be answered without creating the cases reader; an empty result SHALL stay an empty list. The cases tools SHALL NOT test which library backend is in use, since the library is served from PostgreSQL only.
 
 Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
 
@@ -100,11 +102,18 @@ Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
 - **WHEN** the cases database does not answer and a case search is called
 - **THEN** an error object pointing to the database start script is returned, and a following library search still answers
 
+#### Scenario: Empty question
+- **WHEN** a case search is called with an empty question
+- **THEN** an error object says the question is empty and no cases reader is created
+
 #### Scenario: SQLite backend
-- **WHEN** the server runs with the SQLite backend and a cases tool is called
-- **THEN** an error object says the cases module requires the PostgreSQL backend
+- **WHEN** a cases tool is called on a running server, which can no longer be started with a SQLite backend (the backend option is refused at start, capability library-search-mcp-server)
+- **THEN** the answer never says the cases module requires the PostgreSQL backend: the former error object for a server running on the SQLite backend is removed with that backend, and the call is answered from the cases database or with one of the errors above
+
+#### Scenario: No backend branch
+- **WHEN** the server source of the cases tools is inspected
+- **THEN** it holds no message saying the cases module requires the PostgreSQL backend and no test of a backend name
 
 ## Open questions
 
 None.
-

@@ -2,7 +2,8 @@
 
 Le français reproduit à l'octet près les textes du script avant le lot 3. Ne passent pas par ce catalogue : les noms de
 colonnes de l'export Jira (Issue key, Status, Created, Inward issue link…), le libellé « (équipe inconnue) » écrit dans
-le CSV (format de données lu par flux_jira.py) et les clés du fichier equipes-assets.yaml. Aucun message ne contient de
+le CSV (format de données lu par flux_jira.py), les clés du fichier equipes-assets.yaml et les en-têtes « Declared Label » et
+« Fix Version ». Aucun message ne contient de
 jeton, de clé de ticket, de titre ni de nom : seulement des effectifs, des formes de valeurs et des noms de réglages.
 """
 
@@ -29,8 +30,11 @@ CATALOGS = {
         "form_list_of": "liste de {forms}",
         "team_label_options": (
             "Le champ d'équipe ne renvoie pas le libellé de l'équipe (forme reçue : {form}). Rien n'est deviné, rien n'est "
-            "écrit. Créer à la main Flux-Lab/equipes-assets.yaml, au format `equipes: {{identifiant: libellé}}`, puis "
+            "écrit. Renseigner le référentiel d'organisation Flux-Lab/organisation.yaml : sous `teams`, chaque équipe a les "
+            "clés `name`, `headcount` et `jira_team_ids` (la liste de ses identifiants d'équipe Jira, à saisir à la main) ; "
+            "les clés de la racine sont `source_date`, `sites`, `departments`, `teams` et `cross_cutting_teams`. Puis "
             "relancer ; `diagnose` montre la forme du champ. L'export liste ensuite les identifiants à compléter."),
+        "table_deprecated": "table des équipes dépréciée : compléter jira_team_ids du référentiel d'organisation",
         # diagnose
         "diagnose_no_field": "réglage export_team_field manquant : rien à diagnostiquer pour l'équipe.",
         "diagnose_page": "Page interrogée : {count} ticket(s).",
@@ -40,6 +44,8 @@ CATALOGS = {
         "diagnose_labels_yes": "Libellés exploitables : oui (texte, ou objet avec un libellé). L'export peut s'écrire.",
         "diagnose_labels_table": "Libellés exploitables : par la table {table} ({count} identifiant(s)). L'export peut "
                                  "s'écrire ; compléter la table si des équipes inconnues s'affichent.",
+        "diagnose_labels_referential": "Libellés exploitables : par le référentiel d'organisation ({count} identifiant(s)). "
+                                       "L'export peut s'écrire ; compléter jira_team_ids si des équipes inconnues s'affichent.",
         "diagnose_labels_no": "Libellés exploitables : non.",
         # fields
         "fields_search_empty": "--search : donner un texte à chercher dans le nom des champs.",
@@ -52,6 +58,11 @@ CATALOGS = {
         "export_summary": "{label}Tickets : {tickets} ; pages : {pages} ; colonnes : {columns} "
                           "(équipe : {team_columns}, liens : {link_columns} pour {link_types} type(s)).",
         "export_no_team_column": "{label}Aucune colonne d'équipe : export_team_field n'est pas réglé.",
+        "export_past_retention": "{label}tickets au-delà de la conservation, non écrits : {count}",
+        "export_lookalike_labels": "{label}étiquettes non déclarées au préfixe déclaré : {count}",
+        "export_lookalike_tickets": "{label}  tickets qui les portent : {tickets} (aucune étiquette affichée).",
+        "export_two_up_merge": "{label}éléments d'up-merge à deux étiquettes : {count}",
+        "export_referential_idle": "équipes du référentiel sans ticket : {count}",
         "export_verification": "{label}Colonne « {header} » : {filled} ticket(s) renseigné(s) sur {total} "
                                "(aucune valeur affichée).",
         "export_points": "{label}Colonne « {header} » : {filled} ticket(s) renseigné(s) sur {total} "
@@ -62,6 +73,9 @@ CATALOGS = {
         "export_unknown_teams": "{label}Équipes inconnues : {identifiers} identifiant(s) distinct(s) absent(s) de la table, "
                                 "{tickets} ticket(s) concerné(s), écrits « {unknown} ».",
         "export_unknown_ids": "{label}Complétez {table} (equipes: identifiant -> libellé) avec ces identifiants : {ids}.",
+        "export_unknown_teams_referential": "{label}Équipes inconnues : {identifiers} identifiant(s) distinct(s) absent(s) du "
+                                            "référentiel, {tickets} ticket(s) concerné(s), écrits « {unknown} ».",
+        "export_unknown_ids_referential": "{label}Compléter jira_team_ids du référentiel d'organisation avec ces identifiants : {ids}.",
         "export_written": "{label}Fichier écrit : {name} (permissions 600).",
         "export_strict_teams": "identifiants d'équipe inconnus : export incomplet",
         # sous-commandes retirées
@@ -93,8 +107,11 @@ CATALOGS = {
         "form_list_of": "list of {forms}",
         "team_label_options": (
             "The team field does not return the team label (shape received: {form}). Nothing is guessed, nothing is "
-            "written. Create Flux-Lab/equipes-assets.yaml by hand, in the format `equipes: {{identifier: label}}`, then "
-            "run again; `diagnose` shows the shape of the field. The export then lists the identifiers to complete."),
+            "written. Fill the organisation referential Flux-Lab/organisation.yaml: under `teams`, each team has the keys "
+            "`name`, `headcount` and `jira_team_ids` (the list of its Jira team identifiers, entered by hand); the root "
+            "keys are `source_date`, `sites`, `departments`, `teams` and `cross_cutting_teams`. Then run again; "
+            "`diagnose` shows the shape of the field. The export then lists the identifiers to complete."),
+        "table_deprecated": "team table deprecated: fill jira_team_ids in the organisation referential",
         "diagnose_no_field": "setting export_team_field is missing: nothing to diagnose for the team.",
         "diagnose_page": "Page queried: {count} ticket(s).",
         "diagnose_no_ticket": "the query returns no ticket.",
@@ -103,6 +120,8 @@ CATALOGS = {
         "diagnose_labels_yes": "Usable labels: yes (text, or object with a label). The export can be written.",
         "diagnose_labels_table": "Usable labels: through the table {table} ({count} identifier(s)). The export can "
                                  "be written; complete the table if unknown teams show up.",
+        "diagnose_labels_referential": "Usable labels: through the organisation referential ({count} identifier(s)). "
+                                       "The export can be written; complete jira_team_ids if unknown teams show up.",
         "diagnose_labels_no": "Usable labels: no.",
         "fields_search_empty": "--search: give a text to look for in the field names.",
         "fields_unexpected": "unexpected response from Jira for the field list.",
@@ -113,6 +132,11 @@ CATALOGS = {
         "export_summary": "{label}Tickets: {tickets}; pages: {pages}; columns: {columns} "
                           "(team: {team_columns}, links: {link_columns} for {link_types} type(s)).",
         "export_no_team_column": "{label}No team column: export_team_field is not set.",
+        "export_past_retention": "{label}tickets past retention, not written: {count}",
+        "export_lookalike_labels": "{label}undeclared labels with a declared prefix: {count}",
+        "export_lookalike_tickets": "{label}  tickets carrying them: {tickets} (no label displayed).",
+        "export_two_up_merge": "{label}up-merge items with two labels: {count}",
+        "export_referential_idle": "referential teams without ticket: {count}",
         "export_verification": "{label}Column \"{header}\": {filled} ticket(s) filled out of {total} "
                                "(no value displayed).",
         "export_points": "{label}Column \"{header}\": {filled} ticket(s) filled out of {total} "
@@ -123,6 +147,9 @@ CATALOGS = {
         "export_unknown_teams": "{label}Unknown teams: {identifiers} distinct identifier(s) missing from the table, "
                                 "{tickets} ticket(s) affected, written \"{unknown}\".",
         "export_unknown_ids": "{label}Complete {table} (equipes: identifier -> label) with these identifiers: {ids}.",
+        "export_unknown_teams_referential": "{label}Unknown teams: {identifiers} distinct identifier(s) missing from the "
+                                            "referential, {tickets} ticket(s) affected, written \"{unknown}\".",
+        "export_unknown_ids_referential": "{label}Complete jira_team_ids of the organisation referential with these identifiers: {ids}.",
         "export_written": "{label}File written: {name} (permissions 600).",
         "export_strict_teams": "unknown team identifiers: export incomplete",
         "retired_teams_table": "the teams-table subcommand is retired. Flux-Lab/equipes-assets.yaml is completed by hand "

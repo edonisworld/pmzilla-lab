@@ -41,9 +41,9 @@ Source: tests/flow_import/test_reader.py; tests/flow_import/test_import.py (Refu
 - **THEN** the message names the column but not the text
 
 ### Requirement: Incremental ticket upsert
-The system SHALL insert new tickets, update a ticket only when a field differs (a difference in the updated date alone counts), leave unchanged tickets alone, and SHALL NOT overwrite a ticket with an export whose updated date is older than the stored one. Tickets absent from a new export SHALL be kept. The console SHALL report counts only: read, inserted, updated, unchanged, unreadable, teams created, links added, links removed.
+The system SHALL insert new tickets, update a ticket only when a field differs (a difference in the updated date alone counts), leave unchanged tickets alone, and SHALL NOT overwrite a ticket with an export whose updated date is older than the stored one. Tickets absent from a new export SHALL be kept, and marked out of the export only under the requirement "Out-of-export mark". The console SHALL report counts only: read, inserted, updated, unchanged, unreadable, teams created, links added, links removed, and the out-of-export line of design D19.
 
-Source: tests/flow_import/test_import.py (Import)
+Source: tests/flow_import/test_import.py (Import); out-of-export line: tests/flow_import/test_groupe8_sans_base.py (Comptes)
 
 #### Scenario: Reimport
 - **WHEN** the same export is imported twice
@@ -126,6 +126,71 @@ Source: tests/flow_import/test_import.py (EssaiEtSortie)
 #### Scenario: English
 - **WHEN** `--language en` is given
 - **THEN** the output includes "Tickets read" and "Transitions added ... ignored without ticket" lines
+
+### Requirement: Out-of-export mark
+The system SHALL, with the `--mark-absent` option, set the out-of-export instant (the import instant) on every stored ticket absent from all the given files that does not already carry it, and SHALL clear the instant of every ticket present in the given files, with or without the option. It SHALL report the marked and returned counts with the key phrase of design D19. It SHALL NOT delete a marked ticket, SHALL NOT move the instant of a ticket already marked, and SHALL NOT print a key.
+
+Source: tests/flow_import/test_groupe8_base.py (MarqueAbsents)
+
+#### Scenario: Ticket leaves the export
+- **WHEN** a stored ticket is absent from the complete set of the day and the option is given
+- **THEN** it carries the import instant as out-of-export instant, and the console prints "Tickets out of the export: 1 marked, 0 back"
+
+#### Scenario: Ticket comes back
+- **WHEN** a marked ticket is present in a later import, even without the option
+- **THEN** its mark is cleared and counted as back
+
+#### Scenario: Without the option
+- **WHEN** an import runs without the option and a stored ticket is absent
+- **THEN** no mark is set
+
+### Requirement: Mark only with a complete export set
+The system SHALL accept `--mark-absent` only when the given files are exactly one API-export file per named export query of the settings, all of the same day (design D8). Otherwise it SHALL stop with exit code 1 and the incomplete-set key phrase of design D19, before writing anything. The refusal SHALL NOT name a query or a file.
+
+Source: tests/flow_import/test_groupe8_sans_base.py (JeuComplet, RefusJeuIncomplet); tests/flow_import/test_groupe8_base.py
+
+#### Scenario: One file missing
+- **WHEN** two named queries are configured and only one file of the day is given with the option
+- **THEN** the output holds "incomplete export set: --mark-absent refused", nothing is written, and the exit code is 1
+
+#### Scenario: Files of two days
+- **WHEN** the files of both queries are given but from two different days
+- **THEN** the import is refused in the same way
+
+### Requirement: Declared labels and fix versions imported
+The system SHALL read the `Declared Label` and `Fix Version` columns when present and, with `--history`, store the declared label periods and the fix version periods from the add and remove events of the cache (an add opens a period, a remove closes it; a label or version present in the export without an event opens a period at the creation instant). A label that is not declared in the settings SHALL be refused as a column value: the row is imported without it and the count of refused values is printed, never the value. Among the columns added by this change, the system SHALL import only the declared labels and the fix versions; it SHALL NOT store a person column (a `PO` column found in a file is ignored, design D3), and SHALL NOT print a label or a version name.
+
+Source: tests/flow_import/test_groupe8_sans_base.py (ConstruirePeriodes, LecteurColonnes); tests/flow_import/test_groupe8_base.py (Periodes)
+
+#### Scenario: Periods from events
+- **WHEN** the cache holds the add then the remove of a declared label
+- **THEN** one closed period is stored with both instants
+
+#### Scenario: Undeclared value in the column
+- **WHEN** a `Declared Label` cell holds a label absent from the settings
+- **THEN** it is not stored and the console counts one refused value
+
+### Requirement: Tickets past retention not imported
+The system SHALL skip the export rows of tickets resolved longer ago than the retention period, count them with the key phrase of design D19, and SHALL NOT insert or update them.
+
+Source: tests/flow_import/test_groupe8_sans_base.py (HorsConservation); tests/flow_import/test_groupe8_base.py (HorsConservation)
+
+#### Scenario: Old row
+- **WHEN** an export holds a ticket resolved before the retention period
+- **THEN** it is not in the database after the import and the console prints "tickets past retention, skipped: 1"
+
+### Requirement: Mark refused on an empty export or too many absent tickets
+The system SHALL refuse `--mark-absent` with exit code 1, writing nothing, when the files hold no ticket (checked before any connection) or when the tickets to mark exceed the share of stored tickets set by `--max-absent-percent` (which has a default); it SHALL NOT mark part of them. An invalid percentage SHALL be refused with exit code 2 before any connection.
+
+Source: tests/flow_import/test_groupe8_sans_base.py (SeuilDesAbsents), test_groupe8_base.py (MarqueAbsents)
+
+#### Scenario: Empty export
+- **WHEN** the complete set of the day holds no ticket and the option is given
+- **THEN** the output holds "empty export: --mark-absent refused", no connection is opened, and the exit code is 1
+
+#### Scenario: Too many absent
+- **WHEN** two of four stored tickets are absent and the threshold given with the option is below that share
+- **THEN** the output says too many tickets are absent from the files, no ticket is marked, and the exit code is 1
 
 ## Open questions
 

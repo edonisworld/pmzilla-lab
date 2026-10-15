@@ -2,7 +2,9 @@
 
 ## Purpose
 Git hooks, installed from a tracked folder, that protect confidentiality at commit time (pre-commit for sensitive names, commit-msg for personal identifiers), require a green test run of what is committed (pre-commit) and of what is pushed to `main` (pre-push), and optionally trigger the posture evaluation run after a commit (post-commit).
+
 ## Requirements
+
 ### Requirement: A script installs the hooks as relative links
 The system SHALL provide an installer that links the pre-commit, post-commit, commit-msg and pre-push hooks of the repository's tracked hooks folder into the repository's git hooks folder with relative symbolic links, makes the sources executable, and verifies the result. It SHALL be safe to run again (a correct link is left untouched), SHALL move a different existing hook aside instead of deleting it, SHALL repair a wrongly aimed link, SHALL exit non-zero and name a missing source hook, and SHALL offer a verify-only mode that changes nothing. It SHALL NOT delete an existing hook. It SHALL stop with an error, linking nothing, outside a git repository or when the repository's hooks folder is not the standard one that the relative links assume.
 
@@ -264,3 +266,13 @@ The system SHALL refuse the former mode variable, its former values and the form
 - **WHEN** only current names are set
 - **THEN** no refusal message appears
 
+### Requirement: Pre-commit refuses every commit in the run tree
+The system SHALL make the pre-commit hook refuse any commit whose repository top level is the run tree, before every other check, with the key phrase of design D6, whatever the branch, the fingerprints or the owner bypass variable. It SHALL NOT refuse a commit in the development checkout or in a work-branch worktree on that ground. Untested until implemented.
+
+#### Scenario: Commit in the run tree
+- **WHEN** a commit is attempted in a run tree of a temporary repository, with a matching complete-run fingerprint and the owner bypass variable set
+- **THEN** the commit is refused with the run-tree key phrase
+
+#### Scenario: Work-branch worktree
+- **WHEN** a commit is attempted in a work-branch worktree of the same repository
+- **THEN** the run-tree refusal does not apply

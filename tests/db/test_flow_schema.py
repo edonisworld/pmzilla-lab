@@ -16,8 +16,11 @@ from pathlib import Path
 import test_db as base          # noqa: E402  (même dossier : connexion, base jetable, mot de passe)
 from test_db import db          # noqa: E402
 
-INTERDITES = {"summary", "title", "description", "assignee", "reporter", "creator", "author", "labels", "comment", "name_of_person"}
-TABLES = {"teams", "issues", "issue_teams", "transitions", "links"}
+INTERDITES = {"summary", "title", "description", "assignee", "reporter", "creator", "author", "labels", "comment", "name_of_person",
+              "po", "product_owner", "person"}          # R-58 (D3, D20) : ni PO ni donnée personnelle
+TABLES = {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods"}
+TABLE_ETIQUETTES = "issue_label_periods"                  # périodes d'étiquettes déclarées (migration 0008)
+TABLE_VERSIONS = "issue_version_periods"                  # périodes de fixVersion (migration 0008)
 VUES = {"v_team_status", "v_team_weekly_resolved", "v_team_open_age", "v_team_dependencies"}
 
 
@@ -67,7 +70,7 @@ class SchemaFlow(unittest.TestCase):
         c = self.conn()
         noms = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                         "WHERE n.nspname = 'flow' AND c.relkind = 'r'")}
-        self.assertLessEqual(TABLES, noms)
+        self.assertEqual(TABLES, noms)                    # les sept tables, pas une de plus
         vues = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                         "WHERE n.nspname = 'flow' AND c.relkind = 'v'")}
         self.assertEqual(vues, VUES)
@@ -76,7 +79,64 @@ class SchemaFlow(unittest.TestCase):
         issues = {r[0] for r in c.execute("SELECT column_name FROM information_schema.columns "
                                           "WHERE table_schema = 'flow' AND table_name = 'issues'")}
         self.assertLessEqual({"key", "project", "type", "status", "status_category", "created_at", "resolved_at", "resolution",
-                              "status_category_changed_at", "story_points", "updated_at", "team_id", "parent_key"}, issues)
+                              "status_category_changed_at", "story_points", "updated_at", "team_id", "parent_key",
+                              "has_history", "out_of_export_at"}, issues)
+
+    def test_aucune_colonne_po_ni_personnelle_et_etiquette_dans_une_seule_table(self):
+        c = self.conn()
+        lignes = c.execute("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'flow'").fetchall()
+        for table, colonne in lignes:
+            nom = colonne.lower()
+            self.assertNotIn(nom, INTERDITES, f"{table}.{colonne}")
+            self.assertFalse(set(nom.split("_")) & {"po", "owner", "person", "assignee", "reporter", "creator", "author", "email", "account"},
+                             f"{table}.{colonne} : colonne PO ou personnelle")
+        avec_etiquette = {t for t, col in lignes if "label" in col.lower()}
+        self.assertEqual(avec_etiquette, {TABLE_ETIQUETTES})
+        for table in (TABLE_ETIQUETTES, TABLE_VERSIONS):
+            colonnes = {col for t, col in lignes if t == table}
+            self.assertLessEqual({"issue_key", "added_at", "removed_at"}, colonnes, table)
+
+    def test_instant_sorti_de_l_export_nullable(self):
+        c = self.conn()
+        ligne = c.execute("SELECT data_type, is_nullable FROM information_schema.columns "
+                          "WHERE table_schema = 'flow' AND table_name = 'issues' AND column_name = 'out_of_export_at'").fetchone()
+        self.assertIsNotNone(ligne, "colonne flow.issues.out_of_export_at absente")
+        self.assertEqual(ligne, ("timestamp with time zone", "YES"))
+        self.jeu(c)
+        c.execute("SET ROLE pmzilla_flow")
+        self.assertIsNone(c.execute("SELECT out_of_export_at FROM flow.issues WHERE key = 'PROJ-0'").fetchone()[0])
+        c.execute("RESET ROLE")
+
+    def test_drapeau_d_historique_inchange(self):
+        c = self.conn()
+        ligne = c.execute("SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+                          "WHERE table_schema = 'flow' AND table_name = 'issues' AND column_name = 'has_history'").fetchone()
+        self.assertEqual(ligne, ("boolean", "NO", "false"))
+        self.jeu(c)
+        c.execute("SET ROLE pmzilla_flow")
+        self.assertEqual(c.execute("SELECT has_history FROM flow.issues WHERE key = 'PROJ-0'").fetchone(), (False,))
+        c.execute("UPDATE flow.issues SET has_history = true WHERE key = 'PROJ-0'")
+        self.assertEqual(c.execute("SELECT has_history FROM flow.issues WHERE key = 'PROJ-0'").fetchone(), (True,))
+        with self.assertRaises(db.psycopg.errors.NotNullViolation):
+            with c.transaction():
+                c.execute("UPDATE flow.issues SET has_history = NULL WHERE key = 'PROJ-0'")
+        c.execute("RESET ROLE")
+
+    def test_suppression_en_cascade_d_une_issue_et_de_ses_dependances(self):
+        c = self.conn()
+        self.jeu(c)
+        c.execute("SET ROLE pmzilla_flow")
+        c.execute("INSERT INTO flow.issue_teams (issue_key, team_id, position) VALUES ('PROJ-0', 1, 1), ('PROJ-0', 2, 2)")
+        c.execute("INSERT INTO flow.transitions (issue_key, transitioned_at, from_status, to_status) VALUES ('PROJ-0', now(), NULL, 'Open')")
+        c.execute(f"INSERT INTO flow.{TABLE_ETIQUETTES} (issue_key, label, added_at) VALUES ('PROJ-0', 'etiquette-a', now())")
+        c.execute(f"INSERT INTO flow.{TABLE_VERSIONS} (issue_key, version, added_at) VALUES ('PROJ-0', 'version-a', now())")
+        c.execute("INSERT INTO flow.links (source_key, target_key, link_type, direction) VALUES ('PROJ-0', 'PROJ-1', 'Relates', 'outward')")
+        c.execute("DELETE FROM flow.issues WHERE key = 'PROJ-0'")
+        for table, colonne in (("issue_teams", "issue_key"), ("transitions", "issue_key"), (TABLE_ETIQUETTES, "issue_key"),
+                               (TABLE_VERSIONS, "issue_key"), ("links", "source_key")):
+            self.assertEqual(c.execute(f"SELECT count(*) FROM flow.{table} WHERE {colonne} = 'PROJ-0'").fetchone()[0], 0, table)
+        self.assertEqual(c.execute("SELECT count(*) FROM flow.issues WHERE key = 'PROJ-1'").fetchone()[0], 1)
+        c.execute("RESET ROLE")
 
     def test_les_vues_ne_montrent_aucune_cle(self):
         c = self.conn()

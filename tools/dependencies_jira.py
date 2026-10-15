@@ -14,10 +14,15 @@ Ni titre, ni description, ni personne ne sont lus.
         Colonnes reconnues, format des liens (avec ou sans type), types de liens et leur nombre,
         part des liens qui pointent vers un ticket absent de l'export. Aucune clé affichée.
 
-    uv run dependencies_jira.py compute <export.csv> [--name perimetre] [--weeks 26] [--keys] [--by team|project]
+    uv run dependencies_jira.py compute <export.csv> [--name perimetre] [--weeks 26] [--keys] [--by team|project|mission-team|site]
         Matrice des dépendances entre équipes, blocages en cours, graphe Mermaid, effet des
         dépendances externes sur le lead time. Écrit Flux-Lab/rapports/dependances-<nom>-AAAA-MM-JJ.md
-        (et .json).
+        (et .json). Avec --by mission-team ou --by site, les équipes sont regroupées d'après le référentiel
+        d'organisation (Flux-Lab/organisation.yaml) : matrices, blocages et graphe sont entre groupes, les équipes
+        que le référentiel ne décrit pas forment le groupe « hors référentiel », une dépendance entre deux équipes
+        d'un même groupe est dite interne au groupe. Le rapport porte l'agrégation dans son nom
+        (dependances-<nom>-mission-team-AAAA-MM-JJ.md) et ne divise rien par un effectif. Référentiel absent ou
+        invalide : code de sortie 1, aucun rapport.
 
     uv run dependencies_jira.py diagnose|compute --source db [...]
         Lit tickets et liens dans le schéma flow de la base (rôle pmzilla_flow_ro, lecture seule) au lieu d'un export CSV :
@@ -59,6 +64,8 @@ SEUIL_ANCIEN = 365        # blocage en cours depuis plus longtemps : probablemen
 SANS_ENFANT = "sans enfant de livraison"
 FENETRE_ACTIVITE = 90     # un Epic ancien est « vivant » si un de ses enfants a bougé dans ces derniers jours
 SPECIAUX = {"(hors export)", "(sans équipe)"}
+ORGANISATION = "organisation.yaml"     # référentiel d'organisation, dans le dossier de flux
+GROUPEMENTS = ("mission-team", "site")  # valeurs de --by qui passent par le référentiel
 
 
 def plus_frequents(compte) -> list:
@@ -504,6 +511,11 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     t = Messages(CATALOGS, args.language)
     settings = config()
     appliquer_perimetre(settings, args.perimetre)
+    referentiel = None
+    if args.par in GROUPEMENTS:
+        # avant toute lecture des données : référentiel absent ou invalide = code 1 (ErreurConfig), aucun rapport
+        import flow_organisation as organisation
+        referentiel = organisation.charger_fichier(FLUX_DIR / ORGANISATION)
     data = lire_donnees(args, settings, t)
     tickets = data["tickets"]
     orientees, non_orientees, mode = dependances(data, settings)
@@ -527,6 +539,17 @@ def cmd_calcul(args: argparse.Namespace) -> None:
             nom = tickets[k]["equipe"]
             # sans équipe : on garde le projet, pour savoir d'où viennent ces tickets
             return f"(sans équipe : {noms.get(projet(k), projet(k))})" if nom == "(sans équipe)" else nom
+        if referentiel is not None:
+            # par Mission Team ou par site : l'équipe devient son groupe ; les côtés sans équipe connue restent tels quels,
+            # les équipes que le référentiel ne décrit pas vont dans « hors référentiel »
+            equipe_nom, groupes = equipe, {}
+            def equipe(k: str) -> str:
+                nom = equipe_nom(k)
+                if special(nom):
+                    return nom
+                if nom not in groupes:
+                    groupes[nom] = referentiel.group_of(nom, args.par, args.language or "fr")
+                return groupes[nom]
 
     # 1. Matrice : liens ouverts (côté dépendant non terminé)
     # ouverte : les deux côtés sont dans l'export et aucun n'est terminé ;
@@ -605,7 +628,20 @@ def cmd_calcul(args: argparse.Namespace) -> None:
 
     nom = args.nom
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    stem = REPORT_DIR / f"dependances-{nom}{'-projets' if args.par == 'projet' else ''}-{aujourdhui.isoformat()}"
+    # par groupe : aucune liste classée par un chiffre, tout est par ordre de nom
+    ordre = plus_frequents if referentiel is None else (lambda compte: sorted(compte.items(), key=lambda e: str(e[0])))
+    par_nom = referentiel is not None
+    suffixe = "-projets" if args.par == "projet" else f"-{args.par}" if referentiel is not None else ""
+    stem = REPORT_DIR / f"dependances-{nom}{suffixe}-{aujourdhui.isoformat()}"
+    par_groupe = {}
+    if referentiel is not None:
+        # résumé de structure (seul endroit où paraît un effectif) et dépendances internes de chaque groupe, ordre par nom
+        tickets_groupe = Counter(equipe(k) for k in tickets if dans_perimetre(k, settings))
+        internes_groupe = Counter({a: n for (a, b), n in matrice_tous.items() if a == b})
+        noms_groupes = sorted({g["group"] for g in referentiel.structure_summary(args.par, args.language or "fr")}
+                              | {g for g in tickets_groupe if not special(g)})
+        par_groupe = {"structure": referentiel.structure_summary(args.par, args.language or "fr"),
+                      "dependances_internes": [[g, internes_groupe.get(g, 0)] for g in noms_groupes]}
     rapport = {
         "nom": nom, "date": aujourdhui.isoformat(), "export": ", ".join(data["fichiers"]), "mode": mode,
         "par": args.par,
@@ -613,10 +649,10 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         "tickets": len(tickets), "semaines": args.semaines,
         "dependances": len(orientees) if mode == "orienté" else len(non_orientees),
         "hors_export": sum(1 for a, b in (orientees or non_orientees) if a not in tickets or b not in tickets),
-        "matrice_ouverte": [[a, b, n] for (a, b), n in plus_frequents(matrice)],
-        "matrice_portefeuille": [[a, b, n] for (a, b), n in plus_frequents(matrice_haut)],
-        "matrice_inconnue": [[a, b, n] for (a, b), n in plus_frequents(matrice_inconnu)],
-        "matrice_totale": [[a, b, n] for (a, b), n in plus_frequents(matrice_tous)],
+        "matrice_ouverte": [[a, b, n] for (a, b), n in ordre(matrice)],
+        "matrice_portefeuille": [[a, b, n] for (a, b), n in ordre(matrice_haut)],
+        "matrice_inconnue": [[a, b, n] for (a, b), n in ordre(matrice_inconnu)],
+        "matrice_totale": [[a, b, n] for (a, b), n in ordre(matrice_tous)],
         # une entrée par paire, pour le tableau de bord (graphe) : de = l'équipe qui attend, vers = l'équipe attendue
         "aretes": [{"de": a, "vers": b, "ouvertes": matrice.get((a, b), 0), "inconnues": matrice_inconnu.get((a, b), 0),
                     "toutes": n, "entre_epics": matrice_haut.get((a, b), 0),
@@ -628,8 +664,8 @@ def cmd_calcul(args: argparse.Namespace) -> None:
                                for (a, proj), v in sorted(inconnus.items(), key=lambda kv: (-len(kv[1]), str(kv[0])))],
         "blocages": [[a, b, e, len(v), pcts([x[0] for x in v if x[0] is not None]),
                       max(Counter(x[1] for x in v if x[1] is not None).values(), default=0), sum(1 for x in v if x[2])]
-                     for (a, b, e), v in sorted(blocages.items(), key=lambda kv: (-len(kv[1]), str(kv[0])))],
-        "blocages_anciens": [[a, b, len(v), max(v)] for (a, b), v in sorted(anciens.items(), key=lambda kv: (-len(kv[1]), str(kv[0])))],
+                     for (a, b, e), v in sorted(blocages.items(), key=lambda kv: (str(kv[0]) if par_nom else (-len(kv[1]), str(kv[0]))))],
+        "blocages_anciens": [[a, b, len(v), max(v)] for (a, b), v in sorted(anciens.items(), key=lambda kv: (str(kv[0]) if par_nom else (-len(kv[1]), str(kv[0]))))],
         "epics_anciens": vitalite,
         "boucles": boucles({(a, b) for (a, b), n in matrice.items() if n and a != b and not special(a) and not special(b)})
                    if mode == "orienté" else [],
@@ -637,6 +673,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         "lead_time": lt,
         "exclus": [[p, sens, n] for (p, sens), n in sorted(exclus.items())],
         "types_exclus": [[t, n] for t, n in plus_frequents(types_exclus)],
+        **par_groupe,
     }
     stem.with_suffix(".json").write_text(json.dumps(rapport, ensure_ascii=False, indent=1), encoding="utf-8")
     stem.with_suffix(".md").write_text(rendu(rapport, t), encoding="utf-8")
@@ -649,8 +686,11 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     if args.cles:
         print(t("blockages_terminal_header"))
         for bloque, bloquant, etat, age in sorted(cles_terminal, key=lambda x: (-(x[3] or 0), str(x[0]), str(x[1]))):
-            print(t("blockage_terminal_line", blocked=bloque, blocked_team=team_label(equipe(bloque), t), blocking=bloquant,
-                    blocking_team=team_label(equipe(bloquant), t), state=t(STATES[etat]), age=age))
+            if referentiel is not None:        # aucun nom de groupe en console
+                print(t("blockage_terminal_line_group", blocked=bloque, blocking=bloquant, state=t(STATES[etat]), age=age))
+            else:
+                print(t("blockage_terminal_line", blocked=bloque, blocked_team=team_label(equipe(bloque), t), blocking=bloquant,
+                        blocking_team=team_label(equipe(bloquant), t), state=t(STATES[etat]), age=age))
 
 
 SIDES = {"attendu par l'export": "side_awaited_by_export", "attend l'export": "side_waits_for_export",
@@ -684,6 +724,8 @@ def rendu(r: dict, t: Messages | None = None) -> str:
     L = [t("title", name=r["nom"], date=r["date"]), "",
          t("summary", export=r["export"], tickets=r["tickets"], deps=r["dependances"],
            kind=t("kind_oriented" if oriente else "kind_unoriented"), outside=r["hors_export"]), ""]
+    if r.get("par") in GROUPEMENTS:
+        L += ["\x00GROUPE"]               # remplacé après les échanges de mots : le texte des groupes les évite
     if not oriente:
         L += [t("note_untyped"), ""]
     if r.get("tronques"):
@@ -699,12 +741,13 @@ def rendu(r: dict, t: Messages | None = None) -> str:
     ouverts = {(a, b): n for a, b, n in r["matrice_ouverte"]}
     inconnues = {(a, b): n for a, b, n in r.get("matrice_inconnue", [])}
     ouverts_ext = {k: n for k, n in ouverts.items() if k[0] != k[1] and n}
+    par_groupe_ = r.get("par") in GROUPEMENTS          # pas de « paire la plus chargée » : ce serait un classement
     L += [t("sec_brief"), ""]
     L.append(t("brief_open", n=sum(ouverts_ext.values()), pairs=len(ouverts_ext),
                tickets=r.get("tickets_perimetre", r["tickets"])))
     if inconnues:
         L.append(t("brief_unknown", n=sum(inconnues.values())))
-    if ouverts_ext:
+    if ouverts_ext and not par_groupe_:
         (a, b), n = max(ouverts_ext.items(), key=lambda kv: kv[1])
         part = round(100 * n / sum(ouverts_ext.values()))
         L.append(t("brief_busiest_oriented", a=n_(a), b=n_(b), n=n, part=part) if oriente
@@ -723,8 +766,9 @@ def rendu(r: dict, t: Messages | None = None) -> str:
         L += [t("who_reading_oriented"), ""]
     else:
         L += [t("who_reading_unoriented"), ""]
+    par_groupe = r.get("par") in GROUPEMENTS          # par groupe : ordre par nom, jamais par un chiffre
     externes = sorted(((a, b) for (a, b) in tous if a != b),
-                      key=lambda p: (-ouverts.get(p, 0), -inconnues.get(p, 0), -tous[p]))
+                      key=(lambda p: p) if par_groupe else (lambda p: (-ouverts.get(p, 0), -inconnues.get(p, 0), -tous[p])))
     internes = sum(n for (a, b), n in tous.items() if a == b)
     if externes:
         L += [t("head_matrix_oriented" if oriente else "head_matrix_unoriented"), "|---|---|---|---|---|---|"]
@@ -733,7 +777,10 @@ def rendu(r: dict, t: Messages | None = None) -> str:
               for a, b in externes]
     else:
         L += [t("no_externals")]
-    L += ["", t("internal_dependencies", n=internes), ""]
+    if r.get("par") in GROUPEMENTS:
+        L += ["", t("internal_dependencies_group", n=internes), ""]
+    else:
+        L += ["", t("internal_dependencies", n=internes), ""]
 
     graphe = [(a, b) for a, b in externes if ouverts.get((a, b), 0)]
     if graphe:
@@ -757,7 +804,7 @@ def rendu(r: dict, t: Messages | None = None) -> str:
         if r["blocages"]:
             L += [t("head_blockages"), "|---|---|---|---|---|---|---|---|"]
             groupes = []
-            for ligne in r["blocages"]:
+            for ligne in (sorted(r["blocages"], key=lambda x: tuple(map(str, x[:3]))) if par_groupe else r["blocages"]):
                 a, b, e, n, p = ligne[:5]
                 meme, epics = (ligne[5], ligne[6]) if len(ligne) > 6 else (1, 0)
                 drapeau = t("same_date_flag", same=meme, n=n) if n >= 3 and meme >= max(3, n / 2) else ""
@@ -773,7 +820,8 @@ def rendu(r: dict, t: Messages | None = None) -> str:
         if r.get("attentes_inconnues"):
             L += [t("sec_unknown_waits"), "", t("unknown_waits_intro"), "",
                   t("head_unknown_waits"), "|---|---|---|---|---|"]
-            for a, proj, n, p in r["attentes_inconnues"]:
+            for a, proj, n, p in (sorted(r["attentes_inconnues"], key=lambda x: (str(x[0]), str(x[1])))
+                                  if par_groupe else r["attentes_inconnues"]):
                 L.append(f"| {n_(a)} | {proj} | {n} | {d_(p['p50'] if p else '?')} | {d_(p['p85'] if p else '?')} |")
             L += [""]
         va = r.get("epics_anciens")
@@ -787,13 +835,15 @@ def rendu(r: dict, t: Messages | None = None) -> str:
             L += [t("sec_old_epics"), "", t("old_epics_intro", old=SEUIL_ANCIEN, window=FENETRE_ACTIVITE), "",
                   t("old_epics_total", alive=total["vivant"], inactive=total["enfants inactifs"], none=total[SANS_ENFANT]), "",
                   t("head_old_epics"), "|---|---|---|---|"]
-            for e, c in sorted(par_equipe.items(), key=lambda kv: (-sum(kv[1].values()), kv[0])):
+            for e, c in sorted(par_equipe.items(), key=lambda kv: kv[0] if par_groupe else (-sum(kv[1].values()), kv[0])):
                 L.append(f"| {n_(e)} | {c['vivant']} | {c['enfants inactifs']} | {c[SANS_ENFANT]} |")
             L += [""]
         if r.get("blocages_anciens"):
             L += [t("sec_old_blockages"), "", t("old_blockages_intro", old=SEUIL_ANCIEN), "",
                   t("head_old_blockages"), "|---|---|---|---|"]
-            L += [f"| {n_(a)} | {n_(b)} | {n} | {d_(m)} |" for a, b, n, m in r["blocages_anciens"]]
+            L += [f"| {n_(a)} | {n_(b)} | {n} | {d_(m)} |"
+                  for a, b, n, m in (sorted(r["blocages_anciens"], key=lambda x: (str(x[0]), str(x[1])))
+                                     if par_groupe else r["blocages_anciens"])]
             L += [""]
 
     lt = r["lead_time"]
@@ -813,7 +863,26 @@ def rendu(r: dict, t: Messages | None = None) -> str:
     if r.get("par") == "projet":
         for i in range(1, 12):
             texte = texte.replace(t(f"swap_{i}_from"), t(f"swap_{i}_to"))
+    elif r.get("par") in GROUPEMENTS:
+        cle = {"mission-team": "swap_mt", "site": "swap_site"}[r["par"]]
+        for i in range(1, 12):
+            texte = texte.replace(t(f"swap_{i}_from"), t(f"{cle}_{i}_to"))
+        texte = texte.replace("\x00GROUPE", "\n".join(rendu_groupes(r, t)))
     return texte
+
+
+def rendu_groupes(r: dict, t: Messages) -> list[str]:
+    """Sections propres au rapport par Mission Team ou par site : structure (effectifs), tickets et dépendances internes.
+    Groupes par ordre de nom, jamais par un chiffre ; l'effectif ne paraît que dans le tableau de structure."""
+    genre = t("kind_mission_team" if r["par"] == "mission-team" else "kind_site")
+    internes = dict(r["dependances_internes"])
+    L = [t("group_intro", kind=genre), "", t("sec_structure"), "", t("structure_note"), "",
+         t("head_structure", kind=genre), "|---|---|---|"]
+    L += [f"| {g['group']} | {g['teams']} | {g['headcount']} |" for g in sorted(r["structure"], key=lambda g: g["group"])]
+    L += ["", t("sec_group_counts"), "", t("group_internal_intro", kind=genre), "", t("head_group_counts"), "|---|---|---|"]
+    L += [f"| {g} | {r['equipes_tickets'].get(g, 0)} | {n} |" for g, n in sorted(internes.items())]
+    L += [""]
+    return L
 
 
 OPTIONS_RENOMMEES = {**cfg.OPTIONS_COMMUNES, "--cles": "--keys", "--par": "--by"}
@@ -841,8 +910,9 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (lots de projets) ; aucun avec --source db")
     c.add_argument("--source", default="csv", metavar="{csv,db}",
                    help="d'où viennent les tickets et les liens : csv (défaut, les exports donnés) ou db (schéma flow de la base)")
-    c.add_argument("--by", dest="par", type=valeur_by, choices=["team", "project"], default="team",
-                   help="agrégation : par équipe (défaut) ou par projet Jira, plus lisible à l'échelle du produit")
+    c.add_argument("--by", dest="par", type=valeur_by, choices=["team", "project", *GROUPEMENTS], default="team",
+                   help="agrégation : par équipe (défaut), par projet Jira (plus lisible à l'échelle du produit), "
+                        "par Mission Team ou par site (d'après le référentiel d'organisation)")
     c.add_argument("--name", dest="nom", default="perimetre")
     c.add_argument("--weeks", dest="semaines", type=int, default=26)
     c.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous » ; "
@@ -854,7 +924,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.source == "csv" and not args.export:
         parser.error("the following arguments are required: export")
     if getattr(args, "par", None):
-        args.par = {"team": "equipe", "project": "projet"}[args.par]      # valeurs internes (rapport JSON, noms de fichier)
+        args.par = {"team": "equipe", "project": "projet", "mission-team": "mission-team", "site": "site"}[args.par]
+        # valeurs internes (rapport JSON, noms de fichier)
     args.func(args)
 
 

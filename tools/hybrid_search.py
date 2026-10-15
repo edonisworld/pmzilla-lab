@@ -2,7 +2,7 @@
 PMZilla Lab : recherche hybride en SQL (lot 4 de la base, docs/pmzilla/application.md 5.1 et 9), réutilisable telle quelle par les
 outils de recherche du module de cas (search_cases, search_experiments, lot 2) : seule la spécification change.
 
-La fusion est celle de `pmzilla_lab_library.Library.search` (voie SQLite), réécrite en une requête :
+La recherche de la bibliothèque est une fusion de deux listes, écrite en une requête :
 
   - candidats sémantiques : les 50 passages les plus proches de la question (cosinus), rangés par score arrondi à 3 décimales,
     puis par bonus de fraîcheur décroissant, puis par identifiant (à égalité de pertinence, le billet récent d'abord) ;
@@ -19,7 +19,7 @@ en `vector` met l'index HNSW hors jeu : même résultat que numpy) reste une opt
 
 Aucune valeur n'est interpolée dans le SQL : la question, les mots, les collections, la date et le vecteur passent en paramètres
 psycopg ; seuls des entiers et des réels convertis par int() et float() (constantes de réglage) sont écrits dans le texte.
-`fuse` et `freshness_bonus` sont les mêmes calculs en Python pur : les tests les comparent à la voie SQLite.
+`fuse` et `freshness_bonus` sont les mêmes calculs en Python pur : les tests les comparent aux valeurs figées et à la requête SQL sur la bibliothèque inventée.
 
 Ce module n'ouvre aucune connexion de lui-même : `hybrid_search` reçoit une connexion psycopg.
 """
@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 from watch_paths import OWN_COLLECTION  # jamais de bonus de fraîcheur pour les articles de la collection personnelle
 
-RRF_K = 60                 # constante de la fusion de rangs (celle de pmzilla_lab_library.RRF_K)
+RRF_K = 60                 # constante de la fusion de rangs
 CANDIDATES = 50            # candidats pris dans chaque liste avant la fusion
 EF_SEARCH = 400            # hnsw.ef_search du balayage ann (défaut pgvector : 40, sous les CANDIDATES ; 100 laissait atelier-fr à 2/8) ; pgvector accepte 1 à 1000
 FRESHNESS_BONUS = 0.001
@@ -99,21 +99,19 @@ LIBRARY_SPEC = HybridSpec(
 # Drapeau de normalisation de ts_rank_cd (0 : aucune ; 1 : divise par 1 + log(longueur) ; 2 : divise par la longueur). BM25 (FTS5) pénalise
 # les passages longs mais sature : sur des passages de taille voisine (environ 1 500 caractères) la correction est douce. Le drapeau 1 en est le
 # plus proche ; le drapeau 2 est linéaire (trop fort) et ramène les scores vers 0,004, où l'arrondi à 3 décimales du classement créerait des égalités.
-# Départage, comme sur la voie SQLite. Dans chaque liste : score arrondi à 3 décimales, fraîcheur décroissante, puis ordre des identifiants (knowledge_import.py
-# copie les livres et les passages dans l'ordre des identifiants SQLite, donc id croissant = rowid croissant). Après la fusion : à score égal, SQLite garde
-# l'ordre d'arrivée dans son dictionnaire (liste vectorielle d'abord, puis plein texte seul) ; ici : rang vectoriel croissant, les passages sans rang
-# vectoriel en dernier, puis rang plein texte croissant, puis id.
+# Départage. Dans chaque liste : score arrondi à 3 décimales, fraîcheur décroissante, puis identifiant croissant. Après la fusion : à score égal,
+# rang vectoriel croissant, les passages sans rang vectoriel en dernier, puis rang plein texte croissant, puis id.
 NORMALISATION_RANG = 1
 
 
 def words(query: str) -> list[str]:
-    """Mots de la question : comme `re.findall(r"\\w+", query)` de la voie SQLite."""
+    """Mots de la question : `re.findall(r"\\w+", query)`."""
     return re.findall(r"\w+", query, flags=re.UNICODE)
 
 
 def freshness_bonus(published: str | None, collections, today: dt.date, bonus: float = FRESHNESS_BONUS,
                     half_life: int = FRESHNESS_HALF_LIFE) -> float:
-    """Bonus de fraîcheur d'un document (même règle que `Library._freshness`) : décroissance par demi-vie pour un document daté
+    """Bonus de fraîcheur d'un document : décroissance par demi-vie pour un document daté
     de « watch » (hors la collection personnelle, OWN_COLLECTION), la moitié du bonus sinon ou si la date est illisible."""
     neutral = bonus * 0.5
     names = set(collections or ())
@@ -202,7 +200,7 @@ def build_query(spec: HybridSpec, *, query: str, vector, limit: int = 8, collect
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     n = int(candidates)
     if scan == "exact":
-        # PRODUIT SCALAIRE, comme la voie SQLite (numpy : vecteurs @ requête, sans renormaliser). `<#>` rend l'opposé du produit scalaire.
+        # PRODUIT SCALAIRE (vecteurs @ requête, sans renormaliser). `<#>` rend l'opposé du produit scalaire.
         # Le cosinus (`<=>`) renormalise : il diffère du produit scalaire pour des vecteurs non unitaires et rend NaN pour un vecteur nul,
         # or PostgreSQL range NaN avant tous les nombres en tri décroissant : un tel passage sortirait premier de toutes les requêtes.
         # Cast en vector (float32) : calcul exact, sans l'index HNSW.
@@ -240,7 +238,7 @@ kw AS (
         # puis les 50 premiers. Le type de passage, la collection et la date s'appliquent AVANT la limite de 200 (change filter-before-keyword-limit) :
         # le type par une condition sur la table de l'index, la collection et la date par la liste des livres retenus (sous-requête sur les livres, sans
         # jointure dans `hits` : l'index ne porte que l'identifiant et le texte, et le classement par score reste poussé dans l'index). Sans filtre
-        # de collection ni de date, la requête est celle d'avant. La voie SQLite, elle, applique encore ces filtres après sa limite (R-27).
+        # de collection ni de date, la requête est celle d'avant.
         params["bm25_query"] = " ".join(mots)
         kind_condition = f" AND {spec.bm25_kind_expr} = ANY(%(kinds)s::text[])" if kinds and spec.bm25_kind_expr else ""
         book_condition = ""
@@ -325,7 +323,7 @@ def diagnose(conn, spec: HybridSpec, *, query: str, vector, limit: int = 14, col
              kinds=None, today: dt.date | None = None, scan: str = DEFAULT_SCAN, rank_norm: int | None = None,
              fulltext: str = "bm25") -> list[dict]:
     """Valeurs intermédiaires de la recherche, dans l'ordre final : id, score, rrf (avant bonus), fresh, sem_rank, sem_score, kw_rank,
-    kw_raw (score brut de BM25, ou de ts_rank_cd normalisé en mode tsvector). Pour comprendre un écart avec la voie SQLite ; ne sert à aucune décision."""
+    kw_raw (score brut de BM25, ou de ts_rank_cd normalisé en mode tsvector). Pour comprendre un classement ; ne sert à aucune décision."""
     sql, params = build_query(spec, query=query, vector=vector, limit=limit, collections=collections, since=since, kinds=kinds,
                               today=today, scan=scan, diagnostic=True, rank_norm=rank_norm, fulltext=fulltext)
     colonnes = ("id", "score", "rrf", "fresh", "sem_rank", "sem_score", "kw_rank", "kw_raw")

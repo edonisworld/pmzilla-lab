@@ -6,7 +6,11 @@ le cache, une seule table range les états dans les segments, pour que les deux 
 Aucune dépendance hors bibliothèque standard.
 
 Format du cache (Flux-Lab/historique/transitions.json) :
-    {"<clé>": {"termine": bool, "transitions": [[date, état de départ, état d'arrivée], ...]}}
+    {"<clé>": {"termine": bool, "transitions": [[date, état de départ, état d'arrivée], ...],
+               "resolu": date de résolution | null, "vu_le": dernier jour vu dans un export | null,
+               "versions": [[date, "add"|"remove", version], ...], "etiquettes": [[date, "add"|"remove", étiquette], ...]}}
+Les quatre dernières clés sont facultatives (conservation d'un an, R-58 : horloge du design D1 ; périodes d'étiquettes déclarées
+et de versions) : un ancien cache sans elles se lit comme un cache sans date, sans version et sans étiquette.
 La date est un texte ISO 8601 avec décalage (2026-03-01T09:00:00.000+0200). L'API groupée de Jira peut la donner
 sous une autre forme (millisecondes depuis 1970, en nombre ou en texte) : normaliser_date la ramène au format ISO
 (en UTC dans ce cas) aussi bien à la collecte qu'à la lecture d'un ancien cache.
@@ -76,14 +80,38 @@ def date_calendaire(date: str | None) -> dt.date | None:
         return None
 
 
+def en_fuseau(date: str | None, fuseau: dt.tzinfo) -> str | None:
+    """Date ISO avec décalage ramenée dans `fuseau` (même format que le cache : millisecondes et décalage +HHMM). Une date sans
+    décalage ou illisible est gardée telle quelle, comme `normaliser_date` garde une valeur inconnue."""
+    if date is None:
+        return None
+    try:
+        moment = dt.datetime.fromisoformat(str(date))
+    except ValueError:
+        return date
+    if moment.tzinfo is None:
+        return date
+    local = moment.astimezone(fuseau)
+    return local.strftime("%Y-%m-%dT%H:%M:%S.") + f"{local.microsecond // 1000:03d}" + local.strftime("%z")
+
+
 def trier(transitions: list) -> list[list]:
     """Transitions [date, de, vers] normalisées et triées par instant (tri stable)."""
     propres = [[normaliser_date(t[0]), t[1], t[2]] for t in transitions or []]
     return sorted(propres, key=lambda t: instant(t[0]))
 
 
+def trier_evenements(evenements: list) -> list[list]:
+    """Événements [date, "add"|"remove", valeur] normalisés et triés par instant (tri stable) ; un événement mal formé est écarté."""
+    propres = [[normaliser_date(e[0]), e[1], e[2]] for e in evenements or []
+               if isinstance(e, (list, tuple)) and len(e) == 3 and e[1] in ("add", "remove")]
+    return sorted(propres, key=lambda e: instant(e[0]))
+
+
 def lire_cache(chemin: Path) -> dict[str, dict]:
-    """Cache lu et normalisé : dates ISO, transitions triées. Lève CacheIllisible si le fichier est absent ou invalide."""
+    """Cache lu et normalisé : dates ISO, transitions et événements triés ; les clés facultatives (resolu, vu_le, versions,
+    etiquettes) sont toujours rendues (None ou liste vide quand elles manquent). Lève CacheIllisible si le fichier est absent
+    ou invalide."""
     try:
         donnees = json.loads(Path(chemin).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -93,7 +121,10 @@ def lire_cache(chemin: Path) -> dict[str, dict]:
     sortie = {}
     for cle, entree in donnees.items():
         if isinstance(entree, dict):
-            sortie[cle] = {"termine": bool(entree.get("termine")), "transitions": trier(entree.get("transitions"))}
+            sortie[cle] = {"termine": bool(entree.get("termine")), "transitions": trier(entree.get("transitions")),
+                           "resolu": normaliser_date(entree.get("resolu")), "vu_le": normaliser_date(entree.get("vu_le")),
+                           "versions": trier_evenements(entree.get("versions")),
+                           "etiquettes": trier_evenements(entree.get("etiquettes"))}
     return sortie
 
 

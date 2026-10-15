@@ -76,6 +76,9 @@ Usage :
   deviennent des blocs ; les images et zones vectorielles sans légende ne sont ni extraites ni indexées.
   Les images des figures retenues vont dans Bibliotheque-Images/<livre>/fig-NNNN.<ext> (dossier hors Git,
   illisible par Claude Code ; PDF : la zone de la page est rendue en PNG).
+
+Exemple :
+    uv run tools/convert_books.py livres markdown --dry-run
 """
 import base64
 import os

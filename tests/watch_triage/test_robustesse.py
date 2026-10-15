@@ -5,7 +5,9 @@ dépassé, fusion des références d'un passage à l'autre, ordre de la liste «
     uv run --with numpy --with httpx --with pyyaml python -m unittest discover -s tests/watch_triage -v
 
 Faux modèle : `httpx.post` est remplacé par une fonction scénarisée ; `library.embed` par un vecteur déterministe.
-Aucun accès réseau, aucun modèle local, aucun dossier réel : tout est dans le dossier temporaire de la classe Base voisine.
+Aucun accès réseau, aucun modèle local, aucun dossier réel : tout est dans le dossier temporaire et le faux magasin en mémoire de
+la classe Base voisine. Couvre aussi la base qui ne répond pas ou sans tables : sortie 4 ou 5 avant tout appel au modèle, toute
+lecture de vos posts, tout déplacement et tout fichier écrit, pour chaque sous-commande ; les égalités se départagent par nom de fichier.
 """
 import argparse
 import contextlib
@@ -26,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import watch_triage as tri  # noqa: E402
 import watch_lab as veille  # noqa: E402
 import watch_paths  # noqa: E402
+import watch_store  # noqa: E402
 import test_watch_triage as voisin  # noqa: E402
 
 CRITERES = list(tri.CRITERIA)
@@ -86,7 +89,7 @@ class Notation(voisin.Base):
         return sortie, appels
 
     def notes(self):
-        return {r["file"]: r["substance"] for r in self.connection.execute("SELECT file, substance FROM scores")}
+        return {n["file"]: n["substance"] for n in self.store.all_scores()}
 
     # -- réponses inutilisables ---------------------------------------------
 
@@ -121,8 +124,7 @@ class Notation(voisin.Base):
             {**reponse_valide(), CRITERES[0]: {"justification": "j", "ok": 7}})}
         for nom, contenu in mauvaises.items():
             with self.subTest(nom):
-                self.connection.execute("DELETE FROM scores")
-                self.connection.commit()
+                self.data.edit(lambda tables: tables["scores"].clear())
                 sortie, _ = self.noter(lambda n, k, c=contenu: reponse_http(
                     c if n == "a1.md" else json.dumps(reponse_valide(4))))
                 self.assertEqual(self.notes(), {"a2.md": 4})   # a1 n'a pas de note, surtout pas une note fausse
@@ -212,15 +214,15 @@ class FusionDesReferences(voisin.Base):
                 mock.patch.object(tri.library, "embed", side_effect=lambda t: [voisin.vecteur(0) for _ in t]), \
                 contextlib.redirect_stdout(io.StringIO()):
             tri.cmd_references(args)
-        return dict(self.connection.execute("SELECT url, origin FROM refs").fetchall())
+        return {url: ref["origin"] for url, ref in self.data.table("refs").items()}
 
     @staticmethod
     def ref(url):
         return {"url": url, "title": url, "origin": "signalpm", "text": "réponse " + url}
 
     def test_un_second_passage_remplace_les_references_et_ne_les_ajoute_pas(self):
-        self.connection.execute("INSERT INTO refs VALUES ('p', 'p', 'partage', ?)", (tri.to_blob(voisin.vecteur(0)),))
-        self.connection.commit()
+        self.store.put_reference("p", "p", "partage", voisin.vecteur(0))
+        self.store.commit()
         premier = self.lancer_references([self.ref("https://x.test/a"), self.ref("https://x.test/b")])
         self.assertEqual(set(premier), {"p", "https://x.test/a", "https://x.test/b"})
         second = self.lancer_references([self.ref("https://x.test/c")])
@@ -231,18 +233,31 @@ class FusionDesReferences(voisin.Base):
         refs = [self.ref("https://x.test/a"), self.ref("https://x.test/b")]
         self.lancer_references(refs)
         self.lancer_references(refs)
-        nombre = self.connection.execute("SELECT COUNT(*) FROM refs WHERE origin = 'signalpm'").fetchone()[0]
+        nombre = sum(1 for ref in self.data.table("refs").values() if ref["origin"] == "signalpm")
         self.assertEqual(nombre, 2)
 
 
 class OrdreADatesEgales(voisin.Base):
-    """Dates de publication identiques : la date ne départage rien, la pertinence décide, puis l'ordre d'insertion."""
+    """Dates de publication identiques : la date ne départage rien, la pertinence décide, puis le nom de fichier (jamais l'ordre
+    dans lequel les lignes ont été écrites ou recopiées)."""
+
+    def setUp(self):
+        super().setUp()
+        self.fichier_semaine = self.tmp / "_semaine.md"
+        patch = mock.patch.object(tri, "WEEK_FILE", self.fichier_semaine)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def titres_a_lire(self):
         self.lancer(tri.cmd_digest)
         texte = veille.to_read_file().read_text(encoding="utf-8")
         a_lire = texte.split("## Les autres")[0]
         return [ligne.split("](")[0][5:] for ligne in a_lire.splitlines() if ligne.startswith("### [")]
+
+    def fichiers_de_la_semaine(self):
+        self.lancer(tri.cmd_week, days=7, max=40, per_run=False)
+        return [l[len("- Fichier : "):] for l in self.fichier_semaine.read_text(encoding="utf-8").splitlines()
+                if l.startswith("- Fichier : ")]
 
     def reglages(self):
         tri.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -251,9 +266,8 @@ class OrdreADatesEgales(voisin.Base):
 
     def ajouter_recent(self, nom, angle):
         self.ajouter(nom, 4)
-        self.connection.execute("UPDATE scores SET published = '2026-10-01', collected = ?, vector = ? WHERE file = ?",
-                                (dt.date.today().isoformat(), tri.to_blob(voisin.vecteur(angle)), nom))
-        self.connection.commit()
+        self.modifier_note(nom, published=dt.date.today() - dt.timedelta(days=1), collected=watch_store.as_moment(dt.date.today().isoformat()),
+                           embedding=np.asarray(voisin.vecteur(angle), dtype=np.float16).astype(np.float32))
 
     def test_a_dates_egales_la_plus_pertinente_vient_d_abord(self):
         self.reglages()
@@ -261,14 +275,122 @@ class OrdreADatesEgales(voisin.Base):
             self.ajouter_recent(nom, angle)
         self.assertEqual(self.titres_a_lire(), ["Titre a.md", "Titre b.md", "Titre c.md"])
 
-    def test_a_pertinence_et_date_egales_l_ordre_est_stable_d_un_passage_a_l_autre(self):
+    def test_lignes_ecrites_a_l_envers_la_liste_suit_l_ordre_des_noms_de_fichier(self):
         self.reglages()
-        for nom in ("m.md", "k.md", "z.md"):
+        for nom in ("z.md", "m.md", "k.md"):       # même pertinence, même date, écrits en ordre décroissant de nom
             self.ajouter_recent(nom, 0.3)
         premier = self.titres_a_lire()
-        self.assertEqual(sorted(premier), ["Titre k.md", "Titre m.md", "Titre z.md"])
+        self.assertEqual(premier, ["Titre k.md", "Titre m.md", "Titre z.md"])
         for _ in range(3):
             self.assertEqual(self.titres_a_lire(), premier)
+        self.assertEqual(self.fichiers_de_la_semaine(), ["k.md", "m.md", "z.md"])
+        # la pertinence est un rang : à similarité égale, l'article qui s'affiche d'abord a aussi le rang le plus haut
+        rangs = {r["file"]: r["pertinence"] for r in tri.ranked(self.store)}
+        self.assertEqual(rangs, {"k.md": 100, "m.md": 50, "z.md": 0})
+
+
+class BaseIndisponible(voisin.Base):
+    """Base qui ne répond pas (4) ou sans tables (5) : chaque sous-commande s'arrête avant tout appel au modèle, toute lecture de vos
+    posts, tout déplacement de fichier et toute écriture de fichier, avec le message sans mot de passe ni texte du pilote."""
+
+    MESSAGES = {4: "Base de données injoignable : démarrer la base (bash tools/db_up.sh), puis relancer.",
+                5: "Tables de la veille absentes : appliquer les migrations (uv run tools/db.py migrate)."}
+
+    def setUp(self):
+        super().setUp()
+        self.ajouter("bon.md", 5)
+        self.ajouter("faible.md", 0)
+        tri.local_config_file().parent.mkdir(parents=True, exist_ok=True)
+        tri.local_config_file().write_text("bluesky: compte.test\n", encoding="utf-8")
+        self.modele = mock.patch.object(tri.httpx, "post", side_effect=AssertionError("appel au modèle")).start()
+        self.embed = mock.patch.object(tri.library, "embed", side_effect=AssertionError("appel à l'embedding")).start()
+        self.posts = mock.patch.object(veille, "links_from_bluesky", side_effect=AssertionError("lecture des posts")).start()
+        self.references = mock.patch.object(tri, "signalpm_references", side_effect=AssertionError("lecture de l'export")).start()
+        self.ollama = mock.patch.object(tri, "ollama_reachable", side_effect=AssertionError("sonde Ollama")).start()
+        self.addCleanup(mock.patch.stopall)
+        self.fichier_semaine = self.tmp / "_semaine.md"
+        mock.patch.object(tri, "WEEK_FILE", self.fichier_semaine).start()
+
+    def commandes(self):
+        return {
+            "references": (tri.cmd_references, dict(claude_export=["x.zip"], without_own=True)),
+            "score": (tri.cmd_score, dict(limit=0, rescore=False, no_model=False, compilations=False, promotional=False,
+                                          max_substance=None)),
+            "shares": (tri.cmd_shares, dict(pages=1)),
+            "week": (tri.cmd_week, dict(days=7, max=40, per_run=False)),
+            "digest": (tri.cmd_digest, {}),
+            "calibration": (tri.cmd_calibration, dict(import_sheet=None)),
+            "calibration --import": (tri.cmd_calibration, dict(import_sheet="")),
+            "thresholds": (tri.cmd_thresholds, dict(save=False)),
+            "shadow-report": (tri.cmd_shadow_report, dict(limit=20)),
+            "shadow-backfill": (tri.cmd_shadow_backfill, dict(limit=0)),
+            "apply": (tri.cmd_apply, {}),
+            "restore": (tri.cmd_restore, dict(fichier="bon.md")),
+            "exclude": (tri.cmd_exclude, dict(fichier="bon.md")),
+            "suggestions": (tri.cmd_suggestions, dict(min=2, max=30, reset=False)),
+        }
+
+    def etat_des_fichiers(self):
+        return {str(p.relative_to(self.tmp)): (p.stat().st_mtime_ns, p.stat().st_size) for p in self.tmp.rglob("*") if p.is_file()}
+
+    def verifier(self, erreur, code):
+        avant = self.etat_des_fichiers()
+        self.data.unavailable = erreur
+        for nom, (commande, options) in self.commandes().items():
+            with self.subTest(commande=nom):
+                sortie_code, message = self.erreur_de_sortie(commande, **options)
+                self.assertEqual(sortie_code, code)
+                self.assertEqual(message.strip(), self.MESSAGES[code])
+                for interdit in ("hunter2", "password", "10.0.0.1", "OperationalError"):
+                    self.assertNotIn(interdit, message)
+                self.assertEqual(self.etat_des_fichiers(), avant)      # ni fichier déplacé, ni fichier écrit
+        self.assertEqual(self.modele.call_count + self.embed.call_count + self.posts.call_count + self.references.call_count
+                         + self.ollama.call_count, 0)
+
+    def test_base_qui_ne_repond_pas(self):
+        self.verifier(watch_store.WatchDatabaseUnavailable("OperationalError password=hunter2 host=10.0.0.1"), 4)
+
+    def test_tables_absentes(self):
+        self.verifier(watch_store.WatchTablesMissing("triage_scores"), 5)
+
+    def test_apply_en_mode_filtre_ne_deplace_rien_quand_la_base_ne_repond_pas(self):
+        tri.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tri.CONFIG_FILE.write_text("mode: filtre\nmodel: faux\nto_read: 5\ndays: 7\nsubstance_threshold: 3\nthemes:\n  - t\n",
+                                   encoding="utf-8")
+        self.data.unavailable = watch_store.WatchDatabaseUnavailable("x")
+        code, _ = self.erreur_de_sortie(tri.cmd_apply)
+        self.assertEqual(code, 4)
+        self.assertEqual(sorted(p.name for p in self.articles.glob("*.md")), ["bon.md", "faible.md"])
+        self.assertFalse(self.archive.exists())
+
+    def test_la_base_s_arrete_en_cours_de_commande_sortie_4(self):
+        """Une validation qui échoue après l'ouverture : même code, même message."""
+        self.data.fail_on_commit(1)
+        code, message = self.erreur_de_sortie(tri.cmd_exclude, fichier="bon.md")
+        self.assertEqual((code, message.strip()), (4, self.MESSAGES[4]))
+        self.assertEqual(self.store.excluded_files(), set())
+
+
+class RolesParCommande(voisin.Base):
+    """Les commandes qui n'écrivent aucune ligne (week, thresholds, shadow-report, suggestions) se connectent en lecture seule."""
+
+    def test_roles(self):
+        tri.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tri.CONFIG_FILE.write_text("mode: observation\nmodel: faux\nto_read: 5\ndays: 7\nsubstance_threshold: 3\nthemes:\n  - t\n",
+                                   encoding="utf-8")
+        self.ajouter("bon.md", 5)
+        mock.patch.object(tri, "WEEK_FILE", self.tmp / "_semaine.md").start()
+        self.addCleanup(mock.patch.stopall)
+        self.lancer(tri.cmd_week, days=7, max=40, per_run=False)
+        self.lancer(tri.cmd_shadow_report, limit=20)
+        self.lancer(tri.cmd_suggestions, min=2, max=30, reset=False)
+        with self.assertRaises(SystemExit):
+            self.lancer(tri.cmd_thresholds, save=False)         # aucun avis : s'arrête, mais après une ouverture en lecture seule
+        self.assertEqual(set(self.data.roles), {"ro"})
+        self.data.roles.clear()
+        self.lancer(tri.cmd_digest)
+        self.exporter()
+        self.assertEqual(self.data.roles, ["rw", "rw"])
 
 
 if __name__ == "__main__":

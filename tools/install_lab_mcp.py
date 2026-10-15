@@ -3,8 +3,7 @@ PMZilla Lab : Étape mcp : enregistrement du serveur de la bibliothèque (design
 Module du script d'installation (orchestrateur du même nom sans suffixe) ; ne se lance pas seul.
 
 Le serveur est enregistré pour l'utilisateur, lancé par le lien du dossier du laboratoire (<maison>/PMZilla-Lab/pmzilla_lab_library.py)
-avec `uv` trouvé par le PATH. Quand la base n'est pas prête (conteneur absent ou report), il est enregistré avec le secours fichier
-(`serve --backend sqlite`, guide d'installation 14.3).
+avec `uv` trouvé par le PATH. L'étape dépend de `links` et de `database` : sans base prête, elle est reportée (design D8).
 """
 from __future__ import annotations
 
@@ -26,16 +25,10 @@ def enregistrement_actuel(ctx: Contexte) -> str | None:
 
 
 def deja_enregistre(ctx: Contexte) -> bool:
-    """Sonde : le serveur est enregistré et la sortie nomme le lien du dossier du laboratoire."""
+    """Sonde : le serveur est enregistré, la sortie nomme le lien du dossier du laboratoire et ne porte aucune option de backend.
+    Une déclaration qui porte encore l'ancienne option compte comme enregistrée autrement (remplacée après confirmation)."""
     sortie = enregistrement_actuel(ctx)
-    return sortie is not None and str(lien_du_serveur(ctx)) in sortie
-
-
-def base_est_prete(ctx: Contexte) -> bool:
-    if "base_ok" in ctx.etat:
-        return bool(ctx.etat["base_ok"])
-    from install_lab_database import base_prete
-    return bool(base_prete(ctx))
+    return sortie is not None and str(lien_du_serveur(ctx)) in sortie and "--backend" not in sortie
 
 
 def executer_mcp(ctx: Contexte) -> Resultat:
@@ -44,9 +37,6 @@ def executer_mcp(ctx: Contexte) -> Resultat:
         ctx.dire_etape("mcp", "failed: uv not found on the search path (needed to launch the library server)")
         return Resultat(ECHEC, "uv not found")
     lancement = ["uv", "run", str(lien_du_serveur(ctx)), "serve"]      # uv résolu par le PATH à l'exécution
-    if not base_est_prete(ctx):
-        lancement += ["--backend", "sqlite"]
-        ctx.dire_etape("mcp", "database not ready, the server will use the file backend")
     ajout = ["claude", "mcp", "add", "--scope", "user", "--transport", "stdio", NOM_SERVEUR, "--", *lancement]
 
     if enregistrement_actuel(ctx) is not None:                          # enregistré autrement : remplacement confirmé
@@ -60,5 +50,5 @@ def executer_mcp(ctx: Contexte) -> Resultat:
 
 
 ETAPES: list[Etape] = [
-    Etape("mcp", ("fresh",), ("links",), deja_enregistre, executer_mcp),
+    Etape("mcp", ("fresh",), ("links", "database"), deja_enregistre, executer_mcp),
 ]

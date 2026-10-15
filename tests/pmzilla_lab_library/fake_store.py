@@ -2,8 +2,7 @@
 
 Même interface que `pmzilla_lab_library.KnowledgeStore` : ouverture, verrou, lecture des livres stockés, remplacement d'un livre en
 une « transaction » (tout ou rien), mise à jour sans recalcul, suppression, collections orphelines, renommage, comptes. Il ne crée
-aucun fichier. `export_sqlite` recopie son contenu dans un index SQLite (library.DB_PATH du test) pour les seuls tests de la voie de
-lecture SQLite (`Library`, conservée jusqu'au change R-27) : l'indexeur, lui, n'écrit jamais de fichier SQLite.
+aucun fichier. Les tests de lecture (PostgresLibrary) indexent, eux, dans une base jetable (LectureEnBase de test_pmzilla_lab_library.py).
 """
 import json
 import time
@@ -89,22 +88,3 @@ class FakeStore:
             self.collections |= set(names)
         self.delete_orphan_collections()
         self.writes.append(("collections", tuple(sorted(changes))))
-
-
-def export_sqlite(store: FakeStore) -> None:
-    """Recopie le faux magasin dans l'index SQLite du test (library.DB_PATH, patché vers un dossier temporaire), pour les tests de
-    la voie de lecture `Library`. Le genre « text » redevient « texte », comme dans l'index SQLite."""
-    db = library.connect()
-    with db:
-        db.execute("DELETE FROM books")
-        for name, book in sorted(store.books.items()):
-            cursor = db.execute(
-                "INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (name, book["title"], book["sha256"], "|".join(sorted(book["collections"])), book["model"], book["indexed_at"],
-                 json.dumps(book["meta"], ensure_ascii=False, sort_keys=True)))
-            db.executemany(
-                "INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [(cursor.lastrowid, p["position"], p["section"], p["text"], p["vector"].tobytes(),
-                  "texte" if p["kind"] == "text" else p["kind"], json.dumps(p["ref"], ensure_ascii=False, sort_keys=True))
-                 for p in book["passages"]])
-    db.close()

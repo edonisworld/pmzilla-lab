@@ -2,15 +2,25 @@
 
 ## Purpose
 A branch-finishing script, run by the user in the Terminal, that refuses in a fixed order every state that must not reach `main`, runs the complete test runner, then merges the work branch into `main`, pushes it and deletes the branch, with one exit code per outcome.
+
 ## Requirements
+
 ### Requirement: One exit code per outcome
-The system SHALL give the finishing script the following exit codes, checked in this order before any branch change: 2 usage, 3 no branch to finish, 4 working tree not clean, 5 OpenSpec change not archived, 6 validating evaluation run missing, 7 `main` not up to date, 8 the branch does not contain `main`, 1 complete run red; then, after a change, 9 merge impossible and aborted, 10 push refused, 11 branch not deleted; and 0 when the branch is merged, pushed and deleted. Each refusal SHALL be printed on the error output, prefixed with the script name. The help SHALL list the checks in that order with their codes.
+The system SHALL give the finishing script the following exit codes, checked in this order before any branch change: 2 usage, 3 no branch to finish, 4 working tree not clean, 5 OpenSpec change not archived, 6 validating evaluation run missing, 7 `main` not up to date, 8 the branch does not contain `main`, 12 `main` checked out in another folder, 1 complete run red; then, after a change, 9 merge impossible and aborted, 10 push refused, 11 branch not deleted, 13 merge done and pushed but the run tree not updated; and 0 when the branch is merged, pushed and deleted and the run tree is updated or absent. Each refusal SHALL be printed on the error output, prefixed with the script name. The help SHALL list the checks in that order with their codes, codes 12 and 13 included. No code SHALL mean two outcomes, and a run tree detached at the tip of `main` SHALL NOT raise code 12.
 
 #### Scenario: Each code
 - WHEN the script is exercised on a temporary repository in each refused state
 - THEN it exits with the code of that state and prints its key phrase
 
-Source: tests/finish_branch/test_finish_branch.sh (one case per exit code)
+#### Scenario: Help lists the codes
+- **WHEN** the help option is given
+- **THEN** the help lists the checks in that order with their codes, codes 12 and 13 included
+
+#### Scenario: Detached run tree
+- **WHEN** the run tree exists, detached at the tip of `main`, and every other check passes
+- **THEN** code 12 is not raised and the merge proceeds
+
+Source: tests/finish_branch/test_finish_branch.sh (one case per exit code); code 13 and the detached run tree untested until implemented
 
 ### Requirement: The finishing script is launched by the user and checks before any change
 The system SHALL provide a branch-finishing script that the user launches in the Terminal from the workspace, that takes no argument other than a help option, and that runs its refusal checks in a fixed order before changing any branch. It SHALL exit with a usage code and a usage message on an unknown option or an unexpected argument, and SHALL print its help and exit 0 with the help option. It SHALL NOT be launchable from a Claude Code session (see tooling-permission-guards) and SHALL NOT change any file of the working tree.
@@ -168,11 +178,11 @@ The system SHALL run the complete test runner (no suite filter, without the vari
 Source: tests/finish_branch/test_finish_branch.sh (code 1)
 
 ### Requirement: Merge, push, delete and report
-The system SHALL, after a green complete run, merge the branch into `main` without fast-forward and without editing the message, push `main`, delete the local branch with the safe deletion, delete the remote branch when it exists, and print the list of what it did, exiting 0. On a merge failure it SHALL abort the merge, return to the branch and exit with its own code; on a push failure it SHALL exit with its own code and print the command to retry the push and the command to undo the local merge; on a branch deletion failure after a successful push it SHALL exit with its own code and say the work is merged. The system SHALL NOT force-push, use the forced branch deletion, bypass hooks or resolve conflicts.
+The system SHALL, after a green complete run, merge the branch into `main` without fast-forward and without editing the message, push `main`, delete the local branch with the safe deletion, delete the remote branch when it exists, update the run tree as the requirement "Update the run tree after the merge is pushed" states, and print the list of what it did, exiting 0. On a merge failure it SHALL abort the merge, return to the branch and exit with its own code; on a push failure it SHALL exit with its own code and print the command to retry the push and the command to undo the local merge; on a branch deletion failure after a successful push it SHALL exit with its own code and say the work is merged. After a failed step it SHALL NOT go on to a later step, the run-tree update included. The system SHALL NOT force-push, use the forced branch deletion, bypass hooks, resolve conflicts, or reset or clean the run tree.
 
 #### Scenario: Success
 - **WHEN** every check passes and the run is green
-- **THEN** `main` holds a merge commit of the branch, the remote `main` equals it, the branch no longer exists locally or remotely, the output lists merge, push and deletion, and the exit code is 0
+- **THEN** `main` holds a merge commit of the branch, the remote `main` equals it, the branch no longer exists locally or remotely, the run tree is at the new tip of `main`, the output lists merge, push, deletion and update, and the exit code is 0
 
 #### Scenario: Merge conflict
 - **WHEN** the merge cannot complete
@@ -180,7 +190,7 @@ The system SHALL, after a green complete run, merge the branch into `main` witho
 
 #### Scenario: Push refused
 - **WHEN** the remote refuses the push
-- **THEN** the script exits with the push-failed code and prints the retry and undo commands
+- **THEN** the script exits with the push-failed code, prints the retry and undo commands, does not delete the branch and does not update the run tree
 
 #### Scenario: Remote branch deletion refused
 - **WHEN** the remote refuses the deletion of the branch after the merge and push
@@ -188,9 +198,9 @@ The system SHALL, after a green complete run, merge the branch into `main` witho
 
 #### Scenario: Forbidden commands
 - **WHEN** the script text is scanned outside comments
-- **THEN** it contains no forced push, forced deletion, rebase, hook bypass, owner bypass variable or evaluation-set launch
+- **THEN** it contains no forced push, forced deletion, rebase, hook bypass, owner bypass variable, evaluation-set launch, reset or clean of the run tree
 
-Source: tests/finish_branch/test_finish_branch.sh (codes 0, 9, 10, 11, forbidden commands)
+Source: tests/finish_branch/test_finish_branch.sh (codes 0, 9, 10, 11, forbidden commands); the run-tree update untested until implemented
 
 ### Requirement: The finishing script is testable without the real repository
 The system SHALL let tests replace the test runner command and the folder of evaluation run records through environment variables, so that a shell suite can exercise every exit code on a temporary repository with a temporary bare remote. The system SHALL NOT read the real evaluation records or run the real runner when those variables are set.
@@ -201,3 +211,21 @@ The system SHALL let tests replace the test runner command and the folder of eva
 
 Source: tests/finish_branch/test_finish_branch.sh
 
+### Requirement: Update the run tree after the merge is pushed
+The system SHALL, once `main` is pushed and the branch deleted, update the run tree through the run-tree script. A missing run tree SHALL be stated in one line, with exit 0. A refused or postponed update, or unprepared dependencies, SHALL give exit 13 with the key phrases of design D4. It SHALL NOT update before the push, nor reset, clean or recreate the run tree, nor touch the watch lock or a run marker. Untested until implemented.
+
+#### Scenario: Local change in the run tree
+- **WHEN** the merge and push succeed and the run tree holds a modified file
+- **THEN** the remote `main` holds the merge, the run tree and its file are unchanged, the output says the merge is done and pushed and gives the update command, and the exit code is 13
+
+#### Scenario: Watch run in progress
+- **WHEN** the merge and push succeed while the watch lock is held by a live process
+- **THEN** the exit code is 13, the cause says the update is postponed, and the lock is unchanged
+
+#### Scenario: No run tree
+- **WHEN** the merge and push succeed and no run tree exists
+- **THEN** the output says there is nothing to update and the exit code is 0
+
+#### Scenario: Update done
+- **WHEN** the merge and push succeed and the update moves the run tree
+- **THEN** the output lists the update, then the library-server reminder of design D3, and the exit code is 0

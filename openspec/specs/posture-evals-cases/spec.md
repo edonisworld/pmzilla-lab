@@ -3,7 +3,9 @@
 ## Purpose
 
 Describes the reference cases of the posture evaluation set: how they are read, normalized, translated into a language variant, filtered by prerequisites, and protected against unintended changes of what the judge receives. Also covers the shared vocabulary of fixed formulas.
+
 ## Requirements
+
 ### Requirement: Case files are read and unknown rules are refused
 The system SHALL read the reference cases from a case file (the default file or an alternative file given on the command line), SHALL refuse to run when that file is missing, and SHALL refuse any automatic check rule it does not know how to apply.
 
@@ -60,12 +62,12 @@ Source: tests/posture_evals/test_posture_evals.py (Langue, Principal); tests/pos
 - **THEN** every case has a variant with a different question, the same number and kind of criteria, rules of the same shape, and no French fixed formula
 
 ### Requirement: Prerequisites make a case non-evaluable
-The system SHALL check the optional prerequisites of a case against the library database that the case's library server reads (the installation database, or the disposable one of a library case), under the read-only role, and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. Supported prerequisites SHALL be: a book present (title containing the text, case-insensitive), a collection with a minimum number of books (exact collection name), and a topic that must be absent (alternatives separated by uppercase OR, one matching passage is enough; an alternative written between double quotes is an exact expression, its words adjacent and in order, and an alternative without quotes requires all its words anywhere in the passage; case- and accent-insensitive; a passage matching several alternatives counts once). A database that does not answer or an unknown rule SHALL count as unmet. The system SHALL NOT read the SQLite library index.
+The system SHALL check the optional prerequisites of a case against the library database that the case's library server reads (the installation database, or the disposable one of a library case), under the read-only role, and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. Supported prerequisites SHALL be: a book present (title containing the text, case-insensitive), a collection with a minimum number of books (exact collection name), and a topic that must be absent (alternatives separated by uppercase OR, one matching passage is enough; an alternative written between double quotes is an exact expression, its words adjacent and in order, and an alternative without quotes requires all its words anywhere in the passage; case- and accent-insensitive; a passage matching several alternatives counts once). An unreachable library database (reason of design D7) or an unknown rule SHALL count as unmet. The system SHALL NOT open any index file.
 
 Source: tests/posture_evals/test_posture_evals.py (Prerequis, with a fake reader; database class run with `tools/dbtest.sh posture_evals`)
 
 #### Scenario: Satisfied prerequisites
-- **WHEN** the database has the book, enough books in the collection, and no passage on the absent topic
+- **WHEN** the library has the book, enough books in the collection, and no passage on the absent topic
 - **THEN** no reason is returned
 
 #### Scenario: Unmet prerequisite
@@ -78,28 +80,26 @@ Source: tests/posture_evals/test_posture_evals.py (Prerequis, with a fake reader
 
 #### Scenario: Database unavailable
 - **WHEN** the library database does not answer
-- **THEN** the reason says the library database is unreachable, and no SQLite file is opened
+- **THEN** the reason carries the key phrase of design D7 ("base de la bibliothèque injoignable") and no file is opened
 
 #### Scenario: Rejudge ignores prerequisites
 - **WHEN** a past run is rejudged
 - **THEN** prerequisites are not checked
 
 ### Requirement: Command cases with invented files and throwaway library
-The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library built from a given folder, indexed into the run's disposable database (its knowledge tables emptied first) and served by a library server pointed at that database, without writing into the installation's database or overwriting the installation's library configuration. Without a disposable database, such a case SHALL be non-evaluable with the reason of design.md D11. Files SHALL NOT be placed outside the copy.
-
-Source: tests/posture_evals/test_posture_evals.py (CasDeCommandes)
+The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library built from a given folder, without touching the installation's library. Files SHALL NOT be placed outside the copy. A throwaway library SHALL be indexed into the run's disposable database, whose library tables are emptied before each case that declares one, and the case's library server configuration SHALL name that database through the library database setting of design D7. When the disposable database cannot be created, such a case SHALL be reported as not evaluable here with the reason "throwaway library unavailable". The system SHALL NOT index anything into the installation's library database and SHALL NOT write any index file.
 
 #### Scenario: Files placed in the copy only
 - **WHEN** a case declares source and destination files
 - **THEN** the files are copied into the temporary copy; a destination escaping the copy is refused
 
 #### Scenario: Throwaway library
-- **WHEN** a case declares a library folder and a disposable database exists
-- **THEN** that folder is indexed into the disposable database and the case's library configuration names that database and the PostgreSQL backend; without a library folder the installation configuration is used unchanged
+- **WHEN** a case declares a library folder
+- **THEN** the library tables of the disposable database are emptied, that folder is indexed into it, and a separate library configuration naming the disposable database is produced; without it the installation configuration is used unchanged
 
 #### Scenario: No disposable database
-- **WHEN** a case declares a library folder and no disposable database could be created
-- **THEN** the case is non-evaluable with the reason that the throwaway library is unavailable, and nothing is indexed
+- **WHEN** the disposable database cannot be created and a case declares a library folder
+- **THEN** the case is not evaluable here with the reason "throwaway library unavailable" and nothing is indexed
 
 #### Scenario: Command cases are separate from the standard set
 - **WHEN** the command-case file is read
@@ -140,7 +140,9 @@ Source: tests/posture_evals/test_claude_md_vocabulaire.py, tests/posture_evals/t
 - **THEN** the names are the same, with the same spelling and case
 
 ### Requirement: Evaluation sessions read only a disposable cases database
-The system SHALL, for a run that plays sessions, create one disposable database in the instance, apply every migration to it, empty its cases tables and reset their numbering before each case, load the case's invented fixture when it has one, and drop the database at the end of the run whatever happens. It SHALL pass the disposable database and an invented author to the session environment and to the library server configuration of every case, so that no session reads the real cases. When the disposable database cannot be created, it SHALL pass a cases database name that does not exist and an empty author. The temporary copy of the workspace SHALL never contain the local author file, so the author of every session comes from the environment only. A fixture path SHALL exist and stay inside the fixtures folder of the evaluation set, and SHALL be checked before any database is created or any session played. A rejudge SHALL create no database, and a run on the file-based library back-end SHALL create none either (it runs as if the database could not be created). Every replay of a case SHALL empty and reload the database again. When the database cannot be created, the system SHALL print the message of a database connection error (which names where the password is looked for, never a value) and, for any other error, its type only.
+The system SHALL, for a run that plays sessions, create one disposable database in the instance, apply every migration to it, empty its cases tables and reset their numbering before each case, load the case's invented fixture when it has one, and drop the database at the end of the run whatever happens. It SHALL pass the disposable database and an invented author to the session environment and to the library server configuration of every case, so that no session reads the real cases. When the disposable database cannot be created, it SHALL pass a cases database name that does not exist and an empty author. The temporary copy of the workspace SHALL never contain the local author file, so the author of every session comes from the environment only. A fixture path SHALL exist and stay inside the fixtures folder of the evaluation set, and SHALL be checked before any database is created or any session played. A rejudge SHALL create no database. Every replay of a case SHALL empty and reload the database again. When the database cannot be created, the system SHALL print the message of a database connection error (which names where the password is looked for, never a value) and, for any other error, its type only.
+
+Source: tests/posture_evals/test_cases_fixture.py (FixtureDansUnCas, EnvironnementDesSeances, MessageDeBaseIndisponible, BaseJetable, PassageAvecBaseJetable, CopieSansFichierAuteur)
 
 #### Scenario: Case with a fixture
 - **WHEN** a case names a fixture with one case and one running experiment
@@ -169,8 +171,6 @@ The system SHALL, for a run that plays sessions, create one disposable database 
 #### Scenario: Error message without secret
 - **WHEN** creating the database fails with an error other than a database connection error
 - **THEN** only the error type is printed, never its message
-
-Source: tests/posture_evals/test_cases_fixture.py (FixtureDansUnCas, EnvironnementDesSeances, MessageDeBaseIndisponible, BaseJetable, PassageAvecBaseJetable, CopieSansFichierAuteur)
 
 ### Requirement: Shipped cases cover the cases module
 The system SHALL ship three cases with invented fixtures, each with exactly one blocking criterion and non-blocking indicators, checking that a close case that worked is presented as a lead cited with its number, author, date and outcome and as a testimony; that a close case that failed is presented as a path already tried, to avoid or adapt; and that the user's running experiment is mentioned for information only with a proposal to add a note to it.

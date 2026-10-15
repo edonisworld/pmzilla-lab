@@ -4,6 +4,9 @@
 
 ```
 connection OK
+access search: OK
+access history: OK
+access fields: OK
 ```
 
 ## test, access denied (exit 1)
@@ -15,7 +18,7 @@ HTTP 401
 ## missing settings (exit 1)
 
 ```
-Error: missing settings in <ws>/Flux-Lab/flux.yaml: jira_site, jira_token_type
+Error: missing settings in <ws>/Flux-Lab/flux.yaml: jira_site
 ```
 
 ## remote http (exit 1)
@@ -27,7 +30,98 @@ Error: jira_site must start with https:// (http is only accepted for the local m
 ## token type (exit 1)
 
 ```
-Error: jira_token_type must be "scoped" or "classic".
+Error: jira_token_type must be "scoped".
+```
+
+## test, classic token (exit 1)
+
+```
+Error: classic token refused: use a scoped token
+```
+
+## collect, classic token (exit 1)
+
+```
+Tickets read: 1; discarded (portfolio types, excluded projects): 0.
+Already cached and finished (not queried again): 0; to query: 1.
+tickets past retention, skipped: 0
+Error: classic token refused: use a scoped token
+```
+
+## test, cloud id missing (exit 1)
+
+```
+Error: cloudId not found: jira_cloud_id is missing or invalid in the settings.
+```
+
+## test, cloud id with path characters (exit 1)
+
+```
+Error: cloudId not found: jira_cloud_id is missing or invalid in the settings.
+```
+
+## test, cloud id differs from the site's (exit 1)
+
+```
+Error: cloudId differs from the site's
+```
+
+## test, missing scope on history (exit 1)
+
+```
+connection OK
+access search: OK
+access history: 403
+access fields: OK
+```
+
+## test, missing scopes on search and fields (exit 1)
+
+```
+connection OK
+access search: 403
+access history: OK
+access fields: 403
+```
+
+## test, token expires soon (exit 0)
+
+```
+connection OK
+access search: OK
+access history: OK
+access fields: OK
+API token expires in 10 days
+```
+
+## test, token expiry passed (exit 0)
+
+```
+connection OK
+access search: OK
+access history: OK
+access fields: OK
+API token expiry date passed
+```
+
+## test, token expiry passed and a refused call (exit 1)
+
+```
+connection OK
+access search: OK
+access history: OK
+access fields: 403
+API token expiry date passed
+```
+
+## test, no token expiry date (exit 0)
+
+```
+connection OK
+access search: OK
+access history: OK
+access fields: OK
+token expiry date not set
 ```
 
 ## collect, bulk mode (exit 0)
@@ -35,6 +129,7 @@ Error: jira_token_type must be "scoped" or "classic".
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Already cached and finished (not queried again): 0; to query: 5.
+tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
 ```
 
@@ -43,6 +138,7 @@ Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Already cached and finished (not queried again): 4; to query: 1.
+tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
 ```
 
@@ -51,6 +147,7 @@ Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Cache ignored (--refresh): to query: 5.
+tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
 ```
 
@@ -59,6 +156,7 @@ Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0; outside the requested team: 2.
 Already cached and finished (not queried again): 2; to query: 1.
+tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
 ```
 
@@ -68,11 +166,21 @@ Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
 Error: --team: no ticket in the export matches.
 ```
 
+## collect, tickets past retention (exit 0)
+
+```
+Tickets read: 2; discarded (portfolio types, excluded projects): 0.
+Already cached and finished (not queried again): 0; to query: 1.
+tickets past retention, skipped: 1
+Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+```
+
 ## collect, ticket by ticket with one error (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Cache ignored (--refresh): to query: 5.
+tickets past retention, skipped: 0
 Mode: ticket by ticket. Tickets processed: 4; status transitions: 8; errors: 1 (HTTP 404: 1).
 ```
 
@@ -81,6 +189,7 @@ Mode: ticket by ticket. Tickets processed: 4; status transitions: 8; errors: 1 (
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Cache ignored (--refresh): to query: 5.
+tickets past retention, skipped: 0
 Mode: ticket by ticket. Tickets processed: 0; status transitions: 0; errors: 0.
 Stopped: HTTP 401 (access denied: check the token and its permissions). The cache keeps what was collected.
 ```

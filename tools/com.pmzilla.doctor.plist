@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Modèle : __HOME__ est remplacé par le dossier personnel à l'installation (voir docs/pmzilla/installation.md, section « Doctor »). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pmzilla.doctor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/PMZilla-Lab/doctor.sh</string>
+  </array>
+  <!-- Chaque jour à 9 h 00, après la collecte de la veille (7 h 10), la sauvegarde de la base (7 h 45) et la copie hors du Mac (8 h 15). Si le Mac dort à cette heure, launchd lance la tâche au réveil. Ni lancement à la charge, ni relance. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/pmzilla-doctor.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/pmzilla-doctor.log</string>
+</dict>
+</plist>

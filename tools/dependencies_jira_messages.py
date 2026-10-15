@@ -170,6 +170,46 @@ FR = {
     "swap_9_from": "une autre équipe", "swap_9_to": "un autre projet",
     "swap_10_from": "même équipe", "swap_10_to": "même projet",
     "swap_11_from": "de l'équipe attendue vers l'équipe qui attend", "swap_11_to": "du projet attendu vers le projet qui attend",
+    # ---- rapport par Mission Team ou par site (groupes d'après le référentiel d'organisation)
+    "blockage_terminal_line_group": "  {blocked} attend {blocking} ({state}) depuis {age} j",
+    "internal_dependencies_group": "Dépendances internes à un même groupe : {n} (le détail par groupe est dans « Tickets et "
+                                   "dépendances internes »).",
+    "kind_mission_team": "Mission Team",
+    "kind_site": "site",
+    "group_intro": "Rapport par {kind} : les équipes de l'export sont regroupées d'après le référentiel d'organisation. Les équipes "
+                   "que le référentiel ne décrit pas forment le groupe « hors référentiel ». Matrices, blocages et graphe sont "
+                   "entre groupes ; les totaux sont ceux du rapport par équipe.",
+    "sec_structure": "## Structure",
+    "structure_note": "Les effectifs décrivent la structure seulement : aucun chiffre de ce rapport n'est rapporté à un effectif, "
+                      "et les groupes sont classés par nom, jamais par un chiffre.",
+    "head_structure": "| Groupe ({kind}) | Équipes | Effectif |",
+    "sec_group_counts": "## Tickets et dépendances internes",
+    "group_internal_intro": "Une dépendance entre deux équipes d'un même groupe ({kind}) est interne au groupe : elle est comptée "
+                            "ici et ne figure pas parmi les paires du tableau « Qui dépend de qui ». Le groupe « hors référentiel » "
+                            "rassemble les équipes que le référentiel ne décrit pas ; son nombre de tickets est dans ce tableau.",
+    "head_group_counts": "| Groupe | Tickets | Dépendances internes |",
+    "swap_mt_1_to": "à une même Mission Team",
+    "swap_mt_2_to": "d'une autre Mission Team connue (ni hors export, ni sans équipe)",
+    "swap_mt_3_to": "Mission Teams qui s'attendent",
+    "swap_mt_4_to": "Mission Team qui attend",
+    "swap_mt_5_to": "Mission Team attendue",
+    "swap_mt_6_to": "| Mission Team | Mission Team |",
+    "swap_mt_7_to": "entre Mission Teams",
+    "swap_mt_8_to": "paires de Mission Teams",
+    "swap_mt_9_to": "une autre Mission Team",
+    "swap_mt_10_to": "même Mission Team",
+    "swap_mt_11_to": "de la Mission Team attendue vers la Mission Team qui attend",
+    "swap_site_1_to": "à un même site",
+    "swap_site_2_to": "d'un autre site connu (ni hors export, ni sans équipe)",
+    "swap_site_3_to": "Sites qui s'attendent",
+    "swap_site_4_to": "Site qui attend",
+    "swap_site_5_to": "Site attendu",
+    "swap_site_6_to": "| Site | Site |",
+    "swap_site_7_to": "entre sites",
+    "swap_site_8_to": "paires de sites",
+    "swap_site_9_to": "un autre site",
+    "swap_site_10_to": "même site",
+    "swap_site_11_to": "du site attendu vers le site qui attend",
 }
 
 EN = {
@@ -337,6 +377,47 @@ EN = {
     "swap_9_from": "another team", "swap_9_to": "another project",
     "swap_10_from": "same team", "swap_10_to": "same project",
     "swap_11_from": "from the awaited team to the waiting team", "swap_11_to": "from the awaited project to the waiting project",
+    # ---- report by Mission Team or by site (groups from the organisation referential)
+    "blockage_terminal_line_group": "  {blocked} waits for {blocking} ({state}) for {age} d",
+    "internal_dependencies_group": "Dependencies within a single group: {n} (the detail per group is in \"Tickets and internal "
+                                   "dependencies\").",
+    "kind_mission_team": "Mission Team",
+    "kind_site": "site",
+    "group_intro": "Report by {kind}: the teams of the export are grouped through the organisation referential. Teams the "
+                   "referential does not describe form the \"outside the referential\" group. Matrices, blockages and graph are "
+                   "between groups; the totals are those of the report by team.",
+    "sec_structure": "## Structure",
+    "structure_note": "Headcounts describe the structure only: no figure of this report is divided by a headcount, and groups "
+                      "are ordered by name, never by a figure.",
+    "head_structure": "| Group ({kind}) | Teams | Headcount |",
+    "sec_group_counts": "## Tickets and internal dependencies",
+    "group_internal_intro": "A dependency between two teams of the same group ({kind}) is internal to the group: it is counted "
+                            "here and does not appear among the pairs of the \"Who depends on whom\" table. The \"outside the "
+                            "referential\" group gathers the teams the referential does not describe; its ticket count is in "
+                            "this table.",
+    "head_group_counts": "| Group | Tickets | Internal dependencies |",
+    "swap_mt_1_to": "within a single Mission Team",
+    "swap_mt_2_to": "of another known Mission Team (neither outside the export nor without a team)",
+    "swap_mt_3_to": "Mission Teams that wait on each other",
+    "swap_mt_4_to": "Waiting Mission Team",
+    "swap_mt_5_to": "Awaited Mission Team",
+    "swap_mt_6_to": "| Mission Team | Mission Team |",
+    "swap_mt_7_to": "between Mission Teams",
+    "swap_mt_8_to": "pairs of Mission Teams",
+    "swap_mt_9_to": "another Mission Team",
+    "swap_mt_10_to": "same Mission Team",
+    "swap_mt_11_to": "from the awaited Mission Team to the waiting Mission Team",
+    "swap_site_1_to": "within a single site",
+    "swap_site_2_to": "of another known site (neither outside the export nor without a team)",
+    "swap_site_3_to": "Sites that wait on each other",
+    "swap_site_4_to": "Waiting site",
+    "swap_site_5_to": "Awaited site",
+    "swap_site_6_to": "| Site | Site |",
+    "swap_site_7_to": "between sites",
+    "swap_site_8_to": "pairs of sites",
+    "swap_site_9_to": "another site",
+    "swap_site_10_to": "same site",
+    "swap_site_11_to": "from the awaited site to the waiting site",
 }
 
 CATALOGS = {"fr": FR, "en": EN}

@@ -100,3 +100,16 @@ The system SHALL show help for each controlled script in an isolated uv environm
 - THEN the test is skipped with the reason
 
 Source: tests/script_dependencies/test_script_dependencies.py (AideSansWith)
+
+### Requirement: Private tools may be absent from the generated edition
+The system SHALL treat a fixed set of private-repository tools, which the edition manifest excludes, as optional: when one is absent, the checks SHALL skip it and SHALL NOT fail for its absence from the controlled or exempted lists; when it is present, it SHALL be checked like any other script. A script outside that set that is listed and missing SHALL still fail the check.
+
+#### Scenario: Private tool absent
+- **WHEN** the checks run on a tree where a private tool of the set is absent
+- **THEN** no check fails because it is missing
+
+#### Scenario: Private tool present
+- **WHEN** a private tool of the set exists in the tools folder
+- **THEN** it is checked as the controlled or exempted script it is listed as
+
+Source: tests/script_dependencies/test_script_dependencies.py (presents, PRIVES, test_les_exemptions_et_les_controles_existent)

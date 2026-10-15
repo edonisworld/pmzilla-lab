@@ -25,15 +25,28 @@ C'est la source des CSV : flux_jira.py, dependencies_jira.py et flow_import.py l
         export_verification_field est donné (aucun autre usage pour l'instant), une colonne « Inward/Outward issue
         link (<type>) » par lien (en-tête répété). Les dates s'écrivent au format 09/Nov/2017 08:49. Aucun titre, aucune description,
         aucune personne n'est demandé à Jira. Sortie : des nombres, jamais une clé ni un nom.
-        Si le champ d'équipe ne renvoie pas un libellé (identifiant d'objet Assets, UUID), il traduit l'identifiant par la
-        table Flux-Lab/equipes-assets.yaml, écrite à la main (clé « equipes » : identifiant -> libellé) ; un identifiant
-        absent de la table s'écrit « (équipe inconnue) », leur nombre s'affiche et leurs identifiants (jamais un libellé)
-        sont listés, triés, pour compléter le fichier. Les clés « conflits » et « appuis » des anciennes tables sont
-        ignorées. Sans table, rien n'est écrit : le script s'arrête et dit comment la créer (diagnose montre la forme du
-        champ). Un ticket à plusieurs équipes a une colonne d'équipe par équipe.
-        --strict-teams (suivi mensuel en une commande) : quand au moins un identifiant d'équipe manque dans la table, le
-        fichier est écrit et les lignes habituelles s'affichent, puis la phrase « identifiants d'équipe inconnus : export
-        incomplet » et la sortie avec le code 3 (sans l'option, le code reste 0).
+        Si le champ d'équipe ne renvoie pas un libellé (identifiant d'objet Assets, UUID), il traduit l'identifiant par les
+        identifiants Jira du référentiel d'organisation (Flux-Lab/organisation.yaml, clé jira_team_ids de chaque équipe ;
+        design D5). Tant que le référentiel n'a aucun identifiant, l'ancienne table Flux-Lab/equipes-assets.yaml, écrite à la
+        main (clé « equipes » : identifiant -> libellé), est lue à la place avec l'avertissement de dépréciation ; dès qu'un
+        identifiant est dans le référentiel, la table est ignorée avec le même avertissement (à supprimer). Un identifiant
+        absent de la source s'écrit « (équipe inconnue) », leur nombre, celui des tickets touchés et leurs identifiants
+        (jamais un libellé) s'affichent, triés. Les clés « conflits » et « appuis » des anciennes tables sont ignorées. Sans
+        référentiel ni table, rien n'est écrit : le script s'arrête et donne la structure du référentiel à remplir (diagnose
+        montre la forme du champ). Un référentiel ou une table illisible arrête l'export. Le nombre d'équipes du référentiel
+        sans ticket dans l'export s'affiche (jamais un nom). L'API Assets n'est jamais appelée. Un ticket à plusieurs
+        équipes a une colonne d'équipe par équipe.
+        Étiquettes et versions (jira-flow-labels) : avec le bloc declared_labels des réglages, le champ labels est demandé et
+        seules les étiquettes déclarées s'écrivent, dans des colonnes « Declared Label » répétées ; les versions correctives
+        (fixVersions, toujours demandées) s'écrivent dans des colonnes « Fix Version » répétées. Ces colonnes viennent après
+        « Verification Required » et avant les colonnes de liens ; l'en-tête simple « Labels » et toute colonne de personne
+        ne sont jamais écrits. Les étiquettes non déclarées sont comptées puis jetées : le nombre de celles qui commencent par un
+        préfixe déclaré et celui des éléments d'up-merge aux deux étiquettes s'affichent, jamais une étiquette ni une version.
+        Conservation (retention.period_days, un an au plus, refusé au-delà avant tout appel) : un ticket résolu depuis plus
+        longtemps n'est pas écrit, le nombre s'affiche.
+        --strict-teams (suivi mensuel en une commande) : quand au moins un identifiant d'équipe manque dans la source de
+        traduction (référentiel, ou table en repli), le fichier est écrit et les lignes habituelles s'affichent, puis la phrase
+        « identifiants d'équipe inconnus : export incomplet » et la sortie avec le code 3 (sans l'option, le code reste 0).
 
 Les sous-commandes teams-table et compare (qui reposaient sur l'export manuel CSV) sont retirées : les lancer affiche
 la voie à suivre. Flux-Lab/equipes-assets.yaml se complète à la main ; la comparaison base contre CSV est dans
@@ -70,12 +83,14 @@ import os
 import re
 import sys
 import time
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config
+import flow_organisation
 from yaml_strict import charger
 import history_jira as hj
 from export_jira_api_messages import CATALOGS
@@ -86,7 +101,10 @@ OPTIONS_RENOMMEES = {**flux_config.OPTIONS_COMMUNES, "--cherche": "--search", "-
 PAGE = 100
 MOIS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 CHAMPS_DE_BASE = ["issuetype", "status", "created", "resolutiondate", "resolution", "statuscategorychangedate",
-                  "parent", "issuelinks", "updated"]
+                  "parent", "issuelinks", "updated", "fixVersions"]     # fixVersions : lu à chaque export (jira-flow-labels)
+CHAMP_ETIQUETTES = "labels"          # demandé seulement si des étiquettes déclarées sont réglées
+ENTETE_ETIQUETTE = "Declared Label"      # en-têtes anglais dans les deux langues (design D19)
+ENTETE_VERSION = "Fix Version"
 ENTETES_DE_BASE = ["Issue key", "Issue Type", "Status", "Status Category", "Created", "Resolved", "Resolution",
                    "Status Category Changed", "Parent key", "Updated"]
 ENTETE_POINTS = "Story Points"
@@ -95,6 +113,7 @@ IDENTIFIANT = re.compile(r"\d+|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{
 
 EQUIPE_INCONNUE = "(équipe inconnue)"      # écrit dans le CSV : format de données, identique dans les deux langues
 NOM_TABLE = "equipes-assets.yaml"
+NOM_REFERENTIEL = "organisation.yaml"
 RETIREES = {"teams-table": "retired_teams_table", "compare": "retired_compare"}     # sous-commandes retirées -> message
 
 _MESSAGES = Messages(CATALOGS, "fr")
@@ -180,6 +199,30 @@ def charger_table() -> dict[str, str] | None:
         raise Arret(t("table_unreadable", table=NOM_TABLE)) from None
     table = donnees.get("equipes") if isinstance(donnees, dict) else None
     return {str(k): str(v) for k, v in (table or {}).items()}
+
+
+@dataclass
+class Traduction:
+    """Source de traduction des identifiants d'équipe (design D4, D5) : `correspondance` identifiant -> nom (None sans
+    source), `source` « referentiel » ou « table » (None sans source), le référentiel lu (None s'il n'existe pas) et la
+    présence du fichier de l'ancienne table (à supprimer quand le référentiel porte des identifiants)."""
+    correspondance: dict[str, str] | None
+    source: str | None
+    referentiel: flow_organisation.Referentiel | None
+    table_presente: bool
+
+
+def resoudre_traduction() -> Traduction:
+    """Source de traduction : les identifiants Jira du référentiel d'organisation s'il en porte au moins un (l'ancienne table
+    est alors ignorée, sans être lue) ; sinon l'ancienne table ; sinon aucune. Un référentiel ou une table illisible arrête
+    (`ErreurConfig` ou `Arret`, sans valeur)."""
+    referentiel = flow_organisation.charger_si_present(hj.FLUX_DIR / NOM_REFERENTIEL)
+    table_presente = (hj.FLUX_DIR / NOM_TABLE).exists()
+    if referentiel is not None and referentiel.has_jira_ids:
+        correspondance = {i: e.nom for e in referentiel.teams.values() for i in e.jira_ids}
+        return Traduction(correspondance, "referentiel", referentiel, table_presente)
+    table = charger_table()
+    return Traduction(table, "table" if table is not None else None, referentiel, table is not None)
 
 
 def forme(valeur) -> str:
@@ -354,17 +397,33 @@ def liens_de(ticket: dict) -> dict[tuple[str, str], list[str]]:
     return sortie
 
 
+def etiquettes_du_ticket(champs_ticket: dict) -> list[str]:
+    """Étiquettes du champ labels (texte non vide), sans doublon, dans l'ordre de l'API."""
+    valeurs = champs_ticket.get(CHAMP_ETIQUETTES) or []
+    return list(dict.fromkeys(e.strip() for e in valeurs if isinstance(e, str) and e.strip()))
+
+
+def versions_du_ticket(champs_ticket: dict) -> list[str]:
+    """Noms des versions correctives du ticket, sans doublon, dans l'ordre de l'API."""
+    noms = [(v or {}).get("name") for v in champs_ticket.get("fixVersions") or [] if isinstance(v, dict)]
+    return list(dict.fromkeys(n.strip() for n in noms if isinstance(n, str) and n.strip()))
+
+
 def construire_csv(tickets: list[dict], champ_equipe: str | None, entete_equipe: str,
                    table: dict[str, str] | None = None, fuseau: dt.tzinfo | None = None,
                    champ_verification: str | None = None,
                    entete_verification: str = "Verification Required",
-                   champ_points: str | list[str] | None = None) -> tuple[list[list[str]], dict]:
+                   champ_points: str | list[str] | None = None,
+                   etiquettes: dict | None = None) -> tuple[list[list[str]], dict]:
     """Lignes du CSV (en-têtes comprises) et quelques effectifs. Un libellé est écrit tel quel ; un identifiant d'objet se
-    traduit par la table (identifiant absent : « (équipe inconnue) », compté). Lève Arret si le champ d'équipe n'est ni
-    un libellé ni un identifiant traduisible par une table."""
+    traduit par `table` (identifiant -> nom ; absent : « (équipe inconnue) », compté). Lève Arret si le champ d'équipe n'est
+    ni un libellé ni un identifiant traduisible. `etiquettes` (rôle -> {prefix, labels}, lecteur declared_labels) : seules les
+    étiquettes déclarées s'écrivent, dans des colonnes « Declared Label » ; les autres sont comptées puis jetées. Les versions
+    correctives s'écrivent dans des colonnes « Fix Version ». Les deux familles viennent après la colonne de vérification."""
     equipes = {}
     inconnus: Counter = Counter()
     tickets_inconnus: set[str] = set()
+    traduits = False
     if champ_equipe:
         for ticket in tickets:
             valeur = (ticket.get("fields") or {}).get(champ_equipe)
@@ -374,6 +433,7 @@ def construire_csv(tickets: list[dict], champ_equipe: str | None, entete_equipe:
                 if ids is None:
                     formes, _ = analyser_equipes(tickets, champ_equipe)
                     raise Arret(t("team_label_options", form=", ".join(t("form_count", form=f, count=n) for f, n in sorted(formes.items()))))
+                traduits = traduits or bool(ids)
                 noms = []
                 for identifiant in dict.fromkeys(ids):
                     if identifiant in table:
@@ -391,10 +451,28 @@ def construire_csv(tickets: list[dict], champ_equipe: str | None, entete_equipe:
         for cle, valeurs in liens[str(ticket["key"])].items():
             colonnes_liens[cle] = max(colonnes_liens[cle], len(valeurs))
     ordre_liens = sorted(colonnes_liens)
+    # étiquettes : déclarées gardées par ticket, non déclarées comptées puis oubliées (jamais gardées ni affichées)
+    declarees = {e for contenu in (etiquettes or {}).values() for e in contenu["labels"]}
+    prefixes = tuple(contenu["prefix"] for contenu in (etiquettes or {}).values())
+    up_merge = set((etiquettes or {}).get("up_merge", {}).get("labels", ()))
+    gardees: dict[str, list[str]] = {}
+    proches: set[str] = set()
+    tickets_proches = deux_up_merge = 0
+    for ticket in tickets:
+        brutes = etiquettes_du_ticket(ticket.get("fields") or {}) if etiquettes else []
+        gardees[str(ticket["key"])] = [e for e in brutes if e in declarees]
+        voisines = {e for e in brutes if e not in declarees and e.startswith(prefixes)}
+        proches |= voisines
+        tickets_proches += bool(voisines)
+        deux_up_merge += len(up_merge) == 2 and up_merge <= set(brutes)
+    versions = {str(ticket["key"]): versions_du_ticket(ticket.get("fields") or {}) for ticket in tickets}
+    nb_etiquettes = max([0] + [len(v) for v in gardees.values()])
+    nb_versions = max([0] + [len(v) for v in versions.values()])
     champs_points = [champ_points] if isinstance(champ_points, str) else list(champ_points or [])
     par_champ = {c: [0, 0] for c in champs_points}          # champ -> [tickets renseignés, tickets en désaccord avec un autre champ]
     entetes = (list(ENTETES_DE_BASE) + ([ENTETE_POINTS] if champs_points else []) + [entete_equipe] * nb_equipes
-               + ([entete_verification] if champ_verification else []))
+               + ([entete_verification] if champ_verification else [])
+               + [ENTETE_ETIQUETTE] * nb_etiquettes + [ENTETE_VERSION] * nb_versions)
     verification_renseignes = points_renseignes = points_invalides = 0
     for sens, type_ in ordre_liens:
         entetes += [f"{sens} issue link ({type_})"] * colonnes_liens[(sens, type_)]
@@ -424,17 +502,42 @@ def construire_csv(tickets: list[dict], champ_equipe: str | None, entete_equipe:
             texte = texte_verification(champs.get(champ_verification))
             verification_renseignes += bool(texte)
             ligne.append(texte)
+        ligne += gardees[cle] + [""] * (nb_etiquettes - len(gardees[cle]))
+        ligne += versions[cle] + [""] * (nb_versions - len(versions[cle]))
         for sens, type_ in ordre_liens:
             valeurs = liens[cle].get((sens, type_), [])
             ligne += valeurs + [""] * (colonnes_liens[(sens, type_)] - len(valeurs))
         lignes.append(ligne)
+    vues = {nom for noms in equipes.values() for nom in noms if nom != EQUIPE_INCONNUE}
     return lignes, {"inconnus_distincts": len(inconnus), "inconnus_ids": sorted(inconnus), "inconnus_tickets": len(tickets_inconnus),
-                    "table_utilisee": table is not None, "colonnes_equipe": nb_equipes, "types_de_liens": len({t for _, t in ordre_liens}),
+                    "table_utilisee": table is not None, "traduction_utilisee": traduits, "equipes_vues": vues,
+                    "colonnes_equipe": nb_equipes, "types_de_liens": len({t for _, t in ordre_liens}),
                     "colonnes_de_liens": sum(colonnes_liens.values()), "colonnes": len(entetes),
+                    "proches_distinctes": len(proches), "proches_tickets": tickets_proches, "deux_up_merge": deux_up_merge,
                     "verification_renseignes": verification_renseignes if champ_verification else None,
                     "points_renseignes": points_renseignes if champs_points else None,
                     "points_par_champ": par_champ,
                     "points_invalides": points_invalides}
+
+
+def ecarter_hors_conservation(tickets: list[dict], jours: int, aujourdhui: dt.date,
+                              fuseau: dt.tzinfo | None = None) -> tuple[list[dict], int]:
+    """(tickets à écrire, nombre de tickets écartés). Un ticket résolu depuis plus de `jours` jours est écarté (design D1) ;
+    un ticket sans date de résolution, ou à date illisible, est gardé. Jamais de clé en retour."""
+    limite = aujourdhui - dt.timedelta(days=jours)
+    gardes = []
+    for ticket in tickets:
+        brute = (ticket.get("fields") or {}).get("resolutiondate")
+        try:
+            resolu = dt.datetime.fromisoformat(str(brute)) if brute else None
+        except ValueError:
+            resolu = None
+        if resolu is not None and fuseau is not None and resolu.tzinfo is not None:
+            resolu = resolu.astimezone(fuseau)
+        if resolu is not None and resolu.date() < limite:
+            continue
+        gardes.append(ticket)
+    return gardes, len(tickets) - len(gardes)
 
 
 def ecrire_csv(chemin: Path, lignes: list[list[str]]) -> None:
@@ -466,9 +569,14 @@ def cmd_diagnose(args: argparse.Namespace) -> None:
     hj.afficher(t("diagnose_forms", forms=t("list_separator").join(f"{f} {n}" for f, n in sorted(formes.items()))))
     if exploitable:
         hj.afficher(t("diagnose_labels_yes"))
-    elif (table := charger_table()) is not None and all(
+    elif (traduction := resoudre_traduction()).correspondance is not None and all(
             identifiants((t.get("fields") or {}).get(champ)) is not None for t in tickets):
-        hj.afficher(t("diagnose_labels_table", table=NOM_TABLE, count=len(table)))
+        if traduction.source == "referentiel":      # source et effectif seulement : ni identifiant ni nom
+            hj.afficher(t("diagnose_labels_referential", count=len(traduction.correspondance)))
+        else:
+            hj.afficher(t("diagnose_labels_table", table=NOM_TABLE, count=len(traduction.correspondance)))
+        if traduction.table_presente:
+            hj.afficher(t("table_deprecated"))
     else:
         hj.afficher(t("diagnose_labels_no"))
         hj.afficher(t("team_label_options", form=", ".join(sorted(formes))))
@@ -515,25 +623,33 @@ def cmd_export(args: argparse.Namespace) -> None:
     fuseau = fuseau_export(settings)       # réglage invalide : arrêt avant tout appel à Jira
     champ_verification, entete_verification = reglage_verification(settings)
     champ_points = reglage_points(settings)
+    jours_conservation = flux_config.retention_days(settings)       # au-delà d'un an : refus avant tout appel
+    etiquettes = flux_config.declared_labels(settings)
     requetes = choisir_requetes(requetes, args.requete)
     if args.sortie and len(requetes) > 1:
         raise Arret(t("output_single_query"))
+    traduction = resoudre_traduction() if champ else Traduction(None, None, None, False)      # illisible : arrêt avant Jira
     client = hj.construire_client(settings)
-    table = charger_table()
-    equipes_inconnues = False
+    equipes_inconnues = avertie = False
+    equipes_vues: set[str] = set()
     for nom, jql in requetes:
         etiquette = f"[{nom}] " if nom else ""
         tickets, pages = interroger(client, jql, CHAMPS_DE_BASE + ([champ] if champ else [])
+                                    + ([CHAMP_ETIQUETTES] if etiquettes else [])
                                     + ([champ_verification] if champ_verification else [])
                                     + champ_points)
-        lignes, effectifs = construire_csv(tickets, champ, entete, table, fuseau, champ_verification,
-                                           entete_verification, champ_points)
+        tickets, hors_conservation = ecarter_hors_conservation(tickets, jours_conservation, hj.aujourd_hui(), fuseau)
+        lignes, effectifs = construire_csv(tickets, champ, entete, traduction.correspondance, fuseau, champ_verification,
+                                           entete_verification, champ_points, etiquettes)
+        equipes_vues |= effectifs["equipes_vues"]
         fichier = nom_fichier_export(nom, dt.date.today().isoformat())
         sortie = Path(args.sortie).expanduser() if args.sortie else hj.FLUX_DIR / "exports" / fichier
         ecrire_csv(sortie, lignes)
         hj.afficher(t("export_summary", label=etiquette, tickets=len(tickets), pages=pages, columns=effectifs["colonnes"],
                       team_columns=effectifs["colonnes_equipe"], link_columns=effectifs["colonnes_de_liens"],
                       link_types=effectifs["types_de_liens"]))
+        if hors_conservation:
+            hj.afficher(t("export_past_retention", label=etiquette, count=hors_conservation))
         if not champ:
             hj.afficher(t("export_no_team_column", label=etiquette))
         if effectifs["verification_renseignes"] is not None:
@@ -547,13 +663,27 @@ def cmd_export(args: argparse.Namespace) -> None:
                               conflicts=desaccords))
             if effectifs["points_invalides"]:
                 hj.afficher(t("export_points_invalid", label=etiquette, count=effectifs["points_invalides"]))
+        if effectifs["proches_distinctes"]:        # nombres seulement : jamais une étiquette
+            hj.afficher(t("export_lookalike_labels", label=etiquette, count=effectifs["proches_distinctes"]))
+            hj.afficher(t("export_lookalike_tickets", label=etiquette, tickets=effectifs["proches_tickets"]))
+        if effectifs["deux_up_merge"]:
+            hj.afficher(t("export_two_up_merge", label=etiquette, count=effectifs["deux_up_merge"]))
+        if effectifs["traduction_utilisee"] and traduction.table_presente and not avertie:
+            avertie = True
+            hj.afficher(t("table_deprecated"))      # table lue en repli, ou ignorée parce que le référentiel porte des identifiants
         if effectifs["inconnus_tickets"]:
             equipes_inconnues = True
-            hj.afficher(t("export_unknown_teams", label=etiquette, identifiers=effectifs["inconnus_distincts"],
-                          tickets=effectifs["inconnus_tickets"], unknown=EQUIPE_INCONNUE, table=NOM_TABLE))
-            hj.afficher(t("export_unknown_ids", label=etiquette, table=NOM_TABLE,
+            ref = traduction.source == "referentiel"
+            hj.afficher(t("export_unknown_teams_referential" if ref else "export_unknown_teams", label=etiquette,
+                          identifiers=effectifs["inconnus_distincts"], tickets=effectifs["inconnus_tickets"],
+                          unknown=EQUIPE_INCONNUE, table=NOM_TABLE))
+            hj.afficher(t("export_unknown_ids_referential" if ref else "export_unknown_ids", label=etiquette, table=NOM_TABLE,
                           ids=t("list_separator").join(effectifs["inconnus_ids"])))
         hj.afficher(t("export_written", label=etiquette, name=sortie.name))
+    if traduction.referentiel is not None:        # contrôle du référentiel : un nombre, jamais un nom (design D17)
+        sans_ticket = sum(1 for nom in traduction.referentiel.teams if nom not in equipes_vues)
+        if sans_ticket:
+            hj.afficher(t("export_referential_idle", count=sans_ticket))
     if args.strict_equipes and equipes_inconnues:        # option stricte (orchestrateur du suivi mensuel) : le fichier est écrit, le mois est incomplet
         hj.afficher(t("export_strict_teams"))
         sys.exit(3)
@@ -570,7 +700,7 @@ def main(argv: list[str] | None = None) -> None:
     export.add_argument("--output", dest="sortie", help="fichier CSV à écrire, avec une seule requête (par défaut "
                                          "Flux-Lab/exports/api-[NOM-]AAAA-MM-JJ.csv)")
     export.add_argument("--strict-teams", dest="strict_equipes", action="store_true",
-                        help="identifiants d'équipe absents de la table : écrit le fichier puis sort avec le code 3")
+                        help="identifiants d'équipe absents de la source de traduction : écrit le fichier puis sort avec le code 3")
     for retiree in RETIREES:        # déclarées pour répondre par la voie à suivre, cachées de l'aide
         sous = commandes.add_parser(retiree)          # sans help : absente de la liste de l'aide
         sous.add_argument("ignores", nargs="*")

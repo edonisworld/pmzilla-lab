@@ -47,7 +47,6 @@ class PassageFictif(socle.Base):
                       mock.patch.dict(os.environ)):
             patch.start()
             self.addCleanup(patch.stop)
-        os.environ.pop("PMZILLA_LAB_BACKEND", None)
         essai.CASES_FILE.write_text(yaml.safe_dump(CAS, allow_unicode=True), encoding="utf-8")
 
     def lancer(self, *arguments) -> str:
@@ -83,28 +82,40 @@ class VoieDeLaBibliotheque(PassageFictif):
         config = json.loads(next(essai.DATA.glob("*/mcp.json")).read_text(encoding="utf-8"))
         return config["mcpServers"]["pmzilla-library"]["args"]
 
-    def test_backend_postgres_est_transmis_au_serveur_de_la_bibliotheque(self):
-        args = self.configuration("--backend", "postgres")
-        self.assertEqual(args[-2:], ["--backend", "postgres"])
+    CLE = "--backend n'existe plus : la bibliothèque est lue dans PostgreSQL seulement"
 
-    def test_backend_sqlite_est_transmis_au_serveur_de_la_bibliotheque(self):
-        args = self.configuration("--backend", "sqlite")
-        self.assertEqual(args[-2:], ["--backend", "sqlite"])
-
-    def test_sans_option_le_serveur_garde_sa_voie_par_defaut(self):
+    def test_sans_option_la_configuration_ne_porte_aucune_voie(self):
+        self.assertEqual(self.configuration()[-1], "serve")
         self.assertNotIn("--backend", self.configuration())
 
-    def test_la_bibliotheque_jetable_d_un_cas_est_lue_en_postgres_quelle_que_soit_la_voie(self):
-        self.lancer("--cases", "c1", "--backend", "sqlite")
+    def test_l_ancienne_variable_n_est_pas_lue(self):
+        avant = self.configuration()
+        for valeur in ("sqlite", "postgres"):
+            with mock.patch.dict(os.environ, {"PMZILLA_LAB_BACKEND": valeur}):
+                self.assertEqual(self.configuration(), avant)
+
+    def test_la_bibliotheque_jetable_d_un_cas_nomme_sa_base_sans_voie(self):
+        self.lancer("--cases", "c1")
         dossier = next(essai.DATA.glob("*/mcp.json")).parent
-        config = essai.mcp_config(dossier, knowledge_dbname="pmzilla_eval_inventee", backend="sqlite", label="bibliotheque-c1")
+        config = essai.mcp_config(dossier, knowledge_dbname="pmzilla_eval_inventee", label="bibliotheque-c1")
         serveur = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
-        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertNotIn("--backend", serveur["args"])
         self.assertEqual(serveur["env"], {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"})
 
-    def test_voie_inconnue_refusee(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            self.lancer("--backend", "mysql")
+    def test_backend_refuse_avant_tout_quelle_que_soit_la_valeur(self):
+        for arguments in (("--backend", "sqlite"), ("--backend", "postgres"), ("--backend", "mysql"), ("--backend=sqlite",),
+                          ("--cases", "c1", "--backend", "postgres")):
+            with self.subTest(arguments=arguments):
+                erreur = io.StringIO()
+                with mock.patch.object(essai, "make_copy") as copie, mock.patch.object(essai, "create_cases_database") as base, \
+                        mock.patch.object(essai, "run_session") as seance, \
+                        contextlib.redirect_stderr(erreur), self.assertRaises(SystemExit) as fin:
+                    self.lancer(*arguments)
+                self.assertEqual(fin.exception.code, 2)
+                self.assertIn(self.CLE, erreur.getvalue())
+                for faux in (copie, base, seance):
+                    faux.assert_not_called()
+                self.assertFalse(list(essai.DATA.glob("*/mcp.json")))
 
 
 class FichierDeCasDeCommandes(PassageFictif):

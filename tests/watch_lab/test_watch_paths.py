@@ -102,7 +102,7 @@ class LigneDeCommande(Base):
     def test_aucune_dependance_hors_bibliotheque_standard(self):
         source = (TOOLS / "watch_paths.py").read_text(encoding="utf-8")
         imports = {l.split()[1].split(".")[0] for l in source.splitlines() if l.startswith(("import ", "from "))}
-        self.assertEqual(imports - {"__future__", "sys", "pathlib"}, set())
+        self.assertEqual(imports - {"__future__", "os", "sys", "pathlib"}, set())
 
 
 if __name__ == "__main__":

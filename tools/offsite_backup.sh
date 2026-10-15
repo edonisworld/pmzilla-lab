@@ -3,7 +3,7 @@
 #
 #     bash tools/offsite_backup.sh setup <point de montage>   enregistre le disque (identifiant du volume), après vérifications et confirmation
 #     bash tools/offsite_backup.sh copy [--include-protected] copie la dernière sauvegarde ordinaire de la base et du sanctum, avec manifeste
-#     bash tools/offsite_backup.sh restore-test [--force]     test mensuel : sommes de contrôle, restauration de la base dans un conteneur jetable
+#     bash tools/offsite_backup.sh restore-test [--force] [--detail]     test mensuel : sommes de contrôle, restauration de la base dans un conteneur jetable
 #     bash tools/offsite_backup.sh status                     affiche l'état (dernières copies, âge) sans rien monter ni écrire
 #     bash tools/offsite_backup.sh --help
 #
@@ -16,9 +16,19 @@
 # Copie : dernière sauvegarde ordinaire datée (db-AAAA-MM-JJ, bmad-memory-AAAA-MM-JJ), jamais une sauvegarde étiquetée ; écrite dans
 # .partiel-<nom>, avec un manifeste (somme SHA-256 et taille de chaque fichier), vérifiée sur le disque, puis renommée. Dossiers en 700,
 # fichiers en 600. Rotation après une copie vérifiée : N copies récentes plus la dernière de chacun des M derniers mois.
+# Dump flux (règle de conservation) : après une copie vérifiée et la rotation, le dump flow.dump est retiré de chaque copie de la base
+# plus vieille que OFFSITE_FLOW_AGE_DAYS (défaut 35 jours, entier au moins égal à 1 ; la date de la copie est celle de son nom) ; le
+# manifeste est réécrit sans ce fichier, puis vérifié, et une ligne « flux retiré : <copie> » est affichée par copie. Les dumps knowledge
+# et cases restent. Le dump flux de la copie complète (manifeste vérifié) la plus récente n'est jamais retiré. Les copies de sanctum
+# ne sont jamais touchées.
 # La sauvegarde de sanctum protégée de la rotation locale n'est copiée que sur --include-protected, une fois, et n'est jamais tournée.
 # Il n'affiche que des noms de copies (dates), des nombres de fichiers, des tailles et des statuts : jamais un nom de fichier d'une
 # copie, ni une valeur, ni le contenu du sanctum, ni le nom ou l'identifiant du volume (le nom n'est montré que par setup).
+#
+# Compte lu par le contrôle de conservation (tools/flow_retention.py) : chaque copie écrit dans l'état la ligne unique
+#     flux copies_flux_anciennes=<N> age_jours=<A> date=<AAAA-MM-JJ>
+# N = nombre de copies de la base qui contiennent encore un dump flux plus vieux que A jours (la copie complète la plus récente
+# comprise, si elle est trop vieille), calculé au moment de la dernière copie ; `status` la reprend telle quelle, sans monter le disque.
 #
 # Codes : 0 fait, déjà présent ou test non dû ; 1 échec (copie, vérification, place, somme de contrôle, test) ;
 # 2 usage ou environnement refusé (option inconnue, rétention invalide, non configuré, volume refusé, setup refusé) ;
@@ -28,18 +38,37 @@
 #
 # Variables (pour les tests et le réglage) : OFFSITE_DONNEES (défaut ~/.pmzilla-lab), OFFSITE_SAUVEGARDES (défaut <données>/sauvegardes),
 # OFFSITE_DISKUTIL (utilitaire de disque, défaut diskutil), OFFSITE_MOUNT_CMD (défaut mount), OFFSITE_DATE (défaut : date du jour),
-# OFFSITE_GARDER_RECENTES (7), OFFSITE_GARDER_MOIS (12), OFFSITE_AGE_MAX_JOURS (7), OFFSITE_RAPPORTS_GARDER (12), OFFSITE_RESTORE_SCRIPT
+# OFFSITE_GARDER_RECENTES (7), OFFSITE_GARDER_MOIS (12), OFFSITE_AGE_MAX_JOURS (7), OFFSITE_FLOW_AGE_DAYS (35), OFFSITE_RAPPORTS_GARDER (12), OFFSITE_RESTORE_SCRIPT
 # (défaut tools/db_restore_test.sh), OFFSITE_PROTEGEE (défaut bmad-memory-2026-10-07), OFFSITE_LIBRE_KO (place libre simulée, en Ko).
 # HYPOTHÈSE (à confirmer sur le macOS de l'auteur, tâche 1.3) : noms des clés de `diskutil info -plist`, réglables ici :
 # OFFSITE_CLE_UUID (VolumeUUID), OFFSITE_CLE_MONTAGE (MountPoint), OFFSITE_CLE_NOM (VolumeName), OFFSITE_CLES_CHIFFRE (« FileVault
 # Encryption » : la première clé vraie vaut chiffré), OFFSITE_CLE_VERROUILLE (Locked), OFFSITE_CLE_INTERNE (Internal), OFFSITE_CLE_RESEAU
 # (NetworkVolume), OFFSITE_CLE_FS (FilesystemType, types réseau : smbfs nfs afpfs webdav cifs autofs).
+# Lancé par son lien ~/PMZilla-Lab/offsite_backup.sh : le script résout le lien pour trouver son dossier de code. Il exporte
+# PMZILLA_LAB_WORKSPACE (dossier de contenu, défaut le dépôt de développement).
+# Repères de passage (D14) : copy crée horsmac-copie.encours, restore-test crée horsmac-restauration.encours (mkdir, pid, début) dans
+# PMZILLA_LAB_DATA (défaut : le dossier de données ci-dessus), après les contrôles d'argument ; retirés à la sortie par le seul processus
+# qui les a créés, quel que soit le code (passage reporté compris). setup, status et help n'en créent aucun. Un repère n'arrête jamais un
+# passage. Âge maximal : PMZILLA_RUN_MARKER_MAX_AGE (défaut 21600 secondes).
 set -uo pipefail
 umask 077
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
-RACINE="$(cd "$(dirname "$0")/.." && pwd)"
+# Le script se lance par son lien du dossier du labo (~/PMZilla-Lab/<script>) : on résout le lien pour trouver le dossier de code
+# (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
+SOI="$0"
+while [ -L "$SOI" ]; do
+  CIBLE_LIEN="$(readlink "$SOI")"
+  case "$CIBLE_LIEN" in /*) SOI="$CIBLE_LIEN" ;; *) SOI="$(dirname "$SOI")/$CIBLE_LIEN" ;; esac
+done
+RACINE="$(cd "$(dirname "$SOI")/.." && pwd)"
+# Dossier de contenu : le dépôt de développement (défaut), jamais déduit de l'emplacement du code.
+if [ -z "${PMZILLA_LAB_WORKSPACE:-}" ]; then
+  if [ -d "$HOME/PMZilla-Lab/workspace" ]; then PMZILLA_LAB_WORKSPACE="$HOME/PMZilla-Lab/workspace"; else PMZILLA_LAB_WORKSPACE="$RACINE"; fi
+fi
+export PMZILLA_LAB_WORKSPACE
 
 LAB="${OFFSITE_DONNEES:-$HOME/.pmzilla-lab}"
+REPERE_DONNEES="${PMZILLA_LAB_DATA:-$LAB}"
 SAUV="${OFFSITE_SAUVEGARDES:-$LAB/sauvegardes}"
 DISKUTIL="${OFFSITE_DISKUTIL:-diskutil}"
 MOUNT_CMD="${OFFSITE_MOUNT_CMD:-mount}"
@@ -48,6 +77,7 @@ RECENTES="${OFFSITE_GARDER_RECENTES:-7}"
 MOIS="${OFFSITE_GARDER_MOIS:-12}"
 AGE_MAX="${OFFSITE_AGE_MAX_JOURS:-7}"
 RAPPORTS_GARDER="${OFFSITE_RAPPORTS_GARDER:-12}"
+FLUX_AGE="${OFFSITE_FLOW_AGE_DAYS-35}"
 RESTORE="${OFFSITE_RESTORE_SCRIPT:-$RACINE/tools/db_restore_test.sh}"
 PROTEGEE="${OFFSITE_PROTEGEE:-bmad-memory-2026-10-07}"
 CLE_UUID="${OFFSITE_CLE_UUID:-VolumeUUID}"
@@ -58,6 +88,58 @@ CLE_VERROUILLE="${OFFSITE_CLE_VERROUILLE:-Locked}"
 CLE_INTERNE="${OFFSITE_CLE_INTERNE:-Internal}"
 CLE_RESEAU="${OFFSITE_CLE_RESEAU:-NetworkVolume}"
 CLE_FS="${OFFSITE_CLE_FS:-FilesystemType}"
+
+# --- Repère de passage (change run-worktree, D14) : dossier créé par mkdir dans le dossier de données du labo, avec le pid et le début.
+# Le repère ne protège pas d'un double passage : il dit seulement à la mise à jour du dossier d'exécution qu'un passage est en cours.
+# Même règle de péremption que le verrou de la veille : pid mort, ou âge (secondes écoulées depuis le début) au-dessus du maximum.
+AGE_MAX_REPERE="${PMZILLA_RUN_MARKER_MAX_AGE:-21600}"
+printf '%s' "$AGE_MAX_REPERE" | grep -Eq '^[0-9]+$' || AGE_MAX_REPERE=21600
+REPERE=""; REPERE_PROPRIETAIRE=""
+repere_maintenant() { echo "${PMZILLA_RUN_NOW:-$(date +%s)}"; }
+repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou abandonné), 1 s'il est tenu
+  local dossier=$1 pid debut age mtime
+  pid="$(cat "$dossier/pid" 2>/dev/null)"
+  if ! printf '%s' "$pid" | grep -Eq '^[0-9]+$'; then   # création en cours, ou dossier abandonné
+    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    printf '%s' "$mtime" | grep -Eq '^[0-9]+$' && [ $(( $(date +%s) - mtime )) -gt 10 ] && return 0
+    return 1
+  fi
+  kill -0 "$pid" 2>/dev/null || return 0
+  debut="$(cat "$dossier/debut" 2>/dev/null)"
+  if printf '%s' "$debut" | grep -Eq '^[0-9]+$'; then
+    age=$(( $(repere_maintenant) - debut ))
+  else
+    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    printf '%s' "$mtime" | grep -Eq '^[0-9]+$' || return 1
+    age=$(( $(date +%s) - mtime ))
+  fi
+  [ "$age" -gt "$AGE_MAX_REPERE" ] && return 0
+  return 1
+}
+poser_repere() {   # nom-du-dossier : crée le repère, ou journalise pourquoi il n'est pas créé ; ne change jamais le code de sortie
+  local dossier="$REPERE_DONNEES/$1" essai
+  mkdir -p "$REPERE_DONNEES" 2>/dev/null
+  for essai in 1 2; do
+    if mkdir "$dossier" 2>/dev/null; then
+      echo "$$" > "$dossier/pid"; repere_maintenant > "$dossier/debut"
+      REPERE="$dossier"; REPERE_PROPRIETAIRE=1
+      return 0
+    fi
+    if [ ! -d "$dossier" ]; then echo "Repère de passage impossible à écrire"; return 0; fi
+    if [ "$essai" -eq 1 ] && repere_perime "$dossier"; then
+      # renommage atomique : un seul processus reprend le repère périmé
+      mv "$dossier" "$dossier.perime.$$" 2>/dev/null && rm -rf "$dossier.perime.$$"
+      echo "Repère de passage périmé, repris"
+      continue
+    fi
+    echo "Repère de passage déjà tenu : passage sans repère propre"; return 0
+  done
+  echo "Repère de passage impossible à écrire"; return 0
+}
+retirer_repere() {   # seulement le processus qui l'a créé
+  [ -n "$REPERE_PROPRIETAIRE" ] && [ "$(cat "$REPERE/pid" 2>/dev/null)" = "$$" ] && rm -rf "$REPERE"
+  return 0
+}
 
 DOSSIER_OFFSITE="pmzilla-offsite"
 MANIFESTE="MANIFESTE.sha256"
@@ -104,6 +186,7 @@ a_la_sortie() {
   case "$code" in
     1|2) notifier "${MESSAGE_NOTIF:-Sauvegarde hors du Mac en échec (code $code) : $RAISON}" >/dev/null ;;
   esac
+  retirer_repere
   rm -rf "$TMP"
 }
 trap a_la_sortie EXIT
@@ -117,10 +200,10 @@ echec() {   # code message : affiche, retient pour la notification, sort
 entier_au_moins_1() { printf '%s' "$1" | grep -Eq '^[1-9][0-9]*$'; }
 valider_reglages() {
   local nom valeur
-  for nom in OFFSITE_GARDER_RECENTES OFFSITE_GARDER_MOIS OFFSITE_AGE_MAX_JOURS OFFSITE_RAPPORTS_GARDER; do
+  for nom in OFFSITE_GARDER_RECENTES OFFSITE_GARDER_MOIS OFFSITE_AGE_MAX_JOURS OFFSITE_RAPPORTS_GARDER OFFSITE_FLOW_AGE_DAYS; do
     case "$nom" in
       OFFSITE_GARDER_RECENTES) valeur="$RECENTES" ;; OFFSITE_GARDER_MOIS) valeur="$MOIS" ;;
-      OFFSITE_AGE_MAX_JOURS) valeur="$AGE_MAX" ;; *) valeur="$RAPPORTS_GARDER" ;;
+      OFFSITE_AGE_MAX_JOURS) valeur="$AGE_MAX" ;; OFFSITE_FLOW_AGE_DAYS) valeur="$FLUX_AGE" ;; *) valeur="$RAPPORTS_GARDER" ;;
     esac
     entier_au_moins_1 "$valeur" || echec 2 "$nom invalide : $valeur (entier au moins égal à 1)"
   done
@@ -297,6 +380,29 @@ copier_serie() {   # serie prefixe : 0 fait ou rien à faire, 1 échec (message 
   [ -n "$nom" ] && [ -d "$dossier" ] && rotation "$dossier" "$prefixe"
   return 0
 }
+retirer_flux_anciens() {   # dossier-de-la-série-db : retire le dump flux des copies trop vieilles, réécrit et vérifie leur manifeste ; 1 si une vérification échoue
+  local dossier="$1" nom date_copie age protegee="" ko=0 anciennes=0 cible
+  [ -d "$dossier" ] || { statut_ecrire flux "copies_flux_anciennes=0 age_jours=$FLUX_AGE date=$DATE"; return 0; }
+  for nom in $(ls -1 "$dossier" | grep -E "^db-[0-9]{4}-[0-9]{2}-[0-9]{2}\$" | grep -vx "$PROTEGEE" | LC_ALL=C sort -r); do
+    [ -d "$dossier/$nom" ] || continue
+    if [ -z "$protegee" ] && copie_verifiee "$dossier/$nom"; then protegee="$nom"; fi   # la plus récente copie complète garde son dump flux
+    [ -f "$dossier/$nom/flow.dump" ] || continue
+    date_copie="${nom#db-}"
+    age=$(( $(jours "$DATE") - $(jours "$date_copie") ))
+    [ "$age" -gt "$FLUX_AGE" ] || continue
+    if [ "$nom" = "$protegee" ] || ! copie_verifiee "$dossier/$nom"; then anciennes=$((anciennes + 1)); continue; fi
+    cible="$dossier/$nom"
+    awk -F'\t' '$3 != "flow.dump"' "$cible/$MANIFESTE" > "$cible/.manifeste-nouveau" && chmod 600 "$cible/.manifeste-nouveau" \
+      && rm -f "$cible/flow.dump" && mv "$cible/.manifeste-nouveau" "$cible/$MANIFESTE"
+    if copie_verifiee "$cible"; then
+      echo "flux retiré : $nom"
+    else
+      rm -f "$cible/.manifeste-nouveau"; RAISON="manifeste réécrit non vérifié : $nom"; echo "$RAISON"; ko=1
+    fi
+  done
+  statut_ecrire flux "copies_flux_anciennes=$anciennes age_jours=$FLUX_AGE date=$DATE"
+  return "$ko"
+}
 copier_protegee() {   # dossier-de-serie : copie la sauvegarde protégée une fois, si absente (jamais tournée)
   local dossier="$1" partiel="$1/.partiel-$PROTEGEE" n
   if [ -d "$dossier/$PROTEGEE" ] && copie_verifiee "$dossier/$PROTEGEE"; then
@@ -341,6 +447,7 @@ sous_commande_copy() {
     esac
   done
   valider_reglages
+  poser_repere horsmac-copie.encours
   charger_config
   OPERATION="copy"
   trouver_volume
@@ -353,7 +460,7 @@ sous_commande_copy() {
   ETAT_DISQUE="$MONTAGE/$DOSSIER_OFFSITE"
   [ -d "$ETAT_DISQUE" ] || { mkdir -p "$ETAT_DISQUE" && chmod 700 "$ETAT_DISQUE"; }
   local ko=0
-  copier_serie db db || ko=1
+  if copier_serie db db; then retirer_flux_anciens "$ETAT_DISQUE/db" || ko=1; else ko=1; fi
   copier_serie sanctum bmad-memory || ko=1
   [ "$ko" -eq 0 ] || exit 1
   exit 0
@@ -388,14 +495,16 @@ vraie_base_disponible() {   # mêmes sondes que db_restore_test.sh ; ne démarre
   ( cd "$RACINE" && docker compose exec -T db pg_isready -U postgres -d pmzilla >/dev/null 2>&1 ) || return 1
 }
 sous_commande_restore_test() {
-  local forcer=0 dossier_db dossier_sanctum nom_db nom_sanctum code n_manifeste n_fichiers
+  local forcer=0 detail=0 dossier_db dossier_sanctum nom_db nom_sanctum code n_manifeste n_fichiers
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) forcer=1; shift ;;
-      *) echec 2 "Usage : bash tools/offsite_backup.sh restore-test [--force]" ;;
+      --detail) detail=1; shift ;;
+      *) echec 2 "Usage : bash tools/offsite_backup.sh restore-test [--force] [--detail]" ;;
     esac
   done
   valider_reglages
+  poser_repere horsmac-restauration.encours
   if [ "$forcer" -eq 0 ] && [ "$(statut_lire restore-test derniere_reussite | cut -c1-7)" = "${DATE%-??}" ]; then
     echo "test du mois déjà fait"; exit 0
   fi
@@ -424,12 +533,17 @@ sous_commande_restore_test() {
     R "copie du sanctum testée : aucune sur le disque (non testé)"
   fi
 
-  bash "$RESTORE" --backup "$dossier_db" > "$TMP/restauration.txt" 2>&1; code=$?
+  if [ "$detail" -eq 1 ]; then bash "$RESTORE" --backup "$dossier_db" --detail > "$TMP/restauration.txt" 2>&1; code=$?
+  else bash "$RESTORE" --backup "$dossier_db" > "$TMP/restauration.txt" 2>&1; code=$?; fi
   R "restauration de la base (db_restore_test.sh, code $code) :"
   grep -E '^  [A-Za-z0-9_]+\.[A-Za-z0-9_]+ +[0-9]+ / [0-9]+ +[^ ]' "$TMP/restauration.txt" > "$TMP/comptes.txt"
   grep -E '^  (RESTAURATION OK|ÉCHEC [a-z_]+ :)' "$TMP/restauration.txt" | cut -c1-120 >> "$TMP/comptes.txt"
   cat "$TMP/comptes.txt"
   sed 's/^/  /' "$TMP/comptes.txt" >> "$LIGNES_RAPPORT"
+  # --detail : les erreurs de pg_restore (qui peuvent citer des valeurs) vont à l'écran seulement, jamais dans le rapport ni dans l'état.
+  if [ "$detail" -eq 1 ]; then
+    awk '/^Restauration :/{s=1; next} s && /^    /{print; next} s && !/^  /{s=0}' "$TMP/restauration.txt"
+  fi
   [ "$code" -eq 0 ] || echec_test "restauration de la base en échec : $nom_db"
 
   if [ -n "$nom_sanctum" ]; then
@@ -474,5 +588,5 @@ case "$SOUS" in
   copy) sous_commande_copy "$@" ;;
   restore-test) sous_commande_restore_test "$@" ;;
   status) sous_commande_status "$@" ;;
-  *) echec 2 "Usage : bash tools/offsite_backup.sh setup <point de montage> | copy [--include-protected] | restore-test [--force] | status | --help" ;;
+  *) echec 2 "Usage : bash tools/offsite_backup.sh setup <point de montage> | copy [--include-protected] | restore-test [--force] [--detail] | status | --help" ;;
 esac

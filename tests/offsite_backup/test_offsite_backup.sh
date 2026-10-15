@@ -32,6 +32,7 @@ ALL="$tmp/toutes-les-sorties"; : > "$ALL"
 cat > "$bin/diskutil" <<'SCRIPT'
 #!/bin/bash
 echo "diskutil $*" >> "$FAUX_LOG"
+echo "MARQ-DISQUE $(ls "${PMZILLA_LAB_DATA:-/inexistant}" 2>/dev/null | tr '\n' ' ')" >> "$FAUX_LOG"
 [ "${1:-}" = "info" ] && [ "${2:-}" = "-plist" ] || exit 1
 for f in "$FX"/volumes/*.plist; do
   [ -f "$f" ] || continue
@@ -75,11 +76,18 @@ SCRIPT
 cat > "$tmp/restore_stub.sh" <<SCRIPT
 #!/bin/bash
 echo "restore \$*" >> "\$FAUX_LOG"
+echo "MARQ-RESTAURATION \$(ls "\${PMZILLA_LAB_DATA:-/inexistant}" 2>/dev/null | tr '\\n' ' ')" >> "\$FAUX_LOG"
 echo "Sauvegarde restaurée : \$2 $SENT"
 echo "Lignes par table (restaurée / vraie base) :"
 printf '  %-34s %10s / %-10s OK\n' knowledge.books 12 12
 printf '  %-34s %10s / %-10s OK\n' flow.issues 40 40
 echo "  valeur-de-table $SENT"
+case " \$* " in *" --detail "*)
+  echo "Restauration :"
+  echo "  ÉCHEC knowledge : pg_restore a échoué (détail masqué)"
+  echo "    pg_restore: error: DETAIL-R22"
+  echo "Autre :" ;;
+esac
 echo "Bilan :"
 echo "  RESTAURATION OK, comptes identiques, empreinte des migrations identique."
 exit \${FAUX_RESTORE_CODE:-0}
@@ -353,6 +361,18 @@ verifie "restore-test déjà fait ce mois : « test du mois déjà fait », code
 lance restore-test --force
 verifie "restore-test --force : refait le test même si le mois est fait" "$([ $code -eq 0 ] && grep -q 'restore --backup' "$FAUX_LOG"; echo $?)"
 
+# --detail : transmis au script de restauration seulement quand restore-test le reçoit ; affiché à l'écran, jamais dans le rapport
+verifie "restore-test sans --detail : le script de restauration ne reçoit pas --detail" "$(grep '^restore ' "$FAUX_LOG" | grep -q -- '--detail'; [ $? -ne 0 ]; echo $?)"
+verifie "restore-test sans --detail : aucune ligne de détail à l'écran" "$(grep -q 'DETAIL-R22' "$tmp/s"; [ $? -ne 0 ]; echo $?)"
+: > "$FAUX_LOG"
+lance restore-test --force --detail
+verifie "restore-test --detail : le script de restauration reçoit --detail avec --backup" "$([ $code -eq 0 ] && grep -q '^restore --backup .*/pmzilla-offsite/db/db-2026-10-11 --detail$' "$FAUX_LOG"; echo $?)"
+verifie "restore-test --detail : le détail de pg_restore est affiché à l'écran" "$(grep -q 'pg_restore: error: DETAIL-R22' "$tmp/s"; echo $?)"
+verifie "restore-test --detail : le détail n'entre jamais dans le rapport ni dans l'état" "$(grep -rq 'DETAIL-R22' "$ETAT/rapports" "$ETAT/statut"; [ $? -ne 0 ]; echo $?)"
+lance restore-test --force --detail --detail
+verifie "restore-test --detail répété : accepté (code 0)" "$([ $code -eq 0 ]; echo $?)"
+verifie "restore-test : le détail reste masqué par défaut dans l'aide (option documentée)" "$(bash "$racine/tools/offsite_backup.sh" --help | grep -q -- '--detail'; echo $?)"
+
 # Base réelle arrêtée : le test est reporté, la base n'est jamais démarrée
 : > "$FAUX_LOG"
 FAUX_DB_ARRETEE=1 lance restore-test --force
@@ -415,6 +435,144 @@ verifie "status : code 0, dernières copies et âge affichés" "$([ $code -eq 0 
 verifie "status : aucun appel à l'utilitaire de disque, rien d'écrit" "$([ ! -s "$FAUX_LOG" ] && [ "$avant_etat" = "$(arbre "$ETAT")" ]; echo $?)"
 OFFSITE_DATE=2026-10-15 lance status
 verifie "status : l'âge suit la date du jour (copie du 2026-10-10 du sanctum : 5 jours)" "$(grep -q 'âge de la dernière copie (sanctum) : 5 jours' "$tmp/s"; echo $?)"
+
+# ===========================================================================================================================
+# Dump flux retiré des copies anciennes (réglage OFFSITE_FLOW_AGE_DAYS, défaut 35 jours)
+# ===========================================================================================================================
+# Monde séparé : autre dossier de données, autres sauvegardes locales, autre volume, pour ne pas toucher à l'état des tests précédents.
+LAB2="$tmp/lab2"; SAUV2="$LAB2/sauvegardes"; ETAT2="$LAB2/offsite"; ID2="AAAAAAAA-2222-4222-8222-ENCRYPTED02"
+mkdir -p "$V/ENC2"
+faire_volume "$FX/volumes/enc2.plist" "$ID2" "Disque deux" "$V/ENC2" true false false false
+mkdir -p "$SAUV2/db-2026-10-11"; for s in knowledge cases flow; do echo "$SENT 11 $s" > "$SAUV2/db-2026-10-11/$s.dump"; done
+D2="$V/ENC2/pmzilla-offsite"
+lance2() { OFFSITE_DONNEES="$LAB2" OFFSITE_SAUVEGARDES="$SAUV2" lance "$@"; }
+ENTREE="y"; lance2 setup "$V/ENC2"; unset ENTREE
+fabrique_copie() { # dossier-de-série nom : trois dumps et un manifeste (somme, taille, chemin)
+  local d="$1/$2" f
+  mkdir -p "$d"
+  for f in cases flow knowledge; do echo "$SENT ancien $2 $f" > "$d/$f.dump"; done
+  ( cd "$d" && for f in cases.dump flow.dump knowledge.dump; do
+      printf '%s\t%s\t%s\n' "$( { shasum -a 256 -- "$f" 2>/dev/null || sha256sum -- "$f"; } | cut -d' ' -f1)" "$(wc -c < "$f" | tr -d ' ')" "$f"
+    done > MANIFESTE.sha256 )
+  chmod -R go-rwx "$d"
+}
+manifeste_coherent() { # dossier : 0 si le manifeste liste exactement les fichiers présents, avec les bonnes sommes
+  ( cd "$1" || exit 1
+    attendu="$(find . -type f ! -name MANIFESTE.sha256 | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do
+      printf '%s\t%s\t%s\n' "$( { shasum -a 256 -- "$f" 2>/dev/null || sha256sum -- "$f"; } | cut -d' ' -f1)" "$(wc -c < "$f" | tr -d ' ')" "$f"; done)"
+    [ "$attendu" = "$(cat MANIFESTE.sha256)" ] )
+}
+mkdir -p "$D2/db" "$D2/sanctum"
+fabrique_copie "$D2/db" db-2026-08-01      # 71 jours à la date du jour : ancienne
+fabrique_copie "$D2/db" db-2026-09-01      # 40 jours : ancienne
+fabrique_copie "$D2/db" db-2026-09-20      # 21 jours : récente
+fabrique_copie "$D2/sanctum" bmad-memory-2026-08-01   # copie de sanctum ancienne : un fichier nommé flow.dump y doit rester intact
+sanctum_avant="$(arbre "$D2/sanctum/bmad-memory-2026-08-01")"
+
+# --- Réglage invalide : code 2 avant toute action, rien créé ni supprimé (copy et restore-test)
+avant_disque="$(arbre "$D2")"
+for valeur in 0 -3 abc 1.5 ""; do
+  OFFSITE_FLOW_AGE_DAYS="$valeur" lance2 copy
+  verifie "âge du flux « $valeur » : code 2, message, ni copie créée ni dump supprimé" "$([ $code -eq 2 ] && grep -q 'OFFSITE_FLOW_AGE_DAYS invalide' "$tmp/s" && [ "$avant_disque" = "$(arbre "$D2")" ] && [ ! -e "$D2/db/db-2026-10-11" ]; echo $?)"
+done
+OFFSITE_FLOW_AGE_DAYS=0 lance2 restore-test --force
+verifie "âge du flux invalide : restore-test refuse aussi (code 2)" "$([ $code -eq 2 ] && grep -q 'OFFSITE_FLOW_AGE_DAYS invalide' "$tmp/s"; echo $?)"
+
+# --- Scénario « Recent copies » : toutes les copies sont plus jeunes que l'âge, rien n'est retiré ni réécrit
+avant_db="$(arbre "$D2/db")"
+OFFSITE_FLOW_AGE_DAYS=100 lance2 copy
+apres_db="$(arbre "$D2/db")"
+verifie "copies récentes : code 0, aucune ligne « flux retiré »" "$([ $code -eq 0 ] && ! grep -q 'flux retiré' "$tmp/s"; echo $?)"
+verifie "copies récentes : les trois dumps et les manifestes des copies existantes sont inchangés" "$([ -f "$D2/db/db-2026-08-01/flow.dump" ] && [ -f "$D2/db/db-2026-09-01/flow.dump" ] && [ "$(printf '%s\n' "$apres_db" | grep -F -e './db-2026-08-01' -e './db-2026-09-01' -e './db-2026-09-20')" = "$(printf '%s\n' "$avant_db" | grep -F -e './db-2026-08-01' -e './db-2026-09-01' -e './db-2026-09-20')" ]; echo $?)"
+verifie "copies récentes : l'état compte les copies au flux plus vieux que l'âge (0)" "$(grep -q '^flux copies_flux_anciennes=0 age_jours=100 date=2026-10-11$' "$ETAT2/statut"; echo $?)"
+
+# --- Scénario « Old copy » : âge par défaut (35 jours)
+OFFSITE_DATE=2026-10-11 lance2 copy
+verifie "copie ancienne : code 0, « flux retiré » une fois par copie ancienne (2)" "$([ $code -eq 0 ] && [ "$(grep -c 'flux retiré' "$tmp/s")" = 2 ] && grep -q 'flux retiré : db-2026-08-01' "$tmp/s" && grep -q 'flux retiré : db-2026-09-01' "$tmp/s"; echo $?)"
+verifie "copie ancienne : plus de dump flux, dumps knowledge et cases conservés" "$([ ! -e "$D2/db/db-2026-08-01/flow.dump" ] && [ -f "$D2/db/db-2026-08-01/knowledge.dump" ] && [ -f "$D2/db/db-2026-08-01/cases.dump" ] && [ ! -e "$D2/db/db-2026-09-01/flow.dump" ] && [ -f "$D2/db/db-2026-09-01/knowledge.dump" ] && [ -f "$D2/db/db-2026-09-01/cases.dump" ]; echo $?)"
+verifie "copie ancienne : le manifeste ne liste que les deux dumps restants, sommes exactes, en 600" "$([ "$(wc -l < "$D2/db/db-2026-08-01/MANIFESTE.sha256" | tr -d ' ')" = 2 ] && ! grep -q 'flow' "$D2/db/db-2026-08-01/MANIFESTE.sha256" && manifeste_coherent "$D2/db/db-2026-08-01" && manifeste_coherent "$D2/db/db-2026-09-01" && [ "$(mode "$D2/db/db-2026-08-01/MANIFESTE.sha256")" = 600 ]; echo $?)"
+verifie "copie récente (21 jours) et copie du jour : trois dumps conservés" "$([ -f "$D2/db/db-2026-09-20/flow.dump" ] && [ -f "$D2/db/db-2026-10-11/flow.dump" ] && manifeste_coherent "$D2/db/db-2026-09-20" && manifeste_coherent "$D2/db/db-2026-10-11"; echo $?)"
+verifie "copie ancienne : la sortie ne montre ni nom de fichier, ni sentinelle" "$(! grep -q -e 'flow.dump' -e "$SENT" "$tmp/s"; echo $?)"
+verifie "sanctum : la copie ancienne n'est pas touchée" "$([ "$sanctum_avant" = "$(arbre "$D2/sanctum/bmad-memory-2026-08-01")" ]; echo $?)"
+verifie "copie ancienne : l'état compte 0 copie au flux trop vieux, sous la forme documentée" "$(grep -q '^flux copies_flux_anciennes=0 age_jours=35 date=2026-10-11$' "$ETAT2/statut"; echo $?)"
+OFFSITE_DATE=2026-10-11 lance2 copy
+verifie "copie ancienne : seconde exécution sans rien à retirer, pas de nouvelle ligne" "$([ $code -eq 0 ] && ! grep -q 'flux retiré' "$tmp/s" && manifeste_coherent "$D2/db/db-2026-08-01"; echo $?)"
+
+# --- Copie complète la plus récente : jamais privée de son dump flux, même plus vieille que l'âge
+OFFSITE_DATE=2026-12-31 lance2 copy
+verifie "copie la plus récente : le dump flux de db-2026-10-11 reste, celui de la copie de 2026-09-20 est retiré" "$([ $code -eq 0 ] && [ -f "$D2/db/db-2026-10-11/flow.dump" ] && [ ! -e "$D2/db/db-2026-09-20/flow.dump" ] && grep -q 'flux retiré : db-2026-09-20' "$tmp/s" && ! grep -q 'flux retiré : db-2026-10-11' "$tmp/s"; echo $?)"
+verifie "copie la plus récente : l'état compte une copie au flux plus vieux que l'âge" "$(grep -q '^flux copies_flux_anciennes=1 age_jours=35 date=2026-12-31$' "$ETAT2/statut"; echo $?)"
+OFFSITE_DATE=2026-12-31 lance2 status
+verifie "status : la ligne du compte est reprise telle quelle (lecture seule)" "$([ $code -eq 0 ] && grep -q '^flux copies_flux_anciennes=1 age_jours=35 date=2026-12-31$' "$tmp/s"; echo $?)"
+OFFSITE_FLOW_AGE_DAYS=10 OFFSITE_DATE=2026-10-21 lance2 copy
+verifie "âge réglé à 10 jours : la copie de 2026-10-11 (10 jours) n'est pas plus vieille que l'âge, rien n'est retiré" "$([ $code -eq 0 ] && [ -f "$D2/db/db-2026-10-11/flow.dump" ] && ! grep -q 'flux retiré' "$tmp/s"; echo $?)"
+
+# --- Scénario « Restore test after removal » : la copie amputée du flux est vérifiée sans erreur par le test de restauration
+rm -rf "$D2/db/db-2026-10-11"    # la copie amputée la plus récente devient la copie testée
+: > "$FAUX_LOG"
+OFFSITE_DATE=2026-12-31 lance2 restore-test --force
+verifie "test de restauration sur une copie sans dump flux : somme de contrôle OK, code 0" "$([ $code -eq 0 ] && grep -q 'test de restauration hors du Mac : OK' "$tmp/s" && grep -q "^restore --backup .*/db/db-2026-09-20\$" "$FAUX_LOG"; echo $?)"
+
+# ===========================================================================================================================
+# change run-worktree (D14) : repères de passage horsmac-copie.encours et horsmac-restauration.encours
+# ===========================================================================================================================
+M="$tmp/donnees-labo"; mkdir -p "$M"
+RC="$M/horsmac-copie.encours"; RR="$M/horsmac-restauration.encours"
+mv "$FX/volumes/enc2.plist" "$FX/debranches/enc2.plist"; : > "$FAUX_LOG"
+PMZILLA_LAB_DATA="$M" lance2 copy
+verifie "repère copie : disque absent (code 3) : le repère existait pendant le passage et n'existe plus après" "$([ $code -eq 3 ] && grep -q '^MARQ-DISQUE .*horsmac-copie.encours' "$FAUX_LOG" && [ ! -e "$RC" ]; echo $?)"
+: > "$FAUX_LOG"
+PMZILLA_LAB_DATA="$M" lance2 restore-test --force
+verifie "repère restauration : disque absent (code 3) : le repère existait pendant le passage, plus après, et celui de la copie n'a pas été créé" "$([ $code -eq 3 ] && grep -q '^MARQ-DISQUE .*horsmac-restauration.encours' "$FAUX_LOG" && ! grep '^MARQ-DISQUE' "$FAUX_LOG" | grep -q 'horsmac-copie' && [ ! -e "$RR" ] && [ ! -e "$RC" ]; echo $?)"
+PMZILLA_LAB_DATA="$M" lance2 copy --bidon
+verifie "repère : refus d'argument (code 2) : aucun repère créé" "$([ $code -eq 2 ] && [ -z "$(ls "$M")" ]; echo $?)"
+PMZILLA_LAB_DATA="$M" OFFSITE_FLOW_AGE_DAYS=0 lance2 copy
+verifie "repère : réglage invalide (code 2) : aucun repère laissé" "$([ $code -eq 2 ] && [ ! -e "$RC" ]; echo $?)"
+
+( : ) & mort=$!; wait "$mort" 2>/dev/null
+mkdir "$RC"; echo "$mort" > "$RC/pid"; date +%s > "$RC/debut"
+PMZILLA_LAB_DATA="$M" lance2 copy
+verifie "repère copie périmé (processus mort) : repris et journalisé, aucun repère laissé" "$([ $code -eq 3 ] && grep -q '^Repère de passage périmé, repris$' "$tmp/s" && [ ! -e "$RC" ]; echo $?)"
+
+mkdir "$RC"; echo "$$" > "$RC/pid"; date +%s > "$RC/debut"
+PMZILLA_LAB_DATA="$M" lance2 copy
+verifie "repère copie tenu par un processus vivant : passage sans repère propre, ligne journalisée, dossier intact" "$([ $code -eq 3 ] && grep -q '^Repère de passage déjà tenu : passage sans repère propre$' "$tmp/s" && [ "$(cat "$RC/pid")" = "$$" ]; echo $?)"
+
+# un repère par sous-commande : la restauration pose et retire le sien, celui de la copie (tenu) reste intact
+mv "$FX/debranches/enc2.plist" "$FX/volumes/enc2.plist"; : > "$FAUX_LOG"
+PMZILLA_LAB_DATA="$M" lance2 restore-test --force
+verifie "repère : la restauration pose son repère pendant le test et le retire, celui de la copie est intact" "$([ $code -eq 0 ] && grep -q '^MARQ-RESTAURATION .*horsmac-restauration.encours' "$FAUX_LOG" && grep -q '^MARQ-RESTAURATION .*horsmac-copie.encours' "$FAUX_LOG" && [ ! -e "$RR" ] && [ "$(cat "$RC/pid")" = "$$" ]; echo $?)"
+rm -rf "$RC"
+
+FAUX_RESTORE_CODE=1 PMZILLA_LAB_DATA="$M" lance2 restore-test --force
+verifie "repère restauration : test en échec (code 1) : repère retiré" "$([ $code -eq 1 ] && [ ! -e "$RR" ]; echo $?)"
+
+# restore-test sans test dû : sort en 0 et retire son repère
+PMZILLA_LAB_DATA="$M" lance2 restore-test --force >/dev/null; PMZILLA_LAB_DATA="$M" lance2 restore-test
+verifie "repère restauration : test du mois déjà fait (code 0) : aucun repère laissé" "$([ $code -eq 0 ] && grep -q 'test du mois déjà fait' "$tmp/s" && [ ! -e "$RR" ]; echo $?)"
+
+# status, aide et setup refusé ne créent aucun repère
+rm -rf "$M"; mkdir -p "$M"
+PMZILLA_LAB_DATA="$M" lance2 status
+PMZILLA_LAB_DATA="$M" lance2 --help
+PMZILLA_LAB_DATA="$M" OFFSITE_DONNEES="$LAB2" OFFSITE_SAUVEGARDES="$SAUV2" bash "$SCRIPT" setup "$V/ENC2" <<<"n" >/dev/null 2>&1   # sortie hors de $ALL : setup montre le nom du volume
+verifie "repère : status, aide et setup ne créent aucun dossier de repère" "$([ -z "$(ls "$M")" ]; echo $?)"
+
+if [ "$(id -u)" != 0 ]; then
+  RO="$tmp/donnees-ro"; mkdir -p "$RO"; chmod 500 "$RO"
+  mv "$FX/volumes/enc2.plist" "$FX/debranches/enc2.plist"
+  PMZILLA_LAB_DATA="$RO" lance2 copy
+  verifie "repère : dossier de données non inscriptible : ligne journalisée, code inchangé (3, disque absent)" "$([ $code -eq 3 ] && grep -q '^Repère de passage impossible à écrire$' "$tmp/s"; echo $?)"
+  mv "$FX/debranches/enc2.plist" "$FX/volumes/enc2.plist"; chmod 700 "$RO"
+else
+  echo "saut : lancé en administrateur, dossier non inscriptible non simulable"
+fi
+
+verifie "contenu : le script exporte PMZILLA_LAB_WORKSPACE" "$(grep -Eq '^export PMZILLA_LAB_WORKSPACE' "$SCRIPT"; echo $?)"
+defaut_offsite="$(grep -E '^[^#]*PMZILLA_RUN_MARKER_MAX_AGE:-[0-9]+' "$SCRIPT" | head -1 | sed -E 's/.*PMZILLA_RUN_MARKER_MAX_AGE:-([0-9]+).*/\1/')"
+defaut_run="$(grep -E '^[^#]*PMZILLA_RUN_MARKER_MAX_AGE:-[0-9]+' "$racine/tools/run_worktree.sh" | head -1 | sed -E 's/.*PMZILLA_RUN_MARKER_MAX_AGE:-([0-9]+).*/\1/')"
+verifie "âge maximal du repère : la constante par défaut de offsite_backup.sh vaut 21600" "$([ "$defaut_offsite" = 21600 ]; echo $?)"
+verifie "âge maximal du repère : la constante de offsite_backup.sh est celle de run_worktree.sh" "$([ -n "$defaut_offsite" ] && [ "$defaut_offsite" = "$defaut_run" ]; echo $?)"
 
 # ===========================================================================================================================
 # Garanties transversales

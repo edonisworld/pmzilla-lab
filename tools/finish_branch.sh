@@ -9,17 +9,24 @@
 # Les vérifications se font dans l'ordre de la table des codes ; la première qui refuse arrête le script avant tout changement de branche.
 # Codes : 0 terminé ; 1 tests en échec ; 2 usage ; 3 aucune branche à terminer (ou branche spike/*) ; 4 arbre non propre ; 5 change OpenSpec non archivé ;
 #         6 jeu d'essai validant absent ; 7 main pas à jour ; 8 la branche ne contient pas main ;
-#         9 fusion impossible (annulée) ; 10 push refusé ; 11 branche non supprimée (le travail est fusionné).
-# Les codes 9 à 11 arrivent après un changement et disent l'état laissé.
+#         9 fusion impossible (annulée) ; 10 push refusé ; 11 branche non supprimée (le travail est fusionné) ;
+#         12 main est ouvert dans un autre dossier (worktree), refus avant toute fusion ;
+#         13 fusion faite et poussée, mais dossier d'exécution non mis à jour (modifications locales, hors de l'historique de main,
+#            verrou de la veille ou fenêtre horaire, dépendances non préparées).
+# Les codes 9 à 11 et 13 arrivent après un changement et disent l'état laissé.
+# Après le push et la suppression des branches, le script lance « tools/run_worktree.sh update » (celui qui est à côté de lui) ;
+# un dossier d'exécution absent est dit en une ligne, sans erreur.
 #
 # Interdit au script : push forcé, rebase, réécriture d'historique, résolution de conflit, --no-verify ou tout contournement de hook,
-# la variable de contournement du lancement vert, suppression forcée de branche, lancement du jeu d'essai, modification de fichier.
+# la variable de contournement du lancement vert, suppression forcée de branche, lancement du jeu d'essai, remise à zéro ou nettoyage du dossier d'exécution.
 #
 # Variables (pour les tests de ce script) :
 #   FINISH_BRANCH_RUNNER   commande du runner complet (défaut : bash tests/run_all.sh), lancée à la racine du dépôt
 #   FINISH_BRANCH_RECORDS  dossier des enregistrements du jeu d'essai (défaut : ${PMZILLA_LAB_DATA:-~/.pmzilla-lab}/essais)
+# Le script ne modifie aucun fichier, sauf l'avance rapide du dossier d'exécution.
 set -u
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 NOM="finish_branch"
 PRINCIPALE="main"
 DISTANT="origin"
@@ -49,11 +56,15 @@ Vérifications, dans cet ordre (la première qui refuse arrête le script, sans 
   6  un jeu d'essai validant est enregistré pour le sommet de la branche si CLAUDE.md, une posture, Critic, le vocabulaire ou la mémoire figée ont changé
   7  main est à jour depuis le distant (avance rapide seulement)
   8  la branche contient main à jour
+  12 main n'est pas déjà ouvert dans un autre dossier (worktree) : sinon, la fusion serait impossible
   1  le runner complet des tests est vert sur la branche
-Puis : fusion de la branche dans main sans avance rapide, push de main, suppression de la branche locale (sûre) et de la branche distante.
+Puis : fusion de la branche dans main sans avance rapide, push de main, suppression de la branche locale (sûre) et de la branche distante,
+puis mise à jour du dossier d'exécution par tools/run_worktree.sh update (absent : une ligne d'information).
 Codes de sortie : 0 terminé ; 1 tests en échec ; 2 usage ; 3 à 8 refus ci-dessus ; 9 fusion impossible (annulée) ;
-10 push refusé (la fusion n'existe que sur main local) ; 11 branche non supprimée (le travail est fusionné).
-Le script ne force rien, ne rebase pas, ne contourne aucun hook, ne lance pas le jeu d'essai et ne modifie aucun fichier.
+10 push refusé (la fusion n'existe que sur main local) ; 11 branche non supprimée (le travail est fusionné) ;
+12 main est ouvert dans un autre dossier (refus avant toute fusion, avec la manoeuvre) ;
+13 fusion faite et poussée, dossier d'exécution non mis à jour (relancer : bash tools/run_worktree.sh update).
+Le script ne force rien, ne rebase pas, ne contourne aucun hook, ne lance pas le jeu d'essai et ne modifie aucun fichier, sauf l'avance rapide du dossier d'exécution.
 EOF
 }
 
@@ -173,6 +184,18 @@ fi
 git merge-base --is-ancestor "$PRINCIPALE" HEAD \
   || refus 8 "la branche ne contient pas main" "Ramène $PRINCIPALE dans la branche d'abord (git merge $PRINCIPALE), relance les tests, puis relance."
 
+# 12. main ouvert dans un autre dossier (worktree) : la fusion y serait impossible, on refuse avant le runner
+DOSSIER_MAIN=$(git worktree list --porcelain 2>/dev/null | awk -v ref="refs/heads/$PRINCIPALE" -v ici="$RACINE" '
+  /^worktree / { dossier = substr($0, 10) }
+  $0 == "branch " ref && dossier != ici { print dossier; exit }')
+if [ -n "$DOSSIER_MAIN" ]; then
+  refus 12 "$PRINCIPALE est ouvert dans un autre dossier" "$PRINCIPALE est déjà ouvert dans : $DOSSIER_MAIN" \
+    "La fusion y est impossible depuis ici ; rien n'est changé. La manoeuvre :" \
+    "  1. ici ($RACINE) : git switch --detach" \
+    "  2. dans $DOSSIER_MAIN : git switch $BRANCHE" \
+    "  3. dans $DOSSIER_MAIN : bash tools/finish_branch.sh"
+fi
+
 # 1. runner complet vert sur la branche (jamais filtré, sans les variables réservées à git commit)
 info "lancement du runner complet sur $BRANCHE"
 env -u PMZILLA_NO_EVALS -u PMZILLA_SKIP_GREEN_CHECK sh -c "$RUNNER" \
@@ -180,10 +203,13 @@ env -u PMZILLA_NO_EVALS -u PMZILLA_SKIP_GREEN_CHECK sh -c "$RUNNER" \
 
 # Fusion
 ANCIEN_MAIN=$(git rev-parse "refs/heads/$PRINCIPALE")
-if ! git checkout -q "$PRINCIPALE" 2>/dev/null || ! git merge --no-ff --no-edit -q "$BRANCHE" >/dev/null 2>&1; then
+RAISON=$(git checkout -q "$PRINCIPALE" 2>&1) \
+  && RAISON=$(git merge --no-ff --no-edit -q "$BRANCHE" 2>&1)
+if [ $? -ne 0 ]; then
   git merge --abort >/dev/null 2>&1
   git checkout -q "$BRANCHE" 2>/dev/null
-  refus 9 "fusion impossible, annulée" "La fusion est annulée, tu es revenu sur $BRANCHE ; $PRINCIPALE est inchangé."
+  refus 9 "fusion impossible, annulée" "Raison donnée par git :" "${RAISON:-(aucun message)}" \
+    "La fusion est annulée, tu es revenu sur $BRANCHE ; $PRINCIPALE est inchangé."
 fi
 FAIT=("fusion de $BRANCHE dans $PRINCIPALE (sans avance rapide)")
 
@@ -207,6 +233,25 @@ if [ ${#ECHECS[@]} -gt 0 ]; then
   refus 11 "branche non supprimée" "Le travail est fusionné et poussé dans $PRINCIPALE." "${ECHECS[@]}"
 fi
 
+# Mise à jour du dossier d'exécution (jamais avant le push)
+SORTIE_RUN=$(bash "$SCRIPT_DIR/run_worktree.sh" update 2>&1); CODE_RUN=$?
+if [ "$CODE_RUN" -eq 4 ] && printf '%s' "$SORTIE_RUN" | grep -q "absent"; then
+  info "dossier d'exécution absent, rien à mettre à jour"
+elif [ "$CODE_RUN" -ne 0 ]; then
+  CAUSES=()
+  while IFS= read -r ligne; do
+    [ -n "$ligne" ] || continue
+    case "$ligne" in "Pour le relancer plus tard"*) continue ;; esac
+    CAUSES+=("$ligne")
+  done <<< "$SORTIE_RUN"
+  refus 13 "dossier d'exécution non mis à jour" "La fusion est faite et poussée dans $PRINCIPALE." "${CAUSES[@]}" \
+    "Pour le mettre à jour : bash tools/run_worktree.sh update"
+else
+  FAIT+=("mise à jour du dossier d'exécution")
+  RAPPEL="serveur de la bibliothèque : l'ancien code reste chargé jusqu'à la prochaine session"
+fi
+
 info "terminé"
 for ligne in "${FAIT[@]}"; do printf '  - %s\n' "$ligne"; done
+[ -z "${RAPPEL:-}" ] || printf '%s\n' "$RAPPEL"
 exit 0

@@ -3,77 +3,48 @@
 # dependencies = ["pyyaml"]
 # ///
 """
-PMZilla Lab : lecteur de la file de travail (docs/pmzilla/feuille-de-route.md).
+PMZilla Lab : lecteur de la file de travail.
 
-Le document contient de la prose libre et exactement un bloc YAML clôturé dont la clé `jobs` est la file ordonnée
-(l'ordre est la priorité). Format et règles : openspec/changes/workflow-tooling/design.md, D7.
+La file est dans les issues du dépôt privé (remote origin), lue par `gh` en lecture seule (change github-roadmap, design D14 à D16) :
+`check`, `next --budget 2h [--milestone M]`, `batch --milestone M`, `status`, `board [--open]`, `show R-<n>` et `reminder --session-hook`. Un instantané de la
+dernière lecture réussie est écrit dans le dossier de données (hors dépôt, $PMZILLA_LAB_DATA, défaut ~/.pmzilla-lab) et sert quand
+GitHub est injoignable (code 5 sans instantané) ; `reminder` ne lit que lui. L'exécutable `gh` peut être remplacé par la variable
+d'environnement PMZILLA_GH (tests). Code 0 : valide. Code 1 : une ligne par problème. Code 2 : usage.
 
-    uv run tools/roadmap.py check [--file CHEMIN]
-        Code 0 : file valide. Code 1 : une ligne par problème (identifiant du job, champ). Code 2 : usage ou fichier absent.
+`batch --milestone M [--today AAAA-MM-JJ]` (change batch-milestone, design D2, D3 et D5) propose les features prêtes d'un jalon qui sont
+indépendantes : celles que `next` proposerait, retenues par rang sauf si leurs fichiers connus (chemins cités par le tasks.md et le
+design.md de leur change non archivé) recoupent ceux d'une feature retenue mieux classée ou d'une feature `In progress`. Il donne pour
+chacune la branche, le modèle de lancement et le genre de session (cadrage ou exécution), liste les écartées avec leur raison et les
+fichiers partagés. Lecture seule, en direct seulement. Codes : 0 (liste éventuellement vide), 1 file invalide (une ligne par problème),
+2 usage (jalon absent, inconnu ou fermé), 5 GitHub injoignable (`GitHub unreachable; a batch needs a live read`, instantané ou non).
 
-    uv run tools/roadmap.py next --budget 2h [--file CHEMIN]
-        Propose, dans l'ordre de la file, les jobs prêts qui tiennent dans le temps donné. Code 1 : file invalide. Code 2 : durée mal formée.
+Interdit à l'outil : écrire dans GitHub, réordonner la file, calculer une date autre que la comparaison avec aujourd'hui.
+La date du jour peut être imposée avec --today AAAA-MM-JJ ou ROADMAP_TODAY (tests).
 
-    uv run tools/roadmap.py done R-3 [--today AAAA-MM-JJ] [--file CHEMIN]
-        Passe le job à `done`, écrit sa date de clôture `done_on` sous la ligne d'état (ou remplace celle qui existe) et liste
-        les jobs débloqués. Code 1 : file invalide ou identifiant inconnu. Un identifiant déjà archivé répond qu'il est archivé (code 0).
-
-    uv run tools/roadmap.py status [--file CHEMIN]
-        Résumé texte, file et archive réunies : compte par état et par thème, jobs en cours (date de début `started_on` si connue),
-        cinq prochains jobs prêts dans l'ordre de la file, jobs bloqués avec leurs dépendances non faites. N'écrit rien.
-
-    uv run tools/roadmap.py board [--open] [--file CHEMIN]
-        Page HTML autonome (sans réseau ni dépendance externe) écrite dans le dossier de données ($PMZILLA_LAB_DATA, défaut
-        ~/.pmzilla-lab), jamais dans le dépôt : avancement par thème, en cours, prochains prêts, bloqués et par quoi, fait par
-        semaine (lundi de la semaine de `done_on`). --open l'ouvre dans le navigateur.
-
-    uv run tools/roadmap.py archive [--dry-run] [--file CHEMIN]
-        Déplace vers l'archive (feuille-de-route-archive.md, à côté de la file) chaque job `done` dont aucun job non `done` ne
-        dépend : son entrée YAML et son paragraphe de « Travaux décrits », mot pour mot, en tête de l'archive (créée au besoin).
-        Idempotente. --dry-run liste seulement. Code 1 : file invalide avant ou après le déplacement (rien n'est écrit après).
-
-L'archive a le même format que la file (un bloc YAML `jobs` et des descriptions) et ne contient que des jobs `done`. `check`, `next`
-et `done` la lisent pour résoudre les dépendances : un identifiant archivé compte comme `done`, et les identifiants sont uniques
-sur les deux fichiers.
-
-Interdit à l'outil : écrire dans la file autre chose que l'état et la date de clôture du job donné à `done` et les déplacements de `archive`, réordonner la file,
-calculer une date autre que la comparaison avec aujourd'hui. La date du jour peut être imposée avec --today AAAA-MM-JJ ou ROADMAP_TODAY (tests).
+Exemple :
+    uv run tools/roadmap.py check
 """
 import argparse
 import collections
 import datetime
 import html
+import json
 import os
 import subprocess
 import re
 import sys
 from pathlib import Path
 
-import yaml
+import roadmap_model as rm
+import identifiants_personnels
 
 RACINE = Path(__file__).resolve().parents[1]
-DOCUMENT = RACINE / "docs" / "pmzilla" / "feuille-de-route.md"
 PREFIXE = "roadmap : "
 
 ETATS = ("ready", "blocked", "in-progress", "done")
-METHODES = ("openspec", "direct-prompt")
-MODELES = ("opus", "sonnet", "haiku", "tbd")      # décision R-16 du 2026-10-10 : alias de /model, ou tbd
 THEMES = ("fiabilite", "veille", "bibliotheque", "base", "cas", "postures", "edition", "outillage")   # R-57
-REQUIS = ("id", "title", "theme", "depends_on", "conditions", "state", "estimate", "method", "model")
-OPTIONNELS = ("not_before", "due", "change", "done_on", "started_on")
 INCONNUE = "inconnue"   # done_on d'un job fait dont la date n'a pas été retrouvée
 NB_PRETS = 5
-RE_ID = re.compile(r"^R-\d+$")
-RE_BLOC = re.compile(r"^```[ \t]*(?:ya?ml)[ \t]*$", re.I)
-RE_FIN = re.compile(r"^```[ \t]*$")
-RE_DESCRIPTION = re.compile(r"^\*\*(R-\d+)\b")
-
-
-class ChargeurTexte(yaml.SafeLoader):
-    """Les dates restent du texte : une date impossible est signalée par job et par champ, pas par une erreur de lecture."""
-
-
-ChargeurTexte.add_constructor("tag:yaml.org,2002:timestamp", lambda c, n: c.construct_scalar(n))
 
 
 class Usage(Exception):
@@ -96,63 +67,6 @@ def affiche_duree(minutes: int) -> str:
     return f"{h}h" if h else f"{m}min"
 
 
-def blocs_yaml(lignes: list[str]) -> list[tuple[int, int]]:
-    """(première, dernière) lignes de contenu de chaque bloc YAML clôturé (indices de ligne, 0 pour la première)."""
-    blocs, debut, autre = [], None, False
-    for i, l in enumerate(lignes):
-        if debut is None and not autre:
-            if RE_BLOC.match(l):
-                debut = i + 1
-            elif l.startswith("```"):
-                autre = True
-        elif debut is not None and RE_FIN.match(l):
-            blocs.append((debut, i - 1))
-            debut = None
-        elif autre and RE_FIN.match(l):
-            autre = False
-    return blocs
-
-
-def analyse(texte: str):
-    """(jobs, problèmes, lignes, bloc) d'un texte, sans la vérification de cohérence."""
-    lignes = texte.split("\n")
-    blocs = blocs_yaml(lignes)
-    if len(blocs) != 1:
-        return None, [f"document : {len(blocs)} bloc(s) YAML, un seul attendu"], lignes, None
-    d, f = blocs[0]
-    try:
-        donnees = yaml.load("\n".join(lignes[d:f + 1]), Loader=ChargeurTexte)
-    except yaml.YAMLError:
-        return None, ["document : bloc YAML illisible"], lignes, blocs[0]
-    if not isinstance(donnees, dict) or not isinstance(donnees.get("jobs"), list):
-        return None, ["document : la clé jobs doit contenir une liste"], lignes, blocs[0]
-    return donnees["jobs"], [], lignes, blocs[0]
-
-
-def chemin_archive(chemin: Path) -> Path:
-    return chemin.with_name(chemin.stem + "-archive" + chemin.suffix)
-
-
-def charge_textes(texte: str, texte_archive: str | None):
-    """(jobs, problèmes, lignes, bloc, archives). La cohérence est vérifiée sur la file et l'archive réunies."""
-    jobs, pb, lignes, bloc = analyse(texte)
-    if jobs is None:
-        return None, pb, lignes, bloc, []
-    archives: list = []
-    if texte_archive is not None:
-        a, pba, _, _ = analyse(texte_archive)
-        if a is None:
-            return None, ["archive : " + p for p in pba], lignes, bloc, []
-        archives = a
-    return jobs, verifie(jobs, archives), lignes, bloc, archives
-
-
-def charge(chemin: Path):
-    """(jobs, problèmes, lignes, bloc, archives). Les problèmes sont des chaînes déjà formatées sans préfixe."""
-    arch = chemin_archive(chemin)
-    return charge_textes(chemin.read_text(encoding="utf-8"), arch.read_text(encoding="utf-8") if arch.is_file() else None)
-
-
 def est_date(v) -> bool:
     if isinstance(v, datetime.date):
         return True
@@ -164,77 +78,6 @@ def est_date(v) -> bool:
 
 def en_date(v) -> datetime.date:
     return v if isinstance(v, datetime.date) else datetime.date.fromisoformat(v)
-
-
-def verifie(file: list, archives: list = ()) -> list[str]:
-    """Problèmes de la file et de l'archive réunies : l'archive ne tient que des jobs `done`, les identifiants sont uniques sur les deux."""
-    jobs = list(file) + list(archives)
-    pb: list[str] = []
-    ids: dict[str, dict] = {}
-    for a in archives:
-        if isinstance(a, dict) and a.get("state") != "done":
-            pb.append(f"{a.get('id', '?')} : state : l'archive ne contient que des jobs done")
-    for rang, j in enumerate(jobs, 1):
-        if not isinstance(j, dict):
-            pb.append(f"job n°{rang} : format : un job doit être une table")
-            continue
-        jid = j.get("id") if isinstance(j.get("id"), str) else f"n°{rang}"
-        for c in REQUIS:
-            if c not in j or j[c] is None and c not in ("conditions",):
-                pb.append(f"{jid} : {c} : champ obligatoire absent")
-        for c in j:
-            if c not in REQUIS and c not in OPTIONNELS:
-                pb.append(f"{jid} : {c} : champ inconnu")
-        if "id" in j:
-            if not isinstance(j["id"], str) or not RE_ID.match(j["id"]):
-                pb.append(f"{jid} : id : attendu R- suivi de chiffres")
-            elif j["id"] in ids:
-                pb.append(f"{jid} : id : identifiant en double")
-            else:
-                ids[j["id"]] = j
-        if "title" in j and not (isinstance(j["title"], str) and j["title"].strip()):
-            pb.append(f"{jid} : title : texte non vide attendu")
-        if "conditions" in j and j["conditions"] is not None and not isinstance(j["conditions"], str):
-            pb.append(f"{jid} : conditions : texte attendu")
-        if "depends_on" in j and not (isinstance(j["depends_on"], list) and all(isinstance(x, str) for x in j["depends_on"])):
-            pb.append(f"{jid} : depends_on : liste d'identifiants attendue")
-        if "state" in j and j["state"] not in ETATS:
-            pb.append(f"{jid} : state : valeur hors de {', '.join(ETATS)}")
-        if "method" in j and j["method"] not in METHODES:
-            pb.append(f"{jid} : method : valeur hors de {', '.join(METHODES)}")
-        if "estimate" in j and j["estimate"] != "tbd" and duree(j["estimate"]) is None:
-            pb.append(f"{jid} : estimate : durée (45min, 2h, 1h30) ou tbd attendue")
-        if "model" in j and j["model"] not in MODELES:
-            pb.append(f"{jid} : model : valeur hors de {', '.join(MODELES)}")
-        if "theme" in j and j["theme"] not in THEMES:
-            pb.append(f"{jid} : theme : valeur hors de {', '.join(THEMES)}")
-        if "done_on" in j and j["done_on"] != INCONNUE and not est_date(j["done_on"]):
-            pb.append(f"{jid} : done_on : date AAAA-MM-JJ ou {INCONNUE} attendue")
-        for c in ("not_before", "due", "started_on"):
-            if c in j and not est_date(j[c]):
-                pb.append(f"{jid} : {c} : date AAAA-MM-JJ attendue")
-        if "change" in j and not (isinstance(j["change"], str) and j["change"].strip()):
-            pb.append(f"{jid} : change : nom de change attendu")
-    # dépendances, cycles, cohérence des états
-    graphe: dict[str, list[str]] = {}
-    for jid, j in ids.items():
-        deps = j.get("depends_on") if isinstance(j.get("depends_on"), list) else []
-        graphe[jid] = [d for d in deps if isinstance(d, str)]
-        for d in graphe[jid]:
-            if d not in ids:
-                pb.append(f"{jid} : depends_on : dépendance inconnue {d}")
-            elif d == jid:
-                pb.append(f"{jid} : depends_on : dépend de lui-même")
-    for jid, j in ids.items():
-        for d in graphe[jid]:
-            if d in ids and d != jid:
-                if j.get("state") == "ready" and ids[d].get("state") != "done":
-                    pb.append(f"{jid} : state : prêt (ready) alors que {d} n'est pas done")
-                if j.get("state") == "done" and ids[d].get("state") != "done":
-                    pb.append(f"{jid} : state : done alors que {d} n'est pas done")
-    for cycle in cycles(graphe, set(ids)):
-        pb.append(f"{cycle[0]} : depends_on : cycle de dépendances {' -> '.join(cycle + [cycle[0]])}")
-    return pb
 
 
 def cycles(graphe: dict[str, list[str]], ids: set[str]) -> list[list[str]]:
@@ -271,12 +114,6 @@ def cycles(graphe: dict[str, list[str]], ids: set[str]) -> list[list[str]]:
     return comps
 
 
-def lit(chemin: Path):
-    if not chemin.is_file():
-        raise Usage(f"fichier absent : {chemin}")
-    return charge(chemin)
-
-
 def sortie_invalide(pb: list[str]) -> int:
     for p in pb:
         print(PREFIXE + p)
@@ -284,11 +121,7 @@ def sortie_invalide(pb: list[str]) -> int:
 
 
 def cmd_check(args) -> int:
-    _, pb, _, _, _ = lit(Path(args.file))
-    if pb:
-        return sortie_invalide(pb)
-    print(PREFIXE + "file valide")
-    return 0
+    return cmd_check_github(args)
 
 
 def aujourdhui(args) -> datetime.date:
@@ -300,22 +133,11 @@ def aujourdhui(args) -> datetime.date:
     return en_date(brut)
 
 
-def cmd_next(args) -> int:
-    budget = duree(args.budget)
-    if budget is None:
-        raise Usage(f"durée mal formée : {args.budget} (attendu 45min, 2h ou 1h30)")
-    jour = aujourdhui(args)
-    jobs, pb, _, _, archives = lit(Path(args.file))
-    if pb:
-        return sortie_invalide(pb)
-    etat = {j["id"]: j["state"] for j in jobs + archives}
+def selection(candidats: list, budget: int):
+    """(retenus, longs, inconnus, total) : parcours dans l'ordre donné des jobs proposables, dans le budget en minutes."""
     reste, total = budget, 0
     retenus, longs, inconnus = [], [], []
-    for j in jobs:
-        if j["state"] != "ready" or any(etat[d] != "done" for d in j["depends_on"]):
-            continue
-        if "not_before" in j and en_date(j["not_before"]) > jour:
-            continue
+    for j in candidats:
         if j["estimate"] == "tbd":
             inconnus.append(j)
             continue
@@ -326,7 +148,10 @@ def cmd_next(args) -> int:
             retenus.append(j)
         else:
             longs.append(j)
+    return retenus, longs, inconnus, total
 
+
+def imprime_next(budget: int, retenus: list, longs: list, inconnus: list, total: int) -> None:
     def ligne(j):
         s = f"{j['id']} | {j['title']} | estimation {j['estimate']} | méthode {j['method']} | modèle {j['model']}"
         if j["conditions"]:
@@ -348,54 +173,14 @@ def cmd_next(args) -> int:
         for j in inconnus:
             print(f"  {ligne(j)}")
     print(f"{PREFIXE}total {affiche_duree(total) if total else '0min'}")
-    return 0
 
 
-def cmd_done(args) -> int:
+def cmd_next(args) -> int:
+    budget = duree(args.budget)
+    if budget is None:
+        raise Usage(f"durée mal formée : {args.budget} (attendu 45min, 2h ou 1h30)")
     jour = aujourdhui(args)
-    chemin = Path(args.file)
-    jobs, pb, lignes, bloc, archives = lit(chemin)
-    if pb:
-        return sortie_invalide(pb)
-    if args.id in {j["id"] for j in archives}:
-        print(f"{PREFIXE}{args.id} : déjà archivé")
-        return 0
-    if args.id not in {j["id"] for j in jobs}:
-        print(f"{PREFIXE}{args.id} : id : identifiant inconnu")
-        return 1
-    d, f = bloc
-    racine = yaml.compose("\n".join(lignes[d:f + 1]))
-    ligne_etat = ligne_cloture = colonne = None
-    liste = next(v for k, v in racine.value if k.value == "jobs")
-    for item in liste.value:
-        champs = {k.value: v for k, v in item.value}
-        if champs["id"].value == args.id:
-            ligne_etat = d + champs["state"].start_mark.line
-            colonne = next(k.start_mark.column for k, _ in item.value if k.value == "state")
-            if "done_on" in champs:
-                ligne_cloture = d + champs["done_on"].start_mark.line
-    if ligne_etat is None:
-        print(f"{PREFIXE}{args.id} : state : ligne d'état introuvable")
-        return 1
-    nouvelle, nb = re.subn(r"^(\s*(?:-\s+)?state\s*:\s*)(\"[^\"]*\"|'[^']*'|[^\s#]+)", r"\g<1>done", lignes[ligne_etat], count=1)
-    if nb != 1:
-        print(f"{PREFIXE}{args.id} : state : ligne d'état non modifiable (forme inattendue)")
-        return 1
-    lignes[ligne_etat] = nouvelle
-    cloture = " " * colonne + f"done_on: {jour.isoformat()}"
-    if ligne_cloture is not None:
-        lignes[ligne_cloture] = cloture
-    else:
-        lignes.insert(ligne_etat + 1, cloture)
-    chemin.write_text("\n".join(lignes), encoding="utf-8")
-    etat = {j["id"]: j["state"] for j in jobs + archives}
-    etat[args.id] = "done"
-    debloques = [j["id"] for j in jobs if etat[j["id"]] != "done" and j["depends_on"] and args.id in j["depends_on"]
-                 and all(etat[x] == "done" for x in j["depends_on"])]
-    print(f"{PREFIXE}{args.id} : state : done")
-    if debloques:
-        print(PREFIXE + "jobs dont toutes les dépendances sont done (à passer ready si tu le décides) : " + ", ".join(debloques))
-    return 0
+    return cmd_next_github(args, budget, jour)
 
 
 def vue(jobs: list, archives: list) -> dict:
@@ -439,11 +224,7 @@ def attente(deps: list) -> str:
     return "attend " + ", ".join(deps) if deps else "dépendances faites, à passer ready si tu le décides"
 
 
-def cmd_status(args) -> int:
-    jobs, pb, _, _, archives = lit(Path(args.file))
-    if pb:
-        return sortie_invalide(pb)
-    v = vue(jobs, archives)
+def imprime_status(v: dict) -> None:
     print(PREFIXE + "par état : " + ", ".join(f"{e} {v['etats'][e]}" for e in ETATS))
     print(PREFIXE + "par thème (faits/total) :")
     for th, (faits, total) in v["themes"].items():
@@ -455,7 +236,10 @@ def cmd_status(args) -> int:
         for x in liste:
             j, info = (x[0], attente(x[1])) if detail is None else (x, detail(x))
             print(f"  {j['id']} | {j['title']} | {info}")
-    return 0
+
+
+def cmd_status(args) -> int:
+    return cmd_status_github(args)
 
 
 STYLE = """:root{--fond:#fbfaf7;--texte:#1d1d1b;--doux:#6b6a65;--trait:#e3e1da;--plein:#2f6f5e;--vide:#e8e6df}
@@ -511,120 +295,721 @@ def ouvre(chemin: Path) -> None:
 
 
 def cmd_board(args) -> int:
-    jobs, pb, _, _, archives = lit(Path(args.file))
+    return cmd_board_github(args)
+
+
+# --- Mode GitHub (change github-roadmap, design D14 à D16) ------------------------------------------------------------
+
+REQUETE = (
+    "query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){"
+    "milestones(first:100){nodes{title state}} "
+    "issues(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){pageInfo{hasNextPage endCursor}"
+    "nodes{number title body state stateReason labels(first:30){nodes{name}} milestone{title state} parent{number} "
+    "blockedBy(first:50){nodes{number}} projectItems(first:20){nodes{project{title} "
+    "fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}}"
+)
+PROJECT_TITLE = "PMZilla Lab roadmap"   # comme gh_issue.PROJECT_TITLE
+TARASQUE = "Tarasque"
+FICHIER_CACHE = "roadmap-cache.json"
+CHEMIN_REGLAGES = RACINE / rm.SETTINGS_FILE
+DELAI_GH = 60           # secondes par appel de gh (fiche W2), variable PMZILLA_GH_TIMEOUT
+DELAI_GIT = 30
+MESSAGE_ORIGIN = "usage: the origin remote is missing or is not a GitHub repository"
+
+
+class Sortie(Exception):
+    """Fin anticipée avec un code et un message sans préfixe (stderr)."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class Injoignable(Exception):
+    pass
+
+
+def executable_gh() -> str:
+    return os.environ.get("PMZILLA_GH") or "gh"
+
+
+def message_refuse(texte: str) -> str:
+    """Message d'erreur de GitHub, retenu s'il contient un identifiant personnel (propriétaire, dépôt, chemin)."""
+    try:
+        bas = texte.lower()
+        trouve = any(i and i in bas for i in identifiants_personnels.identifiants(RACINE))
+    except BaseException as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        trouve = True
+    if trouve:
+        m = re.search(r"HTTP (\d{3})", texte)
+        return f"GitHub refused: HTTP {m.group(1) if m else '?'} (message withheld)"
+    return "GitHub refused: " + texte
+
+
+def jour_reel() -> datetime.date:
+    """Date réelle de la lecture (celle du cache), jamais --today ni ROADMAP_TODAY."""
+    return datetime.date.today()
+
+
+def delai_gh() -> float:
+    """Délai par appel de gh : PMZILLA_GH_TIMEOUT (secondes, positif), sinon le défaut."""
+    try:
+        v = float(os.environ.get("PMZILLA_GH_TIMEOUT", ""))
+    except ValueError:
+        return DELAI_GH
+    if not v > 0 or v == float("inf"):
+        return DELAI_GH
+    return int(v) if v == int(v) else v
+
+
+def git_origin_url() -> str:
+    """URL de `origin` (lecture seule, dans la racine du dépôt) ; chaîne vide si elle manque."""
+    try:
+        p = subprocess.run(["git", "-C", str(RACINE), "remote", "get-url", "origin"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=DELAI_GIT, cwd=RACINE)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def depot_origine() -> tuple[str, str]:
+    """(propriétaire, dépôt) d'après `origin`, par la règle de l'outil d'écriture. Sortie 2 si absent ou hors GitHub."""
+    repo = rm.repo_from_url(git_origin_url())
+    if repo is None:
+        raise Sortie(2, MESSAGE_ORIGIN)
+    proprietaire, _, nom = repo.partition("/")
+    return proprietaire, nom
+
+
+def appelle_gh(args: list[str]) -> str:
+    try:
+        r = subprocess.run([executable_gh()] + args, capture_output=True, text=True, cwd=RACINE, timeout=delai_gh(),
+                           stdin=subprocess.DEVNULL, env={**os.environ, "GH_PROMPT_DISABLED": "1"})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Injoignable(str(e)) from None
+    if r.returncode != 0:
+        if "GraphQL:" in r.stderr:
+            raise Sortie(1, message_refuse((r.stderr.strip().splitlines() or ["?"])[0][:200]))
+        raise Injoignable(r.stderr.strip()[:200])
+    return r.stdout
+
+
+def normalise(noeud: dict) -> dict:
+    statut = None
+    for it in (noeud.get("projectItems") or {}).get("nodes") or []:
+        if ((it or {}).get("project") or {}).get("title") != PROJECT_TITLE:
+            continue
+        v = (it or {}).get("fieldValueByName")
+        if v and v.get("name"):
+            statut = v["name"]
+            break
+    jalon = noeud.get("milestone")
+    return {
+        "number": noeud["number"], "title": noeud.get("title") or "", "body": noeud.get("body") or "",
+        "state": (noeud.get("state") or "OPEN").lower(), "reason": (noeud.get("stateReason") or "").lower(),
+        "labels": [l["name"] for l in (noeud.get("labels") or {}).get("nodes") or []],
+        "milestone": {"title": jalon["title"], "state": (jalon.get("state") or "OPEN").lower()} if jalon else None,
+        "parent": (noeud.get("parent") or {}).get("number"),
+        "blocked_by": [b["number"] for b in (noeud.get("blockedBy") or {}).get("nodes") or []],
+        "status": statut,
+    }
+
+
+def lecture_github(proprietaire: str, depot: str) -> tuple[list[dict], dict]:
+    """(issues ouvertes et fermées, jalons {titre: état}), par lecture GraphQL seule. Injoignable si gh échoue."""
+    issues, jalons, curseur = [], {}, None
+    while True:
+        cmd = ["api", "graphql", "-H", "GraphQL-Features: sub_issues", "-f", "query=" + REQUETE,
+               "-F", f"owner={proprietaire}", "-F", f"name={depot}"]
+        if curseur:
+            cmd += ["-F", "after=" + curseur]
+        try:
+            rep = json.loads(appelle_gh(cmd))
+        except ValueError:
+            raise Injoignable("réponse illisible") from None
+        if rep.get("errors"):
+            raise Sortie(1, message_refuse(str(rep["errors"][0].get("message", "?"))[:200]))
+        page = (((rep.get("data") or {}).get("repository") or {}).get("issues"))
+        if page is None:
+            raise Injoignable("réponse sans issues")
+        if curseur is None:
+            jalons = {j["title"]: (j.get("state") or "OPEN").lower()
+                      for j in (((rep["data"]["repository"].get("milestones")) or {}).get("nodes")) or [] if j}
+        issues += [normalise(n) for n in page["nodes"] if n]
+        if not page["pageInfo"]["hasNextPage"]:
+            return issues, jalons
+        curseur = page["pageInfo"]["endCursor"]
+
+
+def chemin_cache() -> Path:
+    return dossier_donnees() / FICHIER_CACHE
+
+
+def ecrit_cache(issues: list[dict], jour: datetime.date, jalons: dict | None = None) -> None:
+    """Instantané de la dernière lecture réussie, hors dépôt. Une erreur d'écriture ne gêne pas la lecture."""
+    try:
+        chemin = chemin_cache()
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        tmp = chemin.with_name(chemin.name + ".tmp")
+        tmp.write_text(json.dumps({"date": jour.isoformat(), "issues": issues, "milestones": jalons or {}},
+                                            ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, chemin)
+    except OSError:
+        pass
+
+
+def lit_cache():
+    """(issues, date) de l'instantané, ou None s'il manque ou est illisible."""
+    c = lit_cache_complet()
+    return None if c is None else (c[0], c[1])
+
+
+def lit_cache_complet():
+    """(issues, date, jalons) de l'instantané, ou None. Un instantané ancien sans jalons les tire des issues."""
+    try:
+        d = json.loads(chemin_cache().read_text(encoding="utf-8"))
+        issues = d["issues"]
+        jalons = d.get("milestones")
+        if not isinstance(jalons, dict) or not jalons:
+            jalons = {i["milestone"]["title"]: i["milestone"]["state"] for i in issues if i.get("milestone")}
+        return issues, d["date"], jalons
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def lecture_complete(args, banniere=print) -> tuple[list[dict], dict]:
+    """(issues, jalons) en direct (instantané réécrit) ou, GitHub injoignable, depuis l'instantané avec sa ligne d'avertissement
+    (`banniere`, sur la sortie standard par défaut). Le dépôt d'origine est résolu avant toute lecture, du réseau comme de l'instantané."""
+    proprietaire, depot = depot_origine()
+    jour = jour_reel()
+    try:
+        issues, jalons = lecture_github(proprietaire, depot)
+    except Injoignable:
+        cache = lit_cache_complet()
+        if cache is None:
+            raise Sortie(5, "GitHub unreachable and no cache") from None
+        banniere(f"GitHub unreachable; read from the cache of {cache[1]}")
+        return cache[0], cache[2]
+    ecrit_cache(issues, jour, jalons)
+    return issues, jalons
+
+
+def lecture(args) -> list[dict]:
+    return lecture_complete(args)[0]
+
+
+def ident(i: dict) -> str:
+    t = rm.parse_title(i["title"])
+    return f"R-{t[0]}" if t else f"#{i['number']}"
+
+
+def analyse_github(issues: list[dict]):
+    """(features dans l'ordre du rang, sous-issues, problèmes). Un problème est « identifiant : champ : message »."""
+    pb: list[str] = []
+    issues = [i for i in issues if rm.LABEL_IDEA not in i["labels"]]     # une idée n'est pas dans la file (D7)
+    par_num = {i["number"]: i for i in issues}
+    feats: dict[str, dict] = {}
+    sous: list[dict] = []
+    for i in issues:
+        labels, ouvert = i["labels"], i["state"] == "open"
+        est_f, est_t = rm.LABEL_FEATURE in labels, rm.LABEL_TASK in labels
+        nom = ident(i)
+        if est_f and est_t:
+            pb.append(f"{nom} : labels : {rm.LABEL_FEATURE} et {rm.LABEL_TASK} ensemble")
+        if est_t or (not est_f and i["parent"] is not None):
+            sous.append(i)
+            continue
+        if not est_f:
+            pb.append(f"{nom} : labels : {rm.LABEL_FEATURE} ou {rm.LABEL_TASK} attendu")
+            continue
+        titre = rm.parse_title(i["title"])
+        if titre is None:
+            pb.append(f"{nom} : title : motif R-<n> {rm.SEP} <titre> attendu")
+        cle = rm.parse_marker(i["body"])
+        if cle is None:
+            pb.append(f"{nom} : marker : marqueur d'identité absent ou mal formé")
+        elif cle != nom:
+            pb.append(f"{nom} : marker : {cle} différent de l'identifiant du titre")
+        themes = [l for l in labels if l.startswith("theme:")]
+        theme = themes[0].split(":", 1)[1] if len(themes) == 1 else None
+        if len(themes) != 1:
+            pb.append(f"{nom} : labels : exactement un label theme: attendu ({len(themes)} trouvés)")
+        elif theme not in rm.THEMES:
+            pb.append(f"{nom} : labels : thème inconnu {theme}")
+        if i["milestone"] is None:
+            pb.append(f"{nom} : milestone : jalon absent")
+        bloc = None
+        try:
+            bloc = rm.parse_block(i["body"])
+        except rm.BlockError as e:
+            pb.append(f"{nom} : block : {e}")
+        except ValueError:      # date impossible que YAML refuse de construire
+            champs = [k for k, v in re.findall(r"^(\w+):[ \t]*(\S+)[ \t]*$", "\n".join(rm._FENCE.findall(i["body"])), re.M)
+                      if k in rm.DATES and not est_date(v)]
+            pb += [f"{nom} : {k} : date AAAA-MM-JJ attendue" for k in champs] or [f"{nom} : block : bloc roadmap illisible"]
+        if bloc is not None:
+            for p in rm.validate_block(bloc, is_open=ouvert, marker_key=nom if titre else None, theme_label=theme):
+                pb.append(f"{nom} : {p}")
+            e = bloc.get("estimate")
+            if isinstance(e, str) and e != "tbd" and duree(e) is None and not any(p.startswith("estimate :") for p in pb[-8:]):
+                pb.append(f"{nom} : estimate : durée non nulle attendue (45min, 2h, 1h30) ou tbd")
+        if nom in feats:
+            pb.append(f"{nom} : id : identifiant en double (#{feats[nom]['number']} et #{i['number']})")
+            continue
+        feats[nom] = {"id": nom, "number": i["number"], "title": titre[1] if titre else i["title"], "open": ouvert,
+                      "status": i["status"], "milestone": (i["milestone"] or {}).get("title"), "block": bloc or {},
+                      "blocker_numbers": i["blocked_by"], "issue": i}
+    par_numero = {f["number"]: f for f in feats.values()}
+    rangs: dict = collections.defaultdict(list)
+    for f in feats.values():
+        if f["open"] and isinstance(f["block"].get("rank"), int):
+            rangs[f["block"]["rank"]].append(f["id"])
+    for r, ids in rangs.items():
+        if len(ids) > 1:
+            for x in ids:
+                pb.append(f"{x} : rank : rang {r} en double ({', '.join(ids)})")
+    for f in feats.values():
+        s = f["status"]
+        if s is None:
+            pb.append(f"{f['id']} : Status : absent du Project")
+        elif s not in rm.STATUSES:
+            pb.append(f"{f['id']} : Status : valeur inconnue {s}")
+        elif f["open"] and s == "Done":
+            pb.append(f"{f['id']} : Status : Done sur une feature ouverte")
+        elif not f["open"] and s != "Done":
+            pb.append(f"{f['id']} : Status : Done attendu sur une feature fermée, reçu {s}")
+    graphe: dict[str, list[str]] = {}
+    for f in feats.values():
+        graphe[f["id"]] = []
+        f["blockers"] = []
+        for b in f["blocker_numbers"]:
+            cible = par_numero.get(b)
+            if cible is None:
+                autre = par_num.get(b)
+                pb.append(f"{f['id']} : blocked_by : dépendance inconnue ({ident(autre) if autre else '#' + str(b)} n'est pas une feature)")
+            elif cible["id"] == f["id"]:
+                pb.append(f"{f['id']} : blocked_by : bloquée par elle-même")
+            else:
+                graphe[f["id"]].append(cible["id"])
+                f["blockers"].append(cible["id"])
+    for f in feats.values():
+        for b in f["blockers"]:
+            bo = feats[b]["open"]
+            if f["open"] and f["status"] in ("Ready", "In progress") and bo:
+                pb.append(f"{f['id']} : Status : {f['status']} alors que {b} est ouverte")
+            if not f["open"] and bo:
+                pb.append(f"{f['id']} : state : fermée alors que {b} est ouverte")
+    for cycle in cycles(graphe, set(graphe)):
+        pb.append(f"{cycle[0]} : blocked_by : cycle {' -> '.join(cycle + [cycle[0]])}")
+    for i in issues:
+        j = i["milestone"]
+        if j and j["state"] == "closed" and i["state"] == "open":
+            pb.append(f"{ident(i)} : milestone : issue ouverte dans le jalon fermé {j['title']}")
+    for f in feats.values():
+        if f["open"] and f["milestone"] == TARASQUE:
+            pb.append(f"{f['id']} : milestone : feature ouverte dans {TARASQUE}")
+    for i in sous:
+        cle = rm.parse_marker(i["body"]) or f"#{i['number']}"
+        labels = i["labels"]
+        if par_numero.get(i["parent"]) is None:
+            pb.append(f"{cle} : parent : une feature est attendue")
+        if rm.LABEL_TASK not in labels:
+            pb.append(f"{cle} : labels : {rm.LABEL_TASK} attendu")
+        modeles = [l for l in labels if l.startswith("model:")]
+        for m in modeles:
+            if m not in [rm.label_model(x) for x in rm.MODELS]:
+                pb.append(f"{cle} : labels : modèle inconnu {m}")
+        if len(modeles) + (rm.LABEL_USER in labels) != 1:
+            pb.append(f"{cle} : labels : un seul label model: ou {rm.LABEL_USER}, pas les deux ni aucun")
+    for f in feats.values():
+        f["sous"] = [i for i in sous if i["parent"] == f["number"]]
+    rang = lambda f: f["block"]["rank"] if isinstance(f["block"].get("rank"), int) else 10**9
+    ordre = sorted(feats.values(), key=lambda f: (not f["open"], rang(f), f["number"]))
+    return ordre, sous, pb
+
+
+def etat_github(args):
+    return analyse_github(lecture(args))
+
+
+def probleme_release(jalons: dict) -> str | None:
+    """Ligne `current_release : <raison>` si le réglage nomme un jalon absent, fermé ou Tarasque ; None sinon (D12)."""
+    try:
+        texte = CHEMIN_REGLAGES.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "current_release : fichier de réglages illisible"
+    try:
+        nom = rm.parse_settings(texte)["current_release"]
+    except ValueError as e:
+        return f"current_release : {e}"
+    if not nom:
+        return None
+    if nom == TARASQUE:
+        return f"current_release : {TARASQUE} ne peut pas être la release courante"
+    if nom not in jalons:
+        return f"current_release : jalon inconnu {nom}"
+    if jalons[nom] == "closed":
+        return f"current_release : jalon fermé {nom}"
+    return None
+
+
+def en_job(f: dict) -> dict:
+    """La feature sous la forme d'un job de la vue (`vue`, `page_board`) : l'état se déduit de l'ouverture et du Status (D2)."""
+    b = f["block"]
+    etat = "done" if not f["open"] else {"In progress": "in-progress", "Ready": "ready"}.get(f["status"], "blocked")
+    j = {"id": f["id"], "title": f["title"], "theme": b.get("theme", "outillage"), "depends_on": list(f["blockers"]),
+         "conditions": b.get("conditions") or "", "state": etat, "estimate": b.get("estimate", "tbd"),
+         "method": b.get("method", "?"), "model": b.get("model", "tbd")}
+    for k in ("not_before", "due", "started_on"):
+        if k in b:
+            j[k] = b[k]
+    if b.get("done_on") not in (None, "unknown"):
+        j["done_on"] = b["done_on"]
+    return j
+
+
+def vue_github(feats: list[dict]) -> dict:
+    jobs = [en_job(f) for f in feats]
+    return vue([j for j in jobs if j["state"] != "done"], [j for j in jobs if j["state"] == "done"])
+
+
+def cmd_check_github(args) -> int:
+    issues, jalons = lecture_complete(args)
+    pb = analyse_github(issues)[2]
+    release = probleme_release(jalons)
+    if release:
+        pb.append(release)
+    if pb:
+        return sortie_invalide(pb)
+    print(PREFIXE + "file valide")
+    return 0
+
+
+# --- Lot d'un jalon (change batch-milestone, design D2, D3, D5) ----------------------------------------------------
+
+ARBRE = RACINE      # arbre où lire les changes OpenSpec et vérifier les chemins connus (remplaçable par les tests)
+COMMUNS = ("README.md", "docs/pmzilla/installation.md", "docs/pmzilla/application.md", "tests/run_all.sh", ".claude/settings.json")
+INVITE_CADRAGE = ("Frame R-{n} as an OpenSpec change with the spec-writer agent: proposal, design, tasks, delta specs and "
+                  "fiche-decisions.md with an empty decision column; run openspec validate --strict; commit on this branch; do not push.")
+
+
+def change_existe(arbre: Path, nom) -> bool:
+    return isinstance(nom, str) and bool(nom) and nom != "archive" and "/" not in nom and nom not in (".", "..") \
+        and (arbre / "openspec" / "changes" / nom).is_dir()
+
+
+def fichiers_connus(arbre: Path, nom: str) -> set[str]:
+    """Chemins relatifs cités tels quels (entre apostrophes inverses) par le tasks.md et le design.md du change `nom` qui existent dans
+    `arbre`, hors `openspec/` (D3). Un `/` final est ignoré ; un extrait avec espace, `..`, `/` ou `~` initial n'est pas un chemin."""
+    trouves: set[str] = set()
+    for fichier in ("tasks.md", "design.md"):
+        try:
+            texte = (arbre / "openspec" / "changes" / nom / fichier).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for extrait in re.findall(r"`([^`\n]+)`", texte):
+            chemin = extrait.rstrip("/") if extrait != "/" else extrait
+            parts = chemin.split("/")
+            if (not chemin or re.search(r"\s", chemin) or chemin.startswith(("/", "~")) or any(x in ("", ".", "..") for x in parts)
+                    or parts[0] == "openspec"):
+                continue
+            if (arbre / chemin).exists():
+                trouves.add(chemin)
+    return trouves
+
+
+def se_recoupent(a: str, b: str) -> bool:
+    """Deux chemins se recoupent s'ils sont égaux ou si l'un est un dossier qui contient l'autre (D3)."""
+    return a == b or b.startswith(a + "/") or a.startswith(b + "/")
+
+
+def fichiers_en_commun(a: set[str], b: set[str]) -> bool:
+    return any(se_recoupent(x, y) for x in a - set(COMMUNS) for y in b - set(COMMUNS))
+
+
+def slug_branche(titre: str) -> str:
+    return "-".join(rm.idea_slug(titre).split("-")[:4])
+
+
+def lancement(f: dict) -> dict:
+    """Branche, genre de session, modèle de lancement et invite d'une feature retenue, d'après la table de D5."""
+    b, n = f["block"], f["id"].removeprefix("R-")
+    if b.get("method") == "openspec" and not b.get("change"):
+        return {"branche": f"chore/spec-r{n}", "genre": "cadrage", "modele": "opus", "invite": INVITE_CADRAGE.format(n=n)}
+    if b.get("method") == "openspec":
+        return {"branche": f"feat/{b['change']}", "genre": "exécution", "modele": "sonnet", "invite": f"/start {f['id']}"}
+    modele = b.get("model")
+    return {"branche": f"chore/r{n}-{slug_branche(f['title'])}", "genre": "exécution",
+            "modele": modele if modele in ("opus", "sonnet", "haiku") else "sonnet", "invite": f"/start {f['id']}"}
+
+
+def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path):
+    """(retenues, écartées, partagés) : retenues = [(feature, lancement, fichiers connus ou None)], écartées = [(feature, raison)],
+    partagés = {chemin: [identifiants]}."""
+    ouvert = {f["id"]: f["open"] for f in feats}
+    connus: dict[str, set[str] | None] = {}
+    for f in feats:
+        nom = f["block"].get("change")
+        connus[f["id"]] = fichiers_connus(arbre, nom) if change_existe(arbre, nom) else None
+    en_cours = [f for f in feats if f["open"] and f["status"] == "In progress" and connus[f["id"]] is not None]
+    retenues, ecartees = [], []
+    for f in feats:
+        b = f["block"]
+        if (not f["open"] or f["status"] != "Ready" or f["milestone"] != jalon or any(ouvert[x] for x in f["blockers"])
+                or ("not_before" in b and en_date(b["not_before"]) > jour)):
+            continue
+        nom = b.get("change")
+        if nom and connus[f["id"]] is None:
+            ecartees.append((f, f"change {nom} introuvable"))
+            continue
+        if nom:
+            contre = next((g for g in en_cours if fichiers_en_commun(connus[f["id"]], connus[g["id"]])), None)
+            if contre:
+                ecartees.append((f, f"fichiers communs avec {contre['id']} (en cours)"))
+                continue
+            contre = next((g for g, _, c in retenues if c is not None and fichiers_en_commun(connus[f["id"]], c)), None)
+            if contre:
+                ecartees.append((f, f"fichiers communs avec {contre['id']}"))
+                continue
+        retenues.append((f, lancement(f), connus[f["id"]]))
+    partages = {}
+    for chemin in COMMUNS:
+        ids = [f["id"] for f, _, c in retenues if c is not None and chemin in c]
+        if len(ids) > 1:
+            partages[chemin] = ids
+    return retenues, ecartees, partages
+
+
+def release_courante() -> str:
+    try:
+        return rm.parse_settings(CHEMIN_REGLAGES.read_text(encoding="utf-8"))["current_release"]
+    except (OSError, ValueError):
+        return ""
+
+
+def cmd_batch(args) -> int:
+    jour = aujourdhui(args)
+    proprietaire, depot = depot_origine()
+    try:
+        issues, jalons = lecture_github(proprietaire, depot)
+    except Injoignable:
+        raise Sortie(5, "GitHub unreachable; a batch needs a live read") from None
+    ecrit_cache(issues, jour_reel(), jalons)
+    if args.milestone not in jalons:
+        raise Sortie(2, f"usage: unknown milestone {args.milestone}")
+    if jalons[args.milestone] == "closed":
+        raise Sortie(2, f"usage: closed milestone {args.milestone}")
+    feats, _, pb = analyse_github(issues)
+    release = probleme_release(jalons)
+    if release:
+        pb.append(release)
+    if pb:
+        return sortie_invalide(pb)
+    retenues, ecartees, partages = lot(feats, args.milestone, jour, ARBRE)
+    print(f"{PREFIXE}lot du jalon {args.milestone}")
+    print(f"{PREFIXE}release courante : {release_courante() or 'aucune'}")
+    if not retenues:
+        print(f"{PREFIXE}retenues : aucune")
+    else:
+        print(f"{PREFIXE}retenues :")
+    for f, l, c in retenues:
+        b = f["block"]
+        champs = [f["id"], f["title"], f"méthode {b.get('method', '?')}", f"modèle {b.get('model', 'tbd')}", f"branche {l['branche']}",
+                  f"session {l['modele']}", l["genre"], "fichiers inconnus" if c is None else f"fichiers {len(c)}"]
+        if b.get("conditions"):
+            champs.append(f"à confirmer : {b['conditions']}")
+        if b.get("due"):
+            champs.append(f"échéance {b['due']}")
+        print("  " + " | ".join(champs))
+    if ecartees:
+        print(f"{PREFIXE}écartées :")
+        for f, raison in ecartees:
+            print(f"  {f['id']} | {f['title']} | {raison}")
+    if partages:
+        print(f"{PREFIXE}fichiers partagés :")
+        for chemin, ids in partages.items():
+            print(f"  {chemin} | {', '.join(ids)}")
+    return 0
+
+
+def cmd_next_github(args, budget: int, jour: datetime.date) -> int:
+    feats, _, pb = etat_github(args)
+    if pb:
+        return sortie_invalide(pb)
+    ouvert = {f["id"]: f["open"] for f in feats}
+    candidats = []
+    for f in feats:
+        b = f["block"]
+        if not f["open"] or f["status"] != "Ready" or any(ouvert[x] for x in f["blockers"]):
+            continue
+        if args.milestone and f["milestone"] != args.milestone:
+            continue
+        if "not_before" in b and en_date(b["not_before"]) > jour:
+            continue
+        candidats.append(en_job(f))
+    imprime_next(budget, *selection(candidats, budget))
+    return 0
+
+
+def cmd_status_github(args) -> int:
+    feats, _, pb = etat_github(args)
+    if pb:
+        return sortie_invalide(pb)
+    imprime_status(vue_github(feats))
+    return 0
+
+
+def cmd_board_github(args) -> int:
+    feats, _, pb = etat_github(args)
     if pb:
         return sortie_invalide(pb)
     sortie = dossier_donnees() / "feuille-de-route.html"
     sortie.parent.mkdir(parents=True, exist_ok=True)
-    sortie.write_text(page_board(vue(jobs, archives), aujourdhui(args)), encoding="utf-8")
-    print(f"{PREFIXE}tableau écrit : {sortie}")
+    sortie.write_text(page_board(vue_github(feats), aujourdhui(args)), encoding="utf-8")
+    print(f"{PREFIXE}tableau écrit : {sortie.name}")
     if args.open:
         ouvre(sortie)
     return 0
 
 
-def paragraphes_decrits(lignes: list[str], limite: int) -> list[tuple[int, int]]:
-    """(début, fin exclue) de chaque paragraphe `**R-n …` avant la ligne `limite` : il court jusqu'au suivant, à un titre ou à la limite."""
-    debuts = [i for i in range(limite) if RE_DESCRIPTION.match(lignes[i])]
-    plages = []
-    for i in debuts:
-        fin = next((k for k in range(i + 1, limite) if RE_DESCRIPTION.match(lignes[k]) or lignes[k].startswith("#")), limite)
-        plages.append((i, fin))
-    return plages
+def cmd_show(args) -> int:
+    feats, _, pb = etat_github(args)
+    f = next((x for x in feats if x["id"] == args.id), None)
+    if f is None:
+        print(f"{PREFIXE}{args.id} : id : identifiant inconnu")
+        return 1
+    mal = [p for p in pb if p.startswith(f"{args.id} : ")]
+    if mal:
+        return sortie_invalide(mal)
+    b = f["block"]
+    print(f"{PREFIXE}{f['id']} {rm.SEP} {f['title']}")
+    print(f"{PREFIXE}état : {'ouverte' if f['open'] else 'fermée'} | Status : {f['status']} | jalon : {f['milestone']}")
+    print(f"{PREFIXE}estimation {b['estimate']} | méthode {b['method']} | modèle {b['model']}"
+          + (f" | rang {b['rank']}" if "rank" in b else ""))
+    print(f"{PREFIXE}conditions : {b['conditions'] or 'aucune'}")
+    for k in ("not_before", "due", "started_on", "done_on", "change"):
+        if k in b:
+            print(f"{PREFIXE}{k} : {b[k]}")
+    ouvert = {x["id"]: x["open"] for x in feats}
+    bloqueurs = [f"{x} ({'ouverte' if ouvert[x] else 'fermée'})" for x in f["blockers"]]
+    print(f"{PREFIXE}bloquée par : {', '.join(bloqueurs) if bloqueurs else 'aucune'}")
+    print(f"{PREFIXE}sous-issues :" + ("" if f["sous"] else " aucune"))
+    for s in sorted(f["sous"], key=lambda i: i["number"]):
+        print(f"  {rm.parse_marker(s['body']) or '#' + str(s['number'])} | {s['title']} | {'ouverte' if s['state'] == 'open' else 'fermée'}")
+    texte = rm._FENCE.sub("", re.sub(r"\A<!-- roadmap-id: \S+ -->", "", f["issue"]["body"])).strip()
+    if texte:
+        print(PREFIXE + "description :")
+        print(texte)
+    return 0
 
 
-def insere_archive(texte: str | None, nom: str, items: list[str], descriptions: list[str]) -> str:
-    """Texte de l'archive avec les entrées YAML et les descriptions en tête ; l'archive est créée si `texte` est None."""
-    if texte is None:
-        return ("# Feuille de route : archive\n\n"
-                f"Travaux terminés dont aucun travail ouvert ne dépend, déplacés tels quels de {nom} par `tools/roadmap.py archive`.\n\n"
-                "## Travaux décrits\n\n" + "\n".join(descriptions) + "\n```yaml\njobs:\n" + "\n".join(items) + "\n```\n")
-    lignes = texte.split("\n")
-    d, f = blocs_yaml(lignes)[0]
-    liste = next(v for k, v in yaml.compose("\n".join(lignes[d:f + 1])).value if k.value == "jobs")
-    if liste.value:
-        lignes[d + liste.value[0].start_mark.line:d + liste.value[0].start_mark.line] = items
-    else:
-        lignes[d:f + 1] = ["jobs:"] + items
-    existants = paragraphes_decrits(lignes, d - 1)
-    point = existants[0][0] if existants else d - 1
-    lignes[point:point] = descriptions
-    return "\n".join(lignes)
+def lignes_notes(feats: list[dict]) -> list[str]:
+    """Lignes Markdown des notes : un `## <thème>` par thème, ordre alphabétique ; sous lui, `- <titre>` par done_on puis identifiant."""
+    par_theme: dict[str, list] = collections.defaultdict(list)
+    for i in feats:
+        themes = [l.split(":", 1)[1] for l in i["labels"] if l.startswith("theme:")]
+        try:
+            fait = rm.parse_block(i["body"]).get("done_on")
+        except (rm.BlockError, ValueError):
+            fait = None
+        fait = fait.isoformat() if isinstance(fait, datetime.date) else (fait if est_date(fait) else "9999-99-99")
+        t = rm.parse_title(i["title"])
+        par_theme[themes[0] if themes else "none"].append((fait, t[0] if t else 10**9, i["number"], t[1] if t else i["title"]))
+    lignes: list[str] = []
+    for theme in sorted(par_theme):
+        lignes += (["" ] if lignes else []) + [f"## {theme}", ""]
+        lignes += [f"- {x[3]}" for x in sorted(par_theme[theme], key=lambda x: x[:3])]
+    return lignes
 
 
-def cmd_archive(args) -> int:
-    chemin = Path(args.file)
-    arch = chemin_archive(chemin)
-    jobs, pb, lignes, bloc, archives = lit(chemin)
-    if pb:
-        return sortie_invalide(pb)
-    attendus = {d for j in jobs if j["state"] != "done" for d in j["depends_on"]}
-    partants = [j for j in jobs if j["state"] == "done" and j["id"] not in attendus]
-    if not partants:
-        print(PREFIXE + "rien à archiver")
+def cmd_release_notes(args) -> int:
+    """Notes de release d'un jalon (D5) : features fermées comme terminées, en Markdown sur la sortie standard, rien d'écrit."""
+    def avertit(texte):
+        print(PREFIXE + texte, file=sys.stderr)
+
+    issues, jalons = lecture_complete(args, banniere=avertit)
+    if args.milestone not in jalons:
+        raise Sortie(2, f"usage: unknown milestone {args.milestone}")
+    du_jalon = [i for i in issues if (i["milestone"] or {}).get("title") == args.milestone]
+    types = (rm.LABEL_FEATURE, rm.LABEL_TASK, rm.LABEL_IDEA)
+    feats = [i for i in du_jalon if rm.LABEL_FEATURE in i["labels"] and rm.LABEL_IDEA not in i["labels"]
+             and rm.LABEL_TASK not in i["labels"]]
+    faites = [i for i in feats if i["state"] == "closed" and i.get("reason", "completed") in ("completed", "")]
+    ouvertes = [i for i in feats if i["state"] == "open"]
+    privees = 0
+    if getattr(args, "public", False):
+        privees = sum(1 for i in faites if rm.LABEL_EDITION_PUBLIC not in i["labels"])
+        faites = [i for i in faites if rm.LABEL_EDITION_PUBLIC in i["labels"]]
+    sans_type = sorted(i["number"] for i in du_jalon if not any(l in types for l in i["labels"]))
+    texte = "\n".join(lignes_notes(faites)) + "\n" if faites else ""
+    if texte:
+        import gh_issue     # le garde de l'outil d'écriture, réutilisé tel quel
+        try:
+            gh_issue.Guard.load().scan({"notes": texte})
+        except gh_issue.Stop as e:
+            raise Sortie(e.code, e.lines[0].replace("; nothing was sent", "; nothing was printed")) from None
+    if ouvertes:
+        avertit(f"not listed: {len(ouvertes)} open feature(s)")
+    if sans_type:
+        avertit("not listed: issues without a type label: " + ", ".join(f"#{n}" for n in sans_type))
+    if privees:
+        avertit(f"not listed: {privees} closed feature(s) without {rm.LABEL_EDITION_PUBLIC}")
+    if not faites:
+        avertit(f"no closed feature in {args.milestone}")
+    sys.stdout.write(texte)
+    return 0
+
+
+def cmd_reminder(args) -> int:
+    """Une ligne lue dans l'instantané, jamais le réseau ; rien sans instantané ; toujours le code 0."""
+    cache = lit_cache()
+    if cache is None:
         return 0
-    if args.dry_run:
-        print(PREFIXE + "partirait vers l'archive :")
-        for j in partants:
-            print(f"  {j['id']} | {j['title']}")
-        return 0
-    ids = {j["id"] for j in partants}
-    d, f = bloc
-    liste = next(v for k, v in yaml.compose("\n".join(lignes[d:f + 1])).value if k.value == "jobs")
-    debuts = [d + item.start_mark.line for item in liste.value] + [f + 1]
-    morceaux, retire = [], set()
-    for n, item in enumerate(liste.value):
-        if {k.value: v for k, v in item.value}["id"].value in ids:
-            morceaux.append(lignes[debuts[n]:debuts[n + 1]])
-            retire.update(range(debuts[n], debuts[n + 1]))
-    textes = []
-    for debut, fin in paragraphes_decrits(lignes, d - 1):
-        if RE_DESCRIPTION.match(lignes[debut]).group(1) in ids:
-            textes.append(lignes[debut:fin])
-            retire.update(range(debut, fin))
-    restantes = [l for i, l in enumerate(lignes) if i not in retire]
-    if len(morceaux) == len(liste.value):
-        k = d - sum(1 for i in retire if i < d)
-        restantes[k] = re.sub(r"^(\s*jobs\s*:).*$", r"\g<1> []", restantes[k])
-    nouveau_texte = "\n".join(restantes)
-    texte_archive = insere_archive(arch.read_text(encoding="utf-8") if arch.is_file() else None, chemin.name,
-                                   [l for m in morceaux for l in m], [l for t in textes for l in (t if t[-1] == "" else t + [""])])
-    apres = charge_textes(nouveau_texte, texte_archive)[1]
-    if apres:
-        print(PREFIXE + "la file serait invalide après le déplacement, rien n'est écrit :")
-        return sortie_invalide(apres)
-    arch.write_text(texte_archive, encoding="utf-8")
-    chemin.write_text(nouveau_texte, encoding="utf-8")
-    print(f"{PREFIXE}{len(partants)} travaux archivés vers {arch.name} :")
-    for j in partants:
-        print(f"  {j['id']} | {j['title']}")
-    print(f"{PREFIXE}{len(jobs) - len(partants)} travaux restent dans la file")
+    try:
+        feats = analyse_github(cache[0])[0]
+        prets = sum(1 for f in feats if f["open"] and f["status"] == "Ready")
+        en_cours = sum(1 for f in feats if f["open"] and f["status"] == "In progress")
+        print(f"roadmap: {prets} ready, {en_cours} in progress (cache of {cache[1]})")
+    except Exception:
+        pass
     return 0
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="roadmap.py", description="Lecteur de la file de travail.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for nom in ("check", "next", "done", "archive", "status", "board"):
+    for nom in ("check", "next", "batch", "status", "board", "show", "reminder", "release-notes"):
         s = sub.add_parser(nom)
-        s.add_argument("--file", default=str(DOCUMENT))
-        if nom == "archive":
-            s.add_argument("--dry-run", action="store_true")
+        if nom in ("release-notes", "batch"):
+            s.add_argument("--milestone", required=True)
+        if nom == "release-notes":
+            s.add_argument("--public", action="store_true")
         if nom == "next":
             s.add_argument("--budget", required=True)
-        if nom in ("next", "done", "board"):
+            s.add_argument("--milestone", default=None)
+        if nom in ("next", "batch", "board", "check", "status", "show"):
             s.add_argument("--today", default=None)
-        if nom == "done":
+        if nom == "show":
             s.add_argument("id")
         if nom == "board":
             s.add_argument("--open", action="store_true")
+        if nom == "reminder":
+            s.add_argument("--session-hook", action="store_true")
     try:
         args = p.parse_args(argv)
-        return {"check": cmd_check, "next": cmd_next, "done": cmd_done, "archive": cmd_archive, "status": cmd_status,
-                "board": cmd_board}[args.cmd](args)
+        return {"check": cmd_check, "next": cmd_next, "status": cmd_status,
+                "board": cmd_board, "show": cmd_show, "reminder": cmd_reminder,
+                "release-notes": cmd_release_notes, "batch": cmd_batch}[args.cmd](args)
     except Usage as e:
         print(PREFIXE + str(e), file=sys.stderr)
         return 2
+    except Sortie as e:
+        print(str(e), file=sys.stderr)
+        return e.code
 
 
 if __name__ == "__main__":

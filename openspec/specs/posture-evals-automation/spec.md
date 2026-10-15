@@ -61,6 +61,10 @@ The system SHALL allow only one automatic run at a time; a concurrent start SHAL
 - WHEN a run is in progress
 - THEN the new start records the re-run request, says that a re-run is requested, exits successfully, plays neither the evaluation set nor the dashboard, sends no notification, and the lock of the run in progress stays in place
 
+#### Scenario: Re-run at the end
+- WHEN a re-run is requested while the evaluation set is playing
+- THEN the run announces the re-run, plays the evaluation set a second time and no third time, clears the request, and releases the lock
+
 Source: tools/evals_auto.sh; tests/evals_auto/test_evals_auto.sh (re-run requested during a run)
 
 ### Requirement: Prerequisite and notification

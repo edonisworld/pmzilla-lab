@@ -5,7 +5,9 @@
 Optional second scoring of each article with English prompts ("shadow"), strictly without effect on any decision, and a comparison report.
 
 Source of truth: `tests/watch_triage/test_shadow.py`, `tools/watch_triage.py`, `tools/watch_config.py`, `tools/watch_prompts_en.py`.
+
 ## Requirements
+
 ### Requirement: Validate the shadow setting strictly
 The system SHALL treat an absent shadow block as disabled with English as language, accept only the keys `enabled` (boolean) and `language` (English), reject unknown keys, wrong types, other languages, non-mapping blocks and duplicated keys, report the offending line when loaded through the strict loader, and never echo the rejected value in the error.
 
@@ -73,7 +75,7 @@ Source: `tests/watch_triage/test_shadow.py` (Contrat)
 - **THEN** validation raises an error
 
 ### Requirement: Compare languages in a read-only report
-The `shadow-report` command SHALL, in the terminal only, report: articles scored in both languages; agreement on keep/discard at the current threshold; mean substance in each language with mean and absolute differences; per-criterion disagreement counts; agreement with the user's calibration opinions; agreement on rescues (keep) and manual rejections (discard); and the list of decision disagreements with each side's substance, decision and missing criteria, limited by a count option (stating the limit). It SHALL ignore articles scored in one language only, SHALL say "no article scored in both languages" and whether the shadow is inactive or active when there is no data, SHALL state "no common article" for calibration when the sheet is absent, and SHALL write no file nor modify any table, nor create the settings file. The discard-reason rule SHALL be the same function used by ranking.
+The `shadow-report` command SHALL, in the terminal only, report: articles scored in both languages; agreement on keep/discard at the current threshold; mean substance in each language with mean and absolute differences; per-criterion disagreement counts; agreement with the user's calibration opinions stored in the database; agreement on rescues (keep) and manual rejections (discard); and the list of decision disagreements with each side's substance, decision and missing criteria, limited by a count option (stating the limit). It SHALL ignore articles scored in one language only, SHALL say "no article scored in both languages" and whether the shadow is inactive or active when there is no data, and SHALL state "no common article" for calibration when no calibration opinion is stored. It SHALL connect under the knowledge read-only role, SHALL write no file nor modify any table, SHALL NOT read the calibration sheet, and SHALL NOT create the settings file. The discard-reason rule SHALL be the same function used by ranking.
 
 Source: `tests/watch_triage/test_shadow.py` (Rapport)
 
@@ -83,28 +85,36 @@ Source: `tests/watch_triage/test_shadow.py` (Rapport)
 
 #### Scenario: Read only
 - **WHEN** the report runs
-- **THEN** the set of files with their modification times and shadow rows is unchanged
+- **THEN** the set of files with their modification times, the shadow rows and the calibration entries are unchanged, and the connection used is the read-only one
+
+#### Scenario: No calibration opinion
+- **WHEN** the report runs while no calibration opinion is stored, even if a sheet exists
+- **THEN** the calibration part states "no common article"
 
 ### Requirement: Catch up the shadow on articles already scored in French
-The `shadow-backfill` command SHALL score in the shadow language, with the shadow prompts, themes and model, the articles already scored in French (grid filled, complete article), in the library or set aside, that have no shadow row or a shadow row made with another prompt fingerprint, and SHALL write only to the shadow table: the French scores, the forced and excluded tables, the thresholds, the reading list and the set-aside articles SHALL stay unchanged. It SHALL refuse with a clear message when the shadow is disabled, when the shadow prompts cannot be loaded or when the model service does not answer. Articles with an opinion `g` or `e` in the calibration file SHALL come first, then the others in file order. An article already scored with the current fingerprint SHALL NOT be scored again (so an interrupted pass resumes). A failure of the model SHALL be counted without stopping the pass, a missing file SHALL be skipped and counted, `--limit N` SHALL bound the pass, and the command SHALL print progress as `[n/N]` and a final summary (scored, failures, skipped, duration). The watch run takes no lock, so the command SHALL NOT be run during the morning watch run (documented).
+The `shadow-backfill` command SHALL score in the shadow language, with the shadow prompts, themes and model, the articles already scored in French (grid filled, complete article), in the library or set aside, that have no shadow row or a shadow row made with another prompt fingerprint, and SHALL write only to the shadow table: the French scores, the forced and excluded tables, the calibration entries, the thresholds, the reading list and the set-aside articles SHALL stay unchanged. It SHALL refuse with a clear message when the shadow is disabled, when the shadow prompts cannot be loaded, when the model service does not answer, or when the database does not answer (code and message of design.md D4, before any model call). Articles with a calibration opinion (keep or discard) stored in the database SHALL come first, then the others in file order; the calibration sheet SHALL NOT be read. An article already scored with the current fingerprint SHALL NOT be scored again (so an interrupted pass resumes). A failure of the model SHALL be counted without stopping the pass, a missing file SHALL be skipped and counted, `--limit N` SHALL bound the pass, and the command SHALL print progress as `[n/N]` and a final summary (scored, failures, skipped, duration). The watch run takes no lock, so the command SHALL NOT be run during the morning watch run (documented).
 
 Source: `tests/watch_triage/test_shadow_backfill.py` (Ecritures, Reprise, Echecs, Ordre, Limite, Refus)
 
 #### Scenario: Nothing else changes
 - **WHEN** six articles scored in French, some set aside, are caught up
-- **THEN** six shadow rows exist and the scores, forced and excluded tables, the reading list and every article file are identical to before
+- **THEN** six shadow rows exist and the scores, forced and excluded tables, the calibration entries, the reading list and every article file are identical to before
 
 #### Scenario: Resume
 - **WHEN** the command runs twice, or after an interruption
 - **THEN** the second run scores nothing for articles already scored with the current fingerprint, and rescores only the one whose fingerprint is stale
 
 #### Scenario: Opinions first
-- **WHEN** the calibration file holds opinions on two articles
+- **WHEN** the database holds calibration opinions on two articles
 - **THEN** those two are scored before the others
 
 #### Scenario: Shadow disabled
 - **WHEN** the shadow is disabled in the settings
 - **THEN** the command exits with a message and calls no model
+
+#### Scenario: Database down
+- **WHEN** the database does not answer
+- **THEN** the command exits with the code of design.md D4 and calls no model
 
 ### Requirement: The shadow ends at the batch 5b decision
 The system SHALL keep the shadow scoring available until the user has measured the batch 5b English prompts with the shadow catch-up and the shadow report. After that measurement, the tracked triage settings SHALL disable the shadow. Disabling SHALL keep the stored shadow rows, the shadow setting, the catch-up command, the report and their code: the report keeps reading the stored rows. The removal of the shadow SHALL NOT happen in batch 5b; it is decided in a later batch.
@@ -119,3 +129,15 @@ Source: project decision recorded with this change; the disabled flag is set by 
 - **WHEN** the measurement is done and the shadow is disabled
 - **THEN** no new shadow row is written, the stored rows remain, and the shadow report still prints the comparison from them
 
+### Requirement: Store shadow scores in the database, apart from every decision
+The system SHALL store the shadow scores in their own table of the knowledge schema, one row per article address and language, and SHALL NOT read that table in scoring decisions, ranking, reading lists, moves, thresholds or calibration. It SHALL NOT keep shadow scores in a local file.
+
+Source: tests/watch_triage/test_shadow.py
+
+#### Scenario: Shadow rows in the database
+- **WHEN** six articles are scored with the shadow enabled
+- **THEN** six shadow rows exist in the database table, one per address and language, and no local file holds them
+
+#### Scenario: Decisions ignore the table
+- **WHEN** the shadow table is emptied and the reading list is written again
+- **THEN** the reading list, the discard reasons and the article locations are identical

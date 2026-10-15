@@ -9,6 +9,9 @@ Règles (design.md D4 du change workflow-tooling) :
   - un chemin que le texte d'un fichier de test d'une suite nomme (chemin, ou nom de module pour un .py ou .sh, ou nom de fichier pour
     les autres) sélectionne cette suite ;
   - la suite qui parcourt tous les fichiers suivis (identifiants_personnels) est toujours sélectionnée ;
+  - le manuel généré (change user-manual) : un script .py ou .sh directement sous tools/, une commande de .claude/commands/ ou le
+    fichier docs/pmzilla/manuel.md sélectionne en plus la suite « manual ». Ce renfort ne tient pas lieu de suite du chemin : un script
+    qu'aucun test ne nomme exige toujours l'exécution complète, et le manuel est le seul fichier de documentation qui sélectionne une suite ;
   - documentation seule (docs/, openspec/, CHANGELOG.md, README.md, Markdown de _bmad-output/) : rien de plus ;
   - tout autre chemin qu'aucune suite ne nomme, et tout changement de CLAUDE.md, du fichier de réglages, du lanceur, des hooks ou
     du sélecteur, exige l'exécution complète (sûr par défaut).
@@ -17,7 +20,11 @@ Sortie : une ligne « select_suites : <suite> : <raison> » par suite (code 0), 
 (code 3). Code 2 : usage ou hors dépôt Git. Le sélecteur ne lance aucun test, n'écrit aucun fichier et ne lit que l'index et tests/.
 Limites assumées : une suite qui n'exerce un fichier que par une chaîne d'imports est manquée ; un test qui nomme un fichier dans un
 commentaire sélectionne sa suite pour rien. Ces manques n'atteignent jamais main (script de fin de branche et pre-push exigent un
-lancement complet vert)."""
+lancement complet vert).
+
+Exemple :
+    python3 tools/select_suites.py
+"""
 import re
 import subprocess
 import sys
@@ -29,6 +36,8 @@ COMPLETS = {"CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json",
 PREFIXES_COMPLETS = ("tools/hooks/",)
 DOCS_PREFIXES = ("docs/", "openspec/")
 DOCS_FICHIERS = {"CHANGELOG.md", "README.md"}
+SUITE_MANUEL = "manual"
+CHEMIN_MANUEL = "docs/pmzilla/manuel.md"
 
 
 def erreur_usage(texte: str) -> int:
@@ -46,6 +55,14 @@ def chemins_indexes(racine: Path) -> list[str] | None:
 def documentation(chemin: str) -> bool:
     return (chemin in DOCS_FICHIERS or chemin.startswith(DOCS_PREFIXES)
             or (chemin.startswith("_bmad-output/") and chemin.endswith(".md")))
+
+
+def releve_du_manuel(chemin: str) -> bool:
+    """Un script directement sous tools/, une commande slash ou le manuel lui-même : le manuel généré peut changer."""
+    morceaux = chemin.split("/")
+    return (chemin == CHEMIN_MANUEL
+            or (len(morceaux) == 2 and morceaux[0] == "tools" and chemin.endswith((".py", ".sh")))
+            or (len(morceaux) == 3 and morceaux[:2] == [".claude", "commands"] and chemin.endswith(".md")))
 
 
 def suites_python(racine: Path) -> list[str]:
@@ -113,6 +130,8 @@ def selectionner(racine: Path, chemins: list[str]) -> tuple[dict[str, list[str]]
         if chemin in COMPLETS or chemin.startswith(PREFIXES_COMPLETS):
             complets.append(chemin)
             continue
+        if releve_du_manuel(chemin) and SUITE_MANUEL in py:
+            raisons.setdefault(SUITE_MANUEL, []).append(f"{chemin} (peut changer le manuel généré)")
         if documentation(chemin):
             continue
         suites = suites_du_chemin(chemin, py, shell, textes)

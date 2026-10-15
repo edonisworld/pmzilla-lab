@@ -1,0 +1,54 @@
+# Inventaire des composants de PMZilla Lab (change components-watch, R-41).
+#
+# Une entrée par composant : nom amont, genre, endroit où la version est fixée (jamais recopiée ici, fiche C15), canal suivi
+# pour un outil non épinglé, type de source des nouvelles versions et titre de la procédure de mise à jour dans
+# docs/pmzilla/installation.md. Marques possibles : requires-reindex, major-watch-only.
+#
+#     uv run tools/composants.py inventory            # version utilisée de chaque composant, hors réseau
+#     uv run tools/composants.py inventory --verify   # compare aussi aux sources du dépôt (test de tests/composants)
+#
+# Aucune adresse, aucun nom de personne ou d'équipe. Un composant ajouté au dépôt sans entrée ici fait échouer tests/composants.
+components:
+  # --- dépendances directes des scripts (en-têtes PEP 723 de tools/ et options du lanceur de tests), versions dans les verrous
+  - {name: beautifulsoup4, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: ebooklib, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: feedparser, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: httpx, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: markdownify, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: mcp, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: numpy, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: psycopg, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: pymupdf, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: pymupdf4llm, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: pyyaml, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: requests, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: trafilatura, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  # --- Python des scripts
+  - {name: python, kind: python-runtime, pinned_in: .python-version, upstream: uv Python list, procedure: Update the Python runtime}
+  # --- base de données : l'image apporte PostgreSQL et ses extensions ; une ligne PostgreSQL plus haute demande une migration
+  - {name: paradedb/paradedb, kind: docker-image, pinned_in: docker-compose.yml, upstream: Docker Hub tags, procedure: Update the database image, flags: [major-watch-only]}
+  # --- modèles Ollama : embedding de la bibliothèque (tout réindexer s'il change) et modèle du pré-tri de la veille
+  - {name: bge-m3, kind: ollama-model, pinned_in: library tool constant, upstream: Ollama registry, procedure: Update an Ollama model, flags: [requires-reindex]}
+  - {name: gemma4, kind: ollama-model, pinned_in: sorting configuration, upstream: Ollama registry, procedure: Update an Ollama model}
+  # --- BMAD : l'installation et ses modules (manifeste _bmad/_config/manifest.yaml)
+  - {name: bmad-method, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
+  - {name: core, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
+  - {name: bmm, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
+  - {name: bmb, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
+  # --- bibliothèque de graphiques copiée dans tools/vendor
+  - {name: echarts, kind: vendored, pinned_in: vendor version file, upstream: npm registry, procedure: Update the vendored chart library}
+  # --- outils des prérequis d'installation, non épinglés (fiche C5) : la vérification lit leur version locale
+  # Le canal décrit le Mac de l'auteur, pas le script d'installation (qui propose Homebrew quand l'outil manque) : le test ne
+  # reconstruit que les noms depuis les prérequis, jamais le canal. Ici git vient des outils en ligne de commande de Xcode (mis à
+  # jour par la mise à jour logicielle de macOS, au rythme d'Apple : suivi informatif, aucune nouveauté signalée) et node de fnm.
+  - {name: git, kind: tool, pinned_in: not pinned, channel: Xcode Command Line Tools, upstream: local version only, procedure: Update git (Xcode Command Line Tools)}
+  - {name: node, kind: tool, pinned_in: not pinned, channel: fnm, upstream: Node.js releases, procedure: Update Node.js (fnm)}
+  - {name: homebrew, kind: tool, pinned_in: not pinned, channel: official installer, upstream: GitHub releases, procedure: Update a Homebrew tool}
+  - {name: uv, kind: tool, pinned_in: not pinned, channel: Homebrew formula, upstream: Homebrew API, procedure: After an update of uv}
+  - {name: colima, kind: tool, pinned_in: not pinned, channel: Homebrew formula, upstream: Homebrew API, procedure: Update a Homebrew tool}
+  - {name: docker, kind: tool, pinned_in: not pinned, channel: Homebrew formula, upstream: Homebrew API, procedure: Update a Homebrew tool}
+  - {name: docker-compose, kind: tool, pinned_in: not pinned, channel: Homebrew formula, upstream: Homebrew API, procedure: Update a Homebrew tool}
+  - {name: ollama, kind: tool, pinned_in: not pinned, channel: Homebrew cask, upstream: Homebrew API, procedure: Update a Homebrew tool}
+  - {name: claude, kind: tool, pinned_in: not pinned, channel: official installer, upstream: npm registry, procedure: Update Claude Code}
+  # --- CLI OpenSpec (fiche C8) : déclarée par openspec/config.yaml, absente des prérequis d'installation
+  - {name: openspec, kind: tool, pinned_in: not pinned, channel: npm registry, upstream: npm registry, procedure: Update the OpenSpec CLI}

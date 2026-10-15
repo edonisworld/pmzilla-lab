@@ -6,19 +6,16 @@ de tête. `fake_embed` remplace `pmzilla_lab_library.embed` : il donne à une re
 contient (0,7 sinon), jamais d'appel à Ollama.
 
     sys.path.insert(0, ".../tests/fixtures_library"); import demo_library as demo
-    demo.build_sqlite(chemin)   -> dict des comptes attendus (livres, passages, figures, collections)
+    demo.expected_counts()      -> dict des comptes attendus (livres, passages, figures, collections)
     demo.CHUNKS, demo.BOOKS     -> le contenu, pour calculer l'attendu d'une requête
+    pg_demo.ThrowawayDatabase   -> (tests/library_backend/pg_demo.py) charge ce contenu par de simples INSERT dans une base jetable
 
-Contenu : 5 documents, 14 passages dont 2 figures. Collections stockées telles que SQLite les stocke (« veille » est l'ancien nom
-de « watch »). La date de publication des billets est relative à `today` pour que le bonus de fraîcheur soit testable.
+Contenu : 5 documents, 14 passages dont 2 figures. Les collections sont celles du contenu (« veille » est l'ancien nom de « watch »). La date de publication des billets est relative à `today` pour que le bonus de fraîcheur soit testable.
 """
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import json
 import math
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -29,7 +26,6 @@ import watch_paths  # noqa: E402
 
 DIMENSIONS = 1024
 MODEL = "bge-m3"
-INDEXED_AT = 1_760_000_000.0     # secondes depuis 1970 (SQLite stocke un réel)
 
 
 def vector(angle: float) -> np.ndarray:
@@ -95,27 +91,6 @@ def fake_embed(texts: list[str]) -> np.ndarray:
 
 def chunk_blob(angle: float) -> bytes:
     return vector(angle).astype(np.float16).tobytes()
-
-
-def build_sqlite(path: Path) -> dict:
-    """Crée un index SQLite au schéma réel de pmzilla_lab_library, rempli avec les documents inventés ; rend les comptes attendus."""
-    import pmzilla_lab_library as library       # import tardif : numpy, httpx
-    db = sqlite3.connect(path)
-    db.executescript(library.SCHEMA)
-    db.execute("ALTER TABLE books ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'")
-    db.execute("CREATE INDEX IF NOT EXISTS chunks_kind ON chunks(kind)")
-    ids: dict[str, int] = {}
-    for name, (title, collections, meta) in BOOKS.items():
-        cursor = db.execute(
-            "INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, title, hashlib.sha256(name.encode()).hexdigest(), collections, MODEL, INDEXED_AT, json.dumps(meta)))
-        ids[name] = cursor.lastrowid
-    for name, position, section, text, angle, kind, ref in CHUNKS:
-        db.execute("INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                   (ids[name], position, section, text, chunk_blob(angle), kind, json.dumps(ref)))
-    db.commit()
-    db.close()
-    return expected_counts()
 
 
 def expected_counts() -> dict:

@@ -22,6 +22,9 @@ lignes alignées comme diff, hors le titre, la ligne de fusion des exports et le
 Ce que l'outil affiche : des COMPTES seulement. Aucune clé de ticket, aucune valeur de champ, aucun nom d'équipe ; les écarts par projet portent la
 clé du projet (le préfixe d'une clé), pas celle d'un ticket. Code de sortie 0 si tout est identique, 1 sinon, 2 en cas d'erreur.
 À lancer par l'utilisateur seul sur les vraies données (règles deny de .claude/settings.json).
+
+Exemple :
+    uv run tools/flow_compare.py data export.csv
 """
 from __future__ import annotations
 

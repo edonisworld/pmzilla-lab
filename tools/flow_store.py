@@ -12,6 +12,8 @@ structures des lecteurs de CSV, pour que les rapports soient identiques à ceux 
     lire_tickets_flux(settings)  ->  (tickets, found, illisibles, doublons), comme flux_jira.read_exports
     lire_dependances(settings)   ->  le dictionnaire de dependencies_jira.read_exports
     lire_historique(settings)    ->  {CLÉ_MAJUSCULES: [[date ISO, départ, arrivée], ...]}, comme flux_jira.charger_historique
+    lire_donnees_cycles(settings, etiquettes_revue)  ->  une liste d'éléments (type, projet, résolution, étiquettes et versions avec
+                                 leurs périodes, transitions des tickets à étiquette Epic Review) pour `flux_jira.py cycles`
 
 Connexion : db.connect() puis SET ROLE pmzilla_flow_ro (lecture seule sur les tables de flow, aucun autre rôle). Une erreur
 de connexion ou de rôle est levée en ErreurBase (message sans mot de passe).
@@ -23,12 +25,15 @@ comme history_common.parse_moment.
 Les éléments liés aux fichiers CSV reçoivent des valeurs neutres : `found` donne le premier nom de chaque colonne des réglages
 (aucun en-tête de fichier), `illisibles` et `doublons` valent 0, `fichiers` vaut ["base"] et `tronques` est vide.
 Les tickets sont rendus par projet puis par numéro de clé (ordre stable, celui d'un export trié par clé).
+Les tickets marqués hors export (out_of_export_at non nul) ne sont rendus par aucun lecteur.
 Les tickets sans transition figurent dans l'historique avec une liste vide (historique collecté, ticket jamais déplacé).
 """
 from __future__ import annotations
 
 import datetime as dt
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import history_common as commun
 
 ROLE_LECTURE = "pmzilla_flow_ro"
 FUSEAU_PAR_DEFAUT = "Europe/Paris"
@@ -64,11 +69,11 @@ def ouvrir():
     return conn
 
 
-def _lire(settings: dict, requete: str):
+def _lire(settings: dict, requete: str, parametres: dict | None = None):
     fuseau = fuseau_export(settings)
     conn = ouvrir()
     try:
-        return list(conn.execute(requete, {"tz": fuseau.key}))
+        return list(conn.execute(requete, {"tz": fuseau.key, **(parametres or {})}))
     except _erreur():
         raise
     except Exception as erreur:
@@ -89,8 +94,22 @@ SELECT i.key, i.project, i.type, i.status, i.status_category,
        coalesce((SELECT array_agg(t.name ORDER BY it.position) FROM flow.issue_teams it
                  JOIN flow.teams t ON t.id = it.team_id WHERE it.issue_key = i.key), ARRAY[]::text[])
 FROM flow.issues i LEFT JOIN flow.teams t1 ON t1.id = i.team_id
+WHERE i.out_of_export_at IS NULL
 ORDER BY i.project, length(i.key), i.key
 """
+
+# Les tickets marqués « hors export » (out_of_export_at non nul) sont écartés de chaque lecteur : un rapport de la base égale
+# celui des fichiers CSV du jour. Un lien vers un ticket marqué reste dans la liste, sa cible est absente des tickets lus :
+# il se lit comme un lien vers un ticket hors export, comme dans la voie CSV. Un lien dont la source est marquée disparaît.
+REQUETE_LIENS = (
+    "SELECT l.source_key, l.target_key, l.link_type, l.direction FROM flow.links l "
+    "JOIN flow.issues s ON s.key = l.source_key WHERE s.out_of_export_at IS NULL"
+)
+REQUETE_HISTORIQUE = (
+    "SELECT i.key, tr.transitioned_at, tr.from_status, tr.to_status FROM flow.issues i "
+    "LEFT JOIN flow.transitions tr ON tr.issue_key = i.key WHERE i.has_history AND i.out_of_export_at IS NULL "
+    "ORDER BY i.key, tr.transitioned_at, tr.id"
+)
 
 
 def _jour(moment: dt.datetime | None) -> dt.date | None:
@@ -134,7 +153,7 @@ def lire_dependances(settings: dict) -> dict:
         }
     liens = set()
     typees, simples = set(), False
-    for source, cible, typ, sens in _lire(settings, "SELECT source_key, target_key, link_type, direction FROM flow.links"):
+    for source, cible, typ, sens in _lire(settings, REQUETE_LIENS):
         if typ and sens in SENS_BASE:
             liens.add((source, cible, typ, SENS_BASE[sens]))
             typees.add((typ, SENS_BASE[sens]))
@@ -156,14 +175,57 @@ def lire_historique(settings: dict) -> dict[str, list]:
     """Comme le cache de history_jira.py : une entrée par ticket « avec historique » (une entrée du cache importée, avec ou sans
     transition) ; un ticket sans entrée n'y figure pas, comme dans le cache, pour que la couverture et les dormants soient les mêmes."""
     fuseau = fuseau_export(settings)
-    requete = ("SELECT i.key, tr.transitioned_at, tr.from_status, tr.to_status FROM flow.issues i "
-               "LEFT JOIN flow.transitions tr ON tr.issue_key = i.key WHERE i.has_history "
-               "ORDER BY i.key, tr.transitioned_at, tr.id")
     histoire: dict[str, list] = {}
-    for cle, moment, depart, arrivee in _lire(settings, requete):
+    for cle, moment, depart, arrivee in _lire(settings, REQUETE_HISTORIQUE):
         liste = histoire.setdefault(cle.upper(), [])
         if moment is not None:
-            local = moment.astimezone(fuseau)
-            iso = local.strftime("%Y-%m-%dT%H:%M:%S.") + f"{local.microsecond // 1000:03d}" + local.strftime("%z")
-            liste.append([iso, depart, arrivee])
+            liste.append([commun.en_fuseau(moment.isoformat(), fuseau), depart, arrivee])
     return histoire
+
+
+# --- lecteurs des cycles (R-58, tâche 9.3) : périodes d'étiquettes et de versions, transitions des épics ---------------------------
+# Chaque requête passe par flow.issues et écarte les tickets marqués hors export (out_of_export_at), comme les autres lecteurs.
+# Les périodes ne portent que des étiquettes déclarées (jamais d'autre) ; les noms de version ne sortent pas de ce module vers un rapport.
+
+REQUETE_ELEMENTS_CYCLES = """
+SELECT i.key, i.project, i.type, i.status, i.resolved_at AT TIME ZONE %(tz)s, i.resolution
+FROM flow.issues i
+WHERE i.out_of_export_at IS NULL
+ORDER BY i.project, length(i.key), i.key
+"""
+REQUETE_PERIODES_ETIQUETTES = (
+    "SELECT p.issue_key, p.label, p.added_at, p.removed_at FROM flow.issue_label_periods p "
+    "JOIN flow.issues i ON i.key = p.issue_key WHERE i.out_of_export_at IS NULL ORDER BY p.issue_key, p.added_at, p.label"
+)
+REQUETE_PERIODES_VERSIONS = (
+    "SELECT p.issue_key, p.version, p.added_at, p.removed_at FROM flow.issue_version_periods p "
+    "JOIN flow.issues i ON i.key = p.issue_key WHERE i.out_of_export_at IS NULL ORDER BY p.issue_key, p.added_at, p.version"
+)
+# transitions des seuls tickets qui ont porté une étiquette Epic Review : les autres n'ont pas besoin de statut
+REQUETE_TRANSITIONS_REVUE = (
+    "SELECT tr.issue_key, tr.transitioned_at, tr.from_status, tr.to_status FROM flow.transitions tr "
+    "JOIN flow.issues i ON i.key = tr.issue_key WHERE i.out_of_export_at IS NULL AND tr.issue_key IN "
+    "(SELECT p.issue_key FROM flow.issue_label_periods p WHERE p.label = ANY(%(etiquettes_revue)s)) "
+    "ORDER BY tr.issue_key, tr.transitioned_at, tr.id"
+)
+
+
+def lire_donnees_cycles(settings: dict, etiquettes_revue: list[str]) -> list[dict]:
+    """Éléments pour le rapport des cycles : {"cle", "projet", "type", "etat", "resolu" (jour dans le fuseau d'export),
+    "motif", "labels": [(étiquette, ajoutée, retirée)], "versions": [(version, ajoutée, retirée)], "transitions":
+    [(instant, départ, arrivée)]}. Les instants sont avec fuseau (timestamptz) ; `retirée` vaut None tant que la période est
+    ouverte. Les transitions ne sont lues que pour les tickets qui ont porté une étiquette de `etiquettes_revue`."""
+    elements: dict[str, dict] = {}
+    for cle, projet, typ, etat, resolu, motif in _lire(settings, REQUETE_ELEMENTS_CYCLES):
+        elements[cle] = {"cle": cle, "projet": projet or (cle.rsplit("-", 1)[0].upper() if "-" in cle else ""),
+                         "type": (typ or "").strip() or "?", "etat": (etat or "").strip(), "resolu": _jour(resolu),
+                         "motif": (motif or "").strip(), "labels": [], "versions": [], "transitions": []}
+    for requete, champ, parametres in ((REQUETE_PERIODES_ETIQUETTES, "labels", None),
+                                       (REQUETE_PERIODES_VERSIONS, "versions", None),
+                                       (REQUETE_TRANSITIONS_REVUE, "transitions", {"etiquettes_revue": list(etiquettes_revue)})):
+        if champ == "transitions" and not etiquettes_revue:
+            continue
+        for cle, a, b, c in _lire(settings, requete, parametres):
+            if cle in elements:
+                elements[cle][champ].append((a, b, c))
+    return list(elements.values())

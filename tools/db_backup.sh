@@ -20,20 +20,91 @@
 # Variables (pour les tests) : DB_BACKUP_SAUVEGARDES (défaut : ~/.pmzilla-lab/sauvegardes), DB_BACKUP_DATE (défaut : date du
 # jour, AAAA-MM-JJ ; AAAA-MM-JJ-étiquette en minuscules et chiffres pour une deuxième sauvegarde le même jour, jamais
 # supprimée par la rotation), DB_BACKUP_GARDER (défaut : 14, entier au moins égal à 1), DB_BACKUP_SCHEMAS (défaut :
-# knowledge cases flow), DB_BACKUP_NOTIFIER (défaut : vide, pas de notification).
+# knowledge cases flow), DB_BACKUP_NOTIFIER (défaut : vide, pas de notification), PMZILLA_LAB_DATA (dossier de données du labo,
+# défaut ~/.pmzilla-lab : repère sauvegarde.encours), PMZILLA_RUN_MARKER_MAX_AGE (âge maximal du repère, défaut 21600 secondes),
+# PMZILLA_LAB_WORKSPACE (dossier de contenu exporté, défaut le dépôt de développement).
+# Lancé par son lien ~/PMZilla-Lab/db_backup.sh : le script résout le lien pour trouver son dossier de code.
+# Repère de passage (D14) : dossier sauvegarde.encours créé avec mkdir après les contrôles d'argument, retiré à la sortie par le seul
+# processus qui l'a créé ; il n'empêche jamais la sauvegarde et ne change jamais son code de sortie.
 set -uo pipefail
 umask 077
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
-RACINE="$(cd "$(dirname "$0")/.." && pwd)"
+# Le script se lance par son lien du dossier du labo (~/PMZilla-Lab/<script>) : on résout le lien pour trouver le dossier de code
+# (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
+SOI="$0"
+while [ -L "$SOI" ]; do
+  CIBLE_LIEN="$(readlink "$SOI")"
+  case "$CIBLE_LIEN" in /*) SOI="$CIBLE_LIEN" ;; *) SOI="$(dirname "$SOI")/$CIBLE_LIEN" ;; esac
+done
+RACINE="$(cd "$(dirname "$SOI")/.." && pwd)"
+# Dossier de contenu : le dépôt de développement (défaut), jamais déduit de l'emplacement du code.
+if [ -z "${PMZILLA_LAB_WORKSPACE:-}" ]; then
+  if [ -d "$HOME/PMZilla-Lab/workspace" ]; then PMZILLA_LAB_WORKSPACE="$HOME/PMZilla-Lab/workspace"; else PMZILLA_LAB_WORKSPACE="$RACINE"; fi
+fi
+export PMZILLA_LAB_WORKSPACE
 cd "$RACINE" || exit 2
 DEST="${DB_BACKUP_SAUVEGARDES:-$HOME/.pmzilla-lab/sauvegardes}"
 DATE="${DB_BACKUP_DATE:-$(date +%Y-%m-%d)}"
 GARDER="${DB_BACKUP_GARDER:-14}"
 SCHEMAS="${DB_BACKUP_SCHEMAS:-knowledge cases flow}"
+REPERE_DONNEES="${PMZILLA_LAB_DATA:-$HOME/.pmzilla-lab}"
+
+# --- Repère de passage (change run-worktree, D14) : dossier créé par mkdir dans le dossier de données du labo, avec le pid et le début.
+# Le repère ne protège pas d'un double passage : il dit seulement à la mise à jour du dossier d'exécution qu'un passage est en cours.
+# Même règle de péremption que le verrou de la veille : pid mort, ou âge (secondes écoulées depuis le début) au-dessus du maximum.
+AGE_MAX_REPERE="${PMZILLA_RUN_MARKER_MAX_AGE:-21600}"
+printf '%s' "$AGE_MAX_REPERE" | grep -Eq '^[0-9]+$' || AGE_MAX_REPERE=21600
+REPERE=""; REPERE_PROPRIETAIRE=""
+repere_maintenant() { echo "${PMZILLA_RUN_NOW:-$(date +%s)}"; }
+repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou abandonné), 1 s'il est tenu
+  local dossier=$1 pid debut age mtime
+  pid="$(cat "$dossier/pid" 2>/dev/null)"
+  if ! printf '%s' "$pid" | grep -Eq '^[0-9]+$'; then   # création en cours, ou dossier abandonné
+    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    printf '%s' "$mtime" | grep -Eq '^[0-9]+$' && [ $(( $(date +%s) - mtime )) -gt 10 ] && return 0
+    return 1
+  fi
+  kill -0 "$pid" 2>/dev/null || return 0
+  debut="$(cat "$dossier/debut" 2>/dev/null)"
+  if printf '%s' "$debut" | grep -Eq '^[0-9]+$'; then
+    age=$(( $(repere_maintenant) - debut ))
+  else
+    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    printf '%s' "$mtime" | grep -Eq '^[0-9]+$' || return 1
+    age=$(( $(date +%s) - mtime ))
+  fi
+  [ "$age" -gt "$AGE_MAX_REPERE" ] && return 0
+  return 1
+}
+poser_repere() {   # nom-du-dossier : crée le repère, ou journalise pourquoi il n'est pas créé ; ne change jamais le code de sortie
+  local dossier="$REPERE_DONNEES/$1" essai
+  mkdir -p "$REPERE_DONNEES" 2>/dev/null
+  for essai in 1 2; do
+    if mkdir "$dossier" 2>/dev/null; then
+      echo "$$" > "$dossier/pid"; repere_maintenant > "$dossier/debut"
+      REPERE="$dossier"; REPERE_PROPRIETAIRE=1
+      return 0
+    fi
+    if [ ! -d "$dossier" ]; then echo "Repère de passage impossible à écrire"; return 0; fi
+    if [ "$essai" -eq 1 ] && repere_perime "$dossier"; then
+      # renommage atomique : un seul processus reprend le repère périmé
+      mv "$dossier" "$dossier.perime.$$" 2>/dev/null && rm -rf "$dossier.perime.$$"
+      echo "Repère de passage périmé, repris"
+      continue
+    fi
+    echo "Repère de passage déjà tenu : passage sans repère propre"; return 0
+  done
+  echo "Repère de passage impossible à écrire"; return 0
+}
+retirer_repere() {   # seulement le processus qui l'a créé
+  [ -n "$REPERE_PROPRIETAIRE" ] && [ "$(cat "$REPERE/pid" 2>/dev/null)" = "$$" ] && rm -rf "$REPERE"
+  return 0
+}
 
 RAISON="voir le journal ~/Library/Logs/pmzilla-db-backup.log"
 notifier_a_la_sortie() {   # un échec de notification ne change jamais le code de sortie
   local code=$?
+  retirer_repere
   if [ "$code" -ne 0 ] && [ "${DB_BACKUP_NOTIFIER:-}" = "1" ]; then
     osascript -e "display notification \"Sauvegarde de la base en échec (code $code) : $RAISON\" with title \"PMZilla db-backup\"" \
       >/dev/null 2>&1 || echo "Notification macOS impossible"
@@ -51,6 +122,7 @@ fi
 if ! printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9]+)?$'; then
   echec 2 "Date invalide : $DATE (attendu AAAA-MM-JJ, ou AAAA-MM-JJ-étiquette pour une deuxième sauvegarde le même jour)"
 fi
+poser_repere sauvegarde.encours
 CIBLE="$DEST/db-$DATE"
 if [ -e "$CIBLE" ]; then
   echo "La sauvegarde du jour existe déjà : $CIBLE (rien n'a été écrit ni supprimé)"; exit 0

@@ -22,12 +22,13 @@ class Selecteur(unittest.TestCase):
         self.git("config", "user.email", "t@example.org")
         self.git("config", "user.name", "test")
         self.ecrire("tests/run_all.sh", LANCEUR)
-        self.ecrire("tests/alpha/test_alpha.py", "import outil_a\n")                       # nomme tools/outil_a.py
+        self.ecrire("tests/alpha/test_alpha.py", "import outil_a\nCOMMANDE = '.claude/commands/demo.md'\n")   # nomme tools/outil_a.py
         self.ecrire("tests/beta/test_beta.py", "CHEMIN = 'tools/sous/outil_b.py'\n")      # nomme un chemin
         self.ecrire("tests/identifiants_personnels/test_id.py", "pass\n")
         self.ecrire("tests/hooks/test_pre_commit.sh", "echo hooks\n")
         self.ecrire("tests/finish_branch/test_finish_branch.sh", "echo finish\n")
         self.ecrire("tests/gamma/test_gamma.py", "DONNEES = 'cas.yaml'\n")
+        self.ecrire("tests/manual/test_manuel.py", "pass\n")
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "base")
 
@@ -55,7 +56,7 @@ class Selecteur(unittest.TestCase):
 
     def test_outil_nomme_par_une_suite(self):
         self.indexer("tools/outil_a.py")
-        self.assertEqual(self.suites(), {"alpha", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
 
     def test_chaque_ligne_donne_la_raison(self):
         self.indexer("tools/outil_a.py")
@@ -78,6 +79,48 @@ class Selecteur(unittest.TestCase):
     def test_script_de_test_shell_liste(self):
         self.indexer("tests/hooks/test_pre_commit.sh")
         self.assertEqual(self.suites(), {"hooks", "identifiants_personnels"})
+
+    def test_manuel_seul_selectionne_la_suite_du_manuel(self):
+        self.indexer("docs/pmzilla/manuel.md")
+        self.assertEqual(self.suites(), {"manual", "identifiants_personnels"})
+
+    def test_autre_documentation_ne_selectionne_pas_la_suite_du_manuel(self):
+        self.indexer("docs/pmzilla/autre.md", "README.md")
+        self.assertEqual(self.suites(), {"identifiants_personnels"})
+
+    def test_script_de_tools_nomme_selectionne_aussi_la_suite_du_manuel(self):
+        self.indexer("tools/outil_a.py")
+        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+
+    def test_script_shell_de_tools_selectionne_la_suite_du_manuel(self):
+        self.indexer("tools/outil_a.sh")
+        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+
+    def test_commande_slash_selectionne_la_suite_du_manuel(self):
+        self.indexer(".claude/commands/demo.md")
+        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+
+    def test_la_raison_de_la_suite_du_manuel_est_donnee(self):
+        self.indexer(".claude/commands/demo.md")
+        self.assertIn("select_suites : manual : .claude/commands/demo.md", self.selection()[1])
+
+    def test_commande_slash_que_aucun_test_ne_nomme_exige_l_execution_complete(self):
+        self.indexer(".claude/commands/inconnue.md")
+        self.assertEqual(self.selection()[0], 3)
+
+    def test_script_de_tools_qu_aucun_test_ne_nomme_exige_toujours_l_execution_complete(self):
+        self.indexer("tools/orphelin.py")
+        code, sortie = self.selection()
+        self.assertEqual(code, 3)
+        self.assertIn("exécution complète requise : tools/orphelin.py", sortie)
+
+    def test_le_manuel_ne_compte_pas_comme_suite_du_chemin_pour_un_script_orphelin(self):
+        self.indexer("tools/orphelin.sh", "docs/pmzilla/manuel.md")
+        self.assertEqual(self.selection()[0], 3)
+
+    def test_un_script_hors_de_tools_ne_selectionne_pas_la_suite_du_manuel(self):
+        self.indexer("tools/sous/outil_b.py")
+        self.assertEqual(self.suites(), {"beta", "identifiants_personnels"})
 
     def test_documentation_seule_ne_selectionne_que_les_gardes(self):
         self.indexer("docs/pmzilla/x.md", "openspec/changes/c/tasks.md", "CHANGELOG.md", "README.md", "_bmad-output/pmzilla/a.md")

@@ -10,7 +10,7 @@ interactif, vérifie que les règles tiennent toujours (posture annoncée, reche
 bibliothèque, citations, questions de contexte, intervention de Critic, aucun nom en mémoire)
 et écrit un rapport comparé au passage précédent.
 
-    uv run ~/PMZilla-Lab/posture_evals.py [--cases id1,id2] [--model M] [--judge-model M] [--keep] [--backend sqlite|postgres]
+    uv run ~/PMZilla-Lab/posture_evals.py [--cases id1,id2] [--model M] [--judge-model M] [--keep]
                                            [--real-memory] [--cases-file FICHIER] [--prerequisites-only]
 
 Chaque cas tourne dans une copie temporaire du workspace (git worktree), créée à partir de l'état
@@ -89,8 +89,7 @@ KNOWLEDGE_DBNAME_VARIABLE = "PMZILLA_LAB_KNOWLEDGE_DBNAME"
 KNOWLEDGE_READ_ROLE = "pmzilla_knowledge_ro"
 KNOWLEDGE_TABLES = "knowledge.book_collections, knowledge.chunks, knowledge.books, knowledge.collections"
 LIBRARY_UNREACHABLE = "base de la bibliothèque injoignable"
-LIBRARY_UNAVAILABLE = "bibliothèque jetable indisponible : {detail}"
-LIBRARY_NO_DATABASE = "base jetable absente"
+LIBRARY_UNAVAILABLE = "throwaway library unavailable"
 PREREQUISITES_MET = "prérequis satisfaits"
 INDEX_TIMEOUT = 600   # secondes pour indexer la bibliothèque jetable d'un cas
 # Mémoire figée : version neutre du vécu des postures, qui remplace le vécu réel dans la copie
@@ -468,10 +467,14 @@ def show_tools(source: Path) -> None:
                 print("    → " + call["result"].strip().replace("\n", "\n      ")[:1200])
 
 
-def library_backend() -> str | None:
-    """Voie de la bibliothèque pour ce passage : `--backend` (posée dans l'environnement par main), sinon PMZILLA_LAB_BACKEND ;
-    None = celle du serveur (postgres par défaut, sqlite sur demande jusqu'au retrait de la voie fichier)."""
-    return os.environ.get("PMZILLA_LAB_BACKEND") or None
+BACKEND_REFUSED = "--backend n'existe plus : la bibliothèque est lue dans PostgreSQL seulement"
+
+
+def refuse_backend_option(argv: list[str]) -> None:
+    """`--backend` (quelle que soit sa valeur) : arrêt avant toute copie, base ou séance, code 2."""
+    if any(arg == "--backend" or arg.startswith("--backend=") for arg in argv):
+        print(f"PMZilla Lab, erreur : {BACKEND_REFUSED}.", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def check_fixtures(cases: list[dict]) -> None:
@@ -498,9 +501,7 @@ def cases_environment(dbname: str | None) -> dict[str, str]:
 
 def create_cases_database() -> str | None:
     """Base jetable `pmzilla_eval_<hex>` de l'instance (connexion du superutilisateur de db.connect), toutes migrations appliquées ;
-    None si elle ne peut pas être créée (instance arrêtée, voie `--backend sqlite`)."""
-    if library_backend() == "sqlite":
-        return None
+    None si elle ne peut pas être créée (instance arrêtée)."""
     name = "pmzilla_eval_" + secrets.token_hex(6)
     admin = None
     created = False
@@ -557,17 +558,13 @@ def reset_cases_database(name: str, fixture: Path | None) -> None:
         conn.close()
 
 
-def mcp_config(folder: Path, knowledge_dbname: str | None = None, backend: str | None = None,
+def mcp_config(folder: Path, knowledge_dbname: str | None = None,
                cases_env: dict[str, str] | None = None, label: str | None = None) -> Path:
-    """Configuration MCP de la bibliothèque. Avec `knowledge_dbname` (bibliothèque jetable d'un cas), le serveur lit cette base,
-    toujours par la voie PostgreSQL, quelle que soit la voie choisie pour le passage, et sans dossier de données ; sinon `backend`
-    (sqlite ou postgres, défaut : library_backend()). `label` nomme un fichier à part, pour ne pas écraser celui du passage."""
+    """Configuration MCP de la bibliothèque. Avec `knowledge_dbname` (bibliothèque jetable d'un cas), le serveur lit cette base
+    (PMZILLA_LAB_KNOWLEDGE_DBNAME) ; sinon celle de l'installation. Aucune voie n'est jamais passée au serveur. `label` nomme un fichier à part, pour ne pas écraser celui du passage."""
     config = folder / ("mcp.json" if label is None else f"mcp-{label}.json")
     server = {"command": shutil.which("uv") or "/opt/homebrew/bin/uv",
               "args": ["run", str(TOOLS / "pmzilla_lab_library.py"), "serve"]}
-    backend = "postgres" if knowledge_dbname else (backend or library_backend())
-    if backend:
-        server["args"] += ["--backend", backend]
     if knowledge_dbname:
         server["env"] = {KNOWLEDGE_DBNAME_VARIABLE: knowledge_dbname}
     if cases_env:
@@ -580,7 +577,7 @@ class LibraryUnavailable(Exception):
     """La bibliothèque jetable d'un cas ne peut pas être préparée : le cas est non évaluable, avec ce message."""
 
     def __init__(self, detail: str) -> None:
-        super().__init__(LIBRARY_UNAVAILABLE.format(detail=detail))
+        super().__init__(f"{LIBRARY_UNAVAILABLE} : {detail}" if detail else LIBRARY_UNAVAILABLE)
 
 
 def reset_case_library(name: str) -> None:
@@ -601,7 +598,7 @@ def case_library(case: dict, folder: Path, cases_env: dict[str, str] | None = No
     if not case.get("library"):
         return None
     if not dbname:
-        raise LibraryUnavailable(LIBRARY_NO_DATABASE)
+        raise LibraryUnavailable("")
     try:
         reset_case_library(dbname)
     except Exception as error:
@@ -1328,9 +1325,6 @@ def main() -> None:
     parser.add_argument("--judge-model", help=f"modèle du juge (défaut : {DEFAULT_JUDGE_MODEL}) ; avec --rejudge, "
                                               "rejuge les traces d'un passage avec ce juge")
     parser.add_argument("--keep", action="store_true", help="garder les copies temporaires pour inspection")
-    parser.add_argument("--backend", choices=("sqlite", "postgres"),
-                        help="voie de la bibliothèque lue par le serveur MCP (défaut : PMZILLA_LAB_BACKEND, puis celle du serveur, "
-                             "postgres) ; la bibliothèque jetable d'un cas est toujours lue dans la base jetable du passage")
     parser.add_argument("--real-memory", action="store_true",
                         help="tester avec la mémoire réelle des postures au lieu de la mémoire figée de tests/postures/memoire/")
     parser.add_argument("--retries", type=int, default=2, metavar="N",
@@ -1356,9 +1350,8 @@ def main() -> None:
                              "aucune séance, aucun juge, aucun rapport ; code de sortie 0 si tous sont satisfaits, 1 sinon")
     parser.add_argument("--language", choices=LANGUAGES, default=DEFAULT_LANGUAGE,
                         help="langue des cas : fr (défaut, comportement d'avant) ou en (ne rejoue que les cas qui ont une variante `en:`)")
+    refuse_backend_option(sys.argv[1:])
     args = parser.parse_args(check_options(sys.argv[1:]))
-    if args.backend:      # lu par mcp_config : le serveur MCP de la bibliothèque lit cette voie (sqlite ou postgres)
-        os.environ["PMZILLA_LAB_BACKEND"] = args.backend
 
     if args.tools:
         show_tools(DATA / args.tools)

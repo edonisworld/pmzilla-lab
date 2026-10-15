@@ -175,7 +175,7 @@ class MoteurDeConteneurs(Base):
         p = self.lancer(reponses="")
         self.assertEqual(p.code, 4, p.texte)
         self.assertEqual(self.changements(p), [])
-        for ligne in ("database step deferred", "library server registered with the file backend", "backup job not installed"):
+        for ligne in ("database step deferred", "library server step deferred", "backup job not installed"):
             self.assertIn(ligne, p.texte)
 
     def test_refus_apres_une_acceptation_arrete_la_proposition(self):
@@ -204,11 +204,22 @@ class Ollama(Base):
         self.decor(ollama=False, modeles=())
         p = self.lancer(reponses="y\ny\ny\n")
         self.assertEqual(p.code, 0, p.texte)
-        self.assertEqual(self.changements(p), ["brew install --cask ollama", "ollama pull bge-test", "ollama pull gemma-test:1b"])
+        self.assertEqual(self.changements(p), ["brew install --cask ollama-app", "ollama pull bge-test", "ollama pull gemma-test:1b"])
         self.assertIn("about 1.2 GB", p.texte)
         self.assertIn("about 18 GB", p.texte)
         q = self.lancer()
         self.assertEqual((q.code, self.changements(q)), (0, []))
+
+    def test_application_sans_ligne_de_commande_etape_manuelle_sans_brew(self):
+        self.decor(ollama=False, modeles=())
+        (self.fx.tmp / "Applications" / "Ollama.app").mkdir(parents=True)
+        p = self.lancer(reponses="y\ny\ny\n")
+        self.assertEqual(p.code, 4, p.texte)
+        self.assertEqual(self.changements(p), [])
+        self.assertEqual(p.appels_de("brew"), [])
+        self.assertIn("Ollama.app", p.texte)
+        self.assertIn("watch job not installed", p.texte)
+        self.assertIn("indexing deferred", p.texte)
 
     def test_ollama_refuse_reporte_la_veille_et_l_indexation(self):
         self.decor(ollama=False, modeles=())
@@ -242,7 +253,7 @@ class PassageABlanc(Base):
         self.assertEqual(p.code, 0, p.texte)
         self.assertEqual(self.fx.empreinte(), avant)
         self.assertEqual(self.changements(p), [])
-        for texte in ("dry run: would run brew install git uv node", "colima start", "brew install --cask ollama"):
+        for texte in ("dry run: would run brew install git uv node", "colima start", "brew install --cask ollama-app"):
             self.assertIn(texte, p.texte)
 
 

@@ -29,6 +29,8 @@ import history_jira as hj          # noqa: E402
 
 JETON = "test-token-000"
 EMAIL = "utilisateur@example.org"
+CLOUD_ID = "cloud-123"
+PASSERELLE = f"/ex/jira/{CLOUD_ID}"     # le seul chemin des appels authentifiés
 CHAMP = "customfield_10001"
 AUJOURDHUI = "2026-10-04"
 
@@ -66,6 +68,8 @@ class FauxJira:
         self.jeton_repete = False
         self.requetes = []
         self.appels_get = []
+        self.hors_passerelle = []     # chemins appelés avec authentification en dehors de la passerelle
+        self.appels = []              # (méthode, chemin) de chaque appel reçu, écritures comprises (aucune n'est admise)
         self.champs = [
             {"id": "summary", "name": "Summary", "custom": False, "searchable": True, "schema": {"type": "string"}},
             {"id": "customfield_10001", "name": "[G] Team/s", "custom": True, "schema": {"type": "array"}},
@@ -88,7 +92,18 @@ def fabriquer_serveur(faux: FauxJira):
             self.end_headers()
             self.wfile.write(donnees)
 
+        def hors(self) -> bool:
+            """Vrai (et appel noté) si la requête authentifiée ne passe pas par la passerelle ; sinon retire le préfixe."""
+            if "Authorization" in self.headers and not self.path.startswith(PASSERELLE + "/"):
+                faux.hors_passerelle.append(self.path)
+                return True
+            self.path = self.path[len(PASSERELLE):] if self.path.startswith(PASSERELLE + "/") else self.path
+            return False
+
         def do_GET(self):
+            if self.hors():
+                return self.repondre(404)
+            faux.appels.append(("GET", self.path))
             if self.headers.get("Authorization") != faux.attendu:
                 return self.repondre(401)
             faux.appels_get.append(self.path)
@@ -98,6 +113,9 @@ def fabriquer_serveur(faux: FauxJira):
 
         def do_POST(self):
             corps = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            if self.hors():
+                return self.repondre(404)
+            faux.appels.append(("POST", self.path))
             if self.headers.get("Authorization") != faux.attendu:
                 return self.repondre(401)
             if self.path != "/rest/api/3/search/jql":
@@ -115,6 +133,15 @@ def fabriquer_serveur(faux: FauxJira):
                       for i, c in enumerate(cles[debut:fin], start=debut)]
             suite = {} if fin >= len(cles) else {"nextPageToken": "boucle" if faux.jeton_repete else str(fin)}
             return self.repondre(200, {"issues": issues, **suite})
+
+        def ecriture(self):
+            """Toute méthode d'écriture est notée puis refusée : l'export ne doit jamais en émettre."""
+            self.hors()
+            faux.appels.append((self.command, self.path))
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            return self.repondre(405)
+
+        do_PUT = do_DELETE = do_PATCH = ecriture
 
     return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 
@@ -136,15 +163,19 @@ class Base(unittest.TestCase):
                   mock.patch.object(hj, "CONFIG_FILE", flux / "flux.yaml"),
                   mock.patch.object(hj, "lire_jeton", lambda: JETON),
                   mock.patch.object(hj, "API_ATLASSIAN", self.url), mock.patch.object(hj, "PAUSE", 0),
-                  mock.patch.object(hj, "_JETON", None)):
+                  mock.patch.object(hj, "_JETON", None),
+                  mock.patch.object(hj, "aujourd_hui", lambda: dt.date.fromisoformat(AUJOURDHUI))):     # conservation : date fixe
             p.start()
             self.addCleanup(p.stop)
         self.ecrire_reglages()
 
-    def ecrire_reglages(self, extra: str = None):
+    def ecrire_reglages(self, extra: str = None, jeton: str | None = "scoped", cloud: str | None = CLOUD_ID):
+        """jeton et cloud : None retire le réglage ; « classic » est refusé par l'outil."""
         extra = f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n" if extra is None else extra
-        (self.ws / "Flux-Lab" / "flux.yaml").write_text(
-            f"jira_site: {self.url}\njira_email: {EMAIL}\njira_token_type: classic\n{extra}", encoding="utf-8")
+        connexion = f"jira_site: {self.url}\njira_email: {EMAIL}\n"
+        connexion += f"jira_token_type: {jeton}\n" if jeton else ""
+        connexion += f"jira_cloud_id: {cloud}\n" if cloud else ""
+        (self.ws / "Flux-Lab" / "flux.yaml").write_text(connexion + extra, encoding="utf-8")
 
     def lancer(self, *argv):
         sortie = io.StringIO()
@@ -154,6 +185,9 @@ class Base(unittest.TestCase):
                 ex.main(list(argv))
             except SystemExit as s:
                 code = s.code or 0
+                if isinstance(code, str):            # réglage refusé (ErreurConfig) : message sur stderr et code 1, comme au lancement
+                    print(code)
+                    code = 1
         return code, sortie.getvalue()
 
     def exporter(self, nom="api.csv") -> Path:
@@ -191,6 +225,67 @@ class AnciensNoms(Base):
             code, _ = self.lancer(ancien)
             self.assertEqual(code, 2, ancien)
         self.assertEqual(self.faux.requetes, [])
+
+
+class JetonAScopes(Base):
+    """Le client de l'export est celui de history_jira.py : passerelle seule, cloudId des réglages, « classic » refusé."""
+
+    def commandes(self):
+        return (("export", "--output", str(self.ws / "x.csv")), ("fields", "--search", "team"), ("diagnose",))
+
+    def test_les_appels_passent_par_la_passerelle(self):
+        for argv in self.commandes():
+            self.lancer(*argv)
+        self.assertGreater(len(self.faux.requetes) + len(self.faux.appels_get), 0)
+        self.assertEqual(self.faux.hors_passerelle, [])
+
+    def test_reglage_absent_utilise_la_passerelle(self):
+        self.ecrire_reglages(jeton=None)
+        code, sortie = self.lancer("fields", "--search", "team")
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(self.faux.hors_passerelle, [])
+
+    def test_classic_refuse_avant_le_trousseau_et_tout_appel(self):
+        self.ecrire_reglages(jeton="classic")
+        jeton = mock.Mock(return_value=JETON)
+        for argv, attendu in ((self.commandes()[0], "jeton classique refusé : utiliser un jeton à scopes"),
+                              (self.commandes()[1], "jeton classique refusé : utiliser un jeton à scopes"),
+                              (self.commandes()[2], "jeton classique refusé : utiliser un jeton à scopes"),
+                              (self.commandes()[0] + ("--language", "en"), "classic token refused: use a scoped token")):
+            with self.subTest(argv=argv), mock.patch.object(hj, "lire_jeton", jeton):
+                code, sortie = self.lancer(*argv)
+                self.assertEqual(code, 1)
+                self.assertIn(attendu, sortie)
+                self.assertNotIn("Traceback", sortie)
+        jeton.assert_not_called()
+        self.assertEqual((self.faux.requetes, self.faux.appels_get, self.faux.hors_passerelle), ([], [], []))
+        self.assertFalse((self.ws / "x.csv").exists())
+
+    def test_cloud_id_absent_ou_inexploitable(self):
+        jeton = mock.Mock(return_value=JETON)
+        for cloud in (None, "a/../b"):
+            self.ecrire_reglages(cloud=cloud)
+            for argv in self.commandes():
+                with self.subTest(cloud=cloud, argv=argv), mock.patch.object(hj, "lire_jeton", jeton):
+                    code, sortie = self.lancer(*argv)
+                    self.assertEqual(code, 1)
+                    self.assertIn("cloudId introuvable", sortie)
+                    self.assertNotIn("Traceback", sortie)
+        jeton.assert_not_called()
+        self.assertEqual((self.faux.requetes, self.faux.appels_get, self.faux.hors_passerelle), ([], [], []))
+
+    def test_aucune_lecture_du_cloud_id_sur_le_site(self):
+        original = hj.Client.requete
+        vus = []
+
+        def espion(client, methode, chemin, **kwargs):
+            vus.append(chemin)
+            return original(client, methode, chemin, **kwargs)
+
+        with mock.patch.object(hj.Client, "requete", espion):
+            self.exporter("passerelle.csv")
+        self.assertGreater(len(vus), 0)
+        self.assertNotIn("/_edge/tenant_info", vus)
 
 
 class Export(Base):
@@ -440,14 +535,13 @@ class TableEquipes(Base):
         code, sortie = self.lancer("export", "--output", str(chemin))
         self.assertEqual(code, 1)
         self.assertFalse(chemin.exists())
-        self.assertIn("Créer à la main Flux-Lab/equipes-assets.yaml", sortie)
-        self.assertIn("equipes: {identifiant: libellé}", sortie)
+        self.assertIn("Renseigner le référentiel d'organisation Flux-Lab/organisation.yaml", sortie)
+        self.assertIn("jira_team_ids", sortie)
         self.assertIn("`diagnose`", sortie)
         self.assertNotIn("teams-table", sortie)
         self.assertNotIn("table-equipes", sortie)
         code, sortie = self.lancer("export", "--output", str(chemin), "--language", "en")
-        self.assertIn("Create Flux-Lab/equipes-assets.yaml by hand", sortie)
-        self.assertIn("equipes: {identifier: label}", sortie)
+        self.assertIn("Fill the organisation referential Flux-Lab/organisation.yaml", sortie)
 
     def test_table_illisible_arrete_l_export(self):
         self.ecrire_table("equipes: [pas, un, dictionnaire")
@@ -522,7 +616,7 @@ class ChampEquipeIllisible(Base):
         self.assertEqual(code, 1)
         self.assertFalse(chemin.exists())
         self.assertIn("ne renvoie pas le libellé", sortie)
-        self.assertIn("Créer à la main Flux-Lab/equipes-assets.yaml", sortie)
+        self.assertIn("Renseigner le référentiel d'organisation Flux-Lab/organisation.yaml", sortie)
         self.assertIn("objet {id, objectId, workspaceId}", sortie)              # forme, jamais les valeurs
         for valeur in ("ws-secret", "w:123", '"123"', "ABC-"):
             self.assertNotIn(valeur, sortie)

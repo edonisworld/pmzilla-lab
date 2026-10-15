@@ -211,3 +211,20 @@ Source: tests/db/test_db.py (test_erreur_de_connexion_sans_le_mot_de_passe, test
 - WHEN the migrate command fails to connect
 - THEN the exit code is 1, stderr starts with an error message and neither stream contains the password
 
+### Requirement: Later migrations add structure only, under the owner role
+The system SHALL keep the watch-and-triage and flow data-protection migrations free of data statements, passwords and role creation, SHALL number the second right after the first, SHALL create its objects under the owner role, and SHALL leave their tables empty. Writing rows, setting a password or creating a role in them is excluded.
+
+Source: tests/db/test_watch_schema.py (SansBase, AvecBase); tests/db/test_flow_gdpr.py (SansBase, ColonneEtTables)
+
+#### Scenario: Static reading of the two migrations
+- **WHEN** the watch-and-triage and the flow data-protection migrations are read
+- **THEN** the first declares the knowledge schema, the second declares the flow schema and follows the first, and neither contains an insert, a password or a role creation (the second contains no update, delete or copy statement either)
+
+#### Scenario: Owner role before the first change
+- **WHEN** the flow data-protection migration is read
+- **THEN** it switches to the owner role before altering the issues table
+
+#### Scenario: Empty tables after migration
+- **WHEN** all migrations are applied to a disposable database
+- **THEN** the watch and triage tables and the flow tables hold no row
+

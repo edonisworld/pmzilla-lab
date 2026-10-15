@@ -2,38 +2,40 @@
 
 ## Purpose
 
-Measurement of how closely the PostgreSQL search path agrees with the SQLite path on a frozen query set: overlap, verdict, latency, per-component runs, plan inspection, and report confidentiality.
+Regression guard of the library search: the results of a frozen bilingual query set are compared with a snapshot recorded by hand, so that a silently degraded index (after a REINDEX, a migration or a change of the search code) does not go unnoticed: overlap, verdict, latency, per-component runs, plan inspection, changes of the library since the snapshot, and report confidentiality.
 
 Source of truth: `tests/parity/test_parity.py`, `tests/parity/test_parity_main.py`, `tests/parity/queries.yaml` (structure only), `tools/library_parity.py`.
-## Requirements
-### Requirement: Measure overlap of the top results of two paths
-The system SHALL run every query of the set on both paths with the same limit and filters, SHALL compare the top results as (file, position) pairs and SHALL record, per query, how many results are common. It SHALL compute the query embedding once and share it so that only the search differs, and SHALL do so before starting the latency clock.
 
-Source: `tests/parity/test_parity.py` (Mesure.test_recouvrement_8_sur_8_4_sur_8_0_sur_8, Mesure.test_limite_et_filtres_transmis, Mesure.test_embedding_calcule_avant_la_mesure_de_latence)
+## Requirements
+
+### Requirement: Measure overlap of the top results of two paths
+The system SHALL run every query of the set on the PostgreSQL search with the snapshot's limit, filters and freshness date, SHALL compare its top results with the snapshot's as (file, position) pairs and SHALL record, per query, how many results are common. It SHALL compute each query embedding before starting the latency clock. It SHALL NOT run any other search route.
+
+Source: `tests/parity/test_parity.py` (Mesure)
 
 #### Scenario: Full, half and no overlap
-- **WHEN** the two paths return eight, four or zero common results out of eight
+- **WHEN** the search returns eight, four or zero of the eight results of the snapshot
 - **THEN** the per-query common count is eight, four or zero
 
 #### Scenario: Limit and filters forwarded
-- **WHEN** a query has collections and types and a limit is given, or a global collection filter is set
-- **THEN** both paths receive the same arguments and the common count is bounded by the limit
+- **WHEN** a query of the set has collections and types
+- **THEN** the search receives them, with the snapshot's limit and freshness date, and the common count is bounded by the limit
 
 #### Scenario: Warm-up
 - **WHEN** a run starts
 - **THEN** each question is embedded before its latency is measured
 
 ### Requirement: Give a verdict from mean overlap, worst query and rare queries
-The system SHALL declare parity when the mean overlap reaches a threshold, no query falls under a minimum overlap, and every query marked rare shares at least a stricter minimum of results. It SHALL expose the mean, the minimum, the worst query, the queries below the minimum and the failing rare queries, and SHALL let the mean threshold be set from the command line.
+The system SHALL declare parity with the snapshot when the mean overlap reaches a threshold, no query falls under a minimum overlap, and every query marked rare shares at least a stricter minimum of results. It SHALL expose the mean, the minimum, the worst query, the queries below the minimum and the failing rare queries, and SHALL let the mean threshold be set from the command line.
 
 Source: `tests/parity/test_parity.py` (Mesure.test_moyenne_minimum_et_pire_requete, test_verdict_parite, test_seuil_de_la_moyenne, test_requete_rare_exige_7_sur_8)
 
 #### Scenario: Identical results
-- **WHEN** both paths return the same results
+- **WHEN** the search returns the snapshot's results for every query
 - **THEN** the verdict is parity with a mean of one
 
 #### Scenario: One query without overlap
-- **WHEN** one of three queries has no common result
+- **WHEN** one of three queries has no common result with the snapshot
 - **THEN** the mean is the average of the three, the minimum is zero, that query is named worst and below the minimum, and the verdict is not parity
 
 #### Scenario: Mean threshold
@@ -45,33 +47,33 @@ Source: `tests/parity/test_parity.py` (Mesure.test_moyenne_minimum_et_pire_reque
 - **THEN** it is listed as a failing rare query and the verdict is not parity even with a low threshold
 
 ### Requirement: Report latency for each path
-The system SHALL measure the search duration of each path per query, excluding embedding, and SHALL report per path a latency summary including a 95th percentile.
+The system SHALL measure the search duration of each query on the PostgreSQL search, excluding embedding, and SHALL report a latency summary including a 95th percentile.
 
 Source: `tests/parity/test_parity.py` (Mesure.test_latences, Rapport.test_rapport_sans_texte_ni_titre)
 
 #### Scenario: Timings
 - **WHEN** a controlled clock gives durations for two queries
-- **THEN** per-path latency lists match and the 95th percentile of the PostgreSQL path is computed from them
+- **THEN** the latency list matches and the 95th percentile is computed from it
 
 ### Requirement: Measure one component on request
-The system SHALL pass a chosen component (semantic only or keyword only) to both paths, SHALL call paths without a component parameter when the component is the default (both), and SHALL label the report with the component and mark each query "ok" or "gap" with both latencies.
+The system SHALL record and compare one chosen component (semantic only or keyword only) when it is requested, SHALL call the search without a component parameter when the component is the default (both), SHALL refuse to compare a component different from the snapshot's, and SHALL label the report with the component and mark each query "ok" or "gap" with its latency.
 
 Source: `tests/parity/test_parity.py` (Composante)
 
 #### Scenario: Semantic only
-- **WHEN** the semantic component is chosen
-- **THEN** both paths are called with it
+- **WHEN** a snapshot was recorded for the semantic component and the comparison asks for it
+- **THEN** the search is called with it
 
 #### Scenario: Default component
-- **WHEN** no component is chosen
-- **THEN** simple backends that lack the component parameter still work
+- **WHEN** no component is chosen (the default, both)
+- **THEN** the search is called without a component parameter, at record and at comparison alike
 
 #### Scenario: Per-query verdict
-- **WHEN** one query has no overlap in a keyword-only run
-- **THEN** the report line of that query says gap, the other says ok, and both show their latencies in milliseconds
+- **WHEN** one query has no overlap in a keyword-only comparison
+- **THEN** the report line of that query says gap, the other says ok, and both show their latency in milliseconds
 
 ### Requirement: Keep the report free of book content
-The system SHALL print by default only query identifiers, overlap, verdict and latency, SHALL add file:position pairs only with the details option, SHALL never print passage text or titles, SHALL state the verdict ("parity not reached" when it fails), and SHALL write no file.
+The system SHALL print by default only query identifiers, overlap, verdict, latency and the counts of library changes, SHALL add file:position pairs only with the details option, SHALL never print passage text or titles, SHALL state the verdict ("parity not reached" when it fails), and SHALL write no file during a comparison.
 
 Source: `tests/parity/test_parity.py` (Rapport.test_rapport_sans_texte_ni_titre, Rapport.test_aucun_fichier_ecrit)
 
@@ -81,11 +83,11 @@ Source: `tests/parity/test_parity.py` (Rapport.test_rapport_sans_texte_ni_titre,
 
 #### Scenario: Details
 - **WHEN** details are requested
-- **THEN** file:position pairs specific to each path are listed, but no text
+- **THEN** file:position pairs found only in the snapshot or only in the current results are listed, but no text
 
 #### Scenario: No file
-- **WHEN** a report is built and rendered in an empty directory
-- **THEN** the directory is still empty
+- **WHEN** a comparison is run and rendered in an empty directory
+- **THEN** the directory is still empty and the snapshot is unchanged
 
 ### Requirement: Show the query plan without literals
 The system SHALL offer a plan mode for a single query on the PostgreSQL path only, SHALL run the query with an execution-analysing explain inside a transaction it rolls back, and SHALL redact from the plan every literal (question words, collections, dates, vector) while keeping nodes, indexes, row counts and times.
@@ -144,36 +146,55 @@ Source: `tests/parity/test_parity.py` (JeuFige)
 - **THEN** their types are within text and figure, collections are lists, and rare and typed queries exist
 
 ### Requirement: Exit with a code reflecting the verdict
-The system SHALL exit with 0 when parity is reached, 1 when it is not, and 2 when the measurement could not be made.
+The system SHALL exit with 0 when parity with the snapshot is reached, 1 when it is not, and 2 when the measurement could not be made (no snapshot, query set changed, settings differ, database unreachable).
 
-Source: `tests/parity/test_parity_main.py` (CodeDeSortie.test_parite_atteinte_code_0, test_parite_non_atteinte_code_1), `tests/parity/test_parity.py` (code-2 paths)
+Source: `tests/parity/test_parity_main.py` (CodeDeSortie), `tests/parity/test_parity.py` (code-2 paths)
 
 #### Scenario: Parity reached
-- **WHEN** a full run compares two paths that return the same results for every query
+- **WHEN** a full comparison finds the snapshot's results for every query
 - **THEN** the exit code is 0 and the report does not say parity was not reached
 
 #### Scenario: Parity not reached
-- **WHEN** a full run compares two paths that share no result
+- **WHEN** a full comparison shares no result with the snapshot
 - **THEN** the exit code is 1 and the report says parity was not reached
 
 #### Scenario: Not measurable
 - **WHEN** the measurement cannot be made
 - **THEN** the exit code is 2
 
-### Requirement: Report collection-restricted queries apart
-The system SHALL identify in the parity report the queries that ran with a collection restriction (from the query set or from the global option), and SHALL give their overlap separately from the other queries, so that a divergence between the paths that follows from the different order of filter and candidate limit is not read as a regression of the unrestricted queries. The report SHALL stay free of book content. Restricted queries SHALL stay in the overall verdict.
+### Requirement: Record a snapshot of the PostgreSQL results
+The system SHALL offer a record command that runs the frozen query set on the PostgreSQL search and writes one owner-only snapshot file in the data folder, with the content listed in design D5. It SHALL print only counts and the snapshot path. It SHALL refuse to replace an existing snapshot without the replace option (exit 2, "snapshot exists"). It SHALL write nothing else.
 
-Source: `tests/parity/test_parity.py` (GroupeRestreint)
+#### Scenario: First record
+- **WHEN** the record command runs with no snapshot present
+- **THEN** one owner-only snapshot file is written in the data folder and the output holds counts and its path only
 
-#### Scenario: Mixed query set
-- **WHEN** some queries carry a collection restriction and others do not
-- **THEN** the report gives the mean overlap of each group separately in addition to the overall verdict
+#### Scenario: Snapshot already present
+- **WHEN** the record command runs while a snapshot exists and no replace option is given
+- **THEN** it exits with code 2, says "snapshot exists" and leaves the snapshot unchanged
 
-#### Scenario: Global restriction
-- **WHEN** a global collection restriction is given on the command line
-- **THEN** every query is reported in the restricted group
+#### Scenario: Replace
+- **WHEN** the replace option is given
+- **THEN** the snapshot is rewritten with the current results
 
-#### Scenario: No restricted query
-- **WHEN** no query is restricted
-- **THEN** the report has no restricted group and the verdict is unchanged
+#### Scenario: Snapshot content
+- **WHEN** a snapshot is recorded
+- **THEN** it holds, per query, the ordered (file, position) results, plus the settings, the freshness date, the query-set fingerprint and the books with their content fingerprint, and no passage text or title
 
+### Requirement: Refuse a comparison that the snapshot cannot support
+The system SHALL, before running any query, exit with code 2 and the key phrases of design D5 when no snapshot exists ("no snapshot"), when the frozen query set changed since the snapshot ("query set changed since the snapshot"), or when a search option given on the command line differs from the snapshot's settings ("settings differ from the snapshot"). Without options, the comparison SHALL use the snapshot's settings and its freshness date.
+
+#### Scenario: No snapshot
+- **WHEN** a comparison is started and the data folder holds no snapshot
+- **THEN** the exit code is 2, the message points to the record command, and no query is run
+
+#### Scenario: Different scan
+- **WHEN** the snapshot was recorded with the approximate scan and the exact scan is requested
+- **THEN** the exit code is 2 and the message says the settings differ
+
+### Requirement: Report how the library changed since the snapshot
+The system SHALL report, with every comparison, the number of books added, removed and changed (different content fingerprint) since the snapshot, as counts only, without file names unless the details option is given and never with titles or text.
+
+#### Scenario: New watch articles
+- **WHEN** three articles were indexed after the snapshot
+- **THEN** the report says three books were added and the verdict is computed as usual

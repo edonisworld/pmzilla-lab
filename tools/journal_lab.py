@@ -63,6 +63,9 @@ FORMAT d'une entrée (YAML) :
       hypothese: …
       signal: …                   # ce qu'on observera si l'hypothèse tient
       bilan_le: 2026-11-02
+
+Exemple :
+    uv run tools/journal_lab.py add entree.yaml
 """
 from __future__ import annotations
 

@@ -2,6 +2,8 @@
 
     uv run --with pyyaml --with requests python -m unittest discover -s tests/export_jira_api -v
 
+Les refus de réglages (étiquette hors préfixe, durée de conservation) et du référentiel illisible viennent de flux_config.py et
+de flow_organisation.py, en français seulement : ils ne sont pas dans ce parcours (testés dans test_referentiel_et_etiquettes.py).
 Le même parcours (export, diagnostic, champs, table des équipes écrite à la main, sous-commandes retirées, erreurs) est lancé en anglais et comparé à un
 instantané versionné (reference_en.md) ; pour le régénérer après un changement voulu : PMZILLA_UPDATE_SNAPSHOTS=1.
 Aucune donnée réelle.
@@ -24,6 +26,11 @@ ex, hj = base.ex, base.hj
 ICI = Path(__file__).resolve().parent
 REFERENCE_EN = ICI / "reference_en.md"
 CHAMP = base.CHAMP
+DECLAREES = ("declared_labels:\n  up_merge:\n    prefix: um-\n    labels: [um-legal, um-hotfix]\n"
+             "  cycle:\n    prefix: cy-\n    labels: [cy-a, cy-b]\n")
+REFERENTIEL = ("source_date: 2026-10-01\nsites: [Site 1]\ndepartments:\n  - name: Departement 1\n    site: Site 1\n    headcount: 9\n"
+               "    teams: [Equipe A, Equipe B, Equipe D]\nteams:\n  - name: Equipe A\n    headcount: 3\n    jira_team_ids: ['1']\n"
+               "  - name: Equipe B\n    headcount: 3\n    jira_team_ids: ['2']\n  - name: Equipe D\n    headcount: 3\n")
 VERIF = "customfield_10009"
 MOTS_FRANCAIS = re.compile(r"\b(le|la|les|des|du|pour|dans|sur|avec|équipe|semaine|jours|écartés|erreur|livrés|"
                            r"réglages|aucun|aucune|seulement|selon|ticket\(s\) renseigné)\b|[éèêàâçùôî]", re.IGNORECASE)
@@ -38,6 +45,7 @@ class Parcours(base.Base):
         self.faux.__init__()                                       # état neuf : un parcours peut être rejoué dans le même test
         shutil.rmtree(self.ws / "Flux-Lab" / "exports", ignore_errors=True)
         (self.ws / "Flux-Lab" / "equipes-assets.yaml").unlink(missing_ok=True)
+        (self.ws / "Flux-Lab" / "organisation.yaml").unlink(missing_ok=True)
         self.ecrire_reglages()
 
         def lancer(nom: str, *argv: str) -> tuple[int, str]:
@@ -70,6 +78,11 @@ class Parcours(base.Base):
                                     ("unknown time zone", "jql_export: p\nexport_timezone: Nulle/Part\n")):
             self.ecrire_reglages(extra_reglages)
             lancer(f"settings, {nom}", "export", "--output", sortie_csv("y.csv"))
+        self.ecrire_reglages(jeton="classic")
+        lancer("export, classic token", "export", "--output", sortie_csv("y.csv"))
+        lancer("fields, classic token", "fields", "--search", "a")
+        self.ecrire_reglages(cloud=None)
+        lancer("export, cloud id missing", "export", "--output", sortie_csv("y.csv"))
         self.ecrire_reglages()
         attendu, self.faux.attendu = self.faux.attendu, "Basic autre"
         lancer("export, access denied", "export")
@@ -119,7 +132,28 @@ class Parcours(base.Base):
             self.faux.tickets[cle] = ticket
         table.write_text("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n", encoding="utf-8")
         lancer("export, with the table", "export", "--output", sortie_csv("w.csv"))
+        referentiel = self.ws / "Flux-Lab" / "organisation.yaml"
+        referentiel.write_text(REFERENTIEL, encoding="utf-8")
+        lancer("diagnose, with the referential", "diagnose")
+        lancer("export, referential and former table both present", "export", "--output", sortie_csv("x.csv"))
         table.unlink()
+        lancer("export, with the referential", "export", "--output", sortie_csv("r.csv"))
+        lancer("export, strict teams", "export", "--strict-teams", "--output", sortie_csv("s.csv"))
+        referentiel.unlink()
+        table.write_text("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n", encoding="utf-8")
+        lancer("diagnose, with the former table", "diagnose")
+        lancer("export, former table fallback", "export", "--output", sortie_csv("f.csv"))
+        table.unlink()
+
+        self.faux.tickets = copy.deepcopy(base.TICKETS)
+        self.faux.tickets["ABC-1"]["labels"] = ["cy-a", "um-legal", "um-hotfix", "cy-renamed", "other"]
+        self.faux.tickets["ABC-1"]["fixVersions"] = [{"name": "v1"}]
+        self.faux.tickets["ABC-2"]["labels"] = ["cy-renamed"]
+        self.ecrire_reglages("jql_export: project = ABC\n" + DECLAREES)
+        lancer("export, declared labels and fix versions", "export", "--output", sortie_csv("l.csv"))
+        self.ecrire_reglages("jql_export: project = ABC\nretention:\n  period_days: 30\n")
+        lancer("export, rows past the retention rule", "export", "--output", sortie_csv("k.csv"))
+        self.ecrire_reglages()
         lancer("teams-table, retired", "teams-table", "m1.csv", "m2.csv")
         lancer("compare, retired", "compare", "m.csv", "a.csv", "--tolerance", "3.5")
         return "\n".join(["# export_jira_api.py, test run\n"] + blocs)

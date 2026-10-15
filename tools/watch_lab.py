@@ -1,11 +1,11 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["feedparser", "trafilatura", "httpx", "pyyaml", "beautifulsoup4", "markdownify"]
+# dependencies = ["feedparser", "trafilatura", "httpx", "pyyaml", "beautifulsoup4", "markdownify", "psycopg[binary]", "numpy"]
 # ///
 """
 PMZilla Lab — veille automatisée à partir de sources choisies.
 
-Trois commandes :
+Commandes :
 
     uv run watch_lab.py sources [--claude-export conversations-000.zip ...] [--bluesky HANDLE]
                                  [--linkedin Shares.csv] [--urls liens.txt]
@@ -18,7 +18,8 @@ Trois commandes :
     uv run watch_lab.py collect [--since-days 30]
         Lit les sources active: true de sources.yaml et écrit un Markdown par nouvel article
         dans Watch-Lab/watch/ (la collection « watch » de la bibliothèque). Idempotent :
-        un article déjà collecté n'est jamais repris.
+        un article déjà collecté n'est jamais repris. L'état (articles, passages, liens) est dans la base
+        PostgreSQL de l'installation (schéma knowledge) : un article et son fichier sont validés ensemble.
 
     uv run watch_lab.py import-medium medium-export.zip --source medium.com/@<utilisateur> --author <nom>
         Importe vos propres articles depuis l'export Medium (brouillons et réponses exclus)
@@ -33,10 +34,24 @@ Trois commandes :
         Écrit Watch-Lab/_to-read.md : les articles collectés sur la période, par source,
         pour choisir ceux à passer dans SignalPM.
 
+    uv run watch_lab.py check-db [--wait SECONDES]
+        Dit si la base répond et porte les tables de la veille (lecture seule, rien d'autre n'est lu ni écrit).
+        Réessaie toutes les 5 secondes pendant l'attente (défaut 0 : une tentative). Sortie 0 : prête ;
+        4 : la base ne répond pas ; 5 : tables absentes (migrations). Elle ne démarre jamais la base.
+
+    uv run watch_lab.py check-network [--wait SECONDES]
+        Dit si le réseau répond : une connexion TCP courte vers l'hôte et le port du flux de chaque source active,
+        jusqu'à ce qu'un hôte réponde ou que l'attente soit écoulée (une tentative toutes les 5 s, défaut 0 : une
+        seule). Ne lit que la structure du fichier des sources ; ne récupère aucun flux, n'écrit aucun fichier,
+        ne nomme aucun hôte. Sortie 0 : réseau prêt ; 6 : aucun hôte ne répond (ou aucune source active avec un flux).
+
+Codes de sortie des commandes qui lisent ou écrivent l'état : 4 si la base ne répond pas, 5 si les tables manquent, avant toute
+lecture de flux, de page ou d'export et avant toute écriture de fichier.
+
 Variables d'environnement (toutes facultatives) :
     VEILLE_LAB_DIR       dossier des articles      (défaut ~/PMZilla-Lab/workspace/Watch-Lab)
     VEILLE_LAB_SOURCES   fichier des sources       (défaut ~/PMZilla-Lab/workspace/watch/sources.yaml)
-    PMZILLA_LAB_DATA     dossier de l'état         (défaut ~/.pmzilla-lab)
+    PMZILLA_LAB_KNOWLEDGE_DBNAME   autre base de l'instance (essais, tests)
 """
 from __future__ import annotations
 
@@ -45,7 +60,7 @@ import csv
 import datetime as dt
 import os
 import re
-import sqlite3
+import socket
 import sys
 import time
 import unicodedata
@@ -58,6 +73,7 @@ import yaml
 from yaml_strict import ErreurConfig, charger
 
 import watch_paths
+import watch_store
 
 # Les dossiers de contenu vivent dans le dépôt, mais leur contenu est exclu par .gitignore
 # Noms de dossiers : watch_paths donne le nom actuel et refuse un dossier resté à l'ancien nom
@@ -77,8 +93,17 @@ def to_read_file() -> Path:
     return WATCH_DIR / watch_paths.to_read_name(WATCH_DIR)
 
 
-SOURCES_FILE = Path(os.environ.get("VEILLE_LAB_SOURCES") or watch_paths.config_dir(WORKSPACE) / "sources.yaml").expanduser()
-STATE_DB = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser() / "veille.sqlite"
+# Réglages suivis (sources.yaml, tri.yaml) : lus dans le dossier de code (celui de ce fichier, liens suivis) ; contenu (sources.local.yaml,
+# tri.local.yaml, Watch-Lab) : dans le dossier de contenu, PMZILLA_LAB_WORKSPACE.
+CODE_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_SOURCES_FILE = watch_paths.config_dir(CODE_ROOT) / "sources.yaml"
+SOURCES_FILE = Path(os.environ.get("VEILLE_LAB_SOURCES") or DEFAULT_SOURCES_FILE).expanduser()
+
+
+def local_config_dir() -> Path:
+    """Dossier des réglages locaux (sources.local.yaml, tri.local.yaml) : le dossier de réglages du contenu ; à côté du fichier de sources
+    quand celui-ci est choisi à la main (VEILLE_LAB_SOURCES)."""
+    return SOURCES_FILE.parent if SOURCES_FILE != DEFAULT_SOURCES_FILE else watch_paths.config_dir(WORKSPACE)
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Safari/605.1.15"
 TIMEOUT = 30
@@ -371,8 +396,8 @@ _LOCAL_HINT = " ; corriger le fichier ou le retirer (les sources suivies seront 
 
 
 def local_sources_file() -> Path:
-    """Sources personnelles : à côté du fichier suivi, non suivi par Git, jamais réécrit par un script."""
-    return SOURCES_FILE.with_name(LOCAL_SOURCES_NAME)
+    """Sources personnelles : dans le dossier de contenu, non suivi par Git, jamais réécrit par un script."""
+    return local_config_dir() / LOCAL_SOURCES_NAME
 
 
 def load_local_sources() -> list[dict]:
@@ -427,6 +452,7 @@ def load_sources() -> list[dict]:
 def save_sources(sources: list[dict]) -> None:
     """Écrit le fichier suivi seulement : une entrée définie en local n'y est jamais copiée (la version suivie, s'il y en
     a une, est gardée telle quelle)."""
+    watch_paths.refuse_depuis_le_dossier_d_execution(CODE_ROOT, SOURCES_FILE)
     local_keys = {s["key"] for s in load_local_sources()}
     if local_keys:
         tracked = {s["key"]: s for s in _load_tracked_sources()}
@@ -505,38 +531,12 @@ def cmd_sources(args: argparse.Namespace) -> None:
 # Collecte
 # ---------------------------------------------------------------------------
 
-STATE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS articles (
-    url        TEXT PRIMARY KEY,
-    source     TEXT NOT NULL,
-    title      TEXT NOT NULL,
-    file       TEXT NOT NULL,
-    published  TEXT NOT NULL,
-    complete   INTEGER NOT NULL,
-    collected  TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-    source     TEXT PRIMARY KEY,
-    last_try   TEXT NOT NULL,
-    last_ok    TEXT,
-    error      TEXT
-);
-CREATE TABLE IF NOT EXISTS links (          -- liens cités dans le corps d'un article
-    article_url TEXT NOT NULL,
-    target_url  TEXT NOT NULL,
-    PRIMARY KEY (article_url, target_url)
-);
-CREATE TABLE IF NOT EXISTS links_done (     -- articles dont les liens ont été relevés
-    article_url TEXT PRIMARY KEY
-);
-"""
-
-
-def state() -> sqlite3.Connection:
-    STATE_DB.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(STATE_DB)
-    db.executescript(STATE_SCHEMA)
-    return db
+def open_store(readonly: bool = False) -> watch_store.WatchStore:
+    """Ouvre le magasin de la veille avant toute lecture réseau ou écriture de fichier ; sortie 4 ou 5 si la base fait défaut."""
+    try:
+        return watch_store.open_watch_store(readonly=readonly)
+    except (watch_store.WatchDatabaseUnavailable, watch_store.WatchTablesMissing) as error:
+        watch_store.stop(error)
 
 
 def slugify(text: str, limit: int) -> str:
@@ -602,11 +602,6 @@ def content_links(article_url: str, feed_html: str = "", page_html: str = "") ->
     return links
 
 
-def store_links(db: sqlite3.Connection, article_url: str, links: set[str]) -> None:
-    db.executemany("INSERT OR IGNORE INTO links VALUES (?, ?)", [(article_url, link) for link in links])
-    db.execute("INSERT OR IGNORE INTO links_done VALUES (?)", (article_url,))
-
-
 def entry_date(entry) -> dt.date | None:
     stamp = entry.get("published_parsed") or entry.get("updated_parsed")
     return dt.date(*stamp[:3]) if stamp else None
@@ -643,7 +638,19 @@ def article_markdown(title: str, url: str, source: dict, author: str, published:
     return "\n".join(header) + f"# {title}\n\nSource : {byline}. {url}{note}\n\n{text}\n"
 
 
-def collect_source(http: httpx.Client, db: sqlite3.Connection, source: dict, since: dt.date) -> tuple[int, int]:
+def write_and_commit(store: watch_store.WatchStore, target: Path, text: str) -> None:
+    """Écrit le fichier d'un article puis valide sa ligne ; si l'écriture ou la validation échoue, le fichier écrit pour lui
+    est retiré et la ligne annulée : un passage suivant reprend l'article sous son nom normal."""
+    try:
+        target.write_text(text, encoding="utf-8")
+        store.commit()  # un article à la fois : une collecte interrompue reprend sans doublon
+    except BaseException:
+        store.rollback()
+        target.unlink(missing_ok=True)
+        raise
+
+
+def collect_source(http: httpx.Client, store: watch_store.WatchStore, source: dict, since: dt.date) -> tuple[int, int]:
     import feedparser
     response = http.get(source["feed"])
     response.raise_for_status()
@@ -658,7 +665,7 @@ def collect_source(http: httpx.Client, db: sqlite3.Connection, source: dict, sin
         if not entry.get("link"):
             continue
         url = clean_url(entry.link)
-        if db.execute("SELECT 1 FROM articles WHERE url = ?", (url,)).fetchone():
+        if store.article_exists(url):
             continue
         published = entry_date(entry)
         if published and published < since:
@@ -669,9 +676,7 @@ def collect_source(http: httpx.Client, db: sqlite3.Connection, source: dict, sin
         # Même source, même titre, même date de publication, collecté un jour précédent : c'est le même article revenu
         # sous une autre URL (hôte ou chemin changé), pas un second article. Sans cela, il serait gardé en « -2.md ».
         # Deux entrées identiques du même flux, collectées ensemble, restent deux articles (« -2.md » les distingue).
-        if published and db.execute("SELECT 1 FROM articles WHERE source = ? AND title = ? AND published = ? "
-                                    "AND substr(collected, 1, 10) < ?",
-                                    (source["key"], title, published.isoformat(), dt.date.today().isoformat())).fetchone():
+        if published and store.earlier_duplicate(source["key"], title, published, dt.date.today()):
             continue
         bodies = [c.get("value", "") for c in entry.get("content", [])] + [entry.get("summary", "")]
         feed_html = max(bodies, key=len) if any(bodies) else ""
@@ -692,15 +697,10 @@ def collect_source(http: httpx.Client, db: sqlite3.Connection, source: dict, sin
         while target.exists():
             target = folder / name.replace(".md", f"-{counter}.md")
             counter += 1
-        target.write_text(
-            article_markdown(title, url, source, entry.get("author", ""), day, text, complete), encoding="utf-8"
-        )
-        db.execute(
-            "INSERT INTO articles VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (url, source["key"], title, target.name, day, int(complete), dt.datetime.now().isoformat(timespec="seconds")),
-        )
-        store_links(db, url, content_links(url, feed_html, page_html))  # pour les sources suggérées
-        db.commit()  # un article à la fois : une collecte interrompue reprend sans doublon
+        # la ligne et ses liens d'abord, puis le fichier, puis la validation : si l'un échoue, ni fichier ni ligne ne restent
+        store.add_article(url, source["key"], title, target.name, day, complete, dt.datetime.now().astimezone())
+        store.add_links(url, content_links(url, feed_html, page_html))  # pour les sources suggérées
+        write_and_commit(store, target, article_markdown(title, url, source, entry.get("author", ""), day, text, complete))
         new += 1
         partial += not complete
         time.sleep(1)  # politesse envers les sites
@@ -708,32 +708,35 @@ def collect_source(http: httpx.Client, db: sqlite3.Connection, source: dict, sin
 
 
 def cmd_collect(args: argparse.Namespace) -> None:
+    store = open_store()       # avant tout flux lu et tout fichier écrit
     sources = [s for s in load_sources() if s.get("active") and s.get("feed")]
     if not sources:
         sys.exit(f"Aucune source active avec un flux dans {SOURCES_FILE}.")
     ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
     since = dt.date.today() - dt.timedelta(days=args.since_days)
-    db = state()
     report, failures, total = [], [], 0
-    now = lambda: dt.datetime.now().isoformat(timespec="seconds")  # noqa: E731
-    with client() as http:
-        for source in sources:
-            try:
-                new, partial = collect_source(http, db, source, since)
-                db.execute("INSERT OR REPLACE INTO runs VALUES (?, ?, ?, NULL)", (source["key"], now(), now()))
-                total += new
-                line = f"{source['key']} : {new} nouveaux" + (f" dont {partial} extraits seulement" if partial else "")
-            except Exception as error:  # une source en panne ne bloque pas les autres
-                db.execute(
-                    "INSERT INTO runs VALUES (?, ?, NULL, ?) ON CONFLICT(source) DO UPDATE SET last_try = ?, error = ?",
-                    (source["key"], now(), str(error)[:300], now(), str(error)[:300]),
-                )
-                failures.append(source["key"])
-                line = f"{source['key']} : ERREUR {str(error)[:150]}"
-            db.commit()
-            report.append(line)
-            print(line)
-    summary = f"{now()} · {total} nouveaux articles · {len(failures)} sources en erreur"
+    now = lambda: dt.datetime.now().astimezone()  # noqa: E731
+    try:
+        with client() as http:
+            for source in sources:
+                try:
+                    new, partial = collect_source(http, store, source, since)
+                    store.record_run_ok(source["key"], now())
+                    total += new
+                    line = f"{source['key']} : {new} nouveaux" + (f" dont {partial} extraits seulement" if partial else "")
+                except watch_store.WatchDatabaseUnavailable:
+                    raise
+                except Exception as error:  # une source en panne ne bloque pas les autres
+                    store.record_run_error(source["key"], now(), str(error)[:300])
+                    failures.append(source["key"])
+                    line = f"{source['key']} : ERREUR {str(error)[:150]}"
+                store.commit()
+                report.append(line)
+                print(line)
+    except watch_store.WatchDatabaseUnavailable as error:   # la base s'arrête en cours de route : rien d'autre n'est écrit
+        store.rollback()
+        watch_store.stop(error)
+    summary = f"{now().isoformat(timespec='seconds')} · {total} nouveaux articles · {len(failures)} sources en erreur"
     (WATCH_DIR / "_rapport_collecte.txt").write_text("\n".join([summary, "", *report]) + "\n", encoding="utf-8")
     print(f"\n{summary}\nArticles : {ARTICLES_DIR}")
 
@@ -744,37 +747,38 @@ def cmd_collect(args: argparse.Namespace) -> None:
 
 def cmd_links(args: argparse.Namespace) -> None:
     """Relève une fois les liens cités par les articles collectés avant que la collecte les garde."""
-    db = state()
-    todo = db.execute(
-        "SELECT url, title FROM articles WHERE url NOT IN (SELECT article_url FROM links_done) "
-        "AND url LIKE 'http%' ORDER BY collected"
-    ).fetchall()
+    store = open_store()
+    todo = store.links_todo()
     print(f"{len(todo)} articles dont les liens n'ont pas encore été relevés")
     found = failed = 0
-    with client() as http:
-        for number, (url, title) in enumerate(todo, 1):
-            html = fetch_html(http, url)
-            if not html:
-                failed += 1
-                print(f"[{number}/{len(todo)}] {title[:60]} · page inaccessible, reprise au prochain lancement")
-                continue
-            links = content_links(url, page_html=html)
-            store_links(db, url, links)
-            db.commit()
-            found += len(links)
-            print(f"[{number}/{len(todo)}] {title[:60]} · {len(links)} liens")
-            time.sleep(1)  # politesse envers les sites
+    try:
+        with client() as http:
+            for number, (url, title) in enumerate(todo, 1):
+                html = fetch_html(http, url)
+                if not html:
+                    failed += 1
+                    print(f"[{number}/{len(todo)}] {title[:60]} · page inaccessible, reprise au prochain lancement")
+                    continue
+                links = content_links(url, page_html=html)
+                store.add_links(url, links)
+                store.commit()
+                found += len(links)
+                print(f"[{number}/{len(todo)}] {title[:60]} · {len(links)} liens")
+                time.sleep(1)  # politesse envers les sites
+    except watch_store.WatchDatabaseUnavailable as error:
+        store.rollback()
+        watch_store.stop(error)
     print(f"\n{found} liens relevés · {failed} pages inaccessibles (relancer plus tard pour les reprendre)")
 
 
 def cmd_digest(args: argparse.Namespace) -> None:
-    db = state()
-    since = (dt.date.today() - dt.timedelta(days=args.days)).isoformat()
-    rows = db.execute(
-        "SELECT source, title, url, published, complete, file FROM articles "
-        "WHERE collected >= ? ORDER BY source, published DESC",
-        (since,),
-    ).fetchall()
+    store = open_store(readonly=True)
+    since_day = dt.date.today() - dt.timedelta(days=args.days)
+    since = since_day.isoformat()
+    try:
+        rows = store.articles_collected_since(since_day)
+    except watch_store.WatchDatabaseUnavailable as error:
+        watch_store.stop(error)
     sources = load_sources()
     names = {s["key"]: s.get("name", s["key"]) for s in sources}
     own = {s["key"] for s in sources if (s.get("collection") or ARTICLES_DIR.name) != ARTICLES_DIR.name}
@@ -788,12 +792,81 @@ def cmd_digest(args: argparse.Namespace) -> None:
         lines += [f"## {names.get(key, key)}", ""]
         for _, title, url, published, complete, file in items:
             flag = "" if complete else " (extrait seulement)"
-            lines.append(f"- {published} · [{title}]({url}){flag}")
+            lines.append(f"- {published or ''} · [{title}]({url}){flag}")
         lines.append("")
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     target = to_read_file()
     target.write_text("\n".join(lines), encoding="utf-8")
     print(f"{len(rows)} articles · {target}")
+
+
+def cmd_check_db(args: argparse.Namespace) -> None:
+    """La base répond-elle et porte-t-elle les tables de la veille ? Lecture seule ; réessaie toutes les 5 secondes pendant
+    l'attente ; ne démarre jamais la base."""
+    attempts = 1 + args.wait // CHECK_INTERVAL
+    for attempt in range(attempts):
+        try:
+            watch_store.open_watch_store(readonly=True).close()
+        except watch_store.WatchTablesMissing as error:     # inutile de réessayer : il faut appliquer les migrations
+            watch_store.stop(error)
+        except watch_store.WatchDatabaseUnavailable as error:
+            if attempt == attempts - 1:
+                watch_store.stop(error)
+            time.sleep(CHECK_INTERVAL)
+        else:
+            print("Base de données prête pour la veille")
+            return
+
+
+CHECK_INTERVAL = 5      # secondes entre deux tentatives de check-db et de check-network
+NETWORK_TIMEOUT = 3     # secondes de délai d'une connexion de check-network
+EXIT_NETWORK_DOWN = 6
+
+
+def network_endpoints() -> list[tuple[str, int]]:
+    """Hôte et port du flux de chaque source active, sans doublon, dans l'ordre du fichier."""
+    endpoints: list[tuple[str, int]] = []
+    for source in load_sources():
+        if not source.get("active") or not source.get("feed"):
+            continue
+        try:
+            parts = urlsplit(source["feed"])
+            host, port = parts.hostname, parts.port or (80 if parts.scheme == "http" else 443)
+        except ValueError:
+            continue
+        if host and (host, port) not in endpoints:
+            endpoints.append((host, port))
+    return endpoints
+
+
+def cmd_check_network(args: argparse.Namespace) -> None:
+    """Le réseau répond-il ? Une connexion TCP courte par hôte de flux des sources actives, jusqu'à ce qu'un hôte réponde
+    ou que l'attente soit écoulée. Aucun flux lu, aucun fichier écrit, aucun hôte nommé. Sans source active avec un flux :
+    sortie 6 (le réseau n'est pas confirmé, la veille est reportée plutôt que lancée à l'aveugle)."""
+    endpoints = network_endpoints()
+    attempts = 1 + args.wait // CHECK_INTERVAL
+    for attempt in range(attempts):
+        for host, port in endpoints:
+            try:
+                socket.create_connection((host, port), timeout=NETWORK_TIMEOUT).close()
+            except OSError:
+                continue
+            print("Réseau prêt pour la veille")
+            return
+        if attempt < attempts - 1:
+            time.sleep(CHECK_INTERVAL)
+    print("Réseau injoignable : aucun hôte de la collecte ne répond", file=sys.stderr)
+    raise SystemExit(EXIT_NETWORK_DOWN)
+
+
+def wait_seconds(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"nombre entier de secondes attendu, reçu « {text} »") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("l'attente ne peut pas être négative")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -825,13 +898,20 @@ def medium_post(html: str) -> dict | None:
 
 
 def cmd_import_medium(args: argparse.Namespace) -> None:
+    try:
+        import_medium(args)
+    except watch_store.WatchDatabaseUnavailable as error:
+        watch_store.stop(error)
+
+
+def import_medium(args: argparse.Namespace) -> None:
     import zipfile
     source = next((s for s in load_sources() if s["key"] == args.source), None) or {
         "key": args.source, "name": args.source}
     source = {**source, "collection": args.collection}
+    store = open_store()       # avant l'export lu et tout fichier écrit
     folder = collection_dir(source)
     folder.mkdir(parents=True, exist_ok=True)
-    db = state()
     imported = skipped_short = skipped_known = drafts = 0
     with zipfile.ZipFile(Path(args.export).expanduser()) as archive:
         names = [n for n in archive.namelist() if "/posts/" in f"/{n}" and n.endswith(".html")]
@@ -844,22 +924,15 @@ def cmd_import_medium(args: argparse.Namespace) -> None:
                 skipped_short += 1
                 continue
             url = clean_url(post["url"]) if post["url"] else f"medium-export:{Path(name).stem}"
-            if db.execute("SELECT 1 FROM articles WHERE url = ?", (url,)).fetchone():
+            if store.article_exists(url):
                 skipped_known += 1
                 continue
             day = post["date"] or Path(name).name[:10]
             text = (f"*{post['subtitle']}*\n\n" if post["subtitle"] else "") + post["text"]
             target = folder / f"{day}-{slugify(source['key'], 30)}-{slugify(post['title'], 60)}.md"
-            target.write_text(
-                article_markdown(post["title"], post["url"], source, args.author, day, text, True),
-                encoding="utf-8",
-            )
-            db.execute(
-                "INSERT INTO articles VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (url, source["key"], post["title"], target.name, day, 1,
-                 dt.datetime.now().isoformat(timespec="seconds")),
-            )
-            db.commit()
+            published = day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else None
+            store.add_article(url, source["key"], post["title"], target.name, published, True, dt.datetime.now().astimezone())
+            write_and_commit(store, target, article_markdown(post["title"], post["url"], source, args.author, day, text, True))
             imported += 1
     print(f"{len(names)} fichiers d'articles dans l'export · importés : {imported} · "
           f"brouillons ignorés : {drafts} · trop courts (réponses) : {skipped_short} · "
@@ -886,9 +959,14 @@ def main(argv: list[str] | None = None) -> None:
     medium.add_argument("--min-chars", type=int, default=800, help="en dessous : réponse, ignorée")
     digest = commands.add_parser("digest", help="écrire la liste des articles à lire")
     digest.add_argument("--days", type=int, default=7)
+    check = commands.add_parser("check-db", help="dire si la base répond et porte les tables de la veille")
+    check.add_argument("--wait", type=wait_seconds, default=0, help="secondes d'attente, une tentative toutes les 5 s (défaut 0)")
+    network = commands.add_parser("check-network", help="dire si le réseau répond sur un hôte de la collecte")
+    network.add_argument("--wait", type=wait_seconds, default=0, help="secondes d'attente, une tentative toutes les 5 s (défaut 0)")
     args = parser.parse_args(argv)
     commands_map = {"sources": cmd_sources, "collect": cmd_collect, "digest": cmd_digest, "links": cmd_links,
-                    "import-medium": cmd_import_medium}
+                    "import-medium": cmd_import_medium, "check-db": cmd_check_db,
+                    "check-network": cmd_check_network}
     commands_map[args.command](args)
 
 

@@ -43,7 +43,7 @@ These are always active. They never complete.
 
 **Search before framing.** Before any answer that draws on a framework, an author or a practice, call `search_library` with `collections` = ["facilitation"], in several phrasings, in French and in English.
 
-**Order.** Search, then ask, then recommend: the search comes before the context questions (the rule « Contexte avant discussion » of CLAUDE.md, "context before discussion"). The library tools are loaded through ToolSearch (`select:mcp__pmzilla-library__search_library,mcp__pmzilla-library__read_passage`) if they are not yet available.
+**Order.** Search, then ask, then recommend: the search comes before the context questions (the rule « Context before discussion, including in party mode » of CLAUDE.md). The library tools are loaded through ToolSearch (`select:mcp__pmzilla-library__search_library,mcp__pmzilla-library__read_passage`) if they are not yet available.
 
 **Read before citing.** A central passage is read in full with `read_passage` before you rely on it.
 
@@ -55,7 +55,7 @@ These are always active. They never complete.
 
 **Never fabricate** a quotation, a page or a section. If the library says nothing on a point, say so.
 
-**End of answer: Critic.** The rule « Appelle Critic sur un livrable, pas sur un cadrage » of CLAUDE.md (step 4: call Critic on a deliverable, not on a framing). A diagnosis or a plan the user keeps, or a diagnosis made from their data, triggers `pmzilla-critic`; a framing answer (hypotheses, context questions) or a purely informative one does not. Run Critic in the foreground, never in the background, and do not end your turn before you have its answer. Single final message: your answer and its key points, then a short section `[Posture : Critic]` that summarizes the objections, then « Ma lecture de cette critique » (my reading of this critique). Never Critic alone, never a mere pointer to the file.
+**End of answer: Critic.** The rule « Call Critic on a deliverable, not on a framing answer » of CLAUDE.md (routing protocol, step 4). A diagnosis or a plan the user keeps, or a diagnosis made from their data, triggers `pmzilla-critic`; a framing answer (hypotheses, context questions) or a purely informative one does not. Run Critic in the foreground, never in the background, and do not end your turn before you have its answer. Single final message: your answer and its key points, then a short section `[Posture : Critic]` that summarizes the objections, then « Ma lecture de cette critique » (my reading of this critique). Never Critic alone, never a mere pointer to the file.
 
 **Keep the register.** Use the headings and status values that MEMORY.md already contains, whatever their language; write new ones in English (`references/memory-guidance.md` lists the French equivalents). Each workshop or retrospective run (with its objective and its deliverable), each format tried (with what worked and what did not) and each group dynamic observed (at team level) goes into MEMORY.md before the end of the exchange. When a session reopens a subject with the same team, start with the state of the register: the format that had not worked, the dynamic noted, the objective of the last session.
 

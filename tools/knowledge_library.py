@@ -1,17 +1,15 @@
 """
-PMZilla Lab : la bibliothèque lue dans PostgreSQL (schéma knowledge, lot 4 de la base).
+PMZilla Lab : la bibliothèque lue dans PostgreSQL (schéma knowledge), seule voie de lecture du serveur MCP.
 
-`PostgresLibrary` a la même interface publique que `pmzilla_lab_library.Library` (voie SQLite) : `search`, `read`, `collections`,
-`books`, `check_types`, `refresh`, et les mêmes formes de réponse, pour que les quatre outils MCP restent
-inchangés. C'est la voie par défaut de `serve` ; la voie SQLite reste disponible sur demande (`serve --backend sqlite`, ou
-PMZILLA_LAB_BACKEND=sqlite) jusqu'à son retrait.
+`PostgresLibrary` porte l'interface que les quatre outils MCP appellent : `search`, `read`, `collections`, `books`, `check_types`,
+`refresh`. Les formes de réponse sont figées par les tests sur la bibliothèque inventée (tests/fixtures_library/demo_expected.py).
 
 Connexion : `db.connect(role="pmzilla_knowledge_ro")` (lecture seule ; mot de passe lu dans le Trousseau, service
 pmzilla-lab-db-pmzilla_knowledge_ro, ou dans PMZILLA_LAB_DB_PASSWORD_PMZILLA_KNOWLEDGE_RO ; jamais affiché), sur la base de
-l'installation, ou sur celle que nomme PMZILLA_LAB_KNOWLEDGE_DBNAME (base jetable du jeu d'essai, tests). Si la base ne répond
-pas, le serveur s'arrête avec un message clair : il ne bascule jamais en silence sur SQLite (c'est un choix explicite de
-l'utilisateur : `--backend sqlite`), ni d'une base nommée sur celle de l'installation. La question est transformée en vecteur par la même fonction que la voie SQLite
-(`pmzilla_lab_library.embed`, bge-m3 par Ollama) ; la recherche elle-même est celle de hybrid_search.py.
+l'installation, ou sur celle que nomme PMZILLA_LAB_KNOWLEDGE_DBNAME (la même variable que l'indexeur ; base jetable du jeu d'essai,
+tests). Si la base ne répond pas, le serveur s'arrête avec le message de db.py suivi du remède : il n'y a aucune voie de repli, ni vers
+un fichier, ni d'une base nommée vers celle de l'installation. La question est transformée en vecteur par `pmzilla_lab_library.embed`
+(bge-m3 par Ollama) ; la recherche elle-même est celle de hybrid_search.py.
 """
 from __future__ import annotations
 
@@ -24,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hybrid_search  # noqa: E402
 import pmzilla_lab_library as library  # noqa: E402  (embed, KINDS, constantes)
 
-PG_KINDS = {"texte": "text", "figure": "figure"}
-SQLITE_KINDS = {value: key for key, value in PG_KINDS.items()}
+PG_KINDS = library.STORE_KINDS          # « texte » est stocké « text » ; une seule définition, celle de l'indexeur
+STORE_NAMES = library.KIND_NAMES        # et retour : « text » est rendu « texte »
 NAMES_SQL = ("ARRAY(SELECT co.name FROM knowledge.book_collections bc JOIN knowledge.collections co ON co.id = bc.collection_id "
              "WHERE bc.book_id = b.id)")
 
@@ -33,12 +31,16 @@ NAMES_SQL = ("ARRAY(SELECT co.name FROM knowledge.book_collections bc JOIN knowl
 DBNAME_VARIABLE = "PMZILLA_LAB_KNOWLEDGE_DBNAME"     # base à lire à la place de celle de l'installation (jeu d'essai, tests)
 
 
+NO_FALLBACK = ("The library is served from PostgreSQL only, with no fallback: start the database with bash tools/db_up.sh, "
+               "then restart the session.")
+
+
 def default_connect():
     import db
     try:
         return db.connect(role="pmzilla_knowledge_ro", dbname=os.environ.get(DBNAME_VARIABLE) or None)
     except db.ErreurBase as error:
-        raise SystemExit(f"{error} Pour utiliser l'ancienne voie : --backend sqlite.") from None
+        raise SystemExit(f"{error} {NO_FALLBACK}") from None
 
 
 class PostgresLibrary:
@@ -78,11 +80,11 @@ class PostgresLibrary:
                     pass
         return []
 
-    # -- interface de Library ------------------------------------------------
+    # -- interface de la bibliothèque ------------------------------------------
 
     @staticmethod
     def check_types(types):
-        return library.Library.check_types(types)
+        return library.check_types(types)
 
     def refresh(self) -> None:
         """La base est toujours à jour : rien à recharger."""
@@ -97,10 +99,18 @@ class PostgresLibrary:
         if collections:
             wanted = sorted(set(collections))
         pg_kinds = None if set(kinds) == set(library.KINDS) else [PG_KINDS[k] for k in kinds]
-        found = hybrid_search.hybrid_search(
-            self.connection(), self.spec, query=query, vector=self._embedding(query), limit=limit, collections=wanted,
-            since=since, kinds=pg_kinds, today=self.today, scan=self.scan, fulltext=self.fulltext,
-            rank_norm=self.rank_norm, component=component, ef_search=self.ef_search)
+        vector = self._embedding(query)
+        for attempt in (1, 2):
+            try:
+                found = hybrid_search.hybrid_search(
+                    self.connection(), self.spec, query=query, vector=vector, limit=limit, collections=wanted,
+                    since=since, kinds=pg_kinds, today=self.today, scan=self.scan, fulltext=self.fulltext,
+                    rank_norm=self.rank_norm, component=component, ef_search=self.ef_search)
+                break
+            except Exception as error:
+                if attempt == 2 or type(error).__name__ != "OperationalError":      # connexion perdue : une seule reprise
+                    raise
+                self._conn = None
         described = self._describe_many([chunk_id for chunk_id, _ in found])
         return [self._shape(described[chunk_id], score=round(score, 4)) for chunk_id, score in found]
 
@@ -154,8 +164,8 @@ class PostgresLibrary:
 
     @staticmethod
     def _shape(row: dict, **extra) -> dict:
-        """Même dictionnaire que `Library._describe` (mêmes clés, même ordre)."""
-        kind = SQLITE_KINDS.get(row["kind"], row["kind"])
+        """Le dictionnaire d'un passage décrit (clés et ordre figés par les tests)."""
+        kind = STORE_NAMES.get(row["kind"], row["kind"])
         described = {
             "passage_id": row["id"],
             "book": row["title"],

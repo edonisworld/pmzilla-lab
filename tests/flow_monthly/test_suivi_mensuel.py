@@ -31,7 +31,7 @@ def appels_attendus(jour: str, langue: str = "en", date_option: bool = False) ->
     return [
         ("export_jira_api", ["export", "--strict-teams", "--language", langue]),
         ("history_jira", ["collect", *e, "--strict", "--language", langue]),
-        ("flow_import", [*e, "--history", "--language", langue]),
+        ("flow_import", [*e, "--history", "--mark-absent", "--language", langue]),
         ("flux_jira", ["compute", *e, "--name", SERIE_1, "--scope", PORTEE, "--history", "--dormant-from-history", "--points",
                        "--language", langue, *today]),
         ("flux_jira", ["compute", *e, "--name", SERIE_2, "--history", "--dormant-from-history", "--points", "--language", langue, *today]),
@@ -47,6 +47,7 @@ def appels_attendus(jour: str, langue: str = "en", date_option: bool = False) ->
         ("flow_compare", ["--language", langue, "reports", rapport(SERIE_2, jour), rapport(f"{SERIE_2}-db", jour)]),
         ("flow_board", ["--language", langue]),
         ("flow_board", ["--language", langue, "--anonymous"]),
+        ("flow_retention", ["purge", "--language", langue]),
     ]
 
 
@@ -55,20 +56,20 @@ class OrdreEtOptions(Decor):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui()))
-        self.assertIn("Monthly run complete: 11 of 11 steps", r.sortie)
+        self.assertIn("Monthly run complete: 12 of 12 steps, 0 skipped", r.sortie)
 
     def test_run_complet_en_francais_par_defaut(self):
         r = self.lancer()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertIn("Suivi mensuel terminé : 11 étapes sur 11", r.sortie)
+        self.assertIn("Suivi mensuel terminé : 12 étapes sur 12, 0 sautées", r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui(), "fr"))
 
     def test_chaque_etape_est_annoncee_avec_son_rang(self):
         r = self.lancer_en()
-        for ligne in ("Step 1/11: export", "Step 2/11: history", "Step 3/11: import", "Step 4/11: flow (series 1)",
-                      "Step 5/11: flow (series 2)", "Step 6/11: dependencies (series 1)", "Step 7/11: dependencies (series 2)",
-                      "Step 8/11: compare-data", "Step 9/11: compare-reports (series 1)", "Step 10/11: compare-reports (series 2)",
-                      "Step 11/11: dashboard"):
+        for ligne in ("Step 1/12: export", "Step 2/12: history", "Step 3/12: import", "Step 4/12: flow (series 1)",
+                      "Step 5/12: flow (series 2)", "Step 6/12: dependencies (series 1)", "Step 7/12: dependencies (series 2)",
+                      "Step 8/12: compare-data", "Step 9/12: compare-reports (series 1)", "Step 10/12: compare-reports (series 2)",
+                      "Step 11/12: dashboard", "Step 12/12: retention"):
             self.assertIn(ligne, r.sortie)
         self.assertRegex(r.sortie, r"Step export passed \(\d+ s\)")
 
@@ -218,7 +219,7 @@ class Reprise(Decor):
 
     def test_from_dashboard(self):
         self.lancer_en("--from", "dashboard")
-        self.assertEqual(self.outils_appeles(), ["flow_board", "flow_board"])
+        self.assertEqual(self.outils_appeles(), ["flow_board", "flow_board", "flow_retention"])
 
     def test_date_d_un_autre_jour_chemins_et_rapports_de_cette_date(self):
         r = self.lancer_en("--from", "import", "--date", hier())
@@ -262,7 +263,7 @@ class PassageABlanc(Decor):
         r = self.lancer_en("--dry-run")
         self.assertEqual(r.code, 0, r.sortie)
         lignes = [l for l in r.sortie.splitlines() if l.strip()]
-        self.assertEqual(len(lignes), 15)
+        self.assertEqual(len(lignes), 16)
         for ligne in lignes:
             self.assertTrue(ligne.startswith("dry run: would run "), ligne)
         self.assertIn("<series 1>", r.sortie)
@@ -292,7 +293,7 @@ class PassageABlanc(Decor):
 
     def test_dry_run_avec_from(self):
         r = self.lancer_en("--dry-run", "--from", "dashboard")
-        self.assertEqual(len([l for l in r.sortie.splitlines() if l.strip()]), 2)
+        self.assertEqual(len([l for l in r.sortie.splitlines() if l.strip()]), 3)
 
 
 class Reglages(Decor):
@@ -391,7 +392,7 @@ class Resume(Decor):
     def test_le_resume_compte_les_outils_qui_ont_ecrit_sur_la_sortie_d_erreur(self):
         self.codes_de({"stderr_ok": 1})
         self.lancer_en()
-        self.assertRegex(self.resume(), r"- tools with error output on success: 15")
+        self.assertRegex(self.resume(), r"- tools with error output on success: 16")
 
     def test_pas_de_resume_quand_un_prerequis_est_refuse(self):
         self.ecrire_reglages("jira_site: x\n")

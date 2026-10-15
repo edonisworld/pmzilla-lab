@@ -1,10 +1,12 @@
 # tooling-edition Specification
 
 ## Purpose
-TBD - created by archiving change build-edition. Update Purpose after archive.
+An edition generator that builds a shareable English tree from the Git objects of one commit into a new folder, classifying every tracked file by the edition manifest, copying whole files only, checking the tree for personal identifiers, sensitive names, book text and product version numbers before naming it publishable, and optionally running the full test runner in a throwaway copy. It writes no Git folder and publishes nothing.
+
 ## Requirements
+
 ### Requirement: The edition is built from a committed state into a new folder
-The system SHALL provide an edition generator that takes a language and an output folder, plus an optional commit that defaults to the current head. The generator SHALL read the list of files and their content from the Git objects of that commit, never from the working tree. It SHALL refuse a working tree that has a modified, staged or untracked non-ignored file with exit code 3 and the key phrase "working tree not clean", and SHALL refuse an unknown commit with exit code 3. It SHALL refuse with exit code 4 an output folder that already exists, whose staging or not-publishable sibling exists, whose parent is missing, or that lies inside the private workspace. It SHALL accept only the English language and SHALL exit with code 2 on a usage error. The generator SHALL NOT copy any untracked file into the tree, SHALL NOT write a Git folder in the output, and SHALL NOT overwrite an existing folder. Exit codes and messages are those of design.md (D8, D10). Untested until implemented.
+The system SHALL provide an edition generator that takes a language and an output folder, plus an optional commit that defaults to the current head. The generator SHALL read the list of files and their content from the Git objects of that commit, never from the working tree. It SHALL refuse a working tree that has a modified, staged or untracked non-ignored file with exit code 3 and the key phrase "working tree not clean", and SHALL refuse an unknown commit with exit code 3. It SHALL refuse with exit code 4 an output folder that already exists, whose staging or not-publishable sibling exists, whose parent is missing, or that lies inside the private workspace. It SHALL accept only the English language and SHALL exit with code 2 on a usage error. The generator SHALL NOT copy any untracked file into the tree, SHALL NOT write a Git folder in the output, and SHALL NOT overwrite an existing folder. Exit codes and messages are those of design.md (D8, D10).
 
 #### Scenario: Dirty working tree
 - **WHEN** the private workspace has an untracked file that is not ignored
@@ -30,8 +32,10 @@ The system SHALL provide an edition generator that takes a language and an outpu
 - **WHEN** the language is not English or is missing
 - **THEN** the generator exits with code 2
 
+Source: tests/build_edition/test_generateur_source.py (usage, source, output and order of the checks)
+
 ### Requirement: Every tracked file is classified by the manifest, fail closed
-The system SHALL classify every tracked file of the commit with the rules of a tracked edition manifest, the first matching rule winning. The possible actions SHALL be: include; exclude, which requires a reason; or replace by a neutral template taken from the same commit. A tracked file matched by no rule SHALL stop the build before any copy, with exit code 6 and the key phrase "unclassified tracked paths:" followed by every unclassified path. A manifest that cannot be parsed, has an unknown action, an exclude rule without a reason, a template rule whose template is absent, or a rule that matches no tracked path SHALL stop the build with exit code 5 and the key phrase "manifest invalid:". The generator SHALL NOT guess a classification for an unmatched file. The manifest, its templates, the generator and its test suite SHALL be excluded from the edition. Untested until implemented.
+The system SHALL classify every tracked file of the commit with the rules of a tracked edition manifest, the first matching rule winning. The possible actions SHALL be: include; exclude, which requires a reason; or replace by a neutral template taken from the same commit. A tracked file matched by no rule SHALL stop the build before any copy, with exit code 6 and the key phrase "unclassified tracked paths:" followed by every unclassified path. A manifest that cannot be parsed, has an unknown action, an exclude rule without a reason, a template rule whose template is absent, or a rule that matches no tracked path SHALL stop the build with exit code 5 and the key phrase "manifest invalid:". The generator SHALL NOT guess a classification for an unmatched file. The manifest, its templates, the generator and its test suite SHALL be excluded from the edition. The manifest SHALL hold no rule for the former work-queue document, its archive or its template, which are no longer tracked.
 
 #### Scenario: Unclassified file
 - **WHEN** a tracked file matches no rule
@@ -42,19 +46,21 @@ The system SHALL classify every tracked file of the commit with the rules of a t
 - **THEN** the generator exits with code 5
 
 #### Scenario: Stale rule
-- **WHEN** a rule matches no tracked path
+- **WHEN** a rule matches no tracked path, such as a rule left for the removed work-queue document
 - **THEN** the generator exits with code 5 and names the rule
 
 #### Scenario: Known out-of-edition files
-- **WHEN** the manifest excludes the private roadmap documents, the plan of the English version, the library-gaps document, the round-table outputs, the batch-7 correspondence output, the documentation archives and the archived OpenSpec changes
+- **WHEN** the manifest excludes the plan of the English version, the library-gaps document, the round-table outputs, the batch-7 correspondence output, the documentation archives and the archived OpenSpec changes
 - **THEN** none of them is in the output
 
 #### Scenario: A tracked file without a rule
 - **WHEN** the manifest has no rule for a tracked file, such as a file added after the manifest was written
 - **THEN** the build stops with code 6 and names it
 
+Source: tests/build_edition/test_generateur_classement.py (manifest invalid, unclassified paths, first match); tests/build_edition/test_manifeste.py (the real manifest: every tracked file classified, no stale rule, generator files excluded, no work-queue rule, private documents and archived changes excluded); the batch-7 correspondence output and the documentation archives are not asserted by name
+
 ### Requirement: Whole files only, never rewritten
-The system SHALL copy an included file byte for byte, keeping its executable bit. It SHALL write nothing for an excluded file. For a templated file, it SHALL write the bytes of the template at the path of the replaced file. The generator SHALL NOT edit, cut, concatenate or substitute text inside any file. Untested until implemented.
+The system SHALL copy an included file byte for byte, keeping its executable bit. It SHALL write nothing for an excluded file. For a templated file, it SHALL write the bytes of the template at the path of the replaced file. The generator SHALL NOT edit, cut, concatenate or substitute text inside any file.
 
 #### Scenario: Included file
 - **WHEN** a tracked script is included
@@ -64,8 +70,10 @@ The system SHALL copy an included file byte for byte, keeping its executable bit
 - **WHEN** the author's book catalogue is classified as a template
 - **THEN** the output file at the catalogue path equals the neutral template, byte for byte
 
+Source: tests/build_edition/test_generateur_classement.py (TestWholeFiles); the catalogue's template rule: tests/build_edition/test_manifeste.py (test_fichiers_remplaces_par_un_gabarit)
+
 ### Requirement: English CHANGELOG starting at the edition
-The system SHALL give the edition a CHANGELOG written in English that starts at the edition, taken whole from a tracked source file through a template rule. The system SHALL NOT ship the French history of the private CHANGELOG, in whole or in part. Untested until implemented.
+The system SHALL give the edition a CHANGELOG written in English that starts at the edition, taken whole from a tracked source file through a template rule, and whose text says that later versions are described in the releases of the public repository (design D6). The system SHALL NOT ship the French history of the private CHANGELOG, in whole or in part.
 
 #### Scenario: CHANGELOG source missing
 - **WHEN** the template source of the edition CHANGELOG does not exist in the commit
@@ -75,24 +83,33 @@ The system SHALL give the edition a CHANGELOG written in English that starts at 
 - **WHEN** a tree is built
 - **THEN** its CHANGELOG equals the English template and differs from the private CHANGELOG
 
+#### Scenario: Pointer to the releases
+- **WHEN** the edition CHANGELOG template is read
+- **THEN** it says that later versions are described in the releases of the public repository
+
+Source: tests/build_edition/test_gabarits.py (Changelog); tests/build_edition/test_generateur_classement.py (test_changelog_template_missing_gives_code_5, test_template_replaces_whole_file)
+
 ### Requirement: Publication check on the generated tree
-The system SHALL run the publication check on the staging tree as the last step of the build. The check has two parts:
+The system SHALL run the publication check on the staging tree as the last step of the build. The check has five parts:
 - the personal-identifier scanner in tree mode, with the identifiers of the private workspace (the local identifiers file included), no tolerated file, and sanctums instantiated from the tree's own skills;
-- the sensitive-name matching rules of the pre-commit hook, applied to every non-binary file of the tree whatever its size.
+- the sensitive-name matching rules of the pre-commit hook, applied to every non-binary file of the tree whatever its size;
+- the book-text check: a line of a non-binary file of the tree is a finding when a sequence of consecutive words starting on it, of the configured minimum length, also occurs in the converted text of a library book or of a third party's watch article, words compared lowercased and without punctuation; a sequence holding no letter (only numbers and punctuation) never counts, and the own-articles folder and the files the watch produces (names starting with "_") are not compared;
+- the library-file-name check: a line of a non-binary file of the tree is a finding when it holds a file name of the private mapping table (keys of MAPPING, SOURCES and EXCLUSIONS, values of SOURCES; the table is read as text, never run), case and accents ignored;
+- the product-version check: a line of a non-binary file of the tree is a finding when it matches a pattern of the local, untracked product-version list.
 
 On any occurrence, the system SHALL:
 - exit with code 7;
-- print one line per occurrence, giving the path relative to the tree and the line number with the key phrase "personal identifier in" or "sensitive name in", then the "not publishable:" summary;
+- print one line per occurrence, giving the path relative to the tree and the line number with the key phrase "personal identifier in", "sensitive name in", "book text in" or "product version in", then the "not publishable:" summary;
 - rename the tree to the not-publishable sibling name.
 
-When the sensitive-names list is absent or empty, or the scanner fails, the system SHALL:
-- exit with code 8 and the key phrase "publication check could not run:";
+When the sensitive-names list is absent or empty, the converted library text is absent or empty, the product-version list is absent, empty or holds a pattern that does not compile, or the scanner fails, the system SHALL:
+- exit with code 8 and the key phrase "publication check could not run:" followed by the cause;
 - delete the staging tree.
 
-The system SHALL NOT print a matched value nor the text of a line, SHALL NOT tolerate any file, and SHALL NOT name the output folder without suffix unless every check passed. Untested until implemented.
+The system SHALL NOT print a matched value, the text of a line, a shared word sequence, a book or article name, or a pattern; SHALL NOT tolerate any file; SHALL NOT copy or write the converted library text; and SHALL NOT name the output folder without suffix unless every check passed.
 
 #### Scenario: Clean tree
-- **WHEN** no identifier and no sensitive name occurs in the tree or in the generated sanctums
+- **WHEN** no identifier, sensitive name, book text or product version occurs in the tree or in the generated sanctums
 - **THEN** the generator exits with code 0, the tree is at the output path and the last line says "publishable tree written to"
 
 #### Scenario: Identifier in a file
@@ -119,8 +136,38 @@ The system SHALL NOT print a matched value nor the text of a line, SHALL NOT tol
 - **WHEN** the sensitive-names list is absent or holds only comments
 - **THEN** the generator exits with code 8 and no tree remains
 
+#### Scenario: Passage of a book in a document
+- **WHEN** an included document holds a sequence of words of the minimum length taken from a fixture book text, with different case and punctuation
+- **THEN** the generator exits with code 7, prints "book text in" with the path and line, and the output holds neither the words nor the book name
+
+#### Scenario: Short common phrase
+- **WHEN** an included file shares with a fixture book only a sequence shorter than the minimum length
+- **THEN** no book-text finding is reported
+
+#### Scenario: Library text unavailable
+- **WHEN** the converted library text folders are absent or hold no text
+- **THEN** the generator exits with code 8, prints "publication check could not run: library text unavailable" and no tree remains
+
+#### Scenario: Library file name in a file
+- **WHEN** an included file holds a file name taken from the private mapping table
+- **THEN** the generator exits with code 7, prints "library file name in" with the path and line, and the output holds no such name
+
+#### Scenario: Mapping table unusable
+- **WHEN** the mapping table named for the check is missing, is not readable as Python source, or holds no file name
+- **THEN** the generator exits with code 8, prints "publication check could not run: mapping table unavailable" and no tree remains
+
+#### Scenario: Product version in a file
+- **WHEN** an included file holds a string matched by a pattern of the product-version list
+- **THEN** the generator exits with code 7, prints "product version in" with the path and line, and the output holds neither the string nor the pattern
+
+#### Scenario: Product-version list unusable
+- **WHEN** the product-version list is absent, holds only comments, or holds a pattern that does not compile
+- **THEN** the generator exits with code 8, the cause says absent, empty or invalid, an invalid pattern is named by its line number only, and no tree remains
+
+Source: tests/build_edition/test_generateur_publication.py (identifier and sensitive-name parts, code 8 of the list and of the scanner); tests/build_edition/test_generateur_livres_versions.py (book-text and product-version parts, implemented by this change, tasks 3.1 and 3.2)
+
 ### Requirement: Optional test run in the generated tree
-The system SHALL, with the test-run option, run the full test runner on a copy of the publishable tree, placed in a temporary folder outside the output with a throwaway repository and one commit. It SHALL run the runner without the variable reserved to git commit and without any bypass variable, print the runner's total line, and delete the temporary folder. On a red run it SHALL exit with code 1 and the key phrase "tests red in the generated tree", and rename the tree to the not-publishable name. Without the option, the system SHALL print the commands that the user runs after creating their repository. The system SHALL NOT run a filtered or targeted run instead of the full one. Untested until implemented.
+The system SHALL, with the test-run option, run the full test runner on a copy of the publishable tree, placed in a temporary folder outside the output with a throwaway repository and one commit. It SHALL run the runner without the variable reserved to git commit and without any bypass variable, print the runner's total line, and delete the temporary folder. On a red run it SHALL exit with code 1 and the key phrase "tests red in the generated tree", and rename the tree to the not-publishable name. Without the option, the system SHALL print the commands that the user runs after creating their repository. The system SHALL NOT run a filtered or targeted run instead of the full one.
 
 #### Scenario: Green run
 - **WHEN** the test-run option is given and every suite passes in the copy
@@ -134,6 +181,8 @@ The system SHALL, with the test-run option, run the full test runner on a copy o
 - **WHEN** the option is not given
 - **THEN** no test runs and the output lists the commands to run
 
+Source: tests/build_edition/test_generateur_validation.py (fake runner through the environment); the case of a suite excluded by the manifest is covered only through a red fake runner
+
 ### Requirement: The generator publishes nothing and runs nothing paid or private
 The system SHALL NOT, while building the edition:
 - create a remote repository, push, publish, or initialise a repository in the output folder;
@@ -141,7 +190,7 @@ The system SHALL NOT, while building the edition:
 - run the real Jira tools, the database scripts, or the import and compare tools;
 - connect to the database or make any network call.
 
-The last line of a successful build SHALL say that no repository was created and nothing was pushed. Untested until implemented.
+The last line of a successful build SHALL say that no repository was created and nothing was pushed.
 
 #### Scenario: Forbidden commands
 - **WHEN** the generator's text is scanned outside comments
@@ -151,8 +200,10 @@ The last line of a successful build SHALL say that no repository was created and
 - **WHEN** a build succeeds
 - **THEN** the output says that nothing was pushed and no repository was created
 
+Source: tests/build_edition/test_generateur_interdits.py; success line: tests/build_edition/test_generateur_classement.py (test_success_leaves_only_the_output)
+
 ### Requirement: The edition ships the install script and its suite
-The system SHALL classify the install script's bootstrap and orchestrator with explicit include rules, placed before the broad rule of the tools folder, so that their presence in the edition is a stated intent and does not depend on the broad rule. The install-script test suite SHALL be included through the tests rule. The bootstrap SHALL keep its executable bit in the tree. The install-script suite SHALL read no file that the manifest excludes or replaces, so that the test run in the generated tree stays green. Untested until implemented.
+The system SHALL classify the install script's bootstrap and orchestrator with explicit include rules, placed before the broad rule of the tools folder, so that their presence in the edition is a stated intent and does not depend on the broad rule. The install-script test suite SHALL be included through the tests rule. The bootstrap SHALL keep its executable bit in the tree. The install-script suite SHALL read no file that the manifest excludes or replaces, so that the test run in the generated tree stays green.
 
 #### Scenario: Script in the tree
 - **WHEN** a tree is built
@@ -162,3 +213,30 @@ The system SHALL classify the install script's bootstrap and orchestrator with e
 - **WHEN** the explicit include rule of the orchestrator is removed from the manifest
 - **THEN** the edition-manifest test fails and names the install script
 
+Source: tests/build_edition/test_manifeste.py (test_script_d_installation_a_ses_regles_explicites, test_le_test_nomme_le_script_d_installation_quand_les_regles_manquent); the bytes and executable bit through the generic copy tests of tests/build_edition/test_generateur_classement.py; that the install-script suite reads no excluded file is checked only by the test run in the generated tree
+
+### Requirement: The edition ships the GitHub queue tools without a queue template
+The system SHALL include in the edition the queue reader, the GitHub write tool, their test suites and the `/next`, `/start` and `/close` commands, and SHALL NOT ship a template of a work-queue document. The edition's installation guide SHALL state that the queue needs `gh` with the Project scope, a Project whose Status field holds the four options, and the local sensitive-names list, without which the write tool refuses every write.
+
+#### Scenario: Tools in the tree
+- **WHEN** a tree is built
+- **THEN** it holds the reader, the write tool, their suites and the three commands, byte for byte, and no work-queue template
+
+#### Scenario: Rule removed
+- **WHEN** the include rule of the write tool is removed from the manifest
+- **THEN** the edition-manifest test fails and names the write tool
+
+Source: tests/build_edition/test_manifeste.py (test_l_edition_livre_la_file_github_sans_gabarit_de_file); the statement of the installation guide is untested
+
+### Requirement: Release notes are not built by the generator
+The system SHALL keep the edition generator free of release notes: it SHALL NOT call `gh`, read issues or milestones, or write a notes file; the notes come from the queue reader (design D5). The manifest SHALL hold no rule for the removed evolutions document.
+
+#### Scenario: No gh in the generator
+- **WHEN** the generator's text is scanned outside comments
+- **THEN** it holds no launch of `gh` and no read of issues or milestones
+
+#### Scenario: Stale evolutions rule
+- **WHEN** the evolutions document is removed and its manifest rule is left
+- **THEN** the generator exits with code 5 and names the rule
+
+Source: tests/build_edition/test_generateur_interdits.py (test_scan_catches_a_gh_launch and the forbidden-commands scan); stale rules: tests/build_edition/test_generateur_classement.py (test_stale_rule_is_named) and tests/build_edition/test_manifeste.py (test_aucune_regle_perimee)

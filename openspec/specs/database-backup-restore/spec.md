@@ -266,3 +266,30 @@ Source: tests/db_scripts/test_db_scripts.sh (compose : ...)
 #### Scenario: Static checks
 - WHEN the compose file is read
 - THEN no mandatory-variable syntax for the password and no literal password value appear, and a shared-memory size is set
+
+### Requirement: The scheduled backup runs from the run tree and marks its run
+The system SHALL make the backup job launch the backup script through its lab-folder link, and SHALL make the script mark its run by the rules of design D14: its own folder in the lab data folder, created atomically before any work with its process identifier, removed at exit by its own process only, whatever the exit code. A marker SHALL NOT stop the backup or change its exit code, and the script SHALL NOT remove another job's marker or the watch lock. Untested until implemented.
+
+#### Scenario: Rendered template
+- **WHEN** the backup template is rendered
+- **THEN** its program is the backup script's lab-folder link under the home directory, and no code-tree folder is named
+
+#### Scenario: Marker during the backup
+- **WHEN** the backup dumps a schema in a fixture
+- **THEN** the backup's marker folder exists in the lab data folder and holds the backup's process identifier
+
+#### Scenario: Marker removed after a failure
+- **WHEN** a schema is missing and the backup exits non-zero
+- **THEN** the backup's marker no longer exists, and the watch lock, if present, is untouched
+
+#### Scenario: Stale marker taken over
+- **WHEN** the backup starts while its marker folder holds the identifier of a dead process
+- **THEN** the log holds the "stale, taken over" line of design D14, the backup runs with its own marker, and no marker is left after it
+
+#### Scenario: Marker held by another backup
+- **WHEN** the backup starts while its marker folder holds the identifier of a live process, recently created
+- **THEN** the log holds the "already held" line of design D14, the backup runs, and the existing folder is unchanged after it
+
+#### Scenario: Data folder not writable
+- **WHEN** the marker cannot be created because the data folder is read-only
+- **THEN** the log holds the "cannot be written" line of design D14, the dumps are written, and the exit code is the one the backup would give without a marker

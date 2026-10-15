@@ -102,13 +102,14 @@ class Import(ImportBase):
         self.assertEqual(self.comptes(f)[:8], [2, 0, 0, 2, 0, 0, 0, 0])
 
     def test_champs_ecrits(self):
-        f = self.csv("a.csv", [cf.ligne("PROJ-1", Resolved="10/Jul/2026 14:05", Resolution="Done", **{"Story Points": "3.5"},
-                                        **{"Parent key": "PROJ-9"})])
+        resolu = cf.jour_relatif(30)         # relatif au jour du test : une date fixe sortirait de la règle d'un an
+        f = self.csv("a.csv", [cf.ligne("PROJ-1", Resolved=cf.date_export(resolu, 14, 5), Resolution="Done",
+                                        **{"Story Points": "3.5"}, **{"Parent key": "PROJ-9"})])
         self.comptes(f)
         ligne = self.un("SELECT project, type, status, status_category, resolution, story_points, parent_key, "
                         "created_at, resolved_at, status_category_changed_at, updated_at FROM flow.issues")
         self.assertEqual(ligne[:7], ("PROJ", "Story", "In Progress", "In Progress", "Done", 3.5, "PROJ-9"))
-        self.assertEqual(ligne[8], dt.datetime(2026, 7, 10, 12, 5, tzinfo=UTC))      # été : UTC+2
+        self.assertEqual(ligne[8], cf.instant_utc(resolu, 14, 5))      # décalage du fuseau d'export à cette date (été ou hiver)
         self.assertEqual(ligne[7], dt.datetime(2026, 1, 2, 8, 30, tzinfo=UTC))       # hiver : UTC+1
         self.assertEqual(ligne[10], dt.datetime(2026, 1, 6, 10, 15, tzinfo=UTC))
 
@@ -188,12 +189,14 @@ class Import(ImportBase):
     def test_format_de_date_fixe_avec_heure(self):
         """Le réglage du format de date a été retiré (commit 2552d15) : l'export de l'API écrit toujours jour/mois/année
         et heure (history_common.FORMAT_DATE). Une date à minuit est lue ; une date sans heure ne l'est plus et sa ligne est écartée."""
-        f = self.csv("a.csv", [cf.ligne("PROJ-1", Created="02/Jan/2026 00:00", Resolved="15/Jan/2026 00:00",
+        resolu = cf.jour_relatif(30)         # relatif au jour du test (règle de conservation d'un an)
+        sans_heure = f"{resolu.day:02d}/{cf.MOIS[resolu.month - 1]}/{resolu.year}"
+        f = self.csv("a.csv", [cf.ligne("PROJ-1", Created="02/Jan/2026 00:00", Resolved=cf.date_export(resolu),
                                         Updated="16/Jan/2026 00:00"),
-                               cf.ligne("PROJ-2", Created="02/Jan/2026", Resolved="15/Jan/2026", Updated="16/Jan/2026")])
+                               cf.ligne("PROJ-2", Created="02/Jan/2026", Resolved=sans_heure, Updated="16/Jan/2026")])
         comptes = self.comptes(f)
         self.assertEqual(self.un("SELECT resolved_at, created_at FROM flow.issues WHERE key = 'PROJ-1'"),
-                         (dt.datetime(2026, 1, 14, 23, 0, tzinfo=UTC), dt.datetime(2026, 1, 1, 23, 0, tzinfo=UTC)))
+                         (cf.instant_utc(resolu), dt.datetime(2026, 1, 1, 23, 0, tzinfo=UTC)))
         # la ligne à date sans heure est écartée comme illisible (comme test_date_de_creation_illisible_comptee) : absente de la base
         self.assertIsNone(self.un("SELECT 1 FROM flow.issues WHERE key = 'PROJ-2'"))
         self.assertEqual((comptes[0], comptes[4]), (1, 1))     # une ligne importée, une écartée illisible

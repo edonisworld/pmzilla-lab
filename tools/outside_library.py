@@ -13,6 +13,9 @@ la bibliothèque » si un livre du catalogue porte le même titre (ou un alias) 
 « hors bibliothèque ». Les documents officiels et boîtes à outils (`document: true`) se cherchent comme des livres : hors bibliothèque tant qu'ils ne sont pas indexés. Le champ `relations` donne les liens à ne pas confondre.
 wake.py (réveil des postures) imprime ce résultat : la liste n'est plus écrite à la main dans les textes.
 Sans catalogue lisible, le script le dit et ne classe rien (aucune supposition).
+
+Exemple :
+    uv run tools/outside_library.py delivery
 """
 from __future__ import annotations
 

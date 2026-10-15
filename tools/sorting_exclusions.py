@@ -20,23 +20,7 @@ from mapping_lab import MAPPING, R, norm  # noqa: E402
 
 # écarté -> livre gardé à sa place (clés de MAPPING) ; None : écarté sans doublon (hors sujet, version concise)
 GARDES: dict[str, str | None] = {
-    R + "Agile & Scrum/agile-fluency-french-version.md": R + "Agile & Scrum/agile-fluency-project-ebook-rtw-1.md",
-    R + "Agile & Scrum/un_guide_de_survie_à_l_adoption_ou_transformation_agile___travailler_avec_la_culture_d_une_organisation.md":
-        R + "UX & Design/Michael Sahota - An Agile Adoption and Transformation Survival Guide.md",
-    R + "Organizational Change & Transformation/OCTO_CULTURE_SCALING_KAIZEN_WEB.md":
-        R + "Organizational Change & Transformation/culture-scaling-kaizen-version-epub.md",
-    R + "Product Management & Discovery/Jeff Patton - Le story mapping (2015).md":
-        R + "Product Management & Discovery/User Story Mapping Jeffe Patton O reilly 2014.md",
-    R + "UX & Design/Lean UX_ Applying Lean Principles to Improve User Experience.md":
-        R + "UX & Design/Lean UX_ Applying Lean Principles to Improve User Experience .md",
-    R + "Agile & Scrum/Malcolm Gladwell - Blink.md": None,
-    R + "Communication & Social Skills/BookHabits - Summary of Principles by Ray Dalio.md":
-        R + "Organizational Change & Transformation/Ray Dalio - Principles.md",
-    R + "Personal Development & Mindset/Joe Navarro - Narcissists Among Us.md": None,
-    R + "Personal Development & Mindset/Robert Greene - Mastery (concise).md": None,
-    R + "Lean & Continuous Improvement/Kaizen.md": None,
-    R + "Books/Kanban PDF.md":
-        R + "Books/Kanban Successful Evolutionary Change for Your Technology Business by David J. Anderson.md",
+    R + "Exemple/Cartographie des Marées (copie).md": R + "Exemple/Cartographie des Marées.md",
 }
 
 LINE = re.compile(r'^\s*R \+ "(?P<key>.+?)":\s*"(?P<codes>[A-Z]*)",?\s*(?:#\s*(?P<comment>.*))?$')

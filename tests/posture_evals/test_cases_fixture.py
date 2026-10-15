@@ -160,7 +160,7 @@ class MessageDeBaseIndisponible(unittest.TestCase):
         erreur = db.ErreurBase("Connexion à la base impossible : refusée. Aucun mot de passe trouvé (Trousseau pmzilla-lab-db, "
                                "puis PMZILLA_LAB_DB_PASSWORD).")
         sortie = io.StringIO()
-        with mock.patch.object(db, "connect", side_effect=erreur), mock.patch.object(essai, "library_backend", lambda: "postgres"), \
+        with mock.patch.object(db, "connect", side_effect=erreur), \
                 contextlib.redirect_stderr(sortie):
             self.assertIsNone(essai.create_cases_database())
         self.assertIn("PMZILLA_LAB_DB_PASSWORD", sortie.getvalue())
@@ -169,8 +169,7 @@ class MessageDeBaseIndisponible(unittest.TestCase):
     def test_une_autre_exception_n_affiche_que_son_type(self):
         import db
         sortie = io.StringIO()
-        with mock.patch.object(db, "connect", side_effect=RuntimeError("secret-invente")), \
-                mock.patch.object(essai, "library_backend", lambda: "postgres"), contextlib.redirect_stderr(sortie):
+        with mock.patch.object(db, "connect", side_effect=RuntimeError("secret-invente")), contextlib.redirect_stderr(sortie):
             self.assertIsNone(essai.create_cases_database())
         self.assertIn("RuntimeError", sortie.getvalue())
         self.assertNotIn("secret-invente", sortie.getvalue())
@@ -207,24 +206,19 @@ class BaseJetable(AvecFixtures):
             essai.reset_cases_database(BASE_JETABLE, self.workspace / FIXTURE)
         self.assertTrue(conn.closed)
 
-    def test_voie_sqlite_ou_base_en_panne_pas_de_base_jetable(self):
+    def test_base_en_panne_pas_de_base_jetable(self):
         import db
         with mock.patch.object(db, "connect", side_effect=db.ErreurBase("panne")) as connexion:
             self.assertIsNone(CREER_REELLE())
             connexion.assert_called()
-        with mock.patch.dict(essai.os.environ, {"PMZILLA_LAB_BACKEND": "sqlite"}), \
-                mock.patch.object(db, "connect", side_effect=AssertionError("aucune connexion")):
-            self.assertIsNone(CREER_REELLE())
 
     def test_creation_migre_et_la_suppression_est_forcee(self):
         import db
         admin, migree = FausseConnexion(), FausseConnexion()
         connexions = [admin, migree]
-        with mock.patch.dict(essai.os.environ, {}, clear=False), \
-                mock.patch.object(db, "connect", side_effect=lambda *a, **k: connexions.pop(0)) as connexion, \
+        with mock.patch.object(db, "connect", side_effect=lambda *a, **k: connexions.pop(0)) as connexion, \
                 mock.patch.object(db, "lister_migrations", return_value=["m"]), \
                 mock.patch.object(db, "migrer") as migrer:
-            essai.os.environ.pop("PMZILLA_LAB_BACKEND", None)
             nom = CREER_REELLE()
         self.assertRegex(nom, r"^pmzilla_eval_[0-9a-f]{12}$")
         self.assertTrue(admin.executed[0].startswith(f'CREATE DATABASE "{nom}"'))

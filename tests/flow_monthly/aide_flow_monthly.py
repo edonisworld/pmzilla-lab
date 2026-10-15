@@ -49,7 +49,7 @@ monthly_run:
 """
 
 # les outils que l'orchestrateur appelle, et ceux qu'il ne doit jamais appeler (ils existent en faux pour que l'appel se voie)
-OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_compare", "flow_board")
+OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_compare", "flow_board", "flow_retention")
 OUTILS_EXCLUS = ("segment_sample", "db", "flow_views", "knowledge_import")
 
 FAUX_OUTIL = '''import datetime, json, os, sys
@@ -67,6 +67,14 @@ if outil == "flow_compare":
     cle = "flow_compare:" + ("reports" if "reports" in args else "data")
 code = codes.get(cle, codes.get(outil, 0))
 print("SORTIE-OUTIL " + " ".join(args))
+if outil == "flow_retention":
+    imposee = racine / "retention-sortie.txt"
+    if imposee.exists():
+        print(imposee.read_text(encoding="utf-8"))
+    elif "fr" in args:
+        print("contrôle de conservation : rien hors règle\\nessai : rien n'est supprimé")
+    else:
+        print("retention check: nothing out of rule\\ndry run: nothing deleted")
 if code or codes.get("stderr_ok"):
     print("ERREUR-OUTIL boum", file=sys.stderr)
 if outil == "flux_jira" and "compute" in args and not code:
@@ -128,6 +136,10 @@ class Decor(unittest.TestCase):
 
     def codes_de(self, codes: dict) -> None:
         (self.racine / "codes.json").write_text(json.dumps(codes), encoding="utf-8")
+
+    def sortie_retention(self, texte: str) -> None:
+        """Ce que le faux outil de rétention imprime (par défaut : « rien hors règle » dans la langue demandée)."""
+        (self.racine / "retention-sortie.txt").write_text(texte, encoding="utf-8")
 
     def resume_ecrit(self, jour: str, final: str, lignes: str = "") -> Path:
         """Un résumé déjà présent (écrit à la main, au format de l'orchestrateur)."""

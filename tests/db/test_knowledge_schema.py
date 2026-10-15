@@ -10,7 +10,6 @@ import contextlib
 import json
 import secrets
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +19,8 @@ from test_db import db          # noqa: E402
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tests" / "fixtures_library"))
 import demo_library as demo     # noqa: E402
+
+from test_watch_schema import TABLES_VEILLE     # noqa: E402
 
 TABLES = {"books", "collections", "book_collections", "chunks"}
 
@@ -69,7 +70,7 @@ class SchemaKnowledge(unittest.TestCase):
         c = self.conn()
         noms = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                         "WHERE n.nspname = 'knowledge' AND c.relkind = 'r'")}
-        self.assertEqual(noms, TABLES)
+        self.assertEqual(noms, TABLES | TABLES_VEILLE)      # les quatre tables de la bibliothèque et les onze de la veille (0007)
         colonnes = {r[0]: r[1] for r in c.execute("SELECT column_name, data_type FROM information_schema.columns "
                                                   "WHERE table_schema = 'knowledge' AND table_name = 'chunks'")}
         self.assertEqual(colonnes["embedding"], "USER-DEFINED")
@@ -190,8 +191,7 @@ class SansBase(unittest.TestCase):
         self.assertIn("remove_diacritics", texte)
 
     def test_bibliotheque_inventee_coherente(self):
-        with tempfile.TemporaryDirectory() as dossier:
-            comptes = demo.build_sqlite(Path(dossier) / "library.sqlite")
+        comptes = demo.expected_counts()
         self.assertEqual(comptes["books"], 5)
         self.assertEqual(comptes["chunks"], 14)
         self.assertEqual(comptes["figures"], 2)

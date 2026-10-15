@@ -15,8 +15,7 @@ un fichier suivi (un modèle qui réintroduirait un chemin absolu au moment de l
 Les identifiants ne sont écrits dans aucun fichier suivi : ils viennent du compte de la session (`getpass`, nom du
 dossier personnel), du chemin de la racine, au besoin de `.pmzilla/identifiants.txt` (un par ligne, local, ignoré par
 Git) et de l'identifiant d'auteur du module des cas, clé `author` de `.pmzilla/cases.yaml` (local, ignoré par Git ; la
-variable d'environnement PMZILLA_LAB_CASES_AUTHOR n'est pas lue ; un fichier illisible donne le code 2). La recherche ignore la casse. Les fichiers personnels hors édition sont exclus : evolutions.md,
-bibliotheque-lacunes.md, le plan de la version anglaise et les tables rondes (_bmad-output/pmzilla/table-ronde/).
+variable d'environnement PMZILLA_LAB_CASES_AUTHOR n'est pas lue ; un fichier illisible donne le code 2). La recherche ignore la casse. Les fichiers personnels hors édition sont exclus : bibliotheque-lacunes.md, le plan de la version anglaise et les tables rondes (_bmad-output/pmzilla/table-ronde/).
 
 Sortie : le nombre d'occurrences par fichier (avec --lignes : le numéro des lignes), jamais l'identifiant ni le texte de
 la ligne. Code de sortie 0 sans occurrence, 1 sinon, 2 en cas d'erreur.
@@ -39,9 +38,9 @@ from pathlib import Path
 
 POSTURES = ("delivery", "discovery", "scaling", "facilitation")
 
-EXCLUS_PAR_DEFAUT = ("docs/pmzilla/evolutions.md", "docs/pmzilla/bibliotheque-lacunes.md", "docs/pmzilla/version-anglaise.md",
+EXCLUS_PAR_DEFAUT = ("docs/pmzilla/bibliotheque-lacunes.md", "docs/pmzilla/version-anglaise.md",
                      "_bmad-output/pmzilla/table-ronde/")   # un chemin qui finit par « / » exclut tout le dossier
-SUFFIXES_TEXTE_IGNORES = (".png", ".jpg", ".jpeg", ".gif", ".pdf", ".sqlite", ".ico", ".woff", ".woff2", ".zip")
+SUFFIXES_TEXTE_IGNORES = (".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".woff", ".woff2", ".zip")
 
 
 def identifiant_auteur(racine: Path) -> str | None:

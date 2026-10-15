@@ -3,7 +3,9 @@
 ## Purpose
 
 Describes the command-line tool that exports tickets from the Jira API into a CSV file in the same layout as a manual Jira export, so that the flow and dependency reports read it unchanged. The tool never asks Jira for titles, descriptions or individual data. Sources are the tests in `tests/export_jira_api/`.
+
 ## Requirements
+
 ### Requirement: Subcommands and retired subcommands
 The system SHALL offer the subcommands `diagnose`, `fields` and `export`, and SHALL refuse the retired subcommands `compare` and `teams-table` (and the former French subcommand names) with exit code 2, without a traceback, without calling Jira, and with a message that points to the replacement path.
 
@@ -19,7 +21,7 @@ Source: tests/export_jira_api/test_export_jira_api.py (SousCommandesRetirees, An
 
 #### Scenario: Former option and setting names
 - **WHEN** a former option name (for example the French search or output option) or a former setting name is used
-- **THEN** it is accepted with a warning naming the new name, while former subcommand names are refused with exit code 2
+- **THEN** it is refused (exit code 2 for an option, non-zero for a setting) with a message naming the current name, no file is written and Jira is not called; former subcommand names are refused with exit code 2
 
 ### Requirement: CSV layout identical to a manual Jira export
 The system SHALL write a UTF-8 CSV with the columns issue key, issue type, status, status category, created, resolved, resolution, status-category-changed, parent key, updated, then optional points and team columns, then one column per distinct link type and direction, repeated as many times as the largest number of links of that kind on one ticket. Dates SHALL be written as day/abbreviated-month/year hour:minute.
@@ -70,13 +72,21 @@ Source: tests/export_jira_api/test_export_jira_api.py (test_pagination_complete,
 - **THEN** the export ends successfully after the second request
 
 ### Requirement: No sensitive field requested or printed
-The system SHALL NOT request titles, assignee, reporter, creator or description from Jira, SHALL write no title to the file, SHALL NOT print the token, the site address, ticket keys, team labels or the query to the console, and SHALL create the output file readable only by its owner. The console SHALL report the ticket and page counts.
+The system SHALL NOT request titles, assignee, reporter, creator, description, comments or any other user field (the PO in charge included, design D3) from Jira, SHALL request the labels field only when declared labels are configured, SHALL write no title, no undeclared label and no `PO` column to the file, SHALL NOT print the token, the site address, the cloud identifier, ticket keys, team labels, labels, version names or the query to the console, and SHALL create the output file readable only by its owner. The console SHALL report the ticket and page counts.
 
-Source: tests/export_jira_api/test_export_jira_api.py (test_aucun_titre_demande_a_jira_et_rien_de_sensible_en_sortie)
+Source: tests/export_jira_api/test_export_jira_api.py (test_aucun_titre_demande_a_jira_et_rien_de_sensible_en_sortie); tests/export_jira_api/test_garde_champs.py
 
 #### Scenario: Console and file content
 - **WHEN** an export succeeds
 - **THEN** the requested field list contains none of the forbidden fields, neither output nor file contains the secret title or the token, and the file permissions are owner read/write only
+
+#### Scenario: Labels not configured
+- **WHEN** declared labels are not configured
+- **THEN** the requested field list contains neither the labels field nor any user field
+
+#### Scenario: No user field with every setting
+- **WHEN** an export runs with every supported optional setting present
+- **THEN** the requested field list contains no comment, summary, description, creator, reporter, assignee or other user field, and the header has no `PO` column
 
 ### Requirement: Access errors show only the status code
 The system SHALL, when Jira rejects the request, print only the HTTP status code and exit with code 1.
@@ -122,25 +132,45 @@ Source: tests/export_jira_api/test_export_jira_api.py (Export, ChampEquipeIllisi
 - **THEN** it is not accepted as a label, whereas values with a value or name property, or plain strings, are
 
 ### Requirement: Team table for asset-object team fields
-The system SHALL, when the team field returns asset objects instead of labels, translate identifiers to labels through a hand-written team table file (identifier to label mapping, other keys ignored). Unknown identifiers SHALL be written as an "unknown team" marker in the CSV regardless of the language, and the console SHALL report the number of distinct unknown identifiers, the number of tickets affected, and the list of identifiers only (no labels, no keys). When no table exists the export SHALL stop with exit code 1, write no file, and explain how to create the table by hand, naming the shape of the object (never values). An unreadable table SHALL stop the export.
+The system SHALL, when the team field returns asset objects instead of labels, translate identifiers to team names through the Jira team identifiers of the organisation referential (design D5). While the referential holds no Jira team identifier at all, the system SHALL read the former hand-written team table instead, with the deprecation key phrase of design D19 (design D4); as soon as one identifier is present in the referential, the former table SHALL be ignored with the same warning asking to delete it. Unknown identifiers SHALL be written as an "unknown team" marker in the CSV regardless of the language, and the console SHALL report the number of distinct unknown identifiers, the number of tickets affected, and the list of identifiers only (no labels, no keys). When neither source exists the export SHALL stop with exit code 1, write no file, and explain how to fill the referential, naming its structure (never values). An unreadable referential or table SHALL stop the export. The system SHALL NOT call the Assets API.
 
-Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes, ChampEquipeIllisible)
+Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes, ChampEquipeIllisible); tests/export_jira_api/test_referentiel_et_etiquettes.py (TraductionParReferentiel, RepliSurLaTable, AucuneSource)
 
-#### Scenario: Partly unknown table
-- **WHEN** some identifiers are missing from the table
-- **THEN** their cells hold the unknown marker, the original API order of teams is kept, and the console lists the missing identifiers
+#### Scenario: Partly unknown referential
+- **WHEN** some identifiers are missing from the referential
+- **THEN** their cells hold the unknown marker, the original API order of teams is kept, the console lists the missing identifiers, and the export continues
 
-#### Scenario: Complete table
-- **WHEN** every identifier is in the table
+#### Scenario: Complete referential
+- **WHEN** every identifier is in the referential
 - **THEN** no completion message is printed
 
+#### Scenario: Fallback to the former table
+- **WHEN** the referential has no Jira team identifier and the former table exists
+- **THEN** the former table is used and the console prints "team table deprecated: fill jira_team_ids in the organisation referential"
+
+#### Scenario: Both present
+- **WHEN** the referential has identifiers and the former table still exists
+- **THEN** the referential alone is used and the deprecation warning is printed
+
+#### Scenario: Partly unknown table
+- **WHEN** the referential has no Jira team identifier, the former table is used, and some identifiers are missing from that table
+- **THEN** their cells hold the unknown marker, the original API order of teams is kept, the console lists the missing identifiers after the deprecation warning, and the export continues
+
+#### Scenario: Complete table
+- **WHEN** the referential has no Jira team identifier, the former table is used, and every identifier is in that table
+- **THEN** no completion message is printed, and the deprecation warning is printed
+
 #### Scenario: No table
-- **WHEN** the team field is asset objects and the table does not exist
-- **THEN** the exit code is 1, the output file is not created, and the message gives the shape but none of the values
+- **WHEN** the team field is asset objects, the referential holds no Jira team identifier, and the former table does not exist
+- **THEN** the exit code is 1, the output file is not created, and the message explains how to fill the referential, giving its structure but none of the values
+
+#### Scenario: No source
+- **WHEN** the team field is asset objects and neither the referential nor the table exists
+- **THEN** the exit code is 1, the output file is not created, and the message gives the structure but none of the values
 
 #### Scenario: Permission rules
 - **WHEN** the project permission settings are read
-- **THEN** reading the team table file and calling the retired subcommands are denied to the assistant
+- **THEN** reading the team table file, reading the organisation referential and calling the retired subcommands are denied to the assistant
 
 ### Requirement: Optional verification column
 The system SHALL, when a verification field identifier is configured, write one extra column placed right after the team columns (header configurable), converting choice lists, single choices, checkboxes (as true) and multiple choices (values joined by a semicolon), and writing empty for unknown shapes. The console SHALL report only how many tickets are filled out of the total. Without the setting, no column is written and the field is not requested. An invalid identifier SHALL stop before any Jira call.
@@ -186,9 +216,9 @@ Source: tests/export_jira_api/test_export_jira_api.py (Champs)
 - **THEN** the exit code is 1 and Jira is not called
 
 ### Requirement: Diagnose subcommand
-The system SHALL provide a `diagnose` subcommand that reads a single page of tickets requesting only the team field and reports, without any value, whether team labels are usable and the shape of the field (for example a list of objects with a value, or asset objects with their count). It SHALL exit 1 when labels are not usable and no team table exists, or when the field is absent from responses, and exit 0 when labels are usable or a table exists (reporting the number of identifiers in the table).
+The system SHALL provide a `diagnose` subcommand that reads a single page of tickets requesting only the team field and reports, without any value, whether team labels are usable and the shape of the field (for example a list of objects with a value, or asset objects with their count). It SHALL exit 1 when labels are not usable and neither the organisation referential holds identifiers nor the former team table exists, or when the field is absent from responses, and exit 0 when labels are usable or a translation source exists (reporting which source and the number of identifiers it holds).
 
-Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, TableEquipes, ChampEquipeIllisible)
+Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, TableEquipes, ChampEquipeIllisible); tests/export_jira_api/test_referentiel_et_etiquettes.py
 
 #### Scenario: Usable labels
 - **WHEN** the team field returns labels
@@ -197,6 +227,10 @@ Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, TableEquipes,
 #### Scenario: Field absent
 - **WHEN** the configured field never appears in responses
 - **THEN** the exit code is 1 and the message says it is absent from responses
+
+#### Scenario: Referential as source
+- **WHEN** the field returns asset objects and the referential holds identifiers
+- **THEN** the exit code is 0 and the report names the referential and the count of identifiers, without any identifier or name
 
 ### Requirement: CSV compatible with the report tools
 The system SHALL produce a CSV that the flow report and the dependency report read without modification and with the same result as an equivalent manual export, including repeated team columns and link columns.
@@ -208,7 +242,7 @@ Source: tests/export_jira_api/test_export_jira_api.py (LecturePar)
 - **THEN** both reports are identical apart from name and column list
 
 ### Requirement: Message language
-The system SHALL print its messages in French by default and in English with `--language en`, SHALL reject other languages with exit code 2, SHALL NOT keep the language between runs, and SHALL accept the former option name with a warning. English output SHALL contain no French words except the unknown-team marker written in the CSV.
+The system SHALL print its messages in French by default and in English with `--language en`, SHALL reject other languages with exit code 2, SHALL NOT keep the language between runs, and SHALL refuse the former option name with exit code 2 naming the current one. English output SHALL contain no French words except the unknown-team marker written in the CSV.
 
 Source: tests/export_jira_api/test_language.py
 
@@ -221,17 +255,49 @@ Source: tests/export_jira_api/test_language.py
 - **THEN** the exit code is 2
 
 ### Requirement: Strict option for unknown team identifiers
-The system SHALL accept on the export subcommand an opt-in strict-teams option. With it, when at least one team identifier is missing from the team table, the system SHALL write the export file and print its usual lines as without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name an identifier, a label, a key or a value. Without the option, the exit code and the output SHALL stay unchanged. Untested until implemented.
+The system SHALL accept on the export subcommand an opt-in strict-teams option. With it, when at least one team identifier is missing from the translation source (the organisation referential, or the former team table during its fallback), the system SHALL write the export file and print its usual lines as without the option, then print the key phrase of design D5 of the monthly-run change and exit with code 3. The key phrase SHALL NOT name an identifier, a label, a key or a value. Without the option, the exit code and the output SHALL stay unchanged.
+
+Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes: test_strict_teams_*); tests/export_jira_api/test_referentiel_et_etiquettes.py
 
 #### Scenario: Unknown identifier with the option
-- **WHEN** the export runs with the strict-teams option and one identifier is missing from the team table
+- **WHEN** the export runs with the strict-teams option and one identifier is missing from the referential
 - **THEN** the file is written, the output ends with "unknown team identifiers: export incomplete" in English, and the exit code is 3
 
+#### Scenario: Complete referential with the option
+- **WHEN** every identifier is in the referential
+- **THEN** the exit code is 0 and the key phrase is not printed
+
 #### Scenario: Complete table with the option
-- **WHEN** every identifier is in the team table
+- **WHEN** the referential has no Jira team identifier, the former team table is used during its fallback, and every identifier is in that table
 - **THEN** the exit code is 0 and the key phrase is not printed
 
 #### Scenario: Without the option
 - **WHEN** the export runs without the option and one identifier is missing
-- **THEN** the exit code is 0, as before this change
+- **THEN** the exit code is 0
 
+### Requirement: Declared label and fix version columns
+The system SHALL write, after the verification column and before the link columns, one `Declared Label` column per declared label of the ticket and one `Fix Version` column per fix version, both repeated as many times as the largest number on one ticket, following the jira-flow-labels capability. The system SHALL NOT write the plain `Labels` header and SHALL NOT write a `PO` column (design D3).
+
+Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (ColonnesEtiquettesEtVersions)
+
+#### Scenario: Header order
+- **WHEN** one ticket has two declared labels and one fix version
+- **THEN** the header shows the verification column, two `Declared Label` columns, one `Fix Version` column, then the link columns
+
+### Requirement: Rows past the retention rule are not written
+The system SHALL leave out of the CSV the tickets resolved longer ago than the retention period of the jira-flow-retention capability, and print the rows-past-the-rule key phrase of design D19 with their count. It SHALL NOT print their keys.
+
+Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (Conservation)
+
+#### Scenario: Old resolved ticket
+- **WHEN** the query returns a ticket resolved before the retention period
+- **THEN** the CSV has no row for it and the console prints "tickets past retention, not written: 1"
+
+### Requirement: New columns ignored by the CSV calculations
+The system SHALL keep the flow report and the dependency report computed from an export carrying the `Declared Label` and `Fix Version` columns identical to the reports computed from the same export without them (design D11).
+
+Source: tests/flux_jira/test_colonnes_ignorees.py; tests/dependencies_jira/test_colonnes_ignorees.py
+
+#### Scenario: Same report
+- **WHEN** the flow report is computed on an export with and without the new columns
+- **THEN** the Markdown and JSON reports are identical apart from the column list

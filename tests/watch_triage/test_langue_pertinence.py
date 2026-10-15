@@ -94,8 +94,7 @@ class Langue(ombre.Ombre):
         self.assertTrue(systeme.startswith("You evaluate"))
         self.assertIn("Themes: t.", systeme)                 # thèmes des réglages, pas THEMES du module
         self.assertIn("question these", envoyees[0]["messages"][1]["content"])
-        note = self.connection.execute("SELECT substance FROM scores WHERE file = 'a1.md'").fetchone()[0]
-        self.assertEqual(note, 4)
+        self.assertEqual(self.note_de("a1.md")["substance"], 4)
 
     def test_module_anglais_inutilisable_arrete_sans_repli(self):
         self.reglages(extra="language: en\n")
@@ -106,7 +105,7 @@ class Langue(ombre.Ombre):
                 self.noter()
         self.assertIn("Prompts de la langue en inutilisables (watch_prompts_en)", str(erreur.exception.code))
         self.assertEqual(envoyees, [])
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM scores").fetchone()[0], 0)
+        self.assertEqual(self.store.all_scores(), [])
 
 
 class SeuilPertinence(voisin.Base):
@@ -154,9 +153,9 @@ class SeuilPertinence(voisin.Base):
         self.reglages("relevance_threshold: 60\n", mode="filtre")
         self.ajouter("proche.md", 5, collecte=AUJOURD_HUI)
         self.ajouter("loin.md", 5, collecte=AUJOURD_HUI)
-        self.connection.execute("INSERT INTO forced VALUES ('loin.md', 'now')")
-        self.connection.execute("INSERT INTO excluded VALUES ('proche.md', 'now')")
-        self.connection.commit()
+        self.store.restore("loin.md", "2026-10-02")
+        self.store.exclude("proche.md", "2026-10-02")
+        self.store.commit()
         self.assertEqual(self.ligne("loin.md")["reasons"], [])
         self.assertEqual(self.ligne("proche.md")["reasons"], ["écarté à la main"])
         self.lancer(tri.cmd_apply)
@@ -177,6 +176,18 @@ class SeuilPertinence(voisin.Base):
         ligne = {"substance": 5, "criteria": {k: True for k in tri.CRITERIA}, "pertinence": 0}
         self.assertEqual(tri.discard_reasons(ligne, 3), [])
 
+    def test_raisons_dans_l_ordre_des_criteres_quel_que_soit_l_ordre_des_cles(self):
+        """Les critères relus de la base (jsonb) arrivent dans un autre ordre de clés : mêmes raisons, ordre du code."""
+        cles = list(tri.CRITERIA)
+        manquants = {"etaye", "these"}
+        endroit = {k: k not in manquants for k in cles}
+        envers = {k: k not in manquants for k in reversed(cles)}
+        self.assertNotEqual(list(endroit), list(envers))
+        attendu = [tri.CRITERIA[k][1] for k in cles if k in manquants]
+        for criteres in (endroit, envers):
+            ligne = {"substance": 3, "criteria": criteres, "pertinence": 0}
+            self.assertEqual(tri.discard_reasons(ligne, 4), attendu)
+
 
 def jeu_pertinence(self):
     """Dix articles, du plus proche au plus loin : rangs 100, 89, 78, 67, 56, 44, 33, 22, 11, 0.
@@ -195,8 +206,9 @@ class SeuilsAvecPertinence(voisin.Base):
         jeu_pertinence(self)
         with contextlib.redirect_stdout(io.StringIO()):
             tri.config()
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         voisin.remplir_avis(AVIS_PERTINENCE)
+        self.importer()
 
     def test_matrice_et_deux_propositions_sans_rien_ecrire(self):
         avant = tri.CONFIG_FILE.read_bytes()

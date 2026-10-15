@@ -6,7 +6,7 @@ Garde permanente : les entrées du juge ne changent pas sans qu'on l'ait voulu.
 À chaque lot, ce test compare ce que le juge reçoit (le prompt français et, pour chaque cas, la question, la posture, les
 vérifications dont les motifs de texte, les prérequis et les critères jugés, après contrôle des clés : une ancienne clé est refusée) à l'état de
 référence : par défaut le dernier état poussé (`origin/main`). Si rien n'a changé là où une séance et le juge lisent, un
-échec isolé d'un cas de la piste « Cas instables » (evolutions.md) est une variation du modèle, acceptée sans rejeu
+échec isolé d'un cas de la piste « Cas instables » est une variation du modèle, acceptée sans rejeu
 (plan de la version anglaise, section 6.2). Un lot qui change volontairement ces entrées (4, 6 et 7) lance les tests avec
 PMZILLA_ENTREES_JUGE_CHANGEES=1 : le test est alors ignoré, et l'on traite d'abord la piste « Cas instables ».
 

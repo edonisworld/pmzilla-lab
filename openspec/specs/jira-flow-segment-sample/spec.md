@@ -155,9 +155,9 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestDebuts, TestPartAtten
 - **THEN** the section is identical, including the reference columns, and another seed changes the draws
 
 ### Requirement: Print in French by default and in English on request
-The system SHALL print the report in French by default and in English with the language option, SHALL give the same data (keys, figures, states) in both, SHALL contain no French text in the English output, SHALL match a versioned English snapshot, SHALL refuse an unknown language, and SHALL keep message catalogues coherent between languages. Former French option names SHALL be accepted with a rename warning on stderr and the same output.
+The system SHALL print the report in French by default and in English with the language option, SHALL give the same data (keys, figures, states) in both, SHALL contain no French text in the English output, SHALL match a versioned English snapshot, SHALL refuse an unknown language, and SHALL keep message catalogues coherent between languages.
 
-Source: `tests/segment_sample/test_language.py`, `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_anciennes_options_acceptees_avec_avertissement_et_meme_sortie)
+Source: `tests/segment_sample/test_language.py`
 
 #### Scenario: Default language
 - **WHEN** no language is given
@@ -175,6 +175,15 @@ Source: `tests/segment_sample/test_language.py`, `tests/segment_sample/test_segm
 - **WHEN** a language other than French or English is given
 - **THEN** the exit code is 2
 
+### Requirement: Former option names refused
+The system SHALL refuse a former French option name with a non-zero exit code, a message naming the current option and nothing on stdout.
+
+Source: `tests/segment_sample/test_segment_sample.py` (test_anciennes_options_refusees_avec_le_nom_actuel), `tests/segment_sample/test_language.py` (test_ancienne_option_langue_refusee)
+
 #### Scenario: Former option names
-- **WHEN** the former option names for date, longest, seed or language are used
-- **THEN** the output is the same as with the current names and stderr names each renamed option
+- **WHEN** the former option name for date, longest, seed or language is used
+- **THEN** the run fails (exit code 2 for the language option), stderr says the option no longer exists and names the current one, and stdout is empty
+
+## Open questions
+
+1. The tool accepts a project-scope option, exercised only by the English snapshot (a scope without a match); its expected behaviour is not described by an assertion and is not specified here.

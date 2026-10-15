@@ -9,6 +9,11 @@ Les colonnes et le fuseau viennent de flux.yaml (flux_jira.config), le format de
 Un export dont la colonne Updated manque, ou dont une valeur Updated est illisible, est refusé : ErreurExport, dont le
 message ne contient que le nom du fichier et le nom de la colonne, jamais une valeur ni une clé de ticket. Il n'y a pas
 de repli sur l'instant de l'import (l'import incrémental repose sur cette date).
+
+Colonnes « Declared Label » et « Fix Version » (R-58, design D19), répétées une fois par valeur : lues seulement à la demande
+(`periodes=True`, l'import avec --history les demande ; sans cela le résultat ne porte ni étiquette ni version). Une étiquette
+absente des réglages (declared_labels) est refusée : la ligne est lue sans elle et seul le nombre de valeurs refusées est rendu.
+Aucune colonne de personne n'est lue : un en-tête « PO » (ou tout autre nom inconnu) est ignoré, jamais stocké.
 """
 from __future__ import annotations
 
@@ -21,6 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dependencies_jira as dependances   # noqa: E402
+import flux_config as cfg                # noqa: E402
 import history_common as commun          # noqa: E402
 
 FUSEAU_PAR_DEFAUT = "Europe/Paris"
@@ -30,6 +36,8 @@ COLONNES_SUPPLEMENTAIRES = {
     "story_points": ["Story Points"],
     "parent": ["Parent key"],
 }
+COLONNE_ETIQUETTE = "declared label"
+COLONNE_VERSION = "fix version"
 NOMS_DE_COLONNE = {"cle": "Key", "etat": "Status", "cree": "Created", "modifie": "Updated"}
 OBLIGATOIRES = ("cle", "etat", "cree", "modifie")
 
@@ -76,9 +84,17 @@ def colonnes_de(settings: dict) -> dict[str, list[str]]:
     return {**COLONNES_SUPPLEMENTAIRES, **settings["colonnes"]}
 
 
-def lire_export(chemin: Path, settings: dict) -> tuple[dict[str, dict], int, bool]:
-    """(tickets par clé, nombre de lignes illisibles écartées, présence de colonnes de liens). Lève ErreurExport."""
+def etiquettes_declarees(settings: dict) -> set[str]:
+    """Toutes les étiquettes déclarées dans les réglages (tous rôles) ; ensemble vide sans bloc declared_labels."""
+    return {e for contenu in (cfg.declared_labels(settings) or {}).values() for e in contenu["labels"]}
+
+
+def lire_export(chemin: Path, settings: dict, periodes: bool = False) -> tuple[dict[str, dict], int, bool]:
+    """(tickets par clé, nombre de lignes illisibles écartées, présence de colonnes de liens). Lève ErreurExport.
+    Avec `periodes`, chaque ticket porte aussi « etiquettes » et « versions » (listes, ou None si l'export n'a pas la colonne)
+    et « refusees » (nombre de cellules d'étiquette non déclarée, écartées)."""
     zone = fuseau(settings)
+    declarees = etiquettes_declarees(settings) if periodes else set()
     nom_fichier = chemin.name
     try:
         handle = chemin.open(encoding="utf-8-sig", newline="")
@@ -104,6 +120,8 @@ def lire_export(chemin: Path, settings: dict) -> tuple[dict[str, dict], int, boo
                 raise ErreurExport("column_missing", file=nom_fichier, column=NOMS_DE_COLONNE[champ])
         colonnes_equipe = ([i for i, h in enumerate(normalises) if h == normalises[index["equipe"]]]
                            if "equipe" in index else [])
+        colonnes_etiquette = [i for i, h in enumerate(normalises) if h == COLONNE_ETIQUETTE] if periodes else []
+        colonnes_version = [i for i, h in enumerate(normalises) if h == COLONNE_VERSION] if periodes else []
         separateur = settings.get("separateur_equipes") or ";"
         typees, simples = dependances.colonnes_liens(entete)
         nom_modifie = entete[index["modifie"]]
@@ -135,6 +153,21 @@ def lire_export(chemin: Path, settings: dict) -> tuple[dict[str, dict], int, boo
                 if i < len(ligne):
                     for autre in dependances.CLE.findall(ligne[i]):
                         liens.append((autre, "", None))
+            etiquettes: list[str] = []
+            versions: list[str] = []
+            refusees = 0
+            for position in colonnes_etiquette:
+                valeur = ligne[position].strip() if position < len(ligne) else ""
+                if not valeur:
+                    continue
+                if valeur not in declarees:
+                    refusees += 1
+                elif valeur not in etiquettes:
+                    etiquettes.append(valeur)
+            for position in colonnes_version:
+                valeur = ligne[position].strip() if position < len(ligne) else ""
+                if valeur and valeur not in versions:
+                    versions.append(valeur)
             tickets[cle] = {
                 "cle": cle,
                 "projet": cle.rsplit("-", 1)[0].upper() if "-" in cle else "",
@@ -152,17 +185,22 @@ def lire_export(chemin: Path, settings: dict) -> tuple[dict[str, dict], int, boo
                 # None : l'export n'a aucune colonne de liens, les liens déjà en base ne sont pas touchés
                 "liens": list(dict.fromkeys(liens)) if (typees or simples) else None,
             }
+            if periodes:
+                tickets[cle].update({"etiquettes": etiquettes if colonnes_etiquette else None,
+                                     "versions": versions if colonnes_version else None, "refusees": refusees})
     return tickets, illisibles, bool(typees or simples)
 
 
-def lire_exports(chemins: list[str], settings: dict) -> dict:
+def lire_exports(chemins: list[str], settings: dict, periodes: bool = False) -> dict:
     """Un ou plusieurs exports, fusionnés par clé (le dernier fichier l'emporte). Rend
-    {"tickets": [lignes], "illisibles": n, "colonnes_liens": bool}."""
+    {"tickets": [lignes], "illisibles": n, "colonnes_liens": bool, "etiquettes_refusees": n} ; ce dernier compte les cellules
+    d'étiquette non déclarée des lignes retenues (0 sans `periodes`)."""
     fusion: dict[str, dict] = {}
     illisibles, avec_liens = 0, False
     for chemin in chemins:
-        tickets, ecartes, liens = lire_export(Path(chemin).expanduser(), settings)
+        tickets, ecartes, liens = lire_export(Path(chemin).expanduser(), settings, periodes)
         fusion.update(tickets)
         illisibles += ecartes
         avec_liens = avec_liens or liens
-    return {"tickets": list(fusion.values()), "illisibles": illisibles, "colonnes_liens": avec_liens}
+    return {"tickets": list(fusion.values()), "illisibles": illisibles, "colonnes_liens": avec_liens,
+            "etiquettes_refusees": sum(t.get("refusees", 0) for t in fusion.values())}

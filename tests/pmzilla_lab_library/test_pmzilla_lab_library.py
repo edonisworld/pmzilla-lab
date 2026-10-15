@@ -6,10 +6,9 @@ Tests de la bibliothèque (tools/pmzilla_lab_library.py) sur des livres et des a
 Tout se passe dans un dossier temporaire : le catalogue et les livres sont inventés, jamais Bibliotheque-MD
 ni la vraie base. L'indexeur écrit dans un faux magasin en mémoire (fake_store.FakeStore, même interface que
 KnowledgeStore) ; la classe AvecBase refait l'essentiel sur une base jetable (sautée sans base, lancée par
-tools/dbtest.sh). Aucun accès réseau : `embed` (Ollama) est remplacé par un plongement déterministe fondé sur
-les mots, les appels sont comptés pour prouver qu'une indexation incrémentale ne recalcule rien d'inutile. Les
-tests de la voie de lecture SQLite (`Library`, conservée jusqu'au change R-27) recopient le faux magasin dans un
-index SQLite temporaire (fake_store.export_sqlite).
+tools/dbtest.sh), et les tests de recherche et de lecture (Recherche, RenommageLu) indexent dans cette base puis lisent par
+PostgresLibrary. Aucun accès réseau : `embed` (Ollama) est remplacé par un plongement déterministe fondé sur
+les mots, les appels sont comptés pour prouver qu'une indexation incrémentale ne recalcule rien d'inutile.
 """
 import ast
 import contextlib
@@ -29,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import identifiants_personnels  # noqa: E402
 import pmzilla_lab_library as library  # noqa: E402
-from fake_store import FakeStore, export_sqlite  # noqa: E402
+from fake_store import FakeStore  # noqa: E402
+import knowledge_library  # noqa: E402
 
 RACINE = Path(__file__).resolve().parents[2]
 
@@ -101,8 +101,6 @@ class Base(unittest.TestCase):
             return self.plongement(texts)
 
         for patch in (
-            mock.patch.object(library, "DATA_DIR", self.tmp / "data"),
-            mock.patch.object(library, "DB_PATH", self.tmp / "data" / "library.sqlite"),
             mock.patch.object(library, "CATALOGUE_PATH", self.catalogue),
             mock.patch.object(library, "embed", compte),
         ):
@@ -133,13 +131,41 @@ class Base(unittest.TestCase):
     def textes(self, fichier: str | None = None) -> list[str]:
         return [p["text"] for nom, b in sorted(self.store.books.items()) if fichier in (None, nom) for p in b["passages"]]
 
-    def bibliotheque(self) -> "library.Library":
-        """La voie de lecture SQLite sur le contenu du faux magasin."""
-        export_sqlite(self.store)
-        return library.Library()
-
     def fichiers_sqlite(self) -> list[Path]:
         return sorted(self.tmp.rglob("*.sqlite*"))
+
+
+class LectureEnBase(Base):
+    """Indexe dans une base jetable migrée (KnowledgeStore, tests/library_backend/pg_demo.py), tables knowledge vidées avant chaque test, puis lit
+    par PostgresLibrary. Sautée sans base ; lancée par l'utilisateur avec bash tools/dbtest.sh. Jamais la vraie base."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
+        import pg_demo
+        self.pg = pg_demo
+        self.base = pg_demo.ThrowawayDatabase(self)            # saute le test sans base
+        self.lecture = self.base._raw()
+        self.lecture.execute("TRUNCATE knowledge.chunks, knowledge.book_collections, knowledge.books, knowledge.collections")
+        self.lecture.commit()
+        self.lecture.autocommit = True
+        self.plongement = fake_embed_1024
+        self.store = self.magasin()
+
+    def connexion(self):
+        conn = self.pg.db.connect(self.base.url, password=self.pg.base.MOT_DE_PASSE)
+        self.base.opened.append(conn)
+        return conn
+
+    def magasin(self):
+        return library.KnowledgeStore(connect=self.connexion)
+
+    def valeur(self, sql, params=None):
+        return self.lecture.execute(sql, params).fetchone()[0]
+
+    def bibliotheque(self) -> "knowledge_library.PostgresLibrary":
+        """La voie de lecture du serveur sur le contenu de la base jetable."""
+        return knowledge_library.PostgresLibrary(connect=self.base.connect, embed=fake_embed_1024)
 
 
 class Indexation(Base):
@@ -210,11 +236,6 @@ class Indexation(Base):
         self.assertEqual(self.livres()["Flux.md"][0], "Titre du catalogue")
         self.assertEqual(self.store.books["Flux.md"]["meta"]["author"], "Auteur Un, Auteur Deux")
         self.assertEqual(self.store.books["Discovery.md"]["meta"]["author"], "auteur non indiqué")
-        hit = self.bibliotheque().search("kanban", None, 1)[0]
-        self.assertEqual(hit["book"], "Titre du catalogue")
-        self.assertEqual(hit["author"], "Auteur Un, Auteur Deux")
-        hit = library.Library().search("arbre d'opportunités", ["produit"], 1)[0]
-        self.assertEqual(hit["author"], "auteur non indiqué")
 
     def test_changement_de_modele_reindexe(self):
         self.indexer()
@@ -322,7 +343,9 @@ class Decoupage(unittest.TestCase):
         self.assertEqual(meta["author"], "site.test (auteur non indiqué)")  # jamais un nom inventé
 
 
-class Recherche(Base):
+class Recherche(LectureEnBase):
+    """La recherche et la lecture du serveur sur des livres inventés indexés dans une base jetable (sautée sans base)."""
+
     def setUp(self):
         super().setUp()
         self.indexer()
@@ -374,6 +397,16 @@ class Recherche(Base):
         self.assertEqual([b["file"] for b in self.biblio.books("produit")], ["Discovery.md"])
         self.assertEqual(len(self.biblio.books(None)), 4)
 
+    def test_catalogue_titre_et_auteur_lus_par_la_recherche(self):
+        self.catalogue.write_text(
+            "Flux.md:\n  titre: Titre du catalogue\n  auteurs: [Auteur Un, Auteur Deux]\nDiscovery.md:\n  titre: Sans auteur\n", encoding="utf-8")
+        self.indexer()
+        biblio = self.bibliotheque()
+        hit = biblio.search("kanban", None, 1)[0]
+        self.assertEqual(hit["book"], "Titre du catalogue")
+        self.assertEqual(hit["author"], "Auteur Un, Auteur Deux")
+        self.assertEqual(biblio.search("arbre d'opportunités", ["produit"], 1)[0]["author"], "auteur non indiqué")
+
     def test_requete_sans_mot(self):
         self.assertIsInstance(self.biblio.search("???", None, 3), list)
 
@@ -407,30 +440,6 @@ class Renommage(Base):
     def autres_livres(self) -> list:
         return [(nom, b["sha256"], sorted(b["collections"]), b["title"], b["meta"], b["indexed_at"])
                 for nom, b in sorted(self.store.books.items()) if nom != "article-flux.md"]
-
-    def test_ancien_index_montre_le_nom_stocke_et_le_nom_actuel_ne_trouve_rien(self):
-        self.stocke("veille")
-        biblio = self.bibliotheque()
-        self.assertEqual(biblio.collections().get("veille"), 1)
-        self.assertNotIn("watch", biblio.collections())
-        self.assertEqual(biblio.search("métriques de flux agrégées", ["watch"], 5), [])
-        self.assertFalse(hasattr(biblio, "stored_aliases"))
-        self.assertFalse(hasattr(library, "COLLECTION_ALIASES"))
-
-    def test_nouvel_index_ne_trouve_rien_par_l_ancien_nom(self):
-        biblio = self.bibliotheque()
-        self.assertEqual(biblio.search("métriques de flux agrégées", ["veille"], 5), [])
-        hits = biblio.search("métriques de flux agrégées", ["watch"], 5)
-        self.assertEqual({h["file"] for h in hits}, {"article-flux.md"})
-
-    def test_les_deux_noms_stockes_restent_distincts(self):
-        self.store.books["article-flux.md"]["collections"] = {"veille"}
-        self.store.books["Flux.md"]["collections"] = {"watch"}
-        biblio = self.bibliotheque()
-        self.assertEqual(biblio.collections()["watch"], 1)
-        self.assertEqual(biblio.collections()["veille"], 1)
-        hits = biblio.search("flux cycle time débit", ["watch"], 10)
-        self.assertEqual({h["file"] for h in hits}, {"Flux.md"})
 
     def test_dossier_ancien_nom_indexe_sous_le_nouveau_avec_avertissement(self):
         shutil.move(self.racine / "watch", self.racine / "veille")
@@ -523,6 +532,47 @@ class Renommage(Base):
         self.assertEqual(self.fichiers_sqlite(), [])
 
 
+class RenommageLu(LectureEnBase):
+    """Collection « veille » devenue « watch », vue par la lecture du serveur : aucun alias, le nom stocké est celui qu'on voit (sautée sans base)."""
+
+    def setUp(self):
+        super().setUp()
+        self.indexer()
+
+    def stocke(self, livre: str, *noms: str) -> None:
+        """Remet les collections du livre dans la base, sous ces noms stockés."""
+        magasin = self.magasin()
+        magasin.open()
+        try:
+            magasin.set_collections({livre: frozenset(noms)})
+        finally:
+            magasin.close()
+
+    def test_ancien_index_montre_le_nom_stocke_et_le_nom_actuel_ne_trouve_rien(self):
+        self.stocke("article-flux.md", "veille")
+        biblio = self.bibliotheque()
+        self.assertEqual(biblio.collections().get("veille"), 1)
+        self.assertNotIn("watch", biblio.collections())
+        self.assertEqual(biblio.search("métriques de flux agrégées", ["watch"], 5), [])
+        self.assertFalse(hasattr(biblio, "stored_aliases"))
+        self.assertFalse(hasattr(library, "COLLECTION_ALIASES"))
+
+    def test_nouvel_index_ne_trouve_rien_par_l_ancien_nom(self):
+        biblio = self.bibliotheque()
+        self.assertEqual(biblio.search("métriques de flux agrégées", ["veille"], 5), [])
+        hits = biblio.search("métriques de flux agrégées", ["watch"], 5)
+        self.assertEqual({h["file"] for h in hits}, {"article-flux.md"})
+
+    def test_les_deux_noms_stockes_restent_distincts(self):
+        self.stocke("article-flux.md", "veille")
+        self.stocke("Flux.md", "watch")
+        biblio = self.bibliotheque()
+        self.assertEqual(biblio.collections()["watch"], 1)
+        self.assertEqual(biblio.collections()["veille"], 1)
+        hits = biblio.search("flux cycle time débit", ["watch"], 10)
+        self.assertEqual({h["file"] for h in hits}, {"Flux.md"})
+
+
 class Gardes(Base):
     """Gardes d'une indexation (design.md D1 étapes 2, 3, 5 ; D2) : base injoignable, verrou tenu, dossiers vides."""
 
@@ -601,33 +651,9 @@ class Gardes(Base):
         self.assertIn("Indexed: 0 · unchanged: 0", sortie)
 
 
-class AvecBase(Base):
+class AvecBase(LectureEnBase):
     """KnowledgeStore sur une base jetable migrée (tests/library_backend/pg_demo.py), tables knowledge vidées avant chaque test.
     Sautée sans base ; lancée par l'utilisateur avec bash tools/dbtest.sh. Jamais la vraie base."""
-
-    def setUp(self):
-        super().setUp()
-        sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
-        import pg_demo
-        self.pg = pg_demo
-        self.base = pg_demo.ThrowawayDatabase(self)            # saute le test sans base
-        self.lecture = self.base._raw()
-        self.lecture.execute("TRUNCATE knowledge.chunks, knowledge.book_collections, knowledge.books, knowledge.collections")
-        self.lecture.commit()
-        self.lecture.autocommit = True
-        self.plongement = fake_embed_1024
-        self.store = self.magasin()
-
-    def connexion(self):
-        conn = self.pg.db.connect(self.base.url, password=self.pg.base.MOT_DE_PASSE)
-        self.base.opened.append(conn)
-        return conn
-
-    def magasin(self):
-        return library.KnowledgeStore(connect=self.connexion)
-
-    def valeur(self, sql, params=None):
-        return self.lecture.execute(sql, params).fetchone()[0]
 
     def test_premiere_indexation_puis_relance_inchangee(self):
         self.assertIn("Indexed: 4 · unchanged: 0", self.indexer())

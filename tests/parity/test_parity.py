@@ -22,7 +22,7 @@ REQUETES = RACINE / "tests" / "parity" / "queries.yaml"
 
 
 class Faux:
-    """Faux backend : rend toujours les mêmes résultats (fichier, position) pour toute question."""
+    """Fausse recherche : rend toujours les mêmes résultats (fichier, position) pour toute question."""
 
     def __init__(self, resultats):
         self.resultats, self.appels = resultats, []
@@ -40,9 +40,14 @@ def requetes(*items):
     return [{"id": i, "lang": "fr", "query": f"question {i}", **extra} for i, extra in items]
 
 
+def instantane(items, resultats=None):
+    """Instantané minimal : les mêmes résultats pour chaque requête (ou ceux donnés par identifiant)."""
+    return {"queries": {q["id"]: [list(k) for k in (resultats or {}).get(q["id"], jeu())] for q in items}}
+
+
 class Mesure(unittest.TestCase):
-    def mesurer(self, a, b, items, **options):
-        rapport = lp.run_parity(items, Faux(a), Faux(b), **options)
+    def mesurer(self, avant, maintenant, items, **options):
+        rapport = lp.run_compare(items, instantane(items, {q["id"]: avant for q in items}), Faux(maintenant), **options)
         return rapport, lp.verdict(rapport)
 
     def test_recouvrement_8_sur_8_4_sur_8_0_sur_8(self):
@@ -53,14 +58,12 @@ class Mesure(unittest.TestCase):
                 self.assertEqual(rapport["rows"][0]["common"], communs)
 
     def test_moyenne_minimum_et_pire_requete(self):
-        a = jeu()
-
         class Variable(Faux):
             def search(self, query, collections, limit, since=None, types=None):
                 communs = {"q1": 8, "q2": 4, "q3": 0}[query.split()[-1]]
                 return [{"file": f, "position": p} for f, p in (jeu(communs) + [("x-%d.md" % i, i) for i in range(8 - communs)])]
-        rapport = lp.run_parity(requetes(("q1", {}), ("q2", {}), ("q3", {})), Faux(a), Variable([]))
-        resultat = lp.verdict(rapport, threshold=0.5)
+        items = requetes(("q1", {}), ("q2", {}), ("q3", {}))
+        resultat = lp.verdict(lp.run_compare(items, instantane(items), Variable([])), threshold=0.5)
         self.assertAlmostEqual(resultat["mean"], (1 + 0.5 + 0) / 3)
         self.assertEqual(resultat["min"], 0.0)
         self.assertEqual(resultat["worst"], "q3")
@@ -76,59 +79,60 @@ class Mesure(unittest.TestCase):
         b = jeu(7) + [("autre.md", 1)]          # 7 sur 8 partout : moyenne 0,875
         _, ok = self.mesurer(jeu(), b, requetes(("q1", {}), ("q2", {})))
         self.assertTrue(ok["ok"])
-        rapport = lp.run_parity(requetes(("q1", {})), Faux(jeu()), Faux(jeu(6) + [("a.md", 1), ("b.md", 2)]))
+        rapport, _ = self.mesurer(jeu(), jeu(6) + [("a.md", 1), ("b.md", 2)], requetes(("q1", {})))
         self.assertFalse(lp.verdict(rapport)["ok"])                       # 0,75 < 0,85
         self.assertTrue(lp.verdict(rapport, threshold=0.7)["ok"])         # --threshold
 
     def test_requete_rare_exige_7_sur_8(self):
-        b = jeu(6) + [("a.md", 1), ("b.md", 2)]
-        _, banal = self.mesurer(jeu(), b, requetes(("q1", {})) , )
-        rapport = lp.run_parity(requetes(("q1", {"rare": True})), Faux(jeu()), Faux(b))
+        rapport, _ = self.mesurer(jeu(), jeu(6) + [("a.md", 1), ("b.md", 2)], requetes(("q1", {"rare": True})))
         resultat = lp.verdict(rapport, threshold=0.5)
         self.assertEqual(resultat["rare_bad"], ["q1"])
         self.assertFalse(resultat["ok"])
 
     def test_limite_et_filtres_transmis(self):
-        a, b = Faux(jeu(10)), Faux(jeu(10))
+        faux = Faux(jeu(10))
         items = requetes(("q1", {"collections": ["watch"], "types": ["figure"]}))
-        lp.run_parity(items, a, b, limit=5)
-        self.assertEqual(a.appels, b.appels)
-        self.assertEqual(a.appels[0][1:], (["watch"], ["figure"]))
-        lp.run_parity(items, a, b, collections=["flow"])
-        self.assertEqual(a.appels[-1][1], ["flow"])
-        rapport = lp.run_parity(items, a, b, limit=5)
-        self.assertEqual(rapport["rows"][0]["common"], 5)
+        rapport = lp.run_compare(items, instantane(items), faux, limit=5)
+        self.assertEqual(faux.appels[0][1:], (["watch"], ["figure"]))
+        self.assertEqual(rapport["rows"][0]["common"], 5)                 # borné par la limite
+        lp.run_compare(items, instantane(items), faux, collections=["flow"])
+        self.assertEqual(faux.appels[-1][1], ["flow"])
 
     def test_embedding_calcule_avant_la_mesure_de_latence(self):
         vus = []
-        lp.run_parity(requetes(("q1", {})), Faux(jeu()), Faux(jeu()), warm=vus.append)
+        items = requetes(("q1", {}))
+        lp.run_compare(items, instantane(items), Faux(jeu()), warm=vus.append)
         self.assertEqual(vus, ["question q1"])
 
     def test_latences(self):
-        temps = iter([0.0, 0.010, 0.010, 0.050, 0.050, 0.060, 0.060, 0.200])
-        rapport = lp.run_parity(requetes(("q1", {}), ("q2", {})), Faux(jeu()), Faux(jeu()), clock=lambda: next(temps))
-        self.assertEqual([round(x, 3) for x in rapport["latency"]["sqlite"]], [0.01, 0.01])
-        self.assertEqual([round(x, 3) for x in rapport["latency"]["postgres"]], [0.04, 0.14])
-        self.assertAlmostEqual(lp.p95(rapport["latency"]["postgres"]), 0.14)
+        temps = iter([0.0, 0.040, 0.040, 0.180])
+        items = requetes(("q1", {}), ("q2", {}))
+        rapport = lp.run_compare(items, instantane(items), Faux(jeu()), clock=lambda: next(temps))
+        self.assertEqual([round(x, 3) for x in rapport["latency"]], [0.04, 0.14])
+        self.assertAlmostEqual(lp.p95(rapport["latency"]), 0.14)
 
 
 class Composante(unittest.TestCase):
-    def test_composante_transmise_aux_deux_voies_sauf_hybride(self):
+    def test_composante_transmise_sauf_hybride(self):
         vus = []
 
         class Espion(Faux):
             def search(self, query, collections, limit, since=None, types=None, component="hybrid"):
                 vus.append((query, component))
                 return super().search(query, collections, limit, since, types)
-        lp.run_parity(requetes(("q1", {})), Espion(jeu()), Espion(jeu()), component="vector")
-        self.assertEqual(vus, [("question q1", "vector"), ("question q1", "vector")])
-        a2, b2 = Faux(jeu()), Faux(jeu())
-        lp.run_parity(requetes(("q1", {})), a2, b2)                     # hybride : les faux backends sans paramètre fonctionnent
-        self.assertEqual(len(a2.appels), 1)
+        items = requetes(("q1", {}))
+        lp.run_compare(items, instantane(items), Espion(jeu()), component="vector")
+        self.assertEqual(vus, [("question q1", "vector")])
+        lp.record_results(items, Espion(jeu()), limit=8, collections=None, component="text")
+        self.assertEqual(vus[-1], ("question q1", "text"))
+        faux = Faux(jeu())
+        lp.run_compare(items, instantane(items), faux)                  # hybride : une doublure sans paramètre fonctionne
+        lp.record_results(items, faux, limit=8, collections=None)
+        self.assertEqual(len(faux.appels), 2)
 
     def test_resume_par_defaut_et_verdict_par_requete(self):
-        rapport = lp.run_parity(requetes(("q1", {}), ("q2", {})), Faux(jeu()), Faux(jeu()),
-                                clock=iter([0.0, 0.010, 0.010, 0.050, 0.050, 0.060, 0.060, 0.200]).__next__)
+        items = requetes(("q1", {}), ("q2", {}))
+        rapport = lp.run_compare(items, instantane(items), Faux(jeu()), clock=iter([0.0, 0.010, 0.010, 0.050]).__next__)
         rapport["component"] = "text"
         rapport["rows"][1]["common"] = 0      # q1 identique, q2 : rien en commun
         texte = lp.render(rapport, lp.verdict(rapport))
@@ -137,7 +141,7 @@ class Composante(unittest.TestCase):
         self.assertIn("ok", lignes["q1"])
         self.assertIn("écart", lignes["q2"])
         self.assertIn("10 ms", lignes["q1"])
-        self.assertIn("40 ms", lignes["q1"])
+        self.assertIn("40 ms", lignes["q2"])
 
 
 class Plan(unittest.TestCase):
@@ -203,50 +207,11 @@ class Plan(unittest.TestCase):
         self.assertEqual(code, 2)                                   # sans la 0005, refus avant toute connexion
 
 
-class GroupeRestreint(unittest.TestCase):
-    """Les requêtes restreintes par collection sont rapportées à part (change filter-before-keyword-limit), sans quitter le verdict global."""
-
-    def rapport(self, items, **options):
-        rapport = lp.run_parity(requetes(*items), Faux(jeu()), Faux(jeu()), **options)
-        return rapport
-
-    def test_jeu_mixte_une_moyenne_par_groupe_en_plus_du_verdict_global(self):
-        rapport = self.rapport([("libre1", {}), ("libre2", {}), ("restreinte", {"collections": ["watch"]})])
-        rapport["rows"][2]["common"] = 0              # la restreinte ne recouvre rien, les libres tout
-        self.assertEqual([r["restricted"] for r in rapport["rows"]], [False, False, True])
-        resultat = lp.verdict(rapport)
-        texte = lp.render(rapport, resultat)
-        self.assertIn("Requêtes restreintes par collection (écart possible par construction) : 1 · recouvrement moyen 0.000 · minimum 0.000", texte)
-        self.assertIn("Requêtes sans restriction : 2 · recouvrement moyen 1.000 · minimum 1.000", texte)
-        self.assertIn("Recouvrement moyen : 0.667", texte)                       # le global inclut toujours les restreintes
-        self.assertIn("PARITÉ NON ATTEINTE", texte)
-        self.assertFalse(resultat["ok"])
-
-    def test_option_globale_toutes_les_requetes_dans_le_groupe_restreint(self):
-        rapport = self.rapport([("q1", {}), ("q2", {})], collections=["watch"])
-        self.assertTrue(all(r["restricted"] for r in rapport["rows"]))
-        texte = lp.render(rapport, lp.verdict(rapport))
-        self.assertIn("Requêtes restreintes par collection (écart possible par construction) : 2", texte)
-        self.assertNotIn("Requêtes sans restriction", texte)
-
-    def test_aucune_requete_restreinte_aucun_groupe_et_verdict_inchange(self):
-        rapport = self.rapport([("q1", {}), ("q2", {})])
-        resultat = lp.verdict(rapport)
-        texte = lp.render(rapport, resultat)
-        self.assertNotIn("restreintes", texte)
-        self.assertNotIn("sans restriction", texte)
-        self.assertTrue(resultat["ok"])
-        self.assertIn("Verdict : PARITÉ au seuil retenu", texte)
-
-    def test_le_groupe_ne_contient_que_des_identifiants_et_des_nombres(self):
-        rapport = self.rapport([("restreinte", {"collections": ["watch"]})])
-        self.assertNotIn("texte secret", lp.render(rapport, lp.verdict(rapport), details=True))
-
-
 class EfSearch(unittest.TestCase):
     def test_option_ef_search(self):
-        self.assertEqual(lp.build_parser().parse_args([]).ef_search, 400)
-        self.assertEqual(lp.build_parser().parse_args([]).scan, "ann")
+        self.assertIsNone(lp.build_parser().parse_args([]).ef_search)      # non donné : les réglages de l'instantané s'appliquent
+        self.assertEqual(lp.settings_from(lp.build_parser().parse_args([]))["ef_search"], 400)
+        self.assertEqual(lp.settings_from(lp.build_parser().parse_args([]))["scan"], "ann")
         self.assertEqual(lp.build_parser().parse_args(["--ef-search", "400"]).ef_search, 400)
 
     def test_ef_search_hors_bornes_refuse(self):
@@ -256,23 +221,27 @@ class EfSearch(unittest.TestCase):
 
 class Rapport(unittest.TestCase):
     def test_rapport_sans_texte_ni_titre(self):
-        rapport = lp.run_parity(requetes(("q1", {})), Faux(jeu()), Faux(jeu(2) + [("seul-postgres.md", 9)] * 0))
-        texte = lp.render(rapport, lp.verdict(rapport))
+        items = requetes(("q1", {}))
+        rapport = lp.run_compare(items, instantane(items), Faux(jeu(2)))
+        texte = lp.render(rapport, lp.verdict(rapport), changes={"added": 3, "removed": 0, "changed": 1})
         self.assertNotIn("texte secret", texte)
         self.assertNotIn("livre-2.md", texte)                 # résumé par défaut : aucun nom de fichier
+        self.assertIn("3 livres ajoutés · 0 retirés · 1 modifiés", texte)
         detail = lp.render(rapport, lp.verdict(rapport), details=True)
         self.assertNotIn("texte secret", detail)
-        self.assertIn("seulement SQLite : livre-2.md:2", detail)      # les noms de fichiers seulement avec --details
+        self.assertIn("seulement dans l'instantané : livre-2.md:2", detail)      # les noms de fichiers seulement avec --details
+        self.assertIn("seulement maintenant : -", detail)
         self.assertIn("PARITÉ NON ATTEINTE", texte)
-        self.assertIn("Latence sqlite", texte)
-        self.assertIn("Latence postgres", texte)
+        self.assertIn("Latence : moyenne", texte)
+        self.assertIn("p95", texte)
 
     def test_aucun_fichier_ecrit(self):
         with tempfile.TemporaryDirectory() as dossier:
             courant = os.getcwd()
             os.chdir(dossier)
             try:
-                rapport = lp.run_parity(requetes(("q1", {})), Faux(jeu()), Faux(jeu()))
+                items = requetes(("q1", {}))
+                rapport = lp.run_compare(items, instantane(items), Faux(jeu()))
                 lp.render(rapport, lp.verdict(rapport))
                 self.assertEqual(os.listdir(dossier), [])
             finally:

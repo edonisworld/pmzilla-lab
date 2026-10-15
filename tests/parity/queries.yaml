@@ -1,4 +1,4 @@
-# Jeu figé de requêtes pour mesurer la parité des deux voies de la bibliothèque (SQLite et PostgreSQL), lot 4 de la base.
+# Jeu figé de requêtes pour la garde de la recherche de la bibliothèque (instantané des résultats PostgreSQL), lot 4 de la base.
 # Formulations courtes écrites pour la mesure : aucun extrait de livre, aucun nom d'équipe, de projet ni de personne.
 # Champs : id (unique), lang (fr ou en), query ; facultatifs : collections (liste), types (liste : texte, figure),
 # rare (true : requête à mot rare, recouvrement d'au moins 7 sur 8 exigé).

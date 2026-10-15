@@ -21,6 +21,7 @@ from pathlib import Path
 
 PREFIXE = "install_lab: "
 VARIABLE_RACINE = "INSTALL_LAB_ROOT"                    # remplace la racine du dépôt (tests)
+VARIABLE_APPLICATIONS = "INSTALL_LAB_APPLICATIONS"      # remplace les dossiers d'applications, séparés par « : » (tests)
 VARIABLE_SANS_TERMINAL = "INSTALL_LAB_TEST_NO_TTY_CHECK"  # pour les tests seulement : accepte une entrée standard qui n'est pas un terminal
 
 # états d'une étape
@@ -73,6 +74,12 @@ class Contexte:
     # --- recherche de commandes (jamais de chemin fixe) --------------------------------------------------------------------
     def trouver(self, nom: str) -> str | None:
         return shutil.which(nom)
+
+    def application_presente(self, nom: str) -> bool:
+        """Une application macOS (ex. « Ollama.app ») est dans /Applications ou ~/Applications ; INSTALL_LAB_APPLICATIONS les remplace (tests)."""
+        remplace = os.environ.get(VARIABLE_APPLICATIONS)
+        dossiers = [Path(d) for d in remplace.split(":") if d] if remplace is not None else [Path(os.sep) / "Applications", self.maison / "Applications"]
+        return any((d / nom).exists() for d in dossiers)
 
     # --- sondes : lecture seule, tournent aussi en passage à blanc -----------------------------------------------------------
     def sonde(self, commande: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:

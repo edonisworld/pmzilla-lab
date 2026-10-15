@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Describes the consistency checks of the four posture skills (cross-references, identical shared copies, fixed-formula block, register titles) and of the wake script that each posture runs at start.
+Describes the consistency checks of the four posture skills (cross-references, identical shared copies, fixed-formula block, register titles, citations of the project instructions) and of the wake script that each posture runs at start, and the checks on a sanctum created from a skill.
 ## Requirements
 ### Requirement: Cross-references to capability sheets resolve
 The system SHALL ensure that every reference to a capability sheet in a posture skill points to an existing file, that each sheet declares its own name, that sheet names are English kebab-case, that former French names no longer appear anywhere, and that the fifteen renamed sheets exist. Capability tables of the templates SHALL cite existing sheets.
@@ -88,8 +88,8 @@ The system SHALL ensure that the wake command written in each skill's startup st
 
 Source: tests/postures_skills/test_postures_skills.py (Reveil)
 
-### Requirement: Missing local context warning and out-of-library list
-The system SHALL ensure that each posture's wake output warns "LOCAL FILE MISSING" when the local context file imported by the project instructions is absent (also on first wake). It SHALL NOT warn when the file is present, or when the import marker is just prose or in a sentence. The wake output SHALL print the out-of-library list computed from the catalogue under a language-neutral heading. It SHALL refer to the out-of-library formula of the response language without quoting the formula of either language, including in the message shown when the list cannot be computed. It SHALL print the relations between works for the scaling posture only.
+### Requirement: Missing local context warning
+The system SHALL ensure that each posture's wake output warns "LOCAL FILE MISSING" when the local context file imported by the project instructions is absent (also on first wake). It SHALL NOT warn when the file is present, or when the import marker is just prose or in a sentence.
 
 Source: tests/wake_postures/test_wake_postures.py
 
@@ -100,6 +100,11 @@ Source: tests/wake_postures/test_wake_postures.py
 #### Scenario: Import in a sentence
 - WHEN the "@name" appears in prose
 - THEN no warning is shown
+
+### Requirement: Out-of-library list and relations in the wake output
+The system SHALL ensure that each posture's wake output prints the out-of-library list computed from the catalogue under a language-neutral heading. It SHALL refer to the out-of-library formula of the response language without quoting the formula of either language, including in the message shown when the list cannot be computed. It SHALL print the relations between works for the scaling posture only.
+
+Source: tests/wake_postures/test_wake_postures.py
 
 #### Scenario: Empty catalogue
 - WHEN the catalogue is empty
@@ -112,4 +117,30 @@ Source: tests/wake_postures/test_wake_postures.py
 #### Scenario: Relations
 - WHEN the scaling posture wakes
 - THEN a relations section is printed; the discovery posture prints none
+
+### Requirement: Titles of the project instructions cited by the skills exist
+The system SHALL ensure that each posture's skill file cites, on its line naming the project instructions, exactly two quoted titles, a section heading of those instructions then one of their bold rule titles, and that each posture's identity template cites exactly two titles of the project instructions, each a section heading or a bold rule title. A skill or template SHALL NOT cite a title the project instructions no longer carry.
+
+#### Scenario: Renamed section
+- WHEN a section of the project instructions is renamed and a skill file still cites its former title
+- THEN the check fails naming the posture and the cited title
+
+#### Scenario: Current titles
+- WHEN every cited title is a heading or a bold rule title of the project instructions
+- THEN the check passes for the four postures
+
+Source: tests/postures_skills/test_postures_skills.py (RenvoisVersClaudeMd)
+
+### Requirement: A new sanctum reproduces the skill and stays out of Git
+The system SHALL ensure that the sanctum-initialisation script of each posture copies every reference sheet of the skill (the first-breath sheet excepted) into a new sanctum, identical to the skill's copy, and creates the identity, persona, creed, bond, memory and capabilities files. No sanctum file and no local context file SHALL be tracked by Git: both folders SHALL be ignored.
+
+#### Scenario: New sanctum
+- WHEN a sanctum is initialised in an empty root
+- THEN every reference sheet of the skill but the first-breath one is present with the same text, and the six identity and memory files exist
+
+#### Scenario: Tracked sanctum file
+- WHEN a sanctum file is tracked by Git, or the ignore file no longer lists the sanctum or the local context folder
+- THEN the check fails
+
+Source: tests/references_postures/test_references_postures.py
 

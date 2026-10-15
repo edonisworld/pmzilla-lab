@@ -4,7 +4,8 @@ Tests des garde-fous des outils MCP `search_library`, `read_passage`, `list_coll
 
     bash tests/run_all.sh pmzilla_lab_library
 
-Sans base, sans Ollama, sans paquet `mcp` : faux FastMCP et fausse bibliothèque ; données inventées.
+Sans base, sans Ollama, sans paquet `mcp` : faux FastMCP et fausse bibliothèque ; données inventées. Les quatre outils répondent un objet
+d'erreur (type de l'erreur seulement, remède) quand la base échoue.
 """
 import contextlib
 import io
@@ -39,36 +40,46 @@ class FauxFastMCP:
 
 
 class FausseBibliotheque:
-    def __init__(self, erreur=None):
-        self.erreur, self.appels, self.lectures = erreur, [], []
+    def __init__(self, erreur=None, erreur_base=None):
+        self.erreur, self.erreur_base, self.appels, self.lectures = erreur, erreur_base, [], []
 
     def collections(self):
+        if self.erreur_base:
+            raise self.erreur_base
         return {"produit": 2, "watch": 1}
 
     def books(self, collection):
+        if self.erreur_base:
+            raise self.erreur_base
         return [{"file": "livre.md"}]
 
     def search(self, query, collections, limit, since, types):
         self.appels.append((query, collections, limit, since, types))
+        if self.erreur_base:
+            raise self.erreur_base
         if self.erreur:
             raise self.erreur
         return [{"passage_id": 1}]
 
     def read(self, passage_id, before, after):
         self.lectures.append((passage_id, before, after))
+        if self.erreur_base:
+            raise self.erreur_base
         return {"passage_id": passage_id}
 
 
-class Garde(unittest.TestCase):
+class Serveur(unittest.TestCase):
     def serveur(self, **options):
         bibliotheque = FausseBibliotheque(**options)
         modules = {"mcp": types.ModuleType("mcp"), "mcp.server": types.ModuleType("mcp.server"),
                    "mcp.server.fastmcp": types.ModuleType("mcp.server.fastmcp")}
         modules["mcp.server.fastmcp"].FastMCP = FauxFastMCP
         with mock.patch.dict(sys.modules, modules), mock.patch.object(library, "open_library", return_value=bibliotheque):
-            library.serve("sqlite")
+            library.serve()
         return FauxFastMCP.instance.tools, bibliotheque
 
+
+class Garde(Serveur):
     def test_collection_inconnue(self):
         outils, bibliotheque = self.serveur()
         reponse = outils["search_library"]("flux", collections=["produit", "inexistante"])
@@ -127,6 +138,52 @@ class Garde(unittest.TestCase):
         self.assertNotIn("use '", outils["search_library"]("flux", collections=["inexistante"])["error"])
 
 
+class InternalError(Exception):
+    """Porte le nom d'une erreur de la base (index BM25 illisible), message qui pourrait contenir du SQL."""
+
+
+class ErreurDeBase(Serveur):
+    """Tâche 3.3 : l'erreur de la base devient un objet d'erreur, le serveur continue (design D3)."""
+
+    def verifier(self, reponse):
+        reponse = reponse[0] if isinstance(reponse, list) else reponse
+        self.assertEqual(list(reponse), ["error"])
+        message = reponse["error"]
+        for phrase in ("library database error", "(InternalError)", "bash tools/db_up.sh", "Damaged BM25 index"):
+            self.assertIn(phrase, message)
+        self.assertNotIn("SELECT", message)                  # jamais le message de l'erreur
+        self.assertNotIn("colonne_secrete", message)
+
+    def test_les_quatre_outils_repondent_l_objet_d_erreur(self):
+        outils, _ = self.serveur(erreur_base=InternalError("SELECT colonne_secrete FROM knowledge.chunks"))
+        self.verifier(outils["search_library"]("flux"))
+        self.verifier(outils["read_passage"](1))
+        self.verifier(outils["list_collections"]())
+        self.verifier(outils["list_books"]())
+
+    def test_la_verification_des_collections_est_couverte(self):
+        outils, _ = self.serveur(erreur_base=InternalError("SELECT colonne_secrete"))
+        self.verifier(outils["search_library"]("flux", collections=["produit"]))
+        self.verifier(outils["list_books"]("produit"))
+
+    def test_le_serveur_continue_apres_l_erreur(self):
+        outils, bibliotheque = self.serveur(erreur_base=InternalError("SELECT colonne_secrete"))
+        self.verifier(outils["search_library"]("flux"))
+        bibliotheque.erreur_base = None
+        self.assertEqual(outils["search_library"]("flux"), [{"passage_id": 1}])
+        self.assertEqual(outils["list_collections"](), {"produit": 2, "watch": 1})
+
+    def test_une_erreur_de_valeur_n_est_pas_une_erreur_de_base(self):
+        outils, _ = self.serveur(erreur=ValueError("types inconnus"))
+        self.assertEqual(outils["search_library"]("flux", types=["x"]), {"error": "types inconnus"})
+
+    def test_la_fonction_ne_donne_que_le_type(self):
+        reponse = library.database_error(InternalError("SELECT 1 -- secret"))
+        self.assertEqual(list(reponse), ["error"])
+        self.assertIn("(InternalError)", reponse["error"])
+        self.assertNotIn("secret", reponse["error"])
+
+
 class Catalogue(unittest.TestCase):
     def charger(self, contenu):
         with tempfile.TemporaryDirectory() as dossier:
@@ -168,8 +225,6 @@ class CatalogueDansLIndex(base.Base):
         self.assertEqual(self.livres()["Flux.md"][0], "Titre du catalogue")
         self.assertEqual(self.store.books["Flux.md"]["meta"]["author"], "Auteur Un")
         self.assertEqual(self.store.books["Discovery.md"]["meta"]["author"], "auteur non indiqué")
-        self.assertEqual(self.bibliotheque().search("kanban", None, 1)[0]["author"], "Auteur Un")
-        self.assertEqual(library.Library().search("arbre d'opportunités", ["produit"], 1)[0]["author"], "auteur non indiqué")
 
 
 if __name__ == "__main__":

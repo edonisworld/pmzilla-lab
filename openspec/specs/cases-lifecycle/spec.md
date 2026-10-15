@@ -184,6 +184,19 @@ Source: `tests/cases_store/test_cases_store.py` (Recherche.test_le_fixture_est_c
 - **WHEN** a fixture holds a name of the sensitive-names list and the list is absent
 - **THEN** the fixture is loaded
 
+### Requirement: The due-review reminder runs first at session start
+The system SHALL declare exactly two session-start commands, the due-review listing in session-hook mode first and the work-queue reminder second, and SHALL declare no other hook. Running the queue reminder before the due reviews, or adding any other hook, is excluded. The queue reminder itself is specified in workflow-roadmap.
+
+Source: tests/journal_lab/test_session_hook.py (HookDeSession)
+
+#### Scenario: Session start
+- **WHEN** the project settings are read
+- **THEN** the session-start hooks are the due-review listing then the queue reminder, in that order
+
+#### Scenario: No other hook
+- **WHEN** the declared hook events are listed
+- **THEN** only the session-start event is present
+
 ## Open questions
 
 None.

@@ -199,7 +199,7 @@ class Langue(Decor):
 
     def test_phrases_cles_francaises_d_un_run_complet(self):
         r = self.lancer()
-        for phrase in ("Étape 1/11 : export", "Étape 4/11 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 11 étapes sur 11"):
+        for phrase in ("Étape 1/12 : export", "Étape 4/12 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 12 étapes sur 12, 0 sautées"):
             self.assertIn(phrase, r.sortie)
         self.assertNotIn("Step ", r.sortie)
         self.assertNotIn("Monthly run", r.sortie)

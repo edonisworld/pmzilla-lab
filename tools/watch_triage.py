@@ -37,17 +37,19 @@ Commandes :
         Écrit Watch-Lab/_to-read.md : les N articles à lire, le reste classé, et ce que
         le filtre écarterait (ou a écarté) de la bibliothèque.
 
-    uv run watch_triage.py calibration
-        Écrit Watch-Lab/_calibration.csv : remplissez la colonne « avis » (g = garder,
-        e = écarter) sur une vingtaine d'articles variés.
+    uv run watch_triage.py calibration [--import [FEUILLE]]
+        Rafraîchit en base la calibration (une ligne par article, vos avis déjà saisis sont gardés) et écrit
+        Watch-Lab/_calibration.csv : remplissez la colonne « avis » (g = garder, e = écarter) sur une vingtaine
+        d'articles variés. Avec --import, relit seulement les colonnes « fichier » et « avis » de la feuille et
+        les enregistre en base (cellule vide : avis effacé). La feuille n'est lue par aucune autre commande.
 
     uv run watch_triage.py thresholds
-        Compare vos avis aux seuils possibles et propose les meilleurs.
+        Compare vos avis (lus en base) aux seuils possibles et propose les meilleurs.
 
     uv run watch_triage.py shadow-report [--limit 20]
         Notation « en ombre » (lot 5b anglais) : avec `shadow: {enabled: true, language: en}` dans tri.yaml, chaque
         article noté par `score` l'est une seconde fois avec les prompts et thèmes anglais (tools/watch_prompts_en.py),
-        même modèle ; les notes vont dans la table shadow_scores de tri.sqlite et ne servent à AUCUNE décision (filtre,
+        même modèle ; les notes vont dans la table triage_shadow_scores de la base et ne servent à AUCUNE décision (filtre,
         seuils, _to-read.md, écartés). Ce rapport, dans le Terminal seulement, compare les deux langues : articles
         notés dans les deux, accord garder/écarter au seuil actuel, écart des notes, accord avec vos avis de calibration,
         repêchages et rejets, liste des désaccords. Il n'écrit aucun fichier.
@@ -55,8 +57,8 @@ Commandes :
     uv run watch_triage.py shadow-backfill [--limit N]
         Rattrape l'ombre : note en anglais (mêmes prompts, thèmes et modèle que l'ombre quotidienne) les articles DÉJÀ notés en
         français, bibliothèque et écartés, qui n'ont pas de note en ombre ou une note faite avec d'autres prompts. N'écrit que dans
-        shadow_scores : aucune note française, aucun seuil, ni _to-read.md ni écartés ne changent. Les articles qui ont un avis g ou e
-        dans _calibration.csv passent d'abord. Reprise après interruption : un article déjà noté n'est pas renoté. Lancement par
+        triage_shadow_scores : aucune note française, aucun seuil, ni _to-read.md ni écartés ne changent. Les articles qui ont un avis
+        de calibration en base (garder ou écarter) passent d'abord. Reprise après interruption : un article déjà noté n'est pas renoté. Lancement par
         l'utilisateur seul, pas pendant la veille du matin (aucun verrou) ; compter de l'ordre d'une heure pour environ 190 articles.
 
     uv run watch_triage.py apply
@@ -76,6 +78,13 @@ Commandes :
         les articles déjà collectés).
 
 Réglages : ~/PMZilla-Lab/workspace/watch/tri.yaml (veille/ tant que le dossier n'est pas migré ; créé au premier lancement).
+
+État : la base PostgreSQL de l'installation (schéma knowledge, tables triage_*), jamais un fichier local. Toutes les commandes ouvrent
+la base avant tout appel au modèle, toute lecture de vos posts et tout fichier déplacé ou écrit : base muette, sortie 4 ; tables
+absentes, sortie 5. `week`, `thresholds`, `shadow-report` et `suggestions` se connectent en lecture seule.
+
+Exemple :
+    uv run tools/watch_triage.py digest
 """
 from __future__ import annotations
 
@@ -85,9 +94,9 @@ import datetime as dt
 import hashlib
 import importlib
 import json
+import os
 import re
 import shutil
-import sqlite3
 import sys
 import time
 import types
@@ -103,10 +112,11 @@ import watch_paths  # noqa: E402
 import watch_config  # noqa: E402  (noms des clés de tri.yaml)
 import flux_config  # noqa: E402
 import watch_lab as veille  # noqa: E402  (dossiers, lecture de l'export Claude)
+import watch_store  # noqa: E402  (état en base)
 from yaml_strict import charger  # noqa: E402
 
-CONFIG_FILE = veille.SOURCES_FILE.parent / "tri.yaml"
-TRI_DB = library.DATA_DIR / "tri.sqlite"
+CONFIG_FILE = veille.SOURCES_FILE.parent / "tri.yaml"   # suivi : dans le dossier de code
+DEFAULT_CONFIG_FILE = CONFIG_FILE
 ARCHIVE_DIR = watch_paths.excluded_dir(veille.WATCH_DIR.parent) / veille.ARTICLES_DIR.name   # à côté de Watch-Lab, dans le workspace, hors de l'index
 OWN_DIR = veille.WATCH_DIR / watch_paths.OWN_COLLECTION
 
@@ -198,8 +208,11 @@ texte sur lequel tu t'appuies, puis « ok » (true ou false) cohérent avec cett
 # ---------------------------------------------------------------------------
 
 def local_config_file() -> Path:
-    """Couche locale des réglages, à côté de tri.yaml, ignorée par Git et jamais écrite par un script."""
-    return CONFIG_FILE.with_name(watch_config.LOCAL_FILE)
+    """Couche locale des réglages, dans le dossier de contenu (à côté de tri.yaml quand celui-ci est choisi à la main), ignorée par Git
+    et jamais écrite par un script."""
+    if CONFIG_FILE != DEFAULT_CONFIG_FILE:
+        return CONFIG_FILE.with_name(watch_config.LOCAL_FILE)
+    return veille.local_config_dir() / watch_config.LOCAL_FILE
 
 
 def config(create: bool = True) -> dict:
@@ -229,6 +242,7 @@ def config(create: bool = True) -> dict:
 
 def set_config(key: str, value) -> None:
     """Modifie une ligne de tri.yaml (jamais tri.local.yaml) sans toucher aux commentaires ; l'ajoute si elle manque."""
+    veille.watch_paths.refuse_depuis_le_dossier_d_execution(veille.CODE_ROOT, CONFIG_FILE)
     text = CONFIG_FILE.read_text(encoding="utf-8")
     pattern = re.compile(rf"^{re.escape(key)}:[^\n#]*", re.M)
     if pattern.search(text):
@@ -238,50 +252,40 @@ def set_config(key: str, value) -> None:
     CONFIG_FILE.write_text(text, encoding="utf-8")
 
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS refs (
-    url TEXT PRIMARY KEY, title TEXT, origin TEXT, vector BLOB NOT NULL
-);
-CREATE TABLE IF NOT EXISTS scores (
-    file TEXT PRIMARY KEY, url TEXT, title TEXT, source TEXT, published TEXT, collected TEXT,
-    complete INTEGER, vector BLOB NOT NULL, criteria TEXT, substance INTEGER,
-    resume TEXT, pourquoi TEXT, model TEXT, scored_at TEXT, location TEXT DEFAULT 'watch',
-    justifications TEXT, compilation INTEGER, in_themes INTEGER, promo INTEGER
-);
-CREATE TABLE IF NOT EXISTS forced (file TEXT PRIMARY KEY, since TEXT);
-CREATE TABLE IF NOT EXISTS excluded (file TEXT PRIMARY KEY, since TEXT);
-CREATE TABLE IF NOT EXISTS shared (file TEXT PRIMARY KEY, url TEXT, post_date TEXT, found TEXT);
-CREATE TABLE IF NOT EXISTS picks (day TEXT NOT NULL, file TEXT NOT NULL, PRIMARY KEY (day, file));
-CREATE TABLE IF NOT EXISTS shadow_scores (
-    url TEXT NOT NULL, language TEXT NOT NULL, model TEXT, prompts_hash TEXT, criteria TEXT, substance INTEGER,
-    compilation INTEGER, in_themes INTEGER, promo INTEGER, scored_at TEXT, PRIMARY KEY (url, language)
-);
-"""
+def open_store(readonly: bool = False) -> watch_store.TriageStore:
+    """Ouvre la base avant tout appel au modèle, toute lecture de vos posts et tout fichier déplacé ou écrit : sortie 4 si elle
+    ne répond pas, 5 si les tables manquent."""
+    try:
+        return watch_store.open_triage_store(readonly=readonly)
+    except (watch_store.WatchDatabaseUnavailable, watch_store.WatchTablesMissing) as error:
+        watch_store.stop(error)
 
 
-def db() -> sqlite3.Connection:
-    TRI_DB.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(TRI_DB)
-    connection.row_factory = sqlite3.Row
-    connection.executescript(SCHEMA)
-    columns = {row["name"] for row in connection.execute("PRAGMA table_info(scores)")}
-    if "justifications" not in columns:  # base créée par la première version
-        connection.execute("ALTER TABLE scores ADD COLUMN justifications TEXT")
-    if "compilation" not in columns:
-        connection.execute("ALTER TABLE scores ADD COLUMN compilation INTEGER")
-    if "in_themes" not in columns:
-        connection.execute("ALTER TABLE scores ADD COLUMN in_themes INTEGER")
-    if "promo" not in columns:
-        connection.execute("ALTER TABLE scores ADD COLUMN promo INTEGER")
-    return connection
+def guarded(function):
+    """Une base qui s'arrête en cours de commande : annulation de ce qui n'est pas validé, puis sortie 4."""
+    def run(args):
+        try:
+            return function(args)
+        except watch_store.WatchDatabaseUnavailable as error:
+            watch_store.stop(error)
+    run.__name__ = function.__name__
+    run.__doc__ = function.__doc__
+    return run
 
 
-def to_blob(vector: np.ndarray) -> bytes:
-    return vector.astype(np.float16).tobytes()
-
-
-def from_blob(blob: bytes) -> np.ndarray:
-    return np.frombuffer(blob, dtype=np.float16).astype(np.float32)
+def legacy(record: dict) -> dict:
+    """Une note du magasin, avec les clés que lit le code de décision (inchangé) : pertinence et filtre ne dépendent pas du stockage."""
+    collected = record["collected"]
+    published = record["published"]
+    return {
+        "file": record["file"], "url": record["url"], "title": record["title"], "source": record["source"],
+        "published": published.isoformat() if published else "",
+        "collected": collected.astimezone().date().isoformat() if collected else "",
+        "complete": record["complete"], "vector": record["embedding"], "criteria": record["criteria"],
+        "substance": record["substance"], "resume": record["summary"], "pourquoi": record["why"], "model": record["model"],
+        "scored_at": record["scored_at"], "location": record["location"], "justifications": record["justifications"],
+        "compilation": record["is_compilation"], "in_themes": record["in_themes"], "promo": record["is_promo"],
+    }
 
 
 def read_article(path: Path) -> dict:
@@ -343,7 +347,9 @@ def own_references() -> list[dict]:
     return refs
 
 
+@guarded
 def cmd_references(args: argparse.Namespace) -> None:
+    store = open_store()
     refs = signalpm_references([Path(p).expanduser() for p in args.claude_export])
     print(f"{len(refs)} conversations SignalPM avec une réponse exploitable")
     if not args.without_own:
@@ -352,18 +358,15 @@ def cmd_references(args: argparse.Namespace) -> None:
         refs += own
     if not refs:
         sys.exit("Aucune référence : vérifiez le chemin de l'export Claude.")
-    connection = db()
-    connection.execute("DELETE FROM refs WHERE origin != 'partage'")  # les partages restent
+    embedded = []
     for start in range(0, len(refs), 16):
         batch = refs[start:start + 16]
         vectors = library.embed([r["text"] for r in batch])
-        connection.executemany(
-            "INSERT OR REPLACE INTO refs VALUES (?, ?, ?, ?)",
-            [(r["url"], r["title"], r["origin"], to_blob(v)) for r, v in zip(batch, vectors)],
-        )
+        embedded += [(r["url"], r["title"], r["origin"], v) for r, v in zip(batch, vectors)]
         print(f"  {min(start + 16, len(refs))}/{len(refs)}")
-    connection.commit()
-    print(f"Référence enregistrée : {len(refs)} textes · {TRI_DB}")
+    store.replace_references(embedded)  # les partages restent ; un seul remplacement, une seule validation
+    store.commit()
+    print(f"Référence enregistrée : {len(refs)} textes · base de données")
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +496,7 @@ def shadow_key(article: dict) -> str:
     return article["url"] or article["file"]
 
 
-def shadow_score(connection: sqlite3.Connection, model: str, language: str, prompts: types.SimpleNamespace,
+def shadow_score(store: watch_store.TriageStore, model: str, language: str, prompts: types.SimpleNamespace,
                  article: dict) -> bool:
     """Seconde note de l'article avec les prompts de l'ombre. Rend False en cas d'échec ; ne lève jamais d'erreur de
     notation et ne touche pas à la table scores."""
@@ -508,32 +511,29 @@ def shadow_score(connection: sqlite3.Connection, model: str, language: str, prom
             return False
     if verdict is None:
         return False
-    flag = lambda value: None if value is None else int(value)  # noqa: E731
-    connection.execute(
-        "INSERT OR REPLACE INTO shadow_scores (url, language, model, prompts_hash, criteria, substance, compilation, "
-        "in_themes, promo, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (shadow_key(article), language, model, prompts_hash(prompts), json.dumps(verdict["criteria"]),
-         sum(verdict["criteria"].values()), flag(verdict["compilation"]), flag(verdict["in_themes"]),
-         flag(verdict["promo"]), dt.datetime.now().isoformat(timespec="seconds")))
-    connection.commit()
+    store.put_shadow(url=shadow_key(article), language=language, model=model, prompts_hash=prompts_hash(prompts),
+                     criteria=verdict["criteria"], substance=sum(verdict["criteria"].values()),
+                     is_compilation=verdict["compilation"], in_themes=verdict["in_themes"], is_promo=verdict["promo"],
+                     scored_at=dt.datetime.now().astimezone())
+    store.commit()
     return True
 
 
+@guarded
 def cmd_score(args: argparse.Namespace) -> None:
+    store = open_store()
     settings = config()
-    connection = db()
-    known = {row["file"] for row in connection.execute("SELECT file FROM scores")}
+    known = store.score_files()
     files = sorted(veille.ARTICLES_DIR.glob("*.md"))
     todo = [f for f in files if args.rescore or f.name not in known]
     if args.compilations:  # pour revérifier les articles classés en compilation
-        flagged = {row["file"] for row in connection.execute("SELECT file FROM scores WHERE compilation = 1")}
+        flagged = store.flagged_files("compilation")
         todo = [f for f in todo if f.name in flagged]
     if args.promotional:  # pour revérifier les articles classés en contenu promotionnel
-        flagged = {row["file"] for row in connection.execute("SELECT file FROM scores WHERE promo = 1")}
+        flagged = store.flagged_files("promo")
         todo = [f for f in todo if f.name in flagged]
     if args.max_substance is not None:  # pour comparer deux modèles sur les articles jugés faibles
-        low = {row["file"] for row in connection.execute(
-            "SELECT file FROM scores WHERE substance IS NOT NULL AND substance <= ?", (args.max_substance,))}
+        low = store.weak_files(args.max_substance)
         todo = [f for f in todo if f.name in low]
     if args.limit:
         todo = todo[: args.limit]
@@ -565,21 +565,13 @@ def cmd_score(args: argparse.Namespace) -> None:
                     print(f"[{number}/{len(todo)}] {article['title'][:70]} · NON NOTÉ ({error}), repris au prochain passage")
                     continue
         substance = sum(verdict["criteria"].values()) if verdict["criteria"] else None
-        connection.execute(
-            "INSERT OR REPLACE INTO scores (file, url, title, source, published, collected, complete, vector, "
-            "criteria, substance, resume, pourquoi, model, scored_at, location, justifications, compilation, in_themes, promo) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'watch', ?, ?, ?, ?)",
-            (path.name, article["url"], article["title"], article["source"], article["published"],
-             article["collected"], int(article["complete"]), to_blob(vector),
-             json.dumps(verdict["criteria"]) if verdict["criteria"] else None, substance,
-             verdict["resume"], verdict["pourquoi"], settings["model"],
-             dt.datetime.now().isoformat(timespec="seconds"),
-             json.dumps(verdict["justifications"], ensure_ascii=False) if verdict["justifications"] else None,
-             None if verdict["compilation"] is None else int(verdict["compilation"]),
-             None if verdict["in_themes"] is None else int(verdict["in_themes"]),
-             None if verdict["promo"] is None else int(verdict["promo"])),
-        )
-        connection.commit()  # un article à la fois : une notation interrompue reprend où elle s'est arrêtée
+        store.put_score(
+            file=path.name, url=article["url"], title=article["title"], source=article["source"], published=article["published"],
+            collected=article["collected"], complete=article["complete"], embedding=vector, criteria=verdict["criteria"] or None,
+            substance=substance, summary=verdict["resume"], why=verdict["pourquoi"], model=settings["model"],
+            scored_at=dt.datetime.now().astimezone(), location="watch", justifications=verdict["justifications"] or None,
+            is_compilation=verdict["compilation"], in_themes=verdict["in_themes"], is_promo=verdict["promo"])
+        store.commit()  # un article à la fois : une notation interrompue reprend où elle s'est arrêtée
         shown = f"substance {substance}/5" if substance is not None else "extrait seulement"
         if verdict["compilation"]:
             shown += " · compilation"
@@ -590,7 +582,7 @@ def cmd_score(args: argparse.Namespace) -> None:
         print(f"[{number}/{len(todo)}] {article['title'][:70]} · {shown} · {time.time() - started:.0f} s")
         if shadow_prompts and article["complete"] and not args.no_model:  # après la note française, qu'elle ne change pas
             shadow_started = time.time()
-            if shadow_score(connection, settings["model"], shadow["language"], shadow_prompts, article):
+            if shadow_score(store, settings["model"], shadow["language"], shadow_prompts, article):
                 shadow_done += 1
             else:
                 shadow_failed += 1
@@ -608,22 +600,20 @@ def ollama_reachable() -> bool:
         return False
 
 
-def shadow_backfill_candidates(connection: sqlite3.Connection, language: str, current_hash: str) -> list[sqlite3.Row]:
+def shadow_backfill_candidates(store: watch_store.TriageStore, language: str, current_hash: str) -> list[dict]:
     """Articles déjà notés en français (grille remplie, article complet) sans note en ombre pour `language`, ou avec une note faite avec
-    une autre empreinte de prompts. Ceux qui ont un avis de calibration d'abord (g ou e), puis les autres, dans l'ordre des fichiers."""
-    rows = connection.execute(
-        "SELECT s.file, s.location, s.title FROM scores s LEFT JOIN shadow_scores h "
-        "ON h.url = COALESCE(NULLIF(s.url, ''), s.file) AND h.language = ? "
-        "WHERE s.criteria IS NOT NULL AND s.complete = 1 AND (h.url IS NULL OR h.prompts_hash IS NOT ?) ORDER BY s.file",
-        (language, current_hash)).fetchall()
-    opinions = calibration_opinions()
+    une autre empreinte de prompts. Ceux qui ont un avis de calibration d'abord (garder ou écarter), puis les autres, dans l'ordre des fichiers."""
+    rows = store.shadow_candidates(language, current_hash)
+    opinions = store.calibration_opinions()
     return sorted(rows, key=lambda row: row["file"] not in opinions)    # tri stable : l'ordre des fichiers est gardé dans chaque groupe
 
 
+@guarded
 def cmd_shadow_backfill(args: argparse.Namespace) -> None:
     """Rattrape la notation en ombre des articles déjà notés en français. N'écrit que dans shadow_scores : aucune note française,
     aucun seuil, ni _to-read.md ni article écarté ne change. Reprise naturelle : un article déjà noté avec l'empreinte courante
     n'est pas renoté. À ne pas lancer pendant la veille du matin (watch.sh ne pose pas de verrou)."""
+    store = open_store()
     settings = config()
     shadow = settings["shadow"]
     if not shadow["enabled"]:
@@ -634,11 +624,10 @@ def cmd_shadow_backfill(args: argparse.Namespace) -> None:
         sys.exit(f"Prompts de l'ombre ({shadow['language']}) inutilisables : {error}")
     if not ollama_reachable():
         sys.exit("Ollama ne répond pas : le lancer, puis relancer shadow-backfill (la reprise est automatique).")
-    connection = db()
-    todo = shadow_backfill_candidates(connection, shadow["language"], prompts_hash(prompts))
+    todo = shadow_backfill_candidates(store, shadow["language"], prompts_hash(prompts))
     if args.limit:
         todo = todo[: args.limit]
-    opinions = calibration_opinions()
+    opinions = store.calibration_opinions()
     print(f"{len(todo)} article(s) à noter en ombre ({shadow['language']}), dont {sum(r['file'] in opinions for r in todo)} avec un avis "
           f"de calibration · modèle {settings['model']}")
     done = failed = skipped = 0
@@ -652,7 +641,7 @@ def cmd_shadow_backfill(args: argparse.Namespace) -> None:
             continue
         article = read_article(path)
         step = time.time()
-        if shadow_score(connection, settings["model"], shadow["language"], prompts, article):
+        if shadow_score(store, settings["model"], shadow["language"], prompts, article):
             done += 1
             outcome = "noté"
         else:
@@ -684,37 +673,40 @@ def discard_reasons(row: dict, threshold: int, relevance: int = 0) -> list[str]:
     if row["substance"] is None:
         reasons.append("extrait seulement")
     elif row["substance"] < threshold:
-        reasons += [CRITERIA[k][1] for k, ok in row["criteria"].items() if not ok]
+        # ordre de CRITERIA, pas celui des clés lues : jsonb ne garde pas l'ordre des clés
+        reasons += [CRITERIA[k][1] for k in CRITERIA if k in row["criteria"] and not row["criteria"][k]]
     if relevance and row["pertinence"] < relevance:
         reasons.append(f"pertinence {row['pertinence']}/100 sous le seuil {relevance}")
     return reasons
 
 
-def ranked(connection: sqlite3.Connection) -> list[dict]:
-    """Tous les articles notés, avec leur pertinence en rang sur 100 et leur verdict de filtre."""
-    refs = [from_blob(r["vector"]) for r in connection.execute("SELECT vector FROM refs")]
+def ranked(store: watch_store.TriageStore, settings: dict | None = None) -> list[dict]:
+    """Tous les articles notés, avec leur pertinence en rang sur 100 et leur verdict de filtre. Les égalités se départagent par
+    nom de fichier, jamais par l'ordre dans lequel les lignes ont été écrites. `settings` : réglages déjà lus (l'outil de copie
+    les lit sans rien créer) ; par défaut config()."""
+    refs = store.reference_vectors()
     if not refs:
         sys.exit("Pas de référence : lancez d'abord la commande references.")
     reference = np.vstack(refs)
-    rows = [dict(r) for r in connection.execute("SELECT * FROM scores")]
+    rows = [legacy(r) for r in store.all_scores()]
     if not rows:
         sys.exit("Aucun article noté : lancez d'abord la commande score.")
     k = min(NEIGHBOURS, len(reference))
     for row in rows:
-        similarities = reference @ from_blob(row["vector"])
+        similarities = reference @ row["vector"]
         row["cosine"] = float(np.sort(similarities)[-k:].mean())
-    order = sorted(rows, key=lambda r: r["cosine"])
-    for position, row in enumerate(order):
-        row["pertinence"] = round(100 * position / max(1, len(order) - 1))
-    forced = {r["file"] for r in connection.execute("SELECT file FROM forced")}
-    excluded = {r["file"] for r in connection.execute("SELECT file FROM excluded")}
-    settings = config()
+    order = sorted(rows, key=lambda r: (-r["cosine"], r["file"]))      # l'ordre d'affichage : égalité départagée par nom de fichier
+    for index, row in enumerate(order):
+        row["pertinence"] = round(100 * (len(order) - 1 - index) / max(1, len(order) - 1))
+    forced = store.forced_files()
+    excluded = store.excluded_files()
+    settings = settings or config()
     # la pertinence est un rang qui bouge avec le corpus : elle ne décide que pour les articles de la période, pour ne
     # jamais faire sortir plus tard un article gardé à son arrivée
     since = (dt.date.today() - dt.timedelta(days=settings["days"])).isoformat()
     for row in rows:
-        row["criteria"] = json.loads(row["criteria"]) if row["criteria"] else None
-        why = json.loads(row["justifications"]) if row.get("justifications") else {}
+        row["criteria"] = row["criteria"] or None
+        why = row.get("justifications") or {}
         row["why"] = why
         recent = (row["collected"] or "") >= since
         reasons = discard_reasons(row, settings["substance_threshold"],
@@ -723,7 +715,7 @@ def ranked(connection: sqlite3.Connection) -> list[dict]:
         row["reasons"] = [] if row["forced"] else reasons
         if row["file"] in excluded:  # votre décision l'emporte sur celle du modèle
             row["reasons"] = ["écarté à la main"]
-    return sorted(rows, key=lambda r: -r["cosine"])
+    return sorted(rows, key=lambda r: (-r["cosine"], r["file"]))
 
 
 MEDIUM_ID = re.compile(r"-([0-9a-f]{10,12})$")
@@ -741,19 +733,21 @@ def match_keys(url: str) -> set[str]:
     return keys
 
 
+@guarded
 def cmd_shares(args: argparse.Namespace) -> None:
     """Relève vos posts Bluesky récents : un article de la veille que vous avez partagé est marqué
     « partagé » et rejoint la référence de pertinence."""
+    store = open_store()
     settings = config()
     handle = (settings.get("bluesky") or "").strip().removeprefix("@")
     if not handle:
         print(f"Partages : pas d'identifiant Bluesky dans {watch_config.LOCAL_FILE} (ligne « bluesky: »), étape sautée.")
         return
-    connection = db()
-    index: dict[str, sqlite3.Row] = {}
-    for row in connection.execute("SELECT file, url, vector FROM scores WHERE url != ''"):
-        for key in match_keys(row["url"]):
+    index: dict[str, tuple] = {}
+    for row in store.score_urls():
+        for key in match_keys(row[1]):
             index[key] = row
+    shared = store.shared_files()
     try:
         with veille.client() as http:
             posts = veille.links_from_bluesky(http, handle, max_pages=args.pages)
@@ -764,32 +758,30 @@ def cmd_shares(args: argparse.Namespace) -> None:
                 row = next((index[k] for k in match_keys(url) if k in index), None)
                 if row is None:
                     continue
-                if connection.execute("SELECT 1 FROM shared WHERE file = ?", (row["file"],)).fetchone():
+                file, article_url, vector = row
+                if file in shared:
                     continue
-                connection.execute("INSERT INTO shared VALUES (?, ?, ?, ?)",
-                                   (row["file"], row["url"], date, dt.date.today().isoformat()))
-                connection.execute("INSERT OR REPLACE INTO refs VALUES (?, ?, ?, ?)",
-                                   (row["url"], row["file"], "partage", row["vector"]))
+                shared.add(file)
+                store.add_share(file, article_url, date, dt.date.today())
+                store.put_reference(article_url, file, "partage", vector)
                 new += 1
     except (httpx.HTTPError, SystemExit) as error:  # Bluesky indisponible : le reste du passage continue
+        store.rollback()
         print(f"Partages : Bluesky n'a pas répondu ({error}), reprise au prochain passage.")
         return
-    connection.commit()
-    total = connection.execute("SELECT COUNT(*) FROM shared").fetchone()[0]
+    store.commit()
+    total = store.share_total()
     print(f"Partages : {len(posts)} liens lus sur Bluesky · {new} nouveaux articles de la veille partagés "
           f"({total} au total), ajoutés à la référence de pertinence")
 
 
-def share_stats(connection: sqlite3.Connection, days: int = 30) -> str:
+def share_stats(store: watch_store.TriageStore, days: int = 30) -> str:
     """Combien des articles partagés récemment avaient été proposés dans les « à lire »."""
-    since = (dt.date.today() - dt.timedelta(days=days)).isoformat()
-    shared = connection.execute("SELECT file, found FROM shared WHERE found >= ?", (since,)).fetchall()
+    since = dt.date.today() - dt.timedelta(days=days)
+    shared = store.shared_found_since(since)
     if not shared:
         return ""
-    picked = sum(
-        1 for row in shared
-        if connection.execute("SELECT 1 FROM picks WHERE file = ? AND day <= ?", (row["file"], row["found"])).fetchone()
-    )
+    picked = sum(1 for file, found in shared if store.picked_on_or_before(file, found))
     return (f"{days} derniers jours : {len(shared)} article(s) de la veille partagé(s), "
             f"dont {picked} proposé(s) avant dans les « à lire ».")
 
@@ -797,14 +789,15 @@ def share_stats(connection: sqlite3.Connection, days: int = 30) -> str:
 WEEK_FILE = veille.WATCH_DIR / "_semaine.md"
 
 
+@guarded
 def cmd_week(args: argparse.Namespace) -> None:
     """Inventaire des articles retenus sur la période, point de départ de la synthèse hebdomadaire :
     titres, sources, liens et résumés, sans le texte des articles (Claude lit le détail via la
     bibliothèque, passage par passage)."""
-    connection = db()
-    rows = ranked(connection)
+    store = open_store(readonly=True)
+    rows = ranked(store)
     since = (dt.date.today() - dt.timedelta(days=args.days)).isoformat()
-    shared = {r["file"] for r in connection.execute("SELECT file FROM shared")}
+    shared = store.shared_files()
     # Par défaut, la période porte sur la date de publication : une source ajoutée récemment livre
     # aussi ses anciens articles, qui n'ont pas leur place dans la synthèse de la période.
     def day(row: dict) -> str:
@@ -839,19 +832,65 @@ def cmd_week(args: argparse.Namespace) -> None:
     print(f"{len(kept)} articles retenus, {basis} depuis le {since} · {WEEK_FILE}")
 
 
-def cmd_digest(args: argparse.Namespace) -> None:
-    settings = config()
-    connection = db()
-    rows = ranked(connection)
+def reading_period(rows: list[dict], settings: dict) -> tuple[str, list[dict]]:
+    """(date de début, articles collectés depuis) : la période couverte par _to-read.md."""
     since = (dt.date.today() - dt.timedelta(days=settings["days"])).isoformat()
-    period = [r for r in rows if (r["collected"] or "") >= since]
-    filtering = settings["mode"] == "filtre"
-    shared = {r["file"] for r in connection.execute("SELECT file FROM shared")}
+    return since, [r for r in rows if (r["collected"] or "") >= since]
+
+
+def top_picks(period: list[dict], shared: set[str], settings: dict) -> list[dict]:
+    """Les articles à lire du jour : retenus par le filtre, pas déjà partagés (déjà partagé = déjà lu), les `to_read` premiers."""
     kept = [r for r in period if not r["reasons"]]
-    top = [r for r in kept if r["file"] not in shared][: settings["to_read"]]  # déjà partagé = déjà lu
-    today = dt.date.today().isoformat()
-    connection.executemany("INSERT OR IGNORE INTO picks VALUES (?, ?)", [(today, r["file"]) for r in top])
-    connection.commit()
+    return [r for r in kept if r["file"] not in shared][: settings["to_read"]]
+
+
+RETAINED_FILE = "veille-retenus.json"
+RUN_TIMEZONE = "Europe/Paris"
+
+
+def run_day() -> str:
+    """Jour du passage (AAAA-MM-JJ) : celui d'Europe/Paris, comme le repère de watch.sh ; PMZILLA_LAB_TODAY le remplace dans les tests."""
+    forced = os.environ.get("PMZILLA_LAB_TODAY", "")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", forced):
+        return forced
+    from zoneinfo import ZoneInfo
+    return dt.datetime.now(ZoneInfo(RUN_TIMEZONE)).date().isoformat()
+
+
+def record_retained_count(rows: list[dict]) -> None:
+    """Change morning-summary (R-50, D3) : date du passage et nombre d'articles collectés ce jour-là sans raison d'écart, dans
+    veille-retenus.json du dossier de données (remplacement atomique, droits du propriétaire). Ni titre, ni lien, ni source.
+    Un échec d'écriture est dit sur la sortie standard et ne fait pas échouer la liste à lire."""
+    day = run_day()
+    count = sum(1 for r in rows if (r["collected"] or "")[:10] == day and not r["reasons"])
+    folder = Path(os.environ.get("PMZILLA_LAB_DATA") or "~/.pmzilla-lab").expanduser()
+    target = folder / RETAINED_FILE
+    temporary = folder / f".{RETAINED_FILE}.{os.getpid()}.tmp"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"date": day, "retained": count}, handle)
+        os.replace(temporary, target)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        print("Décompte des articles retenus non enregistré (dossier de données non inscriptible).")
+
+
+@guarded
+def cmd_digest(args: argparse.Namespace) -> None:
+    store = open_store()
+    settings = config()
+    rows = ranked(store)
+    since, period = reading_period(rows, settings)
+    filtering = settings["mode"] == "filtre"
+    shared = store.shared_files()
+    top = top_picks(period, shared, settings)
+    store.add_picks(dt.date.today(), [r["file"] for r in top])
+    store.commit()
     others = [r for r in period if r not in top and not r["reasons"]]
     compilations = [r for r in period if r.get("compilation") and not r["forced"]]
     excluded = [r for r in period if r["reasons"] and r not in compilations]
@@ -868,7 +907,7 @@ def cmd_digest(args: argparse.Namespace) -> None:
         if filtering else
         "Mode observation : rien n'est retiré de la bibliothèque. La dernière section montre ce que le filtre écarterait."
     )
-    stats = share_stats(connection)
+    stats = share_stats(store)
     if stats:
         out += ["", stats]
     out += ["", f"## Les {len(top)} à lire", ""]
@@ -895,6 +934,7 @@ def cmd_digest(args: argparse.Namespace) -> None:
     out += [f"{line(r)} · *{', '.join(r['reasons'])}*" for r in excluded]
     target = veille.to_read_file()
     target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    record_retained_count(rows)
     print(f"{len(period)} articles sur la période · {len(top)} à lire · {len(excluded)} "
           f"{'écartés' if filtering else 'seraient écartés'} · {target}")
 
@@ -906,38 +946,70 @@ def cmd_digest(args: argparse.Namespace) -> None:
 CALIBRATION_FILE = veille.WATCH_DIR / "_calibration.csv"
 
 
+SHEET_COLUMNS = ["fichier", "titre", "source", "pertinence", "dans_themes", "substance", "compilation", "promotionnel",
+                 "manque", "filtre", "avis"]
+OPINION_LETTERS = {True: "g", False: "e"}
+NO_OPINION = "Aucun avis de calibration en base : lancez calibration, remplissez la colonne « avis », puis calibration --import."
+
+
+@guarded
 def cmd_calibration(args: argparse.Namespace) -> None:
-    rows = ranked(db())
+    """Sans option : rafraîchit en base la calibration depuis le classement actuel (vos avis sont gardés) et écrit la feuille à
+    éditer. Avec --import : relit seulement les colonnes fichier et avis de la feuille et les enregistre en base."""
+    store = open_store()
+    if args.import_sheet is not None:
+        return import_calibration(store, Path(args.import_sheet).expanduser() if args.import_sheet else CALIBRATION_FILE)
+    rows = ranked(store)
+    entries, sheet = [], []
+    for row in rows:
+        why = row["why"]
+        missing = [f"{CRITERIA[k][1]} ({why[k]})" if why.get(k) else CRITERIA[k][1]
+                   for k, ok in (row["criteria"] or {}).items() if not ok]
+        verdict = "discard" if row["reasons"] else "keep"
+        entries.append({"file": row["file"], "verdict": verdict, "relevance": row["pertinence"], "substance": row["substance"],
+                        "in_themes": row.get("in_themes"), "is_compilation": bool(row.get("compilation")),
+                        "is_promo": bool(row.get("promo")), "missing": ", ".join(missing)})
+        sheet.append((row, missing))
+    store.refresh_calibration(entries, dt.datetime.now().astimezone())
+    store.commit()      # la feuille n'est écrite qu'une fois la base à jour
+    opinions = store.calibration_opinions()
     with CALIBRATION_FILE.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle, delimiter=";")
-        writer.writerow(["fichier", "titre", "source", "pertinence", "dans_themes", "substance", "compilation",
-                         "promotionnel", "manque", "filtre", "avis"])
-        for row in rows:
-            why = row["why"]
-            missing = [f"{CRITERIA[k][1]} ({why[k]})" if why.get(k) else CRITERIA[k][1]
-                       for k, ok in (row["criteria"] or {}).items() if not ok]
+        writer.writerow(SHEET_COLUMNS)
+        for row, missing in sheet:
             themes = {None: "", 1: "oui", 0: "non"}[row.get("in_themes")]
             writer.writerow([row["file"], row["title"], row["source"], row["pertinence"], themes,
                              "" if row["substance"] is None else row["substance"],
                              "oui" if row.get("compilation") else "", "oui" if row.get("promo") else "",
                              ", ".join(missing),
-                             "écarter" if row["reasons"] else "garder", ""])
+                             "écarter" if row["reasons"] else "garder", OPINION_LETTERS.get(opinions.get(row["file"]), "")])
     print(f"{len(rows)} articles · {CALIBRATION_FILE}\n"
           "Ouvrez-le dans Numbers ou Excel, remplissez la colonne « avis » (g = garder, e = écarter) "
           "pour une vingtaine d'articles pris en haut, au milieu et en bas, enregistrez en CSV, "
-          "puis lancez : watch_triage.py thresholds")
+          "puis lancez : watch_triage.py calibration --import")
 
 
-def calibration_opinions() -> dict[str, bool]:
-    """Vos avis de calibration : fichier -> True (g, garder) / False (e, écarter). Vide sans fichier de calibration."""
-    opinions: dict[str, bool] = {}
-    if CALIBRATION_FILE.exists():
-        with CALIBRATION_FILE.open(encoding="utf-8-sig", newline="") as handle:
-            for row in csv.DictReader(handle, delimiter=";"):
-                avis = (row.get("avis") or "").strip().lower()[:1]
-                if avis in ("g", "e"):
-                    opinions[row.get("fichier", "")] = avis == "g"
-    return opinions
+def import_calibration(store: watch_store.TriageStore, path: Path) -> None:
+    """Lit les colonnes « fichier » et « avis » de la feuille : g enregistre garder, e écarter, une cellule vide efface l'avis ;
+    un fichier absent de la table est compté et ignoré."""
+    if not path.exists():
+        print(f"Feuille de calibration introuvable : {path}", file=sys.stderr)
+        raise SystemExit(1)
+    updates: dict[str, bool | None] = {}
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle, delimiter=";"):
+            name = (row.get("fichier") or "").strip()
+            avis = (row.get("avis") or "").strip().lower()[:1]
+            if not name:
+                continue
+            if avis in ("g", "e"):
+                updates[name] = avis == "g"
+            elif not avis:
+                updates[name] = None
+    counts = store.apply_opinions(updates)
+    store.commit()
+    print(f"Avis importés : {counts['keep']} à garder, {counts['discard']} à écarter, {counts['cleared']} effacés, "
+          f"{counts['unknown']} articles inconnus")
 
 
 RELEVANCE_STEPS = range(0, 100, 10)   # seuils de pertinence essayés par thresholds (0 : aucun filtre de pertinence)
@@ -951,34 +1023,51 @@ def threshold_counts(sample: list[tuple], substance: int, relevance: int = 0) ->
     return lost, noise
 
 
-def cmd_thresholds(args: argparse.Namespace) -> None:
-    """Propose les seuils de substance et de pertinence à partir de vos avis, et signale les désaccords sur les règles
-    fixes (hors thèmes, compilation, promotionnel), qui se corrigent article par article avec restore."""
-    if not CALIBRATION_FILE.exists():
-        sys.exit("Pas de fichier de calibration : lancez d'abord la commande calibration.")
+def calibration_sample(entries: list[dict]) -> tuple[list[tuple], list[tuple]]:
+    """Avis exploitables (substance, pertinence, garder, fichier, titre) et désaccords sur les règles fixes (fichier, titre, règle) :
+    un article écarté par une règle fixe (compilation, hors thèmes, promotionnel) ne dépend pas du seuil."""
     sample, disagreements = [], []
-    with CALIBRATION_FILE.open(encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle, delimiter=";"):
-            avis = (row.get("avis") or "").strip().lower()[:1]
-            if avis not in ("g", "e"):
-                continue
-            rule = []
-            if (row.get("compilation") or "").strip():
-                rule.append("compilation")
-            if (row.get("dans_themes") or "").strip() == "non":
-                rule.append("hors thèmes")
-            if (row.get("promotionnel") or "").strip():
-                rule.append("promotionnel")
-            if rule:  # écarté par une règle fixe, pas par le seuil
-                if avis == "g":
-                    disagreements.append((row["fichier"], row["titre"], " et ".join(rule)))
-                continue
-            substance = int(row["substance"]) if row["substance"].strip() else None
-            relevance = int(row["pertinence"]) if (row.get("pertinence") or "").strip() else 0
-            sample.append((substance, relevance, avis == "g", row["fichier"], row["titre"]))
+    for entry in entries:
+        keep = entry["opinion"] == "keep"
+        rule = []
+        if entry["is_compilation"]:
+            rule.append("compilation")
+        if entry["in_themes"] is False:
+            rule.append("hors thèmes")
+        if entry["is_promo"]:
+            rule.append("promotionnel")
+        if rule:  # écarté par une règle fixe, pas par le seuil
+            if keep:
+                disagreements.append((entry["file"], entry["title"], " et ".join(rule)))
+            continue
+        sample.append((entry["substance"], entry["relevance"] or 0, keep, entry["file"], entry["title"]))
+    return sample, disagreements
+
+
+def threshold_tables(sample: list[tuple]) -> tuple[list[tuple], list[tuple]]:
+    """(seuils de substance seuls : (perdus, faibles gardés, seuil), triés ; couples : (-accord, perdus, pertinence, substance,
+    faibles gardés) pour chaque couple dans l'ordre d'affichage). La proposition est results[0] et min(pairs)."""
+    results = sorted((*threshold_counts(sample, threshold), threshold) for threshold in range(0, 6))
+    pairs = []
+    for relevance in RELEVANCE_STEPS:
+        for substance in range(0, 6):
+            pair_lost, pair_noise = threshold_counts(sample, substance, relevance)
+            pairs.append((-(len(sample) - pair_lost - pair_noise), pair_lost, relevance, substance, pair_noise))
+    return results, pairs
+
+
+@guarded
+def cmd_thresholds(args: argparse.Namespace) -> None:
+    """Propose les seuils de substance et de pertinence à partir de vos avis (lus en base, jamais dans la feuille), et signale les
+    désaccords sur les règles fixes (hors thèmes, compilation, promotionnel), qui se corrigent article par article avec restore."""
+    store = open_store(readonly=True)
+    entries = [e for e in store.calibration_entries() if e["opinion"]]
+    if not entries:
+        sys.exit(NO_OPINION)
+    sample, disagreements = calibration_sample(entries)
     if len(sample) < 10:
         sys.exit(f"{len(sample)} avis exploitables seulement : il en faut au moins 10, idéalement 20 à 30.")
-    results = sorted((*threshold_counts(sample, threshold), threshold) for threshold in range(0, 6))
+    results, pairs = threshold_tables(sample)
     settings = config()
     print(f"{len(sample)} avis · seuil actuel : substance {settings['substance_threshold']}/5\n")
     print("substance  bons articles perdus  articles faibles gardés")
@@ -992,13 +1081,8 @@ def cmd_thresholds(args: argparse.Namespace) -> None:
     # pertinence : le relever ne peut que perdre de bons articles.
     print("\npertinence \\ substance (bons perdus/faibles gardés)")
     print("          " + "".join(f"{s:>8}" for s in range(0, 6)))
-    pairs = []
     for relevance in RELEVANCE_STEPS:
-        cells = []
-        for substance in range(0, 6):
-            pair_lost, pair_noise = threshold_counts(sample, substance, relevance)
-            cells.append(f"{pair_lost}/{pair_noise}")
-            pairs.append((-(len(sample) - pair_lost - pair_noise), pair_lost, relevance, substance, pair_noise))
+        cells = [f"{pair_lost}/{pair_noise}" for _, pair_lost, rel, _, pair_noise in pairs if rel == relevance]
         print(f"{relevance:>10}" + "".join(f"{c:>8}" for c in cells))
     minus_agreement, lost, relevance, threshold, noise = min(pairs)
     print(f"\nProposition (substance et pertinence) : substance_threshold: {threshold}, relevance_threshold: {relevance} "
@@ -1035,32 +1119,28 @@ def percent(part: int, total: int) -> str:
     return f"{part}/{total}" + (f" ({round(100 * part / total)} %)" if total else "")
 
 
-def shadow_pairs(connection: sqlite3.Connection, language: str, threshold: int) -> list[dict]:
+def shadow_pairs(store: watch_store.TriageStore, language: str, threshold: int) -> list[dict]:
     """Articles notés dans les deux langues, avec la note et la décision de chacune (sans repêchage ni rejet)."""
-    cursor = connection.execute(
-        "SELECT s.file, s.title, s.source, s.criteria, s.substance, s.compilation, s.in_themes, s.promo, "
-        "h.criteria AS e_criteria, h.substance AS e_substance, h.compilation AS e_compilation, "
-        "h.in_themes AS e_in_themes, h.promo AS e_promo "
-        "FROM scores s JOIN shadow_scores h ON h.url = COALESCE(NULLIF(s.url, ''), s.file) AND h.language = ? "
-        "WHERE s.criteria IS NOT NULL AND h.criteria IS NOT NULL ORDER BY s.file", (language,))
+    def side(note: dict) -> dict:
+        return {"substance": note["substance"], "criteria": note["criteria"], "compilation": note["is_compilation"],
+                "in_themes": note["in_themes"], "promo": note["is_promo"]}
+
     pairs = []
-    for row in cursor:
-        fr = {"substance": row["substance"], "criteria": json.loads(row["criteria"]), "compilation": row["compilation"],
-              "in_themes": row["in_themes"], "promo": row["promo"]}
-        en = {"substance": row["e_substance"], "criteria": json.loads(row["e_criteria"]),
-              "compilation": row["e_compilation"], "in_themes": row["e_in_themes"], "promo": row["e_promo"]}
+    for row in store.shadow_pairs(language):
+        fr, en = side(row["fr"]), side(row["en"])
         pairs.append({"file": row["file"], "title": row["title"], "source": row["source"], "fr": fr, "en": en,
                       "keep_fr": not discard_reasons(fr, threshold), "keep_en": not discard_reasons(en, threshold)})
     return pairs
 
 
+@guarded
 def cmd_shadow_report(args: argparse.Namespace) -> None:
     """Compare les notes françaises et anglaises des mêmes articles. Lecture seule, sortie dans le Terminal."""
+    store = open_store(readonly=True)
     settings = config(create=False)
     language = settings["shadow"]["language"]
     threshold = settings["substance_threshold"]
-    connection = db()
-    pairs = shadow_pairs(connection, language, threshold)
+    pairs = shadow_pairs(store, language, threshold)
     if not pairs:
         print(f"Aucun article noté dans les deux langues (fr et {language}). La notation en ombre est "
               f"{'active' if settings['shadow']['enabled'] else 'inactive'} : "
@@ -1087,9 +1167,9 @@ def cmd_shadow_report(args: argparse.Namespace) -> None:
         differ = sum(p["fr"][key] != p["en"][key] for p in pairs)
         print(f"  {label:<15} désaccord {percent(differ, total)}")
 
-    forced = {r["file"] for r in connection.execute("SELECT file FROM forced")}
-    excluded = {r["file"] for r in connection.execute("SELECT file FROM excluded")}
-    opinions = calibration_opinions()   # fichier -> True (garder) / False (écarter), d'après vos avis de calibration
+    forced = store.forced_files()
+    excluded = store.excluded_files()
+    opinions = store.calibration_opinions()   # fichier -> True (garder) / False (écarter), d'après vos avis de calibration en base
     by_file = {p["file"]: p for p in pairs}
     print("\nAccord avec vos décisions (sur les articles notés dans les deux langues) :")
     for label, wanted in (("avis de calibration", opinions),
@@ -1151,24 +1231,10 @@ def sorted_sources(followed: dict[str, dict]) -> list[dict]:
     return sorted(followed.values(), key=lambda x: (not x.get("active"), -x.get("shared", 0), x["key"]))
 
 
-def cmd_suggestions(args: argparse.Namespace) -> None:
-    """Propose les sources citées par plusieurs bons articles ou compilations, avec active: false."""
-    if not db().execute("SELECT 1 FROM scores LIMIT 1").fetchone():   # base vide : rien à proposer, ce n'est pas une erreur
-        print("Aucun article noté : il n'y a aucune suggestion à calculer. Lancez d'abord « watch_triage.py score ».")
-        if args.reset:   # --reset repart de zéro : il nettoie quand même les anciennes suggestions
-            followed = {s["key"]: s for s in veille.load_sources()}
-            kept = drop_old_suggestions(followed)
-            if len(kept) < len(followed):
-                veille.save_sources(sorted_sources(kept))
-                print(f"Les anciennes suggestions inactives ont été retirées de sources.yaml "
-                      f"({len(followed) - len(kept)}).")
-            else:
-                print("Aucune ancienne suggestion inactive à retirer de sources.yaml.")
-        return
-    rows = ranked(db())
+def suggestion_candidates(rows: list[dict], links: list[tuple[str, str]], followed: dict[str, dict]) -> dict[str, dict]:
+    """Sources citées par les articles retenus ou les compilations, hors sources déjà suivies : clé -> source avec les articles
+    qui la citent, les sources citantes, des exemples de liens et si une compilation la cite."""
     citing = {r["url"]: r for r in rows if r["url"] and (r.get("compilation") or not r["reasons"])}
-    links = veille.state().execute("SELECT article_url, target_url FROM links").fetchall()
-    followed = {s["key"]: s for s in veille.load_sources()}
     found: dict[str, dict] = {}
     for article_url, target in links:
         article = citing.get(article_url)
@@ -1186,6 +1252,30 @@ def cmd_suggestions(args: argparse.Namespace) -> None:
         entry["articles"].add(article_url)
         entry["citing_sources"].add(article["source"])
         entry["examples"].add(target)
+    return found
+
+
+@guarded
+def cmd_suggestions(args: argparse.Namespace) -> None:
+    """Propose les sources citées par plusieurs bons articles ou compilations, avec active: false."""
+    store = open_store(readonly=True)
+    watch = veille.open_store(readonly=True)
+    if not store.score_files():   # base vide : rien à proposer, ce n'est pas une erreur
+        print("Aucun article noté : il n'y a aucune suggestion à calculer. Lancez d'abord « watch_triage.py score ».")
+        if args.reset:   # --reset repart de zéro : il nettoie quand même les anciennes suggestions
+            followed = {s["key"]: s for s in veille.load_sources()}
+            kept = drop_old_suggestions(followed)
+            if len(kept) < len(followed):
+                veille.save_sources(sorted_sources(kept))
+                print(f"Les anciennes suggestions inactives ont été retirées de sources.yaml "
+                      f"({len(followed) - len(kept)}).")
+            else:
+                print("Aucune ancienne suggestion inactive à retirer de sources.yaml.")
+        return
+    rows = ranked(store)
+    links = watch.all_links()
+    followed = {s["key"]: s for s in veille.load_sources()}
+    found = suggestion_candidates(rows, links, followed)
     if args.reset:  # repartir de zéro pour les suggestions jamais activées
         followed = drop_old_suggestions(followed)
     # une source citée par un seul site (lien de sponsor, de bio) ne compte pas, sauf recommandation
@@ -1236,47 +1326,61 @@ def cmd_suggestions(args: argparse.Namespace) -> None:
 # Filtre
 # ---------------------------------------------------------------------------
 
+@guarded
 def cmd_apply(args: argparse.Namespace) -> None:
+    store = open_store()
     settings = config()
     if settings["mode"] != "filtre":
         print("Mode observation : aucun article ne sort de la bibliothèque.")
         return
-    connection = db()
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     moved = 0
-    for row in ranked(connection):
+    for row in ranked(store):
         source = veille.ARTICLES_DIR / row["file"]
         if row["reasons"] and source.exists():
-            shutil.move(str(source), ARCHIVE_DIR / row["file"])
-            connection.execute("UPDATE scores SET location = 'excluded' WHERE file = ?", (row["file"],))
+            target = ARCHIVE_DIR / row["file"]
+            shutil.move(str(source), target)
+            try:
+                store.set_location(row["file"], "excluded")
+                store.commit()      # le fichier et son emplacement enregistré vont ensemble
+            except BaseException:
+                store.rollback()
+                shutil.move(str(target), source)
+                raise
             moved += 1
-    connection.commit()
     print(f"{moved} article(s) sorti(s) de la bibliothèque · {ARCHIVE_DIR}")
 
 
+@guarded
 def cmd_exclude(args: argparse.Namespace) -> None:
-    connection = db()
+    store = open_store()
     name = Path(args.fichier).name
     if not (veille.ARTICLES_DIR / name).exists() and not (ARCHIVE_DIR / name).exists():
         sys.exit(f"Introuvable : {name}")
-    connection.execute("DELETE FROM forced WHERE file = ?", (name,))
-    connection.execute("INSERT OR REPLACE INTO excluded VALUES (?, ?)", (name, dt.date.today().isoformat()))
-    connection.commit()
+    store.exclude(name, dt.date.today())
+    store.commit()
     print(f"{name} sera écarté de la bibliothèque (en mode filtre, au prochain passage).")
 
 
+@guarded
 def cmd_restore(args: argparse.Namespace) -> None:
-    connection = db()
+    store = open_store()
     name = Path(args.fichier).name
     archived = ARCHIVE_DIR / name
-    if archived.exists():
-        shutil.move(str(archived), veille.ARTICLES_DIR / name)
-    elif not (veille.ARTICLES_DIR / name).exists():
+    restored = veille.ARTICLES_DIR / name
+    moved = archived.exists()
+    if moved:
+        shutil.move(str(archived), restored)
+    elif not restored.exists():
         sys.exit(f"Introuvable : {name}")
-    connection.execute("DELETE FROM excluded WHERE file = ?", (name,))
-    connection.execute("INSERT OR REPLACE INTO forced VALUES (?, ?)", (name, dt.date.today().isoformat()))
-    connection.execute("UPDATE scores SET location = 'watch' WHERE file = ?", (name,))
-    connection.commit()
+    try:
+        store.restore(name, dt.date.today())
+        store.commit()
+    except BaseException:
+        store.rollback()
+        if moved:
+            shutil.move(str(restored), archived)      # l'emplacement n'a pas pu être enregistré : le fichier revient
+        raise
     print(f"{name} est dans la bibliothèque et ne sera plus écarté. Il entre dans l'index au prochain passage.")
 
 
@@ -1304,7 +1408,9 @@ def main(argv: list[str] | None = None) -> None:
                       help="filtrer sur la date de collecte au lieu de la date de publication")
     shares = commands.add_parser("shares", help="relever vos partages Bluesky et affiner la pertinence")
     shares.add_argument("--pages", type=int, default=3, help="pages de 100 posts lues (défaut 3)")
-    commands.add_parser("calibration", help="exporter les notes pour donner votre avis")
+    calibration = commands.add_parser("calibration", help="exporter les notes pour donner votre avis, ou importer vos avis")
+    calibration.add_argument("--import", dest="import_sheet", nargs="?", const="", default=None, metavar="FEUILLE",
+                             help="relire la colonne « avis » de la feuille éditée (défaut : la feuille exportée)")
     thresholds = commands.add_parser("thresholds", help="proposer des seuils à partir de vos avis")
     thresholds.add_argument("--save", action="store_true", help="écrire les seuils proposés dans tri.yaml")
     shadow_report = commands.add_parser("shadow-report", help="comparer les notes françaises et anglaises de l'ombre")

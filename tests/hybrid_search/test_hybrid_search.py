@@ -3,22 +3,22 @@ Tests de tools/hybrid_search.py (recherche hybride SQL du lot 4) sur la biblioth
 
     bash tests/run_all.sh hybrid_search
 
-Sans base : la fusion et le bonus de fraîcheur en Python pur sont comparés à la voie SQLite (`Library.search`), et la requête SQL
-est inspectée (paramètres, absence d'interpolation, balayage exact ou ANN) avec une fausse connexion. Avec une base jetable
-(sautés si elle manque) : la requête SQL est jouée sur les mêmes données et comparée à la voie SQLite. Aucun appel à Ollama.
+Sans base : la fusion et le bonus de fraîcheur en Python pur sont comparés à des valeurs figées (calculées à la main ou capturées le
+2026-10-14, avant le retrait de l'ancienne voie de fichier), et la requête SQL est inspectée (paramètres, absence d'interpolation, balayage
+exact ou ANN) avec une fausse connexion. Avec une base jetable (sautés si elle manque) : la requête SQL est jouée sur les mêmes données,
+comparée aux valeurs figées de tests/fixtures_library/demo_expected.py et à la fusion en Python pur. Aucun appel à Ollama.
 """
 import datetime as dt
 import re
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
 import pg_demo                  # noqa: E402  (ajoute tools/, tests/db et tests/fixtures_library au chemin)
 import demo_library as demo     # noqa: E402
+import demo_expected as attendu  # noqa: E402
 import hybrid_search as hs      # noqa: E402
 import watch_paths              # noqa: E402
 import pmzilla_lab_library as library  # noqa: E402
@@ -26,28 +26,16 @@ import pmzilla_lab_library as library  # noqa: E402
 TODAY = dt.date.today()
 
 
-class Sqlite(unittest.TestCase):
-    """Une vraie `Library` SQLite sur la bibliothèque inventée, embedding remplacé."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        chemin = Path(self.tmp.name) / "library.sqlite"
-        demo.build_sqlite(chemin)
-        for patch in (mock.patch.object(library, "DATA_DIR", Path(self.tmp.name)), mock.patch.object(library, "DB_PATH", chemin),
-                      mock.patch.object(library, "embed", demo.fake_embed)):
-            patch.start()
-            self.addCleanup(patch.stop)
-        self.lib = library.Library()
-
-
 class Constantes(unittest.TestCase):
-    def test_memes_constantes_que_la_voie_sqlite(self):
-        self.assertEqual(hs.RRF_K, library.RRF_K)
-        self.assertEqual(hs.CANDIDATES, library.CANDIDATES)
-        self.assertEqual(hs.FRESHNESS_HALF_LIFE, library.FRESHNESS_HALF_LIFE)
-        self.assertEqual(hs.FRESHNESS_BONUS, library.FRESHNESS_BONUS)
-        self.assertEqual(set(hs.FRESHNESS_COLLECTIONS), library.FRESHNESS_COLLECTIONS)
+    def test_constantes_de_la_fusion_figees(self):
+        self.assertEqual((hs.RRF_K, hs.CANDIDATES, hs.FRESHNESS_HALF_LIFE, hs.FRESHNESS_BONUS), (60, 50, 180, 0.001))
+        self.assertEqual(tuple(hs.FRESHNESS_COLLECTIONS), ("watch",))
+
+    def test_la_requete_ecrit_les_constantes_de_la_fusion(self):
+        sql = hs.build_query(hs.LIBRARY_SPEC, query="le flux", vector=[0.5, 0.25], today=TODAY)[0]
+        self.assertIn(str(hs.RRF_K), sql)
+        self.assertIn(repr(float(hs.FRESHNESS_BONUS)), sql)
+        self.assertIn("'watch'", sql)
 
     def test_nom_de_la_collection_personnelle(self):
         nom = hs.OWN_COLLECTION
@@ -58,18 +46,17 @@ class Constantes(unittest.TestCase):
         sql = hs.build_query(hs.LIBRARY_SPEC, query="le flux", vector=[0.5, 0.25], today=TODAY)[0]
         self.assertIn("'" + nom + "' = ANY(", sql)
 
-    def test_mots_comme_la_voie_sqlite(self):
+    def test_mots_listes_figees(self):
         self.assertEqual(hs.words("Le flux, l'équipe et l'état-de-l'art !"), ["Le", "flux", "l", "équipe", "et", "l", "état", "de", "l", "art"])
         self.assertEqual(hs.words("  ?! "), [])
 
 
-class FusionEtFraicheur(Sqlite):
-    def test_bonus_de_fraicheur_identique_a_la_voie_sqlite(self):
-        lib = self.lib
-        lib.refresh()
-        for chunk_id, (collections, published) in lib.chunk_info.items():
-            attendu = lib._freshness(chunk_id, TODAY)
-            self.assertAlmostEqual(hs.freshness_bonus(published, collections, TODAY), attendu, places=12, msg=chunk_id)
+class FusionEtFraicheur(unittest.TestCase):
+    def test_bonus_de_fraicheur_valeurs_figees(self):
+        for (fichier, position), bonus in attendu.FRESHNESS.items():
+            _, collections, meta = demo.BOOKS[fichier]
+            with self.subTest(fichier=fichier, position=position):
+                self.assertEqual(round(hs.freshness_bonus(meta.get("published"), set(collections.split("|")), TODAY), 6), bonus)
 
     def test_bonus_cas_limites(self):
         self.assertEqual(hs.freshness_bonus(None, {"watch"}, TODAY), hs.FRESHNESS_BONUS / 2)
@@ -78,19 +65,6 @@ class FusionEtFraicheur(Sqlite):
         self.assertEqual(hs.freshness_bonus("pas-une-date", {"watch"}, TODAY), hs.FRESHNESS_BONUS / 2)
         self.assertAlmostEqual(hs.freshness_bonus(TODAY.isoformat(), {"watch"}, TODAY), hs.FRESHNESS_BONUS)
         self.assertAlmostEqual(hs.freshness_bonus((TODAY - dt.timedelta(days=180)).isoformat(), {"watch"}, TODAY), hs.FRESHNESS_BONUS / 2)
-
-    def test_fusion_identique_a_library_search(self):
-        lib = self.lib
-        for question in ("le flux de travail", "hypothesis experiment", "prévisibilité du débit", "coaching", "équipe", "rien de connu"):
-            with self.subTest(question=question):
-                kinds = lib.check_types(None)
-                allowed = lib._type_filter(kinds, lib._collection_filter(None))
-                listes = [lib._semantic(question, allowed), lib._keyword(question, allowed, kinds)]
-                reference = hs.fuse(listes, lambda cid: hs.freshness_bonus(lib.chunk_info[cid][1], lib.chunk_info[cid][0], TODAY),
-                                    limit=14)
-                voie_sqlite = lib.search(question, None, 14)
-                self.assertEqual([i for i, _ in reference], [r["passage_id"] for r in voie_sqlite])
-                self.assertEqual([round(s, 4) for _, s in reference], [r["score"] for r in voie_sqlite])
 
     def test_fusion_valeurs_a_la_main(self):
         # a est premier des deux listes, b seulement de la première : 1/61 + 1/61 contre 1/62
@@ -101,9 +75,21 @@ class FusionEtFraicheur(Sqlite):
         self.assertEqual(hs.fuse([], lambda _: 0.0), [])
         self.assertEqual(len(hs.fuse([["a", "b", "c"]], lambda _: 0.0, limit=2)), 2)
 
+    def test_fusion_avec_fraicheur_valeurs_a_la_main(self):
+        # a: rang 0 de la liste 1 (1/61), b: rang 1 de la liste 1 et rang 0 de la liste 2 (1/62 + 1/61), c: rang 1 de la liste 2 (1/62) avec un bonus de 0,001
+        bonus = {"a": 0.0, "b": 0.0, "c": 0.001}
+        sortie = hs.fuse([["a", "b"], ["b", "c"]], bonus.get)
+        self.assertEqual([i for i, _ in sortie], ["b", "c", "a"])
+        self.assertEqual([round(s, 6) for _, s in sortie], [round(1 / 62 + 1 / 61, 6), round(1 / 62 + 0.001, 6), round(1 / 61, 6)])
+
+    def test_egalite_de_score_garde_l_ordre_d_arrivee(self):
+        # deux passages au même rang dans deux listes différentes : même score, la liste vectorielle (première) passe devant
+        egaux = hs.fuse([["u"], ["v"]], lambda _: 0.0)
+        self.assertEqual([i for i, _ in egaux], ["u", "v"])
+
 
 class DepartageEtNormalisation(unittest.TestCase):
-    """Départage final aligné sur SQLite (ordre d'arrivée : vecteur d'abord, puis plein texte seul) et drapeau de normalisation réglable."""
+    """Départage final (rang vectoriel, puis plein texte, puis identifiant) et drapeau de normalisation réglable."""
 
     def requete(self, **options):
         return hs.build_query(hs.LIBRARY_SPEC, query="equipe", vector=demo.fake_embed(["equipe"])[0], today=TODAY, **options)[0]
@@ -171,138 +157,79 @@ LIVRES_IDF = {            # file_name -> [(position, texte)] ; 40 passages de br
 QUESTION_IDF = "le la de et quokka"
 
 
-def ajouter_livres_sqlite(dossier, livres):
-    import sqlite3
-    connexion = sqlite3.connect(Path(dossier) / "library.sqlite")
-    for nom, passages in livres.items():
-        livre = connexion.execute("INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) "
-                                  "VALUES (?, ?, 'x', 'produit', 'bge-m3', 0, '{}')", (nom, nom)).lastrowid
-        for position, texte in passages:
-            connexion.execute("INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, 'Début', ?, ?, 'texte', '{}')",
-                              (livre, position, texte, demo.chunk_blob(0.9)))
-    connexion.commit()
-    connexion.close()
+def par_score(resultats):
+    """[(score, ensemble des passages)] : les résultats groupés par score arrondi égal, dans l'ordre rendu (voir ValeursFigees de tests/library_backend)."""
+    groupes = []
+    for fichier, position, score in resultats:
+        if groupes and groupes[-1][0] == score:
+            groupes[-1][1].add((fichier, position))
+        else:
+            groupes.append((score, {(fichier, position)}))
+    return groupes
 
 
-class MotsCourantsContreMotRare(Sqlite):
-    def test_reference_sqlite_le_mot_rare_passe_devant(self):
-        ajouter_livres_sqlite(self.tmp.name, LIVRES_IDF)
-        self.lib._load()
-        premiers = [(r["file"], r["position"]) for r in self.lib.search(QUESTION_IDF, ["produit"], 3, None, None, component="text")]
-        # (collection « produit » : sans les billets de la veille, dont le bonus de fraîcheur peut passer devant un rang d'écart)
-        self.assertEqual(premiers[0], ("mot-rare.md", 0))              # BM25 : l'IDF du mot rare écrase les mots courants
-        self.assertNotEqual(premiers[0], ("mots-courants.md", 0))      # le passage plein de mots courants ne passe pas devant
+class BaseJetable(unittest.TestCase):
+    """La bibliothèque inventée dans une base jetable, lue sous le rôle de lecture (sautés sans base)."""
+
+    def setUp(self):
+        self.pg = pg_demo.ThrowawayDatabase(self)
+        self.conn = self.pg.connect()
+        self.recharger()
+
+    def recharger(self):
+        """Dictionnaire id -> (fichier, position), à refaire après l'ajout d'un livre."""
+        rows = self.conn.execute("SELECT c.id, b.file_name, c.position FROM knowledge.chunks c JOIN knowledge.books b ON b.id = c.book_id").fetchall()
+        self.conn.rollback()
+        self.cle_pg = {r[0]: (r[1], r[2]) for r in rows}
+
+    def pg_search(self, question, **options):
+        vecteur = demo.fake_embed([question])[0]
+        found = hs.hybrid_search(self.conn, hs.LIBRARY_SPEC, query=question, vector=vecteur, today=TODAY, **options)
+        return [self.cle_pg[i] for i, _ in found], [s for _, s in found]
 
 
-def _test_mot_rare_avant_mots_courants_sur_les_deux_voies(self):
-    """Même corpus dans la base jetable : avec BM25 le passage qui contient le mot rare sort premier, comme sur la voie SQLite."""
-    ajouter_livres_sqlite(self.tmp.name, LIVRES_IDF)
-    self.lib._load()
-    brut = self.pg._raw()
-    brut.execute("SET ROLE pmzilla_knowledge")
-    collection = brut.execute("SELECT id FROM knowledge.collections WHERE name = 'produit'").fetchone()[0]
-    for nom, passages in LIVRES_IDF.items():
-        livre = brut.execute("INSERT INTO knowledge.books (file_name, title, meta, sha256, model, indexed_at) VALUES (%s, %s, '{}'::jsonb, 'x', 'bge-m3', now()) RETURNING id",
-                             (nom, nom)).fetchone()[0]
-        brut.execute("INSERT INTO knowledge.book_collections VALUES (%s, %s)", (livre, collection))
-        for position, texte in passages:
-            brut.execute("INSERT INTO knowledge.chunks (book_id, position, section, text, embedding) VALUES (%s, %s, 'Début', %s, %s::halfvec)",
-                         (livre, position, texte, pg_demo.literal_of(demo.vector(0.9))))
-    brut.execute("RESET ROLE")
-    brut.commit()
-    rows = self.conn.execute("SELECT c.id, b.file_name, c.position FROM knowledge.chunks c JOIN knowledge.books b ON b.id = c.book_id").fetchall()
-    self.conn.rollback()
-    self.cle_pg = {r[0]: (r[1], r[2]) for r in rows}
-    bm25, _ = self.pg_search(QUESTION_IDF, limit=5, kinds=["text"], collections=["produit"], component="text", fulltext="bm25")
-    attendu = [(r["file"], r["position"]) for r in self.lib.search(QUESTION_IDF, ["produit"], 5, None, None, component="text")]
-    self.assertEqual(bm25[0], ("mot-rare.md", 0))
-    self.assertEqual(attendu[0], ("mot-rare.md", 0))
-    self.assertEqual(bm25[0], attendu[0])
+class MotsCourantsContreMotRare(BaseJetable):
+    def test_le_mot_rare_passe_devant_les_mots_courants(self):
+        """Avec BM25 le passage qui contient le mot rare sort premier : l'IDF du mot rare écrase les mots courants (valeur figée)."""
+        for nom, passages in LIVRES_IDF.items():
+            self.pg.add_book(nom, [(position, texte, demo.vector(0.9)) for position, texte in passages])
+        self.recharger()
+        # collection « produit » : sans les billets de la watch, dont le bonus de fraîcheur peut passer devant un rang d'écart
+        bm25, _ = self.pg_search(QUESTION_IDF, limit=5, kinds=["text"], collections=["produit"], component="text", fulltext="bm25")
+        self.assertEqual(bm25[0], ("mot-rare.md", 0))
+        self.assertNotEqual(bm25[0], ("mots-courants.md", 0))      # le passage plein de mots courants ne passe pas devant
 
 
-class VecteursDegeneres(Sqlite):
-    """Cause trouvée par la parité sur les vraies données : la voie SQLite classe au produit scalaire (numpy, sans renormaliser) ; un cosinus SQL
-    range un vecteur nul (NaN) avant tous les autres en tri décroissant. Un vecteur nul et un vecteur de norme 2 l'auraient montré."""
+class VecteursDegeneres(BaseJetable):
+    """Le classement vectoriel est un produit scalaire (sans renormaliser) : un vecteur nul vaut 0 et ne passe jamais devant ; un vecteur de norme 2
+    passe devant un vecteur unitaire au même angle. Un cosinus SQL rangerait le vecteur nul (NaN) avant tous les autres en tri décroissant."""
 
-    def ajouter_degeneres(self):
-        import sqlite3
-        chemin = Path(self.tmp.name) / "library.sqlite"
-        connexion = sqlite3.connect(chemin)
-        livre = connexion.execute("INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) "
-                                  "VALUES ('degenere.md', 'Livre dégénéré', 'x', 'produit', 'bge-m3', 0, '{}')").lastrowid
-        for position, vecteur in ((0, demo.np.zeros(demo.DIMENSIONS, dtype=demo.np.float32)), (1, 2 * demo.vector(0.22))):
-            connexion.execute("INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, 'Début', 'texte neutre', ?, 'texte', '{}')",
-                              (livre, position, vecteur.astype(demo.np.float16).tobytes()))
-        connexion.commit()
-        connexion.close()
-        self.lib._load()
-        return livre
+    def setUp(self):
+        super().setUp()
+        self.pg.add_book("degenere.md", [(0, "texte neutre", demo.np.zeros(demo.DIMENSIONS, dtype=demo.np.float32)),
+                                         (1, "texte neutre", 2 * demo.vector(0.22))])
+        self.recharger()
 
-    def test_la_voie_sqlite_est_un_produit_scalaire(self):
-        self.ajouter_degeneres()
-        classement = self.lib._semantic("flux", None)           # fake_embed : angle 0,22
-        premier = self.lib.db.execute("SELECT b.file_name, c.position FROM chunks c JOIN books b ON b.id = c.book_id WHERE c.id = ?",
-                                      (classement[0],)).fetchone()
-        self.assertEqual(tuple(premier), ("degenere.md", 1))      # norme 2 : produit scalaire double ; un cosinus l'aurait mis à égalité
-        zero = self.lib.db.execute("SELECT c.id FROM chunks c JOIN books b ON b.id = c.book_id WHERE b.file_name = 'degenere.md' AND c.position = 0").fetchone()[0]
-        self.assertNotEqual(classement[0], zero)                  # un vecteur nul vaut 0 : il ne passe jamais devant
-        self.assertGreater(classement.index(zero), 5)
+    def test_vecteur_nul_et_non_normalise(self):
+        # collection « produit » : sans les billets de la watch, dont le bonus de fraîcheur (0,001 contre 0,0005) vaut plus qu'un rang d'écart de la
+        # fusion (1/61 - 1/62 = 0,00026) et fait passer un billet récent devant le premier de la liste vectorielle
+        cles, _ = self.pg_search("flux", limit=6, kinds=["text"], collections=["produit"], component="vector")
+        self.assertEqual(cles[0], ("degenere.md", 1))              # norme 2 : produit scalaire double ; un cosinus l'aurait mis à égalité
+        self.assertEqual(cles[-1], ("degenere.md", 0))             # le vecteur nul vaut 0 : dernier de la collection
+        self.assertEqual(len(cles), 5)
 
-    def test_le_bonus_de_fraicheur_peut_depasser_un_rang_sur_la_voie_sqlite_aussi(self):
+    def test_le_vecteur_nul_ne_passe_jamais_devant_sans_filtre(self):
+        cles, _ = self.pg_search("flux", limit=20, kinds=["text"], component="vector")
+        self.assertNotEqual(cles[0], ("degenere.md", 0))
+        self.assertGreater(cles.index(("degenere.md", 0)), 5)
+
+    def test_le_bonus_de_fraicheur_peut_depasser_un_rang(self):
         """Pourquoi les comparaisons du vecteur seul se font dans une collection sans billets : le billet récent (même angle que la question, produit
-        scalaire 1, rang 1) passe devant le vecteur de norme 2 (produit scalaire 2, rang 0), à cause du bonus de fraîcheur. Même comportement des deux voies."""
-        self.ajouter_degeneres()
-        sans_filtre = [(r["file"], r["position"]) for r in self.lib.search("flux", None, 3, None, None, component="vector")]
+        scalaire 1, rang 1) passe devant le vecteur de norme 2 (produit scalaire 2, rang 0), à cause du bonus de fraîcheur."""
+        sans_filtre, _ = self.pg_search("flux", limit=3, kinds=["text"], component="vector")
         self.assertEqual(sans_filtre[0], ("billet-recent.md", 0))
-        produit = [(r["file"], r["position"]) for r in self.lib.search("flux", ["produit"], 3, None, None, component="vector")]
+        produit, _ = self.pg_search("flux", limit=3, kinds=["text"], collections=["produit"], component="vector")
         self.assertEqual(produit[0], ("degenere.md", 1))
-
-
-def _test_vecteur_nul_et_non_normalise_comme_sqlite(self):
-    """Même jeu dans la base jetable : la requête SQL doit classer le vecteur nul et le vecteur de norme 2 comme SQLite (composante vecteur seule)."""
-    import sqlite3
-    chemin = Path(self.tmp.name) / "library.sqlite"
-    connexion = sqlite3.connect(chemin)
-    livre = connexion.execute("INSERT INTO books (file_name, title, sha256, collections, model, indexed_at, meta) "
-                              "VALUES ('degenere.md', 'Livre dégénéré', 'x', 'produit', 'bge-m3', 0, '{}')").lastrowid
-    vecteurs = ((0, demo.np.zeros(demo.DIMENSIONS, dtype=demo.np.float32)), (1, 2 * demo.vector(0.22)))
-    for position, vecteur in vecteurs:
-        connexion.execute("INSERT INTO chunks (book_id, position, section, text, embedding, kind, ref) VALUES (?, ?, 'Début', 'texte neutre', ?, 'texte', '{}')",
-                          (livre, position, vecteur.astype(demo.np.float16).tobytes()))
-    connexion.commit()
-    connexion.close()
-    self.lib._load()
-    brut = self.pg._raw()
-    brut.execute("SET ROLE pmzilla_knowledge")
-    livre_pg = brut.execute("INSERT INTO knowledge.books (file_name, title, meta, sha256, model, indexed_at) VALUES ('degenere.md', 'Livre dégénéré', '{}'::jsonb, 'x', 'bge-m3', now()) RETURNING id").fetchone()[0]
-    collection = brut.execute("SELECT id FROM knowledge.collections WHERE name = 'produit'").fetchone()[0]
-    brut.execute("INSERT INTO knowledge.book_collections VALUES (%s, %s)", (livre_pg, collection))
-    for position, vecteur in vecteurs:
-        brut.execute("INSERT INTO knowledge.chunks (book_id, position, section, text, embedding) VALUES (%s, %s, 'Début', 'texte neutre', %s::halfvec)",
-                     (livre_pg, position, pg_demo.literal_of(vecteur)))
-    brut.execute("RESET ROLE")
-    brut.commit()
-    rows = self.conn.execute("SELECT c.id, b.file_name, c.position FROM knowledge.chunks c JOIN knowledge.books b ON b.id = c.book_id").fetchall()
-    self.conn.rollback()
-    self.cle_pg = {r[0]: (r[1], r[2]) for r in rows}
-    # collection « produit » : sans les billets de la veille, dont le bonus de fraîcheur (0,001 contre 0,0005) vaut plus qu'un rang d'écart de la
-    # fusion (1/61 - 1/62 = 0,00026) et fait passer un billet récent devant le premier de la liste vectorielle, sur les DEUX voies
-    cles, _ = self.pg_search("flux", limit=6, kinds=["text"], collections=["produit"], component="vector")
-    attendu = [(r["file"], r["position"]) for r in self.lib.search("flux", ["produit"], 6, None, None, component="vector")]
-    self.assertEqual(cles[0], ("degenere.md", 1))
-    self.assertEqual(cles, attendu)
-    self.assertNotEqual(cles[0], ("degenere.md", 0))
-
-
-def _test_requete_a_plusieurs_mots_est_un_ou(self):
-    """Le plein texte de SQLite est un OU de mots : trois mots dont aucun passage ne réunit les trois donnent l'union, pas rien (un ET)."""
-    question = "équipe prévisibilité débit"
-    cles, _ = self.pg_search(question, limit=14, kinds=["text"], component="text")
-    attendu = {(r["file"], r["position"]) for r in self.lib.search(question, None, 14, None, None, component="text")}
-    self.assertGreaterEqual(len(attendu), 3)
-    self.assertEqual(set(cles), attendu)
-
-
 
 
 class FausseConnexion:
@@ -383,7 +310,7 @@ class Requete(unittest.TestCase):
         sql, params = self.build()
         self.assertIn("pdb.score(c.id)", sql)
         self.assertIn("c.fts_text ||| %(bm25_query)s", sql)                    # OU de mots, tokenisés comme l'index
-        self.assertIn("LIMIT 200", sql)                                         # 4 x 50 meilleurs d'abord, comme la voie SQLite
+        self.assertIn("LIMIT 200", sql)                                         # 4 x 50 meilleurs d'abord
         self.assertNotIn("ts_rank_cd", sql)
         self.assertEqual(params["bm25_query"], "le flux")
         with self.assertRaises(ValueError):
@@ -498,32 +425,36 @@ class Requete(unittest.TestCase):
         self.assertEqual(hs.vector_literal([1, 0.5, -0.25]), "[1,0.5,-0.25]")
 
 
-class AvecBase(Sqlite):
+class AvecBase(BaseJetable):
     """La requête SQL jouée sur les données inventées d'une base jetable (sautés sans base)."""
 
-    def setUp(self):
-        super().setUp()
-        self.pg = pg_demo.ThrowawayDatabase(self)
-        self.conn = self.pg.connect()
-        rows = self.conn.execute("SELECT c.id, b.file_name, c.position FROM knowledge.chunks c JOIN knowledge.books b ON b.id = c.book_id").fetchall()
-        self.conn.rollback()
-        self.cle_pg = {r[0]: (r[1], r[2]) for r in rows}
-
-    def pg_search(self, question, **options):
-        vecteur = demo.fake_embed([question])[0]
-        found = hs.hybrid_search(self.conn, hs.LIBRARY_SPEC, query=question, vector=vecteur, today=TODAY, **options)
-        return [self.cle_pg[i] for i, _ in found], [s for _, s in found]
-
-    def sqlite_search(self, question, limit, collections=None, types=None, since=None):
-        return [(r["file"], r["position"]) for r in self.lib.search(question, collections, limit, since, types)]
-
-    def test_memes_resultats_que_la_voie_sqlite(self):
-        for question in ("le flux de travail", "hypothesis experiment", "prévisibilité du débit", "coaching", "equipe"):
+    def test_resultats_figes_sur_la_bibliotheque_inventee(self):
+        """Les cas de demo_expected sans filtre de collection, de type ni de date : mêmes passages, même tête de liste que les valeurs figées."""
+        for cas, resultats in attendu.SEARCHES:
+            question, collections, limite, jours, types, composante = cas
+            if collections or jours or types or composante != "hybrid" or limite != 14:
+                continue
             with self.subTest(question=question):
                 cles, _ = self.pg_search(question, limit=14, kinds=["text"])
-                attendu = self.sqlite_search(question, 14)
-                self.assertEqual(set(cles), set(attendu))
-                self.assertEqual(cles[0], attendu[0])
+                self.assertEqual(set(cles), {(f, p) for f, p, _ in resultats})
+                self.assertIn(cles[0], par_score(resultats)[0][1])
+
+    def test_meme_classement_que_la_fusion_en_python_pur(self):
+        """Le classement de la requête SQL et celui de `fuse` sur les listes de la requête : mêmes passages dans le même ordre, mêmes scores arrondis."""
+        meta = {(f, p): demo.BOOKS[f] for f, p, *_ in demo.CHUNKS}
+        for question in ("le flux de travail", "hypothesis experiment", "prévisibilité du débit", "coaching", "équipe", "rien de connu"):
+            with self.subTest(question=question):
+                vecteur = demo.fake_embed([question])[0]
+                lignes = hs.diagnose(self.conn, hs.LIBRARY_SPEC, query=question, vector=vecteur, limit=14, kinds=["text"], today=TODAY)
+                semantique = [r["id"] for r in sorted((r for r in lignes if r["sem_rank"] is not None), key=lambda r: r["sem_rank"])]
+                mots = [r["id"] for r in sorted((r for r in lignes if r["kw_rank"] is not None), key=lambda r: r["kw_rank"])]
+
+                def fraicheur(identifiant):
+                    _, collections, informations = meta[self.cle_pg[identifiant]]
+                    return hs.freshness_bonus(informations.get("published"), set(collections.split("|")), TODAY)
+                reference = hs.fuse([semantique, mots], fraicheur, limit=14)
+                self.assertEqual([i for i, _ in reference], [r["id"] for r in lignes])
+                self.assertEqual([round(s, 4) for _, s in reference], [round(r["score"], 4) for r in lignes])
 
     def test_accents_et_figures_et_collections_et_since(self):
         cles, _ = self.pg_search("equipe", limit=14, kinds=["text"])
@@ -537,7 +468,7 @@ class AvecBase(Sqlite):
         self.assertIn("atelier-des-flux.md", {f for f, _ in recent})      # un livre n'a pas de date : gardé
 
     def test_ann_donne_les_memes_resultats_sur_ce_petit_corpus(self):
-        exact, _ = self.pg_search("le flux de travail", limit=8, kinds=["text"])
+        exact, _ = self.pg_search("le flux de travail", limit=8, kinds=["text"], scan="exact")
         ann, _ = self.pg_search("le flux de travail", limit=8, kinds=["text"], scan="ann")
         self.assertEqual(set(exact), set(ann))
 
@@ -545,11 +476,17 @@ class AvecBase(Sqlite):
         cles, _ = self.pg_search("?!", limit=5, kinds=["text"])
         self.assertEqual(len(cles), 5)       # le plein texte ne trouve rien, la sémantique répond
 
+    def test_requete_a_plusieurs_mots_est_un_ou(self):
+        """Le plein texte est un OU de mots : trois mots dont aucun passage ne réunit les trois donnent l'union, pas rien (un ET).
+        Valeur figée : les quatre passages de texte qui portent « équipe », « prévisibilité » ou « débit » (accents ignorés)."""
+        cles, _ = self.pg_search("équipe prévisibilité débit", limit=14, kinds=["text"], component="text")
+        self.assertEqual(set(cles), {("atelier-des-flux.md", 1), ("atelier-des-flux.md", 4), ("billet-recent.md", 0), ("article-propre.md", 0)})
+
 
 # ---------------------------------------------------------------------------
-# Mode diagnostic (PMZILLA_DIAG=1) : affiche, sur le jeu inventé seulement, les valeurs intermédiaires des deux voies
+# Mode diagnostic (PMZILLA_DIAG=1) : affiche, sur le jeu inventé seulement, les valeurs intermédiaires de la requête SQL
 #     PMZILLA_DIAG=1 PMZILLA_LAB_DB_PASSWORD=... python -m unittest tests/hybrid_search/test_hybrid_search.py -k diagnostic -v
-# Aucune assertion : il ne sert qu'à lire l'écart entre la voie SQLite et la voie PostgreSQL.
+# Aucune assertion : il ne sert qu'à lire le classement (rangs, scores bruts, fraîcheur) d'une requête.
 # ---------------------------------------------------------------------------
 
 import os   # noqa: E402
@@ -567,72 +504,20 @@ def _ligne(etiquette, cle, sem_rang, sem_score, kw_rang, kw_brut, rrf, frais, fi
             f"  | final {final:.12f} -> arrondi {round(final, 4):.4f}")
 
 
-def diagnostic_sqlite(lib, question):
-    lib.refresh()
-    cles = {r[0]: (r[1], r[2]) for r in lib.db.execute("SELECT c.id, b.file_name, c.position FROM chunks c JOIN books b ON b.id = c.book_id")}
-    kinds = lib.check_types(None)
-    allowed = lib._type_filter(kinds, lib._collection_filter(None))
+def _test_diagnostic(self):
+    if not DIAGNOSTIC:
+        self.skipTest("PMZILLA_DIAG=1 pour afficher le diagnostic")
+    question = QUESTION_DIAG
     vecteur = demo.fake_embed([question])[0]
-    scores = {int(i): float(s) for i, s in zip(lib.ids, lib.vectors @ vecteur)}
-    sem = lib._semantic(question, allowed)
-    kw = lib._keyword(question, allowed, kinds)
-    expression = " OR ".join(f'"{m}"' for m in hs.words(question))
-    marques = ", ".join("?" for _ in kinds)
-    bruts = {r[0]: r[1] for r in lib.db.execute(
-        "SELECT chunks_fts.rowid, bm25(chunks_fts) FROM chunks_fts JOIN chunks ON chunks.id = chunks_fts.rowid "
-        f"WHERE chunks_fts MATCH ? AND chunks.kind IN ({marques})", (expression, *kinds))} if expression else {}
-    rrf = {}
-    for liste in (sem, kw):
-        for rang, cid in enumerate(liste):
-            rrf[cid] = rrf.get(cid, 0.0) + 1.0 / (hs.RRF_K + rang + 1)
-    finals = [r["passage_id"] for r in lib.search(question, None, 14)]
-    lignes = []
-    for cid in finals:
-        frais = lib._freshness(cid, TODAY)
-        lignes.append(_ligne("SQLite  ", cles[cid], sem.index(cid) if cid in sem else None, scores.get(cid),
-                             kw.index(cid) if cid in kw else None, bruts.get(cid), rrf[cid], frais, rrf[cid] + frais))
-    return lignes, [cles[c] for c in finals]
+    rows = hs.diagnose(self.conn, hs.LIBRARY_SPEC, query=question, vector=vecteur, limit=14, kinds=["text"], today=TODAY)
+    print(f"\n=== DIAGNOSTIC « {question} » (jeu inventé, passages de texte) ===")
+    print("-- requête SQL (BM25), valeurs intermédiaires, ordre final")
+    for r in rows:
+        print(_ligne("Postgres", self.cle_pg[r["id"]], r["sem_rank"], r["sem_score"], r["kw_rank"], r["kw_raw"], r["rrf"], r["fresh"], r["score"]))
+    print("  ordre final :", " > ".join(f"{self.cle_pg[r['id']][0]}:{self.cle_pg[r['id']][1]}" for r in rows))
 
 
-class DiagnosticSqlite(Sqlite):
-    def test_diagnostic_voie_sqlite(self):
-        if not DIAGNOSTIC:
-            self.skipTest("PMZILLA_DIAG=1 pour afficher le diagnostic")
-        if pg_demo.base.BASE_DISPONIBLE:
-            self.skipTest("la base est disponible : le diagnostic des deux voies est affiché par AvecBase")
-        lignes, ordre = diagnostic_sqlite(self.lib, QUESTION_DIAG)
-        print(f"\n=== DIAGNOSTIC « {QUESTION_DIAG} » : voie SQLite seule (jeu inventé) ===")
-        print("\n".join(lignes))
-        print("  ordre final :", " > ".join(f"{f}:{p}" for f, p in ordre))
-
-
-def _test_diagnostic_deux_voies(self):
-    if True:
-        if not DIAGNOSTIC:
-            self.skipTest("PMZILLA_DIAG=1 pour afficher le diagnostic")
-        question = QUESTION_DIAG
-        lignes, ordre = diagnostic_sqlite(self.lib, question)
-        vecteur = demo.fake_embed([question])[0]
-        rows = hs.diagnose(self.conn, hs.LIBRARY_SPEC, query=question, vector=vecteur, limit=14, kinds=["text"], today=TODAY)
-        print(f"\n=== DIAGNOSTIC « {question} » (jeu inventé, note : voie PostgreSQL limitée aux passages de texte) ===")
-        print("-- voie SQLite : ordre final et valeurs intermédiaires")
-        print("\n".join(lignes))
-        print("  ordre final :", " > ".join(f"{f}:{p}" for f, p in ordre))
-        print("-- voie PostgreSQL (ts_rank_cd normalisé drapeau", hs.NORMALISATION_RANG, ")")
-        for r in rows:
-            print(_ligne("Postgres", self.cle_pg[r["id"]], r["sem_rank"], r["sem_score"], r["kw_rank"], r["kw_raw"], r["rrf"], r["fresh"], r["score"]))
-        print("  ordre final :", " > ".join(f"{self.cle_pg[r['id']][0]}:{self.cle_pg[r['id']][1]}" for r in rows))
-        # un seul test d'égalité au niveau du RRF : où les deux voies divergent-elles ?
-        sqlite_ids = [c for c in ordre]
-        pg_ids = [self.cle_pg[r["id"]] for r in rows]
-        premiere = next((i for i, (a, b) in enumerate(zip(sqlite_ids, pg_ids)) if a != b), None)
-        print("  première divergence :", "aucune" if premiere is None else f"rang {premiere} : SQLite {sqlite_ids[premiere]} contre PostgreSQL {pg_ids[premiere]}")
-
-
-AvecBase.test_diagnostic_deux_voies = _test_diagnostic_deux_voies      # une seule fois, dans AvecBase (pas de sous-classe : pas de doublon)
-AvecBase.test_vecteur_nul_et_non_normalise_comme_sqlite = _test_vecteur_nul_et_non_normalise_comme_sqlite
-AvecBase.test_requete_a_plusieurs_mots_est_un_ou = _test_requete_a_plusieurs_mots_est_un_ou
-AvecBase.test_mot_rare_avant_mots_courants_sur_les_deux_voies = _test_mot_rare_avant_mots_courants_sur_les_deux_voies
+AvecBase.test_diagnostic = _test_diagnostic      # un seul diagnostic, dans AvecBase (pas de sous-classe : pas de doublon)
 
 
 if __name__ == "__main__":

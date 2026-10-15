@@ -3,14 +3,15 @@ Tests du rattrapage de l'ombre : `watch_triage.py shadow-backfill` (R-30), tools
 
     uv run --with numpy --with httpx --with pyyaml python -m unittest discover -s tests/watch_triage -v
 
-Mêmes faux que test_shadow.py : faux modèle (httpx.post), faux embedding, dossiers et tri.sqlite temporaires, Ollama simulé
-joignable. Articles inventés. Couvre : PREUVE que les tables scores, forced et excluded, _to-read.md et les articles (gardés
-et écartés) ne changent pas d'un octet ; un article déjà noté avec l'empreinte courante n'est pas renoté ; une empreinte périmée
-l'est ; un échec du modèle est compté sans arrêter le passage ; les articles avec avis de calibration passent d'abord ;
-refus quand l'ombre est désactivée ou qu'Ollama ne répond pas ; --limit ; fichier introuvable sauté ; article écarté relu
-dans le dossier des écartés ; message de thresholds (--save).
+Mêmes faux que test_shadow.py : faux modèle (httpx.post), faux embedding, dossiers temporaires et faux magasin en mémoire, Ollama
+simulé joignable. Articles inventés. Couvre : PREUVE que les notes, les sauvetages, les exclusions, la calibration, _to-read.md et
+les articles (gardés et écartés) ne changent pas d'un octet ; un article déjà noté avec l'empreinte courante n'est pas renoté ; une
+empreinte périmée l'est ; un échec du modèle est compté sans arrêter le passage ; les articles avec un avis de calibration stocké
+en base passent d'abord (la feuille n'est jamais lue) ; refus quand l'ombre est désactivée, qu'Ollama ne répond pas ou que la base
+ne répond pas (avant tout appel au modèle) ; --limit ; fichier introuvable sauté ; article écarté relu dans le dossier des écartés ;
+message de thresholds (--save).
 """
-import csv
+import datetime as dt
 import sys
 import unittest
 from pathlib import Path
@@ -22,9 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import watch_triage as tri  # noqa: E402
 import watch_lab as veille  # noqa: E402
+import watch_store  # noqa: E402
 import test_shadow as ombre  # noqa: E402
 
-TABLES_FRANCAISES = ("scores", "forced", "excluded")
 
 
 class Rattrapage(ombre.Ombre):
@@ -50,7 +51,10 @@ class Rattrapage(ombre.Ombre):
             return self.lancer(tri.cmd_shadow_backfill, **{"limit": 0, **options}), faux
 
     def tables(self):
-        return {t: [tuple(r) for r in self.connection.execute(f"SELECT * FROM {t} ORDER BY 1")] for t in TABLES_FRANCAISES}
+        """Tout ce que le rattrapage ne doit pas toucher : notes françaises, sauvetages, exclusions, calibration."""
+        notes = [{k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in note.items()} for note in self.store.all_scores()]
+        return {"scores": notes, "forced": sorted(self.store.forced_files()), "excluded": sorted(self.store.excluded_files()),
+                "calibration": self.store.calibration_entries()}
 
     def fichiers(self):
         contenu = {p.name: p.read_bytes() for d in (self.articles, self.archive) if d.exists() for p in d.glob("*.md")}
@@ -95,17 +99,15 @@ class Reprise(Rattrapage):
     def test_une_empreinte_perimee_est_renotee(self):
         self.preparer()
         self.rattraper()
-        self.connection.execute("UPDATE shadow_scores SET prompts_hash = 'ancienne' WHERE url = 'https://s.test/a1.md'")
-        self.connection.commit()
+        self.data.edit(lambda tables: tables["shadow"][("https://s.test/a1.md", "en")].update(prompts_hash="ancienne"))
         _, faux = self.rattraper()
         self.assertEqual(faux.appels["en"], 1)
-        self.assertEqual(self.connection.execute(
-            "SELECT prompts_hash FROM shadow_scores WHERE url = 'https://s.test/a1.md'").fetchone()[0], tri.prompts_hash(self.module_en))
+        par_url = {l["url"]: l for l in self.lignes_ombre()}
+        self.assertEqual(par_url["https://s.test/a1.md"]["prompts_hash"], tri.prompts_hash(self.module_en))
 
     def test_un_article_non_complet_ou_sans_grille_n_est_pas_candidat(self):
         self.preparer(fichiers_ecartes=False)
-        self.connection.execute("UPDATE scores SET criteria = NULL, complete = 0 WHERE file = 'a3.md'")
-        self.connection.commit()
+        self.modifier_note("a3.md", criteria=None, complete=False)
         _, faux = self.rattraper()
         self.assertEqual(faux.appels["en"], 5)
         self.assertNotIn("https://s.test/a3.md", [l["url"] for l in self.lignes_ombre()])
@@ -143,22 +145,22 @@ class Echecs(Rattrapage):
 
 class Ordre(Rattrapage):
     def avis(self, **par_fichier):
-        tri.CALIBRATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with tri.CALIBRATION_FILE.open("w", encoding="utf-8-sig", newline="") as handle:
-            ecrivain = csv.writer(handle, delimiter=";")
-            ecrivain.writerow(["fichier", "titre", "avis"])
-            for fichier, avis in par_fichier.items():
-                ecrivain.writerow([fichier, "t", avis])
+        """Avis stockés en base ("g" garder, "e" écarter ; un avis vide ne compte pas)."""
+        self.store.refresh_calibration([dict(file=f"a{i}.md", verdict="keep") for i in range(1, 7)], dt.datetime.now().astimezone())
+        self.store.apply_opinions({f: avis == "g" for f, avis in par_fichier.items() if avis in ("g", "e")})
+        self.store.commit()
 
     def test_les_articles_avec_avis_passent_d_abord(self):
         self.preparer(fichiers_ecartes=False)
         self.avis(**{"a5.md": "g", "a2.md": "e", "a6.md": ""})     # un avis vide ne compte pas
-        lignes = tri.shadow_backfill_candidates(self.connection, "en", tri.prompts_hash(self.module_en))
+        lignes = tri.shadow_backfill_candidates(self.store, "en", tri.prompts_hash(self.module_en))
         self.assertEqual([r["file"] for r in lignes], ["a2.md", "a5.md", "a1.md", "a3.md", "a4.md", "a6.md"])
 
-    def test_sans_fichier_de_calibration_l_ordre_des_fichiers(self):
+    def test_sans_avis_en_base_l_ordre_des_fichiers_et_la_feuille_n_est_pas_lue(self):
         self.preparer(fichiers_ecartes=False)
-        lignes = tri.shadow_backfill_candidates(self.connection, "en", tri.prompts_hash(self.module_en))
+        tri.CALIBRATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tri.CALIBRATION_FILE.write_text("fichier;titre;avis\na5.md;x;g\na2.md;x;e\n", encoding="utf-8")      # sans effet
+        lignes = tri.shadow_backfill_candidates(self.store, "en", tri.prompts_hash(self.module_en))
         self.assertEqual([r["file"] for r in lignes], ["a1.md", "a2.md", "a3.md", "a4.md", "a5.md", "a6.md"])
 
     def test_la_progression_suit_cet_ordre(self):
@@ -208,6 +210,22 @@ class Refus(Rattrapage):
         self.assertIn("Ollama", str(erreur.exception))
         self.assertEqual(faux.appels, {"fr": 0, "en": 0})
 
+    def test_base_qui_ne_repond_pas_sort_en_4_avant_tout_appel(self):
+        self.preparer()
+        avant = self.tables()
+        faux = ombre.FauxModele()
+        for erreur, code in ((watch_store.WatchDatabaseUnavailable("OperationalError"), 4), (watch_store.WatchTablesMissing("x"), 5)):
+            with self.subTest(code=code):
+                self.data.unavailable = erreur
+                with mock.patch.object(ombre.httpx, "post", faux):
+                    sortie_code, message = self.erreur_de_sortie(tri.cmd_shadow_backfill, limit=0)
+                self.assertEqual(sortie_code, code)
+                self.assertIn("Base de données injoignable" if code == 4 else "Tables de la veille absentes", message)
+                self.assertEqual(faux.appels, {"fr": 0, "en": 0})
+                self.ollama.assert_not_called()
+        self.data.unavailable = None
+        self.assertEqual(self.tables(), avant)
+
     def test_la_commande_est_declaree(self):
         with mock.patch.object(tri, "cmd_shadow_backfill") as commande, \
                 mock.patch.object(tri.sys, "argv", ["watch_triage.py", "shadow-backfill", "--limit", "7"]):
@@ -218,13 +236,11 @@ class Refus(Rattrapage):
 class MessageThresholds(Rattrapage):
     def test_le_message_cite_save_et_non_enregistrer(self):
         self.reglages(ombre=False)
-        tri.CALIBRATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        champs = ["fichier", "titre", "substance", "compilation", "dans_themes", "promotionnel", "avis"]
-        with tri.CALIBRATION_FILE.open("w", encoding="utf-8-sig", newline="") as handle:
-            ecrivain = csv.writer(handle, delimiter=";")
-            ecrivain.writerow(champs)
-            for i in range(12):
-                ecrivain.writerow([f"x{i}.md", f"Titre {i}", i % 6, "", "oui", "", "g" if i % 2 else "e"])
+        self.store.refresh_calibration(
+            [dict(file=f"x{i}.md", verdict="keep", relevance=0, substance=i % 6, in_themes=True, is_compilation=False, is_promo=False)
+             for i in range(12)], dt.datetime.now().astimezone())
+        self.store.apply_opinions({f"x{i}.md": bool(i % 2) for i in range(12)})
+        self.store.commit()
         sortie = self.lancer(tri.cmd_thresholds, save=False)
         self.assertIn("thresholds --save", sortie)
         self.assertNotIn("--enregistrer", sortie)

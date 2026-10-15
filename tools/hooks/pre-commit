@@ -16,7 +16,11 @@ Second garde-fou : le commit est refusé si l'index n'est pas celui qu'un lancem
 (git write-tree). Sur main ou une tête détachée : seule l'empreinte du lancement complet (.git/pmzilla-run-all-ok) compte. Sur toute
 autre branche : l'empreinte complète ou l'empreinte du lancement ciblé (bash tests/run_all.sh --staged, .git/pmzilla-run-targeted-ok).
 Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP_GREEN_CHECK=1 git commit ... ; les tests du hook le posent.
-Il ne saute que ce garde-fou : celui des noms s'applique toujours."""
+Il ne saute que ce garde-fou : celui des noms s'applique toujours.
+
+Premier garde-fou, avant tous les autres (change run-worktree, D6) : le commit est refusé quand le sommet du dépôt est le dossier
+d'exécution (PMZILLA_LAB_RUN, sinon ~/PMZilla-Lab/run), quelle que soit la branche, l'empreinte ou PMZILLA_SKIP_GREEN_CHECK. Phrase clé :
+« pre-commit : commit refusé dans le dossier d'exécution ». Le dépôt de développement et les worktrees de branche de travail ne sont pas visés."""
 import os
 import subprocess
 import sys
@@ -69,7 +73,22 @@ def verifie_lancement_vert():
     return branche_de_travail() and empreinte_egale_a_l_index(arbre, "pmzilla-run-targeted-ok")
 
 
+def est_le_dossier_d_execution(racine):
+    """True si le sommet du dépôt est le dossier d'exécution : PMZILLA_LAB_RUN, sinon ~/PMZilla-Lab/run (chemins résolus, liens suivis)."""
+    dossier = os.environ.get("PMZILLA_LAB_RUN") or os.path.join(os.path.expanduser("~"), "PMZilla-Lab", "run")
+    return os.path.realpath(racine) == os.path.realpath(dossier)
+
+
 def main():
+    try:
+        sommet = git("rev-parse", "--show-toplevel").decode().strip()
+    except subprocess.CalledProcessError:
+        sommet = None
+    if sommet and est_le_dossier_d_execution(sommet):
+        print("pre-commit : commit refusé dans le dossier d'exécution (copie de main lue par les tâches planifiées, jamais modifiée "
+              "à la main) : commite dans le dépôt de développement ou dans un worktree de branche de travail. Aucun contournement.",
+              file=sys.stderr)
+        return 1
     if not verifie_lancement_vert():
         if branche_de_travail():
             print("pre-commit : lance d'abord bash tests/run_all.sh --staged (après git add) : l'index n'a pas de lancement réussi.", file=sys.stderr)

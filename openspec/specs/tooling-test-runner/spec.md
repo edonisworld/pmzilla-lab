@@ -2,7 +2,9 @@
 
 ## Purpose
 Run every test suite of the repository with one command, or only the suites selected from the staged files, report one line per suite and a total, record the fingerprint of a green run for the commit hooks, and exit with a status that lets a command chain stop on failure.
+
 ## Requirements
+
 ### Requirement: One line per suite and a global total
 The system SHALL run each Python test suite folder and each known shell test script, print one line per suite with its test count and verdict, and finish with a total line giving the number of tests and suites.
 
@@ -202,3 +204,32 @@ The system SHALL offer a runner option that runs the selector on the index and t
 
 Source: tests/run_all/test_run_all.py (LancementCible); tests/run_all/test_run_all.py (LancementCible.test_selecteur_en_echec_fait_un_passage_complet_avec_empreinte_complete)
 
+### Requirement: The runner closes its standard input
+The system SHALL close the runner's standard input before it runs any suite, so that no suite and no tool a suite launches can wait on the keyboard, whether the runner is launched in the foreground of a terminal, by a hook or by the session's shell. It SHALL NOT depend on the caller to redirect the input.
+
+#### Scenario: Suite that reads its input
+- **WHEN** a suite reads its standard input while the runner is launched in the foreground without redirection
+- **THEN** the suite reads end of file at once and the run ends with its total line
+
+Source: tests/run_all/test_run_all.py (EntreeEtDelai.test_une_suite_qui_lit_son_entree_lit_la_fin_de_fichier, EntreeEtDelai.test_une_suite_shell_qui_lit_son_entree_lit_la_fin_de_fichier)
+
+### Requirement: A suite over its time limit is a named failure
+The system SHALL stop any Python or shell suite that runs longer than a configurable time limit, with the processes it started, mark it failed with the key phrase `délai dépassé`, name it in the total line, go on with the next suites and exit with code 1. An invalid limit SHALL make the runner exit with code 2 before any suite.
+
+#### Scenario: Suite that hangs
+- **WHEN** one suite sleeps beyond the limit and another suite passes
+- **THEN** the first suite's line holds `ÉCHEC : délai dépassé`, the second suite is still listed as passed, the total line names the first with `(délai dépassé)`, and the exit code is 1
+
+#### Scenario: Processes of the stopped suite
+- **WHEN** a suite over the limit has started a child process
+- **THEN** no process of that suite remains after the runner ends
+
+#### Scenario: No fingerprint
+- **WHEN** a full run has a suite over the limit
+- **THEN** no fingerprint remains
+
+#### Scenario: Invalid limit
+- **WHEN** the limit is set to a value that is not a positive whole number of seconds
+- **THEN** the runner exits with code 2 and runs no suite
+
+Source: tests/run_all/test_run_all.py (EntreeEtDelai)

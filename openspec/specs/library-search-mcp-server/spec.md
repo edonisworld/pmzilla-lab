@@ -2,10 +2,12 @@
 
 ## Purpose
 
-The library as served to the assistant: the four MCP tools, the shape of their answers, backend choice (PostgreSQL by default, SQLite on request), collection naming and its former-name alias, and the PostgreSQL implementation that mirrors the SQLite one.
+The library as served to the assistant: the seven read-only MCP tools, the shape of their answers, argument validation, collection naming, and the PostgreSQL route that is the only one (no backend choice, no fallback route: a database that does not answer stops the server or turns a tool call into an error object that names the remedy).
 
 Source of truth: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py`, `tests/pmzilla_lab_library/test_figures.py`, `tests/pmzilla_lab_library/test_serve_wrapper.py`, `tests/pmzilla_lab_library/test_coherence_noms.py`, `tests/library_backend/test_backend.py`, `tests/fixtures_library/demo_library.py`, `tools/pmzilla_lab_library.py`, `tools/knowledge_library.py`.
+
 ## Requirements
+
 ### Requirement: Return passages with book, section and citation metadata
 The system SHALL return, for each search hit, the passage identifier, book title, file name, section, position, collections, passage kind, score and text, and SHALL add the author, source, URL and publication date when the document is an article. When the catalogue gives no author the system SHALL return an explicit "author not stated" marker and SHALL NOT invent a name.
 
@@ -87,29 +89,8 @@ Source: `tests/pmzilla_lab_library/test_serve_wrapper.py` (Garde.test_collection
 - **WHEN** the search raises a value error (for example unknown passage types)
 - **THEN** the tool returns an error object carrying that message
 
-### Requirement: Choose the backend explicitly, PostgreSQL by default, without silent fallback
-The system SHALL serve from PostgreSQL by default, SHALL let an option or an environment variable select SQLite or PostgreSQL (the option winning), SHALL refuse an unknown backend with a message naming it, and SHALL stop with a clear message that mentions the SQLite option, and no secret, when the database does not answer. It SHALL NOT fall back to SQLite silently.
-
-Source: `tests/library_backend/test_backend.py` (Voie.test_defaut_postgres_option_et_variable, Voie.test_voie_inconnue_refusee, Voie.test_open_library_postgres_sans_repli_sur_sqlite, Voie.test_base_qui_ne_repond_pas_message_clair_sans_secret, Voie.test_serve_accepte_l_option_backend)
-
-#### Scenario: Default
-- **WHEN** no option and no environment variable are set
-- **THEN** the PostgreSQL backend is chosen
-
-#### Scenario: Option over variable
-- **WHEN** the variable says PostgreSQL and the option says SQLite
-- **THEN** SQLite is chosen
-
-#### Scenario: Database down
-- **WHEN** the database does not answer
-- **THEN** the server stops with a connection message and a hint to use the SQLite option, and does not open SQLite
-
-#### Scenario: Unknown backend
-- **WHEN** the backend name is not known
-- **THEN** the server stops with an error naming it
-
 ### Requirement: Read from PostgreSQL with a read-only role
-The system SHALL connect to the library database under a read-only role, SHALL embed the question with the same embedding function as the SQLite path, SHALL retry a lost connection once, and SHALL be unable to modify library data.
+The system SHALL connect to the library database under a read-only role, SHALL embed the question with the same embedding function as the indexer, SHALL retry a lost connection once, and SHALL be unable to modify library data. The database it connects to SHALL be the installation's, unless the library database setting of design D7 names another one.
 
 Source: `tests/library_backend/test_backend.py` (Voie.test_connexion_sous_le_role_de_lecture, AvecBase.test_le_role_de_lecture_ne_peut_pas_ecrire)
 
@@ -121,39 +102,9 @@ Source: `tests/library_backend/test_backend.py` (Voie.test_connexion_sous_le_rol
 - **WHEN** a delete is attempted over the read connection
 - **THEN** the database refuses it
 
-### Requirement: Give the PostgreSQL backend the same interface and answer shapes as the SQLite backend
-The system SHALL return from the PostgreSQL backend the same dictionary shape, keys and values (kind named as in SQLite, collections canonical and sorted, figure reference record) as the SQLite backend, SHALL translate passage types and collections (including the former alias) for the database search, SHALL reject unknown types as SQLite does, and SHALL do nothing on refresh since the database is always current.
-
-Source: `tests/library_backend/test_backend.py` (Forme.test_meme_dictionnaire_que_la_voie_sqlite, Forme.test_figure_porte_sa_ref_et_le_texte_non, Parametres.test_types_et_collections_traduits, Parametres.test_types_inconnus_refuses_comme_en_sqlite, Parametres.test_refresh_ne_fait_rien)
-
-#### Scenario: Same shape
-- **WHEN** the same passage is described by both backends
-- **THEN** both dictionaries have the same keys, and only figures carry a reference record
-
-#### Scenario: Contract on shared data
-- **WHEN** both backends search the same demo corpus with and without collections, types, the former alias and a date
-- **THEN** they return the same passages with the same top hit and the same field values, and the date filter keeps undated books
-
-#### Scenario: Collections and books agree
-- **WHEN** collections, stored aliases and books are listed on both backends
-- **THEN** the answers are equal
-
-#### Scenario: Reading around a passage
-- **WHEN** a passage is read with neighbours on both backends
-- **THEN** the same positions and the same field values are returned, except the backend-specific identifiers
-
-### Requirement: Forward the backend choice to the evaluation configuration
-The system SHALL leave the MCP server arguments unchanged when no backend is chosen, SHALL pass the chosen backend (option or environment variable) to the server arguments, and SHALL serve a disposable per-case library from the run's disposable database with the PostgreSQL backend and the database-name variable, whatever backend is chosen for the other cases. It SHALL NOT serve a disposable per-case library from a SQLite file.
-
-Source: `tests/library_backend/test_backend.py` (ConfigurationMcp)
-
-#### Scenario: Default
-- **WHEN** no backend is chosen
-- **THEN** the server is started with only its serve argument
-
-#### Scenario: Disposable library
-- **WHEN** a case provides its own library
-- **THEN** the server configuration carries the PostgreSQL backend and the disposable database name, and no data folder for a SQLite index
+#### Scenario: Library database setting
+- **WHEN** the library database setting names a disposable database
+- **THEN** the library tools read that database and the installation's database is not opened
 
 ### Requirement: Expose exactly seven read-only tools without image access
 The system SHALL expose exactly seven tools to the assistant: the four library tools (search, read a passage, list collections, list books) and the three cases tools (search cases, search running experiments, list due reviews). It SHALL let the library search tool take a passage-type argument, SHALL NOT include any capability to open, read, encode or display an image file, and SHALL NOT include any tool that writes to the database.
@@ -202,6 +153,62 @@ The system SHALL let a configurable database-name variable choose the database t
 #### Scenario: Named database down
 - **WHEN** the named database does not answer
 - **THEN** the server stops with its connection message and does not connect to the installation database
+
+### Requirement: Serve from PostgreSQL only and refuse a backend choice
+The system SHALL serve the library from PostgreSQL only, with no file-based route. The serve command SHALL accept no argument: a backend option, whatever its value, SHALL be refused with exit code 2 and the key phrases and remedy of design D1; any other extra argument SHALL be refused with the usage message and exit code 2. The former backend environment variable SHALL be ignored with one warning line. The system SHALL NOT open, create or test for existence any SQLite file.
+
+#### Scenario: Former file backend requested
+- **WHEN** the server is started with the backend option set to the file-based route
+- **THEN** it exits with code 2, prints "the --backend option was removed" and "PostgreSQL only", and opens no file in the data folder
+
+#### Scenario: Database backend requested
+- **WHEN** the server is started with the backend option set to PostgreSQL
+- **THEN** it is refused the same way, with exit code 2
+
+#### Scenario: Former variable set
+- **WHEN** the former backend variable is set to the file-based route and the server starts without option
+- **THEN** a warning line says the variable is ignored and the PostgreSQL library is opened
+
+#### Scenario: Other extra argument
+- **WHEN** the server is started with an extra argument other than the backend option
+- **THEN** the usage message is printed and the exit code is 2
+
+### Requirement: Stop with the remedy when the database does not answer
+The system SHALL, when the library database does not answer at start, stop with exit code 1 and a message made of the connection error text (which names where the password is looked for and never a value) followed by the key phrases of design D2 ("no fallback", "bash tools/db_up.sh"). It SHALL NOT fall back to any other route and SHALL NOT create any file.
+
+#### Scenario: Database down at start
+- **WHEN** the connection to the library database fails at start
+- **THEN** the server stops with code 1, the message names the start script and says there is no fallback, holds no secret, and the data folder is unchanged
+
+### Requirement: Answer a database error during a tool call with an error object
+The system SHALL answer a library tool call (search, read a passage, list collections, list books) whose database query fails, after the single reconnection attempt, with an error object that gives the error type only (never its message) and the key phrases of design D3 ("library database error", "bash tools/db_up.sh", "Damaged BM25 index"), and SHALL keep the server running. It SHALL NOT retry beyond the single reconnection and SHALL NOT answer from another route.
+
+#### Scenario: Keyword index unreadable
+- **WHEN** a search raises a database error that is not a lost connection
+- **THEN** the tool returns an error object with the error type, the start script and the "Damaged BM25 index" section title, without the error message, and a following call is still served
+
+#### Scenario: Lost connection twice
+- **WHEN** the connection is lost and the reconnection fails too
+- **THEN** the tool returns the same kind of error object and the server keeps running
+
+### Requirement: Keep the answer shapes frozen on the demo library
+The system SHALL return from the PostgreSQL library, for the invented demo library, the dictionary shapes, keys and values frozen in the tests (kind named "texte" or "figure", collections canonical and sorted, a figure reference record on figure passages only), for searches, listings and reading around a passage. It SHALL translate passage types and collections for the database search, SHALL refuse unknown types with the error naming the known types, and SHALL do nothing on refresh.
+
+#### Scenario: Shapes
+- **WHEN** a book passage and a figure passage of the demo library are described
+- **THEN** both dictionaries have the frozen keys, and only the figure carries a reference record
+
+#### Scenario: Searches on the demo library
+- **WHEN** the demo library is searched with and without collections, types and a date
+- **THEN** the ordered results and field values equal the expected values frozen in the test
+
+#### Scenario: Unknown types
+- **WHEN** a search is made with an unknown passage type
+- **THEN** it fails with an error naming the known types
+
+#### Scenario: Listings and reading around a passage
+- **WHEN** the collections and books are listed and a passage is read with its neighbours on the demo library
+- **THEN** the answers equal the values frozen in the test, positions included, and undated books are kept by the date filter of a search
 
 ## Open questions
 

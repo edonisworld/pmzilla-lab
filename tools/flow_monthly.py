@@ -10,7 +10,8 @@ PMZilla Lab : suivi mensuel du flux en une commande (change monthly-flow-orchest
 À lancer par l'utilisateur seul, dans le Terminal (refusé dans une session Claude Code : règles deny et variable CLAUDECODE).
 
 Enchaîne les outils existants dans un ordre fixe et s'arrête au premier écart :
-    export, history, import, flow (par série), dependencies (par série), compare-data, compare-reports (par série), dashboard.
+    export, history, import, flow (par série), dependencies (par série), compare-data, compare-reports (par série), dashboard,
+    retention (essai à blanc de la purge, sans --apply : il n'efface rien et n'ouvre aucun magasin).
 Il n'ajoute aucun calcul : il passe des chemins et des options, les outils ouvrent les données. Il lit seulement Flux-Lab/flux.yaml
 (bloc monthly_run : séries à calculer) et Flux-Lab/rapports/ ; jamais les exports, l'historique, les tableaux, la table des équipes
 ni la liste des noms sensibles, et il ne se connecte pas à la base. Sa sortie et son résumé (Flux-Lab/rapports/suivi-mensuel-AAAA-MM-JJ.md)
@@ -41,7 +42,7 @@ from flow_monthly_messages import CATALOGS                     # noqa: E402
 from messages import Messages                                  # noqa: E402
 from yaml_strict import ErreurConfig, charger                  # noqa: E402
 
-ETAPES = ("export", "history", "import", "flow", "dependencies", "compare-data", "compare-reports", "dashboard")
+ETAPES = ("export", "history", "import", "flow", "dependencies", "compare-data", "compare-reports", "dashboard", "retention")
 SUFFIXE_BASE = "-db"
 DOSSIER_FLUX = "Flux-Lab"
 RESUME = "suivi-mensuel-{jour}.md"
@@ -50,7 +51,12 @@ MOTIF_NOM = re.compile(r"^[A-Za-z0-9_-]+$")
 DEPENDANCES = ("team", "project", "both", "none")
 TABLEAUX = ("full", "anonymous", "both")
 VARIABLE_CLAUDE_CODE = "CLAUDECODE"
-LIGNE_RESUME = re.compile(r"^\| ([a-z-]+) \| (-|\d+) \| (passed|failed|gap|not run) \| (-|\d+) \| (-|\d+) \|$")
+# Ligne de total de l'essai de purge, dans la langue du run (D19) : « rien hors règle » compte pour 0.
+TOTAL_RETENTION = {
+    "fr": re.compile(r"^contrôle de conservation : (?:rien hors règle|(\d+) éléments hors règle)\s*$", re.M),
+    "en": re.compile(r"^retention check: (?:nothing out of rule|(\d+) items out of rule)\s*$", re.M),
+}
+LIGNE_RESUME = re.compile(r"^\| ([a-z-]+) \| (-|\d+) \| (passed|failed|gap|skipped|not run) \| (-|\d+) \| (-|\d+) \|$")
 
 
 class Usage(Exception):
@@ -202,6 +208,7 @@ class Appel:
     args: list[str]
     montres: list[str]                 # les mêmes arguments avec des repères à la place de chaque valeur (passage à blanc)
     comparaison: bool = False          # code 1 de l'outil = écart de parité
+    retention: bool = False            # sortie capturée, jamais affichée : seul le total est lu
 
 
 @dataclass
@@ -212,8 +219,8 @@ class Unite:
 
 
 class Commande:
-    def __init__(self, outil: str, comparaison: bool = False):
-        self.outil, self.comparaison = outil, comparaison
+    def __init__(self, outil: str, comparaison: bool = False, retention: bool = False):
+        self.outil, self.comparaison, self.retention = outil, comparaison, retention
         self.args: list[str] = []
         self.montres: list[str] = []
 
@@ -228,7 +235,7 @@ class Commande:
         return self
 
     def appel(self) -> Appel:
-        return Appel(self.outil, self.args, self.montres, self.comparaison)
+        return Appel(self.outil, self.args, self.montres, self.comparaison, self.retention)
 
 
 def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvrir: bool, t: Messages) -> list[Unite]:
@@ -249,7 +256,7 @@ def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvr
     unites = [
         Unite("export", None, [Commande("export_jira_api").ajouter("export", "--strict-teams", "--language", langue).appel()]),
         Unite("history", None, [avec_exports(Commande("history_jira").ajouter("collect")).ajouter("--strict", "--language", langue).appel()]),
-        Unite("import", None, [avec_exports(Commande("flow_import")).ajouter("--history", "--language", langue).appel()]),
+        Unite("import", None, [avec_exports(Commande("flow_import")).ajouter("--history", "--mark-absent", "--language", langue).appel()]),
     ]
     for k, serie in enumerate(reglages.series, start=1):
         c = avec_exports(Commande("flux_jira").ajouter("compute")).ajouter("--name").valeur(serie.nom, t("ph_series", k=k))
@@ -283,6 +290,7 @@ def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvr
             c.ajouter("--open")
         tableaux.append(c.appel())
     unites.append(Unite("dashboard", None, tableaux))
+    unites.append(Unite("retention", None, [Commande("flow_retention", retention=True).ajouter("purge", "--language", langue).appel()]))
     return unites
 
 
@@ -338,18 +346,19 @@ def lire_resume(rapports: Path, jour: str) -> dict[tuple[str, int | None], Ligne
 
 def statut_final(lignes: list[Ligne]) -> str:
     for ligne in lignes:
-        if ligne.statut != "passed":
+        if ligne.statut not in ("passed", "skipped"):
             return f"stopped at {ligne.etape}"
     return "complete"
 
 
 def ecrire_resume(rapports: Path, jour: str, langue: str, requetes: int, series: int, lignes: list[Ligne],
-                  sorties_d_erreur: int | None) -> None:
+                  sorties_d_erreur: int | None, retention: str | None = None) -> None:
     fichiers = sum(1 for n in lister(rapports) if n.endswith((f"-{jour}.md", f"-{jour}.json")) and not MOTIF_RESUME.match(n))
     corps = [f"# Monthly flow run {jour}", "", f"- run date: {jour}", f"- language: {langue}", f"- export queries: {requetes}",
              f"- series: {series}",
              f"- tools with error output on success: {'n/a (verbose)' if sorties_d_erreur is None else sorties_d_erreur}",
-             f"- report files of the run date: {fichiers}", f"- final status: {statut_final(lignes)}", "",
+             f"- report files of the run date: {fichiers}", *([f"- {retention}"] if retention else []),
+             f"- final status: {statut_final(lignes)}", "",
              "| step | series | status | exit code | seconds |", "|---|---|---|---|---|", *[l.texte() for l in lignes], ""]
     try:
         rapports.mkdir(parents=True, exist_ok=True)
@@ -364,18 +373,21 @@ def ecrire_resume(rapports: Path, jour: str, langue: str, requetes: int, series:
 # Exécution
 # ---------------------------------------------------------------------------------------------------------------------------------
 
-def executer(appel: Appel, racine: Path, environ: dict, detaille: bool) -> tuple[int, str]:
-    """Lance un outil depuis la racine. (code, sortie d'erreur capturée). Silencieux : tout est capturé en mémoire, rien n'est écrit."""
+def executer(appel: Appel, racine: Path, environ: dict, detaille: bool, sortie: list[str] | None = None) -> tuple[int, str]:
+    """Lance un outil depuis la racine. (code, sortie d'erreur capturée). Silencieux : tout est capturé en mémoire, rien n'est écrit.
+    Avec `sortie` (liste), la sortie standard est capturée dans la liste et jamais diffusée, même en mode détaillé."""
     lanceur = shlex.split(environ.get("FLOW_MONTHLY_LAUNCHER") or "uv run")
     commande = [*lanceur, f"tools/{appel.outil}.py", *appel.args]
     try:
-        if detaille:
+        if detaille and sortie is None:
             with subprocess.Popen(commande, cwd=racine, env=dict(environ), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, errors="replace") as processus:
                 for ligne in processus.stdout:
                     print(ligne, end="", flush=True)
                 return processus.wait(), ""
         fait = subprocess.run(commande, cwd=racine, env=dict(environ), capture_output=True, text=True, errors="replace")
+        if sortie is not None:
+            sortie.append(fait.stdout)
         return fait.returncode, fait.stderr
     except OSError:
         return 127, ""
@@ -468,21 +480,29 @@ def _suivre(args, environ, t: Messages, racine: Path, rapports: Path, reglages: 
             jour: str, aujourdhui: str) -> int:
     precedentes = lire_resume(rapports, jour) if args.depuis else {}
     lignes = [Ligne(u.etape, u.rang) for u in unites]
-    for i in range(debut):
+    for i in range(debut):                                      # avant --from : le statut du résumé du jour, sinon « skipped »
         avant = precedentes.get((unites[i].etape, unites[i].rang))
-        if avant and avant.statut == "passed":
-            lignes[i] = avant
+        lignes[i] = avant if avant and avant.statut in ("passed", "skipped") else Ligne(unites[i].etape, unites[i].rang, "skipped")
     if args.verbose:
         print(t("verbose_warning"), flush=True)
     sorties_d_erreur = None if args.verbose else 0
     total = len(unites)
+    a_faire = total - debut
+    retention = None
     for i in range(debut, total):
         unite = unites[i]
-        print(t("step_start_series" if unite.rang else "step_start", i=i + 1, n=total, step=unite.etape, k=unite.rang), flush=True)
+        print(t("step_start_series" if unite.rang else "step_start", i=i - debut + 1, n=a_faire, step=unite.etape, k=unite.rang), flush=True)
         t0 = time.monotonic()
         code, erreur, appel = 0, "", None
         for appel in unite.appels:
-            code, erreur = executer(appel, racine, environ, args.verbose)
+            capture: list[str] | None = [] if appel.retention else None
+            code, erreur = executer(appel, racine, environ, args.verbose, capture)
+            if appel.retention and code == 0:
+                trouve = TOTAL_RETENTION[args.language].search("".join(capture))
+                if trouve is None:
+                    code = 1                                     # sans ligne de total, aucun compte n'est deviné
+                else:
+                    retention = t("retention_line", n=int(trouve[1] or 0))
             if code != 0:
                 break
             if sorties_d_erreur is not None and erreur.strip():
@@ -493,6 +513,8 @@ def _suivre(args, environ, t: Messages, racine: Path, rapports: Path, reglages: 
         if code == 0:
             ligne.statut = "passed"
             print(t("step_passed", step=unite.etape, s=secondes), flush=True)
+            if unite.etape == "retention" and retention:
+                print(retention, flush=True)
             continue
         ecart = appel.comparaison and code == 1
         ligne.statut = "gap" if ecart else "failed"
@@ -501,11 +523,11 @@ def _suivre(args, environ, t: Messages, racine: Path, rapports: Path, reglages: 
         print(t("parity_gap", step=unite.etape) if ecart else t("step_failed", step=unite.etape, code=code))
         if not args.verbose:
             print(t("see_output"))
-        ecrire_resume(rapports, jour, args.language, len(reglages.requetes), len(reglages.series), lignes, sorties_d_erreur)
+        ecrire_resume(rapports, jour, args.language, len(reglages.requetes), len(reglages.series), lignes, sorties_d_erreur, retention)
         print(t("resume", step=unite.etape) + (t("resume_date", date=jour) if jour != aujourdhui else ""))
         return 4 if ecart else 1
-    ecrire_resume(rapports, jour, args.language, len(reglages.requetes), len(reglages.series), lignes, sorties_d_erreur)
-    print(t("complete", n=total))
+    ecrire_resume(rapports, jour, args.language, len(reglages.requetes), len(reglages.series), lignes, sorties_d_erreur, retention)
+    print(t("complete", run=a_faire, total=total, skipped=debut))
     print(t("reading_title"))
     print(t("reading_monthly"))
     print(t("reading_dependencies"))

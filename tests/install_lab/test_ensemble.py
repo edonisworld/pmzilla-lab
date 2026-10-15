@@ -52,7 +52,7 @@ class Ensemble(CasDeBase):
         self.assertIn("installation complete", premier.texte)
         self.assertTrue(self.fx.a_drapeau("hooks-ok") and self.fx.a_drapeau("links-ok") and self.fx.a_drapeau("db-up"))
         self.assertTrue(self.fx.a_drapeau("mcp-ok"))
-        self.assertEqual(len(list((self.fx.maison / "Library" / "LaunchAgents").glob("*.plist"))), 2)
+        self.assertEqual(len(list((self.fx.maison / "Library" / "LaunchAgents").glob("*.plist"))), 4)
 
         second = self.fx.lancer("--mode", "fresh")
         self.assertEqual(second.code, 0, second.texte)
@@ -82,8 +82,9 @@ class Ensemble(CasDeBase):
         self.assertEqual(p.code, 4, p.texte)
         self.assertIn("manual action needed", p.texte)
         self.assertIn("security add-generic-password -s pmzilla-test-db", p.texte)
-        self.assertTrue(self.fx.a_drapeau("mcp-ok"), "le serveur est enregistré, avec le backend fichier")
-        self.assertTrue(any("--backend sqlite" in a for a in p.appels_de("claude")), p.appels)
+        self.assertFalse(self.fx.a_drapeau("mcp-ok"), "le serveur attend la base : aucune inscription")
+        self.assertEqual(p.appels_de("claude mcp add"), [], p.appels)
+        self.assertIn("waiting for step database", p.texte)
 
 
 if __name__ == "__main__":

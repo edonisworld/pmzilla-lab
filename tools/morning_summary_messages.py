@@ -1,0 +1,58 @@
+"""PMZilla Lab : messages de tools/morning_summary.py par langue (change morning-summary, R-50).
+
+Les phrases clés sont celles de la décision D7 du change (design.md) : les tests les vérifient mot pour mot. Aucun message ne contient
+de titre, de texte de problème, de chemin, de nom ni de secret, et aucun tiret cadratin.
+"""
+
+CATALOGS = {
+    "fr": {
+        "title": "PMZilla : résumé du matin",
+        "watch_done": "Veille : faite, {n} article(s) retenu(s)",
+        "watch_done_no_triage": "Veille : faite, pré-tri non fait aujourd'hui",
+        "catch_up": " (rattrapage)",
+        "watch_failed": "Veille : {n} étape(s) en échec : {steps}",
+        "watch_failed_unknown": "Veille : en échec",
+        "watch_unknown": "Veille : état inconnu",
+        "reviews_none": "Bilans dus : aucun",
+        "reviews": "Bilans dus : {n}",
+        "reviews_decision": "Bilans dus : {n}, dont {m} décision requise",
+        "reviews_unreachable": "Bilans : base injoignable",
+        "reviews_unavailable": "Bilans : indisponible",
+        "queue": "File : {n} prêt(s)",
+        "queue_older": "File : {n} prêt(s) (cache du {date})",
+        "queue_no_cache": "File : pas de cache",
+        "doctor_ok": "Doctor du {date} : tout va bien",
+        "doctor_problems": "Doctor du {date} : {n} problème(s)",
+        "doctor_absent": "Doctor : pas encore vérifié",
+        "doctor_unreadable": "Doctor : état illisible",
+        "already_sent": "Résumé du matin déjà envoyé aujourd'hui",
+        "notify_failed": "Notification macOS impossible",
+        "switched_off": "Résumé du matin désactivé",
+        "memory_not_written": "Mémoire du jour non écrite (dossier de données non inscriptible)",
+    },
+    "en": {
+        "title": "PMZilla: morning summary",
+        "watch_done": "Watch: done, {n} article(s) kept",
+        "watch_done_no_triage": "Watch: done, no triage today",
+        "catch_up": " (catch-up)",
+        "watch_failed": "Watch: {n} failed step(s): {steps}",
+        "watch_failed_unknown": "Watch: failed",
+        "watch_unknown": "Watch: state unknown",
+        "reviews_none": "Reviews due: none",
+        "reviews": "Reviews due: {n}",
+        "reviews_decision": "Reviews due: {n}, {m} decision required",
+        "reviews_unreachable": "Reviews: database unreachable",
+        "reviews_unavailable": "Reviews: unavailable",
+        "queue": "Queue: {n} ready",
+        "queue_older": "Queue: {n} ready (cache of {date})",
+        "queue_no_cache": "Queue: no cache",
+        "doctor_ok": "Doctor of {date}: all good",
+        "doctor_problems": "Doctor of {date}: {n} problem(s)",
+        "doctor_absent": "Doctor: not checked yet",
+        "doctor_unreadable": "Doctor: state unreadable",
+        "already_sent": "Morning summary already sent today",
+        "notify_failed": "macOS notification failed",
+        "switched_off": "Morning summary switched off",
+        "memory_not_written": "Day memory not written (data folder not writable)",
+    },
+}

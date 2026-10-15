@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__HOME__/PMZilla-Lab/workspace/tools/offsite_backup.sh</string>
+    <string>__HOME__/PMZilla-Lab/offsite_backup.sh</string>
     <string>restore-test</string>
   </array>
   <!-- Chaque jour à 8 h 45, après la copie hors du Mac (8 h 15). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->

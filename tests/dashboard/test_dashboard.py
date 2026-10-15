@@ -16,7 +16,7 @@ import datetime
 import io
 import json
 import os
-import sqlite3
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,7 +26,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "dashboard.py"
 RUNNER = Path(__file__).resolve().parent / "run_with_fake_library.py"   # dashboard.py avec le faux lecteur de la bibliothèque
-SECTIONS = ["a-faire", "experimentations", "veille", "bibliotheque", "qualite", "flux", "critic"]
+SECTIONS = ["sante", "a-faire", "experimentations", "veille", "bibliotheque", "qualite", "flux", "critic", "composants"]
 # textes qui ne doivent jamais se retrouver dans la page
 SENTINELLES = ["SENTINELLE_ARTICLE_TEXTE", "SENTINELLE_LIVRE_TEXTE", "SENTINELLE_PASSAGE_ARTICLE",
                "SENTINELLE_PASSAGE_LIVRE", "SENTINELLE_TITRE_ARTICLE"]
@@ -107,38 +107,28 @@ source-b.example : ERREUR Client error '403 Forbidden'
 Ollama ne répond pas : pré-tri et indexation reportés au prochain passage
 """)
     data.mkdir(parents=True)
-    lib = sqlite3.connect(data / "library.sqlite")
-    lib.executescript("""CREATE TABLE books (id INTEGER PRIMARY KEY, file_name TEXT, title TEXT, sha256 TEXT, collections TEXT,
-        model TEXT, indexed_at REAL, meta TEXT NOT NULL DEFAULT '{}');
-        CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, position INTEGER, section TEXT, text TEXT, embedding BLOB);""")
     rows = [(1, "a.md", "Livre Avec Auteur", "produit", {"author": "Auteur Un"}),
             (2, "b.md", "Livre Sans Auteur", "flow|tech", {"author": "b.pdf (auteur non indiqué)"}),
             (3, "c.md", "SENTINELLE_TITRE_ARTICLE", "watch", {"author": "site.example (auteur non indiqué)"}),
             (4, "d.md", "Autre article", "watch", {})]
-    for id_, name, title, coll, meta in rows:
-        lib.execute("INSERT INTO books VALUES (?,?,?,?,?,?,?,?)", (id_, name, title, "x", coll, "m", 0, json.dumps(meta)))
-        text = "SENTINELLE_PASSAGE_ARTICLE" if coll == "watch" else "SENTINELLE_PASSAGE_LIVRE"
-        lib.execute("INSERT INTO chunks (book_id, position, section, text) VALUES (?,?,?,?)", (id_, 0, "s", text))
-    lib.commit()
-    lib.close()
-    # le même contenu pour le faux lecteur de la base (section bibliothèque) ; library.sqlite ne sert plus qu'au compte de la veille
+    # le même contenu pour le faux lecteur de la base : section bibliothèque, comptes de la veille, partages et sélections
     fake = root / "fake-library.json"
     write_fake(fake, [{"title": title, "author": meta.get("author"), "collections": coll.split("|"), "passages": 1}
-                      for _, _, title, coll, meta in rows])
-    tri = sqlite3.connect(data / "tri.sqlite")
-    tri.executescript("""CREATE TABLE shared (file TEXT PRIMARY KEY, url TEXT, post_date TEXT, found TEXT);
-        CREATE TABLE picks (day TEXT NOT NULL, file TEXT NOT NULL, PRIMARY KEY (day, file));
-        INSERT INTO picks VALUES ('2026-10-08', 'f1.md');
-        INSERT INTO shared VALUES ('f1.md', 'u1', '2026-10-09T10:00:00', '2026-10-10');
-        INSERT INTO shared VALUES ('f2.md', 'u2', '2026-10-09T11:00:00', '2026-10-10');""")
-    tri.commit()
-    tri.close()
+                      for _, _, title, coll, meta in rows],
+               watch_counts={"articles": 2, "passages": 2},
+               shares={"total": 2, "recent": 2, "first_pick": "2026-10-08", "evaluable": 2, "hits": 1})
     return {"PMZILLA_LAB_WORKSPACE": str(ws), "PMZILLA_LAB_DATA": str(data), "PMZILLA_LAB_LOGS": str(logs),
             "PMZILLA_TEST_FAKE_LIBRARY": str(fake)}
 
 
-def write_fake(path: Path, books: list[dict] | None = None, error: str | None = None) -> None:
-    write(path, json.dumps({"raise": error} if error else {"books": books or []}))
+def write_fake(path: Path, books: list[dict] | None = None, error: str | None = None, **extra) -> None:
+    """Décrit le faux lecteur ; les comptes de la veille et les partages déjà écrits sont gardés quand on ne les redonne pas."""
+    if error:
+        write(path, json.dumps({"raise": error}))
+        return
+    ancien = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    garde = {k: v for k, v in ancien.items() if k in ("watch_counts", "shares")}
+    write(path, json.dumps({"books": books or [], **garde, **extra}))
 
 
 def read_fake(path: Path) -> list[dict]:
@@ -212,6 +202,11 @@ class TableauDeBord(unittest.TestCase):
             self.assertIn("Débit : -30 %", page)                   # section « Ce qui a bougé »
             self.assertIn("Hypothèse prise pour un fait", page)    # angles morts du miroir
             self.assertIn("1 sur 2", page)                         # part des partages proposés : f1 oui, f2 non
+            # la veille et les partages viennent de la base : les anciens fichiers (9 articles, 4 partages) ne sont pas ouverts
+            self.assertIn("Collection <code>watch</code> : <b>2</b> articles, 2 passages indexés.", page)
+            self.assertIn("<b>2</b> au total, 2 sur les 14 derniers jours", page)
+            self.assertNotIn("<b>9</b> articles", page)
+            self.assertNotIn("<b>4</b> au total", page)
             self.assertIn("0.40 $", page)                          # coût du dernier passage : 0.15 + 0.25
             self.assertIn("1.35 $", page)                          # total d'octobre, partiel et non validant compris : 0.30 + 0.40 + 0.60 + 0.05
             self.assertIn("sessions sonnet, juge habituel", page)  # modèles du passage non validant
@@ -291,11 +286,21 @@ class TableauDeBord(unittest.TestCase):
             self.assertGreaterEqual(page.count("pas encore de données"), 7)
             self.assertNotIn("Traceback", page)
 
+    def test_dossier_de_donnees_sans_fichier_sqlite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = donnees_completes(root)
+            self.assertEqual(list((root / "data").rglob("*.sqlite")), [])
+            result, page = generer(root, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.verifier_commun(page)
+            self.assertEqual(list((root / "data").rglob("*.sqlite")), [])    # aucun fichier de ce type ouvert ni créé
+            self.assertEqual(list(root.rglob("*.sqlite")), [])
+
     def test_sources_illisibles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             env = donnees_completes(root)
-            (root / "data" / "library.sqlite").write_bytes(b"pas une base sqlite")
             write(root / "workspace" / "Journal-Lab" / "journal.yaml", "- [pas: {valide")
             write_fake(Path(env["PMZILLA_TEST_FAKE_LIBRARY"]), error="ConnectionError")   # la base ne répond pas
             result, page = generer(root, env)
@@ -332,8 +337,104 @@ class ExclusionCollections(unittest.TestCase):
             self.assertIn("Articles de la veille sur 4 :", page)
 
 
+class VeilleDepuisLaBase(unittest.TestCase):
+    """Comptes de la veille et partages (design.md D6) : des lecteurs injectés, la même phrase qu'avant, jamais un ancien fichier."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import dashboard
+        cls.dashboard = dashboard
+
+    def setUp(self):
+        self.dashboard.set_language("fr")
+        self.addCleanup(self.dashboard.set_language, "fr")
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        patcher = unittest.mock.patch.multiple(self.dashboard, WORKSPACE=self.root / "ws", CODE_ROOT=self.root / "ws", DATA=self.root / "data")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        (self.root / "data").mkdir()
+
+    def comptes(self, **valeurs):
+        return lambda: {"articles": 3, "passages": 41, **valeurs}
+
+    def partages(self, **valeurs):
+        defaut = {"total": 2, "recent": 1, "first_pick": "2026-10-08", "evaluable": 2, "hits": 1}
+        return lambda day: {**defaut, **valeurs}
+
+    def test_compte_de_la_veille(self):
+        html = self.dashboard.veille_base_block(self.comptes())
+        self.assertEqual(html, "<p>Collection <code>watch</code> : <b>3</b> articles, 41 passages indexés.</p>")
+        self.assertIn("<b>1</b> article,", self.dashboard.veille_base_block(self.comptes(articles=1)))
+
+    def test_partage_une_part_sur_deux(self):
+        html = self.dashboard.partages_block(self.partages())
+        self.assertIn("<b>2</b> au total, 1 sur les 14 derniers jours", html)
+        self.assertIn("<b>1 sur 2</b> (50 %)", html)
+        self.assertIn("postérieurs au 2026-10-08", html)
+
+    def test_aucun_partage_aucune_selection_aucun_partage_evaluable(self):
+        self.assertIn("aucun partage relevé pour l&#x27;instant", self.dashboard.partages_block(self.partages(total=0, recent=0)))
+        self.assertIn("la table des 5 à lire est vide", self.dashboard.partages_block(self.partages(first_pick=None)))
+        self.assertIn("aucun partage n&#x27;est postérieur", self.dashboard.partages_block(self.partages(evaluable=0, hits=0)))
+
+    def test_le_jour_est_donne_au_lecteur(self):
+        vus = []
+
+        def lecteur(day):
+            vus.append(day)
+            return self.partages()(day)
+        with unittest.mock.patch.dict(os.environ, {"PMZILLA_LAB_TODAY": "2026-10-12"}):
+            self.dashboard.partages_block(lecteur)
+        self.assertEqual(vus, [datetime.date(2026, 10, 12)])
+
+    def test_lecteur_qui_leve_source_illisible_avec_le_type_seulement(self):
+        def leve(*args):
+            raise ConnectionError("hôte secret injoignable")
+        for bloc in (self.dashboard.veille_base_block, self.dashboard.partages_block):
+            with self.subTest(bloc=bloc.__name__):
+                html = self.dashboard.safe(lambda: bloc(leve))
+                self.assertIn("source illisible (ConnectionError)", html)
+                self.assertNotIn("hôte secret", html)
+
+    def test_lecteurs_reels_cherches_a_l_appel(self):
+        with unittest.mock.patch.object(self.dashboard, "fetch_watch_counts", self.comptes(articles=7)), \
+                unittest.mock.patch.object(self.dashboard, "fetch_shares", self.partages(total=9)):
+            self.assertIn("<b>7</b> articles", self.dashboard.veille_base_block())
+            self.assertIn("<b>9</b> au total", self.dashboard.partages_block())
+
+    def test_lecteur_reel_ouvre_le_role_de_lecture_seule_et_ferme_la_connexion(self):
+        class Curseur:
+            def __init__(self, ligne):
+                self.ligne = ligne
+
+            def fetchone(self):
+                return self.ligne
+
+        class Connexion:
+            closed = False
+
+            def execute(self, sql, params=()):
+                assert "knowledge." in sql and "INSERT" not in sql.upper()
+                return Curseur((3, 41) if "watch_collection" in sql or "ANY" in sql else (2, 1, "2026-10-08", 2, 1))
+
+            def close(self):
+                self.closed = True
+
+        connexion = Connexion()
+        self.assertEqual(self.dashboard.fetch_watch_counts(connect=lambda: connexion), {"articles": 3, "passages": 41})
+        self.assertTrue(connexion.closed)
+
+    def test_texte_du_tableau_de_bord_sans_ancien_fichier(self):
+        texte = (SCRIPT.parent / "dashboard.py").read_text(encoding="utf-8")
+        for ancien in ("tri." + "sqlite", "library." + "sqlite", "sqlite" + "3"):
+            self.assertNotIn(ancien, texte)
+        self.assertNotIn("SQLite", texte)
+
+
 class LecteurBibliotheque(unittest.TestCase):
-    """Section bibliothèque (design.md D10) : un lecteur injecté, jamais l'index SQLite, jamais une vraie base."""
+    """Section bibliothèque (design.md D10) : un lecteur injecté, jamais une vraie base."""
 
     BOOKS = [{"title": "Livre Avec Auteur", "author": "Auteur Un", "collections": ["produit"], "passages": 3},
              {"title": "Livre Sans Auteur", "author": "b.pdf (auteur non indiqué)", "collections": ["flow", "tech"], "passages": 2},
@@ -353,7 +454,7 @@ class LecteurBibliotheque(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        patcher = unittest.mock.patch.multiple(self.dashboard, WORKSPACE=self.root / "ws", DATA=self.root / "data",
+        patcher = unittest.mock.patch.multiple(self.dashboard, WORKSPACE=self.root / "ws", CODE_ROOT=self.root / "ws", DATA=self.root / "data",
                                                LOGS=self.root / "logs")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -381,24 +482,13 @@ class LecteurBibliotheque(unittest.TestCase):
             html = self.dashboard.section_bibliotheque()
         self.assertEqual(html.count("pas encore de données"), 3)     # livres, à re-télécharger (aucun), articles
 
-    def test_base_qui_ne_repond_pas_sans_ouvrir_library_sqlite(self):
-        # un library.sqlite valide existe dans le dossier des données : il n'est jamais ouvert par la section
-        (self.root / "data").mkdir()
-        lib = sqlite3.connect(self.root / "data" / "library.sqlite")
-        lib.executescript("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, collections TEXT, meta TEXT);"
-                          "INSERT INTO books VALUES (1, 'Livre SQLite', 'produit', '{}');")
-        lib.commit()
-        lib.close()
-
+    def test_base_qui_ne_repond_pas_source_illisible_type_seulement(self):
         def fetch():
             raise ConnectionError("hôte secret injoignable")
-        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", fetch), \
-                unittest.mock.patch.object(self.dashboard.sqlite3, "connect", side_effect=AssertionError("SQLite ouvert")) as ouvert:
+        with unittest.mock.patch.object(self.dashboard, "fetch_library_books", fetch):
             html = self.dashboard.section_bibliotheque()
-        ouvert.assert_not_called()
         self.assertEqual(html.count("source illisible (ConnectionError)"), 2)
         self.assertNotIn("hôte secret", html)
-        self.assertNotIn("Livre SQLite", html)
 
     def test_page_ecrite_et_code_zero_quand_la_base_ne_repond_pas(self):
         def fetch():

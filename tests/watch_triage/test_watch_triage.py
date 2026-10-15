@@ -3,14 +3,16 @@ Tests du pré-tri de la veille (tools/watch_triage.py) sur des articles inventé
 
     uv run --with numpy --with httpx --with pyyaml python -m unittest discover -s tests/watch_triage -v
 
-Tout se passe dans un dossier temporaire (réglages, base du tri, état de la veille, articles, archive) :
-jamais Watch-Lab, watch/ ni ~/.pmzilla-lab. Aucun accès réseau ni modèle local : les notes sont insérées
-directement dans la base du tri, `veille.client` et `veille.discover_feed` sont remplacés.
-Couvre : classement et raisons d'écart, calibration, seuils (avec et sans --save), suggestions de
-sources, mode observation puis mode filtre (apply, exclude, restore).
+Tout se passe dans un dossier temporaire (réglages, articles, archive) et dans un faux magasin en mémoire
+(tests/fixtures_watch/fake_store.py) : jamais Watch-Lab, watch/, ~/.pmzilla-lab ni la base. Aucun accès réseau ni modèle
+local : les notes sont écrites directement dans le faux magasin, `veille.client` et `veille.discover_feed` sont remplacés.
+Couvre : classement et raisons d'écart, calibration en base (export, import, seuils, avis conservés), seuils (avec et sans
+--save), suggestions de sources, mode observation puis mode filtre (apply, exclude, restore), déplacement annulé quand la
+validation échoue.
 """
 import argparse
 import contextlib
+import datetime as dt
 import csv
 import io
 import json
@@ -26,7 +28,10 @@ import numpy as np
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests" / "fixtures_watch"))
 import watch_triage as tri  # noqa: E402
+import watch_store  # noqa: E402
+import fake_store  # noqa: E402
 import watch_lab as veille  # noqa: E402
 import watch_config  # noqa: E402
 import watch_paths  # noqa: E402
@@ -52,23 +57,25 @@ class Base(unittest.TestCase):
         self.discover = mock.MagicMock(name="discover_feed", return_value=None)
         for patch in (
             mock.patch.object(tri, "CONFIG_FILE", self.tmp / "watch" / "tri.yaml"),
-            mock.patch.object(tri, "TRI_DB", self.tmp / "data" / "tri.sqlite"),
             mock.patch.object(tri, "ARCHIVE_DIR", self.archive),
             mock.patch.object(tri, "CALIBRATION_FILE", self.veille_dir / "_calibration.csv"),
             mock.patch.object(veille, "WATCH_DIR", self.veille_dir),
             mock.patch.object(veille, "ARTICLES_DIR", self.articles),
             mock.patch.object(veille, "SOURCES_FILE", self.tmp / "watch" / "sources.yaml"),
-            mock.patch.object(veille, "STATE_DB", self.tmp / "data" / "veille.sqlite"),
             mock.patch.object(veille, "client", self.client),
             mock.patch.object(veille, "discover_feed", self.discover),
         ):
             patch.start()
             self.addCleanup(patch.stop)
         self.sortie = io.StringIO()
-        self.connection = tri.db()
-        self.addCleanup(self.connection.close)
-        self.connection.execute("INSERT INTO refs VALUES ('r1', 'ref', 'test', ?)", (tri.to_blob(vecteur(0)),))
-        self.connection.commit()
+        donnees = mock.patch.dict("os.environ", {"PMZILLA_LAB_DATA": str(self.tmp / "donnees-labo")})   # le décompte des retenus (R-50) n'écrit jamais dans le vrai dossier
+        donnees.start()
+        self.addCleanup(donnees.stop)
+        self.data = fake_store.install(self)
+        self.store = fake_store.FakeTriageStore(self.data)       # lecture et mise en place : n'ajoute aucune ouverture de rôle
+        self.watch = fake_store.FakeWatchStore(self.data)
+        self.store.put_reference("r1", "ref", "test", vecteur(0))
+        self.store.commit()
         self.compteur = 0
 
     # -- aides -------------------------------------------------------------
@@ -81,23 +88,43 @@ class Base(unittest.TestCase):
 
     def ajouter(self, nom, substance, *, titre=None, source="source-a.test", url=None, in_themes=1, promo=0,
                 compilation=0, justifs=None, ecrire=True, collecte="2026-10-02"):
-        """Insère un article noté ; l'angle croît avec le compteur, donc la pertinence décroît."""
+        """Écrit un article noté ; l'angle croît avec le compteur, donc la pertinence décroît."""
         self.compteur += 1
         criteres = None if substance is None else {k: i < substance for i, k in enumerate(CRITERES)}
-        self.connection.execute(
-            "INSERT INTO scores (file, url, title, source, published, collected, complete, vector, criteria, "
-            "substance, resume, pourquoi, model, scored_at, location, justifications, compilation, in_themes, promo) "
-            "VALUES (?, ?, ?, ?, '2026-10-01', ?, 1, ?, ?, ?, 'résumé', 'pourquoi', 'm', 'now', "
-            "'watch', ?, ?, ?, ?)",
-            (nom, url or f"https://{source}/{nom}", titre or f"Titre {nom}", source, collecte,
-             tri.to_blob(vecteur(0.05 * self.compteur)), json.dumps(criteres) if criteres else None, substance,
-             json.dumps(justifs) if justifs else None, compilation, in_themes, promo))
-        self.connection.commit()
+        self.store.put_score(
+            file=nom, url=url or f"https://{source}/{nom}", title=titre or f"Titre {nom}", source=source, published="2026-10-01",
+            collected=collecte, complete=True, embedding=vecteur(0.05 * self.compteur), criteria=criteres or None,
+            substance=substance, summary="résumé", why="pourquoi", model="m", scored_at=dt.datetime.now().astimezone(),
+            location="watch", justifications=justifs or None, is_compilation=bool(compilation), in_themes=bool(in_themes),
+            is_promo=bool(promo))
+        self.store.commit()
         if ecrire:
             (self.articles / nom).write_text(f"---\ntitle: Titre {nom}\n---\n\ntexte inventé\n", encoding="utf-8")
 
+    def note_de(self, nom):
+        return next(n for n in self.store.all_scores() if n["file"] == nom)
+
+    def modifier_note(self, nom, **champs):
+        """Change des champs d'une note déjà écrite (état validé du faux magasin)."""
+        def changer(tables):
+            tables["scores"][nom].update(champs)
+        self.data.edit(changer)
+
     def ligne(self, nom):
-        return next(r for r in tri.ranked(self.connection) if r["file"] == nom)
+        return next(r for r in tri.ranked(self.store) if r["file"] == nom)
+
+    def erreur_de_sortie(self, commande, **options):
+        """Lance une commande qui doit s'arrêter : (code, texte de l'erreur standard)."""
+        erreur = io.StringIO()
+        with contextlib.redirect_stderr(erreur), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as ctx:
+            commande(argparse.Namespace(**options))
+        return ctx.exception.code, erreur.getvalue()
+
+    def exporter(self):
+        return self.lancer(tri.cmd_calibration, import_sheet=None)
+
+    def importer(self, feuille=""):
+        return self.lancer(tri.cmd_calibration, import_sheet=feuille)
 
 
 class Classement(Base):
@@ -122,7 +149,7 @@ class Classement(Base):
         self.ajouter("a5.md", None)
         self.ajouter("a6.md", 1)
         with contextlib.redirect_stdout(self.sortie):
-            lignes = {r["file"]: r for r in tri.ranked(self.connection)}
+            lignes = {r["file"]: r for r in tri.ranked(self.store)}
         self.assertEqual(lignes["a1.md"]["pertinence"], 100)   # le plus proche de la référence
         self.assertEqual(lignes["a6.md"]["pertinence"], 0)
         self.assertEqual(lignes["a1.md"]["reasons"], [])
@@ -141,21 +168,20 @@ class Classement(Base):
             self.assertEqual(self.ligne("a1.md")["reasons"], [tri.CRITERIA[k][1] for k in CRITERES[3:]])
 
     def test_sans_reference_ou_sans_article(self):
-        self.connection.execute("DELETE FROM refs")
-        self.connection.commit()
+        self.data.edit(lambda tables: tables["refs"].clear())
         with self.assertRaises(SystemExit):
-            tri.ranked(self.connection)
-        self.connection.execute("INSERT INTO refs VALUES ('r', 'r', 't', ?)", (tri.to_blob(vecteur(0)),))
-        self.connection.commit()
+            tri.ranked(self.store)
+        self.store.put_reference("r", "r", "t", vecteur(0))
+        self.store.commit()
         with self.assertRaises(SystemExit):
-            tri.ranked(self.connection)
+            tri.ranked(self.store)
 
     def test_ecart_manuel_et_repechage_l_emportent(self):
         self.ajouter("bon.md", 5)
         self.ajouter("faible.md", 0)
-        self.connection.execute("INSERT INTO excluded VALUES ('bon.md', 'x')")
-        self.connection.execute("INSERT INTO forced VALUES ('faible.md', 'x')")
-        self.connection.commit()
+        self.store.exclude("bon.md", "2026-10-01")
+        self.store.restore("faible.md", "2026-10-01")
+        self.store.commit()
         with contextlib.redirect_stdout(self.sortie):
             self.assertEqual(self.ligne("bon.md")["reasons"], ["écarté à la main"])
             self.assertEqual(self.ligne("faible.md")["reasons"], [])
@@ -170,6 +196,20 @@ def jeu_de_calibration(self):
     self.ajouter("t1.md", 5, in_themes=0)
     self.ajouter("p1.md", 4, promo=1)
     self.ajouter("x1.md", None)
+
+
+def remplir_avis_en_gardant(avis: dict) -> None:
+    """Change seulement les avis nommés dans la feuille, les autres cellules restent telles quelles."""
+    with tri.CALIBRATION_FILE.open(encoding="utf-8-sig", newline="") as handle:
+        lecteur = csv.DictReader(handle, delimiter=";")
+        champs, lignes = lecteur.fieldnames, list(lecteur)
+    for ligne in lignes:
+        if ligne["fichier"][:-3] in avis:
+            ligne["avis"] = avis[ligne["fichier"][:-3]]
+    with tri.CALIBRATION_FILE.open("w", encoding="utf-8-sig", newline="") as handle:
+        ecrivain = csv.DictWriter(handle, fieldnames=champs, delimiter=";")
+        ecrivain.writeheader()
+        ecrivain.writerows(lignes)
 
 
 def remplir_avis(avis: dict) -> None:
@@ -194,7 +234,7 @@ class Calibration(Base):
         jeu_de_calibration(self)
 
     def test_csv_exporte(self):
-        sortie = self.lancer(tri.cmd_calibration)
+        sortie = self.exporter()
         self.assertIn("15 articles", sortie)
         with tri.CALIBRATION_FILE.open(encoding="utf-8-sig", newline="") as handle:
             lignes = {r["fichier"]: r for r in csv.DictReader(handle, delimiter=";")}
@@ -208,21 +248,40 @@ class Calibration(Base):
         self.assertEqual(lignes["x1.md"]["substance"], "")
         self.assertEqual(lignes["x1.md"]["filtre"], "écarter")
         self.assertTrue(all(r["avis"] == "" for r in lignes.values()))
+        self.assertTrue(sortie.rstrip().endswith("watch_triage.py calibration --import"))
+        # la base garde une ligne par article, avec les valeurs exportées
+        entrees = {e["file"]: e for e in self.store.calibration_entries()}
+        self.assertEqual(len(entrees), 15)
+        self.assertEqual((entrees["k1.md"]["verdict"], entrees["w1.md"]["verdict"], entrees["x1.md"]["verdict"]),
+                         ("keep", "discard", "discard"))
+        self.assertEqual((entrees["c1.md"]["is_compilation"], entrees["p1.md"]["is_promo"], entrees["t1.md"]["in_themes"]),
+                         (True, True, False))
+        self.assertIsNone(entrees["x1.md"]["substance"])
+        self.assertTrue(all(e["opinion"] is None for e in entrees.values()))
 
-    def test_seuils_sans_calibration(self):
-        with self.assertRaises(SystemExit):
-            self.lancer(tri.cmd_thresholds, save=False)
+    def test_seuils_sans_aucun_avis_message_exact_avec_ou_sans_feuille(self):
+        attendu = "Aucun avis de calibration en base : lancez calibration, remplissez la colonne « avis », puis calibration --import."
+        for avec_feuille in (False, True):
+            with self.subTest(feuille=avec_feuille):
+                if avec_feuille:
+                    self.exporter()
+                with self.assertRaises(SystemExit) as erreur:
+                    self.lancer(tri.cmd_thresholds, save=False)
+                self.assertEqual(str(erreur.exception), attendu)
+                self.assertEqual(erreur.exception.code, attendu)       # sys.exit(texte) : texte sur l'erreur standard, code 1
 
     def test_seuils_trop_peu_d_avis(self):
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         remplir_avis({"k1": "g", "w1": "e"})
+        self.importer()
         with self.assertRaises(SystemExit) as erreur:
             self.lancer(tri.cmd_thresholds, save=False)
         self.assertIn("2 avis", str(erreur.exception))
 
     def test_seuils_sans_enregistrer(self):
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         remplir_avis(AVIS)
+        self.importer()
         with contextlib.redirect_stdout(io.StringIO()):
             tri.config()
             tri.set_config("substance_threshold", 1)
@@ -238,8 +297,9 @@ class Calibration(Base):
         self.assertRegex(sortie, r"\n\s+4\s+2\s+0\n")
 
     def test_seuils_desaccords_signales(self):
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         remplir_avis(AVIS)
+        self.importer()
         sortie = self.lancer(tri.cmd_thresholds, save=False)
         self.assertIn("2 article(s) que vous voulez garder sont écartés par une règle fixe", sortie)
         self.assertIn("(compilation)", sortie)
@@ -252,8 +312,9 @@ class Calibration(Base):
         self.assertNotIn("t1.md", sortie)   # hors thèmes écarté et voulu écarté : aucun désaccord
 
     def test_seuils_avec_enregistrer(self):
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         remplir_avis(AVIS)
+        self.importer()
         with contextlib.redirect_stdout(io.StringIO()):
             tri.config()
             tri.set_config("substance_threshold", 1)
@@ -266,11 +327,66 @@ class Calibration(Base):
         self.assertIn("# nombre minimal de critères remplis", tri.CONFIG_FILE.read_text(encoding="utf-8"))
 
     def test_seuils_a_egalite_prend_le_moins_strict(self):
-        self.lancer(tri.cmd_calibration)
+        self.exporter()
         # tous bons : aucun seuil ne perd de bon avant 3, le moins strict (0) gagne
         remplir_avis({k: "g" for k in ("k1", "k2", "k3", "k4", "k5", "w1", "w2", "w3", "w4", "w5", "w6")})
+        self.importer()
         sortie = self.lancer(tri.cmd_thresholds, save=False)
         self.assertIn("Proposition (substance seule) : substance_threshold: 0", sortie)
+
+    # -- avis stockés en base (4.3) ------------------------------------------
+
+    def test_import_compte_et_enregistre(self):
+        self.exporter()
+        remplir_avis({"k1": "g", "w1": "e", "k2": "g"})
+        self.assertEqual(self.importer().strip(), "Avis importés : 2 à garder, 1 à écarter, 0 effacés, 0 articles inconnus")
+        self.assertEqual(self.store.calibration_opinions(), {"k1.md": True, "k2.md": True, "w1.md": False})
+        # une cellule vidée efface l'avis ; une ligne qui nomme un article inconnu est comptée et ignorée
+        with tri.CALIBRATION_FILE.open("a", encoding="utf-8-sig", newline="") as handle:
+            handle.write("inconnu.md;x;s;0;;;;;;;g\n")
+        remplir_avis_en_gardant({"k1": ""})
+        self.assertEqual(self.importer().strip(), "Avis importés : 1 à garder, 1 à écarter, 1 effacés, 1 articles inconnus")
+        self.assertEqual(self.store.calibration_opinions(), {"k2.md": True, "w1.md": False})
+
+    def test_import_chemin_explicite_et_feuille_absente(self):
+        code, message = self.erreur_de_sortie(tri.cmd_calibration, import_sheet=str(tri.CALIBRATION_FILE))
+        self.assertEqual(code, 1)
+        self.assertEqual(message.strip(), f"Feuille de calibration introuvable : {tri.CALIBRATION_FILE}")
+        copie = self.tmp / "ailleurs.csv"
+        self.exporter()
+        remplir_avis({"k1": "g"})
+        copie.write_bytes(tri.CALIBRATION_FILE.read_bytes())
+        tri.CALIBRATION_FILE.unlink()
+        self.assertIn("1 à garder", self.importer(str(copie)))
+        self.assertEqual(self.store.calibration_opinions(), {"k1.md": True})
+
+    def test_reexport_prerempli_et_avis_conserves(self):
+        self.exporter()
+        remplir_avis({"k1": "g", "w1": "e"})
+        self.importer()
+        self.exporter()
+        with tri.CALIBRATION_FILE.open(encoding="utf-8-sig", newline="") as handle:
+            avis = {r["fichier"]: r["avis"] for r in csv.DictReader(handle, delimiter=";")}
+        self.assertEqual({k: v for k, v in avis.items() if v}, {"k1.md": "g", "w1.md": "e"})
+        self.assertEqual(len(self.store.calibration_entries()), 15)         # pas de doublon
+        # un article qui n'est plus noté garde sa ligne, ses dernières valeurs et son avis
+        self.data.edit(lambda tables: tables["scores"].pop("w1.md"))
+        self.exporter()
+        entrees = {e["file"]: e for e in self.store.calibration_entries()}
+        self.assertEqual(entrees["w1.md"]["opinion"], "discard")
+        self.assertEqual(entrees["w1.md"]["substance"], 2)
+
+    def test_seuils_ne_lisent_pas_la_feuille_et_ne_changent_aucune_ligne(self):
+        self.exporter()
+        remplir_avis(AVIS)
+        self.importer()
+        avec = self.lancer(tri.cmd_thresholds, save=False)
+        avant = self.store.calibration_entries()
+        tri.CALIBRATION_FILE.unlink()
+        sans = self.lancer(tri.cmd_thresholds, save=False)
+        self.assertEqual(sans, avec)
+        self.assertEqual(self.store.calibration_entries(), avant)
+        self.assertEqual(self.data.roles[-1], "ro")
 
 
 class Filtre(Base):
@@ -295,7 +411,7 @@ class Filtre(Base):
         self.assertIn("2 article(s) sorti(s)", sortie)
         self.assertEqual([p.name for p in self.articles.glob("*.md")], ["bon.md"])
         self.assertEqual(sorted(p.name for p in self.archive.glob("*.md")), ["faible.md", "promo.md"])
-        lieux = dict(self.connection.execute("SELECT file, location FROM scores").fetchall())
+        lieux = {n["file"]: n["location"] for n in self.store.all_scores()}
         self.assertEqual((lieux["faible.md"], lieux["bon.md"]), ("excluded", "watch"))
 
     def test_filtre_deux_fois_ne_deplace_plus(self):
@@ -318,12 +434,37 @@ class Filtre(Base):
         self.assertIn("est dans la bibliothèque", self.lancer(tri.cmd_restore, fichier="faible.md"))
         self.assertTrue((self.articles / "faible.md").exists())
         self.assertFalse((self.archive / "faible.md").exists())
-        self.assertEqual(self.connection.execute(
-            "SELECT location FROM scores WHERE file = 'faible.md'").fetchone()[0], "watch")
+        self.assertEqual(self.store.location_of("faible.md"), "watch")
         self.assertIn("0 article(s) sorti(s)", self.lancer(tri.cmd_apply))   # protégé malgré la note 0
         self.assertTrue((self.articles / "faible.md").exists())
         with self.assertRaises(SystemExit):
             self.lancer(tri.cmd_restore, fichier="inconnu.md")
+
+    def test_apply_annule_le_deplacement_dont_la_validation_echoue(self):
+        tri.set_config("mode", "filtre")
+        self.data.fail_on_commit(2)          # la validation du second article déplacé
+        code, _ = self.erreur_de_sortie(tri.cmd_apply)
+        self.assertEqual(code, 4)
+        archives = sorted(p.name for p in self.archive.glob("*.md"))
+        gardes = sorted(p.name for p in self.articles.glob("*.md"))
+        self.assertEqual(len(archives), 1)                           # le premier est sorti, enregistré
+        self.assertEqual(sorted(archives + gardes), ["bon.md", "faible.md", "promo.md"])
+        lieux = {n["file"]: n["location"] for n in self.store.all_scores()}
+        self.assertEqual(lieux[archives[0]], "excluded")
+        autre = next(n for n in ("faible.md", "promo.md") if n not in archives)
+        self.assertEqual(lieux[autre], "watch")                      # le second est revenu, son emplacement n'a pas changé
+        self.assertTrue((self.articles / autre).exists())
+
+    def test_restore_remet_le_fichier_quand_la_validation_echoue(self):
+        tri.set_config("mode", "filtre")
+        self.lancer(tri.cmd_apply)
+        self.data.fail_on_commit(1)
+        code, _ = self.erreur_de_sortie(tri.cmd_restore, fichier="faible.md")
+        self.assertEqual(code, 4)
+        self.assertTrue((self.archive / "faible.md").exists())
+        self.assertFalse((self.articles / "faible.md").exists())
+        self.assertEqual(self.store.location_of("faible.md"), "excluded")
+        self.assertNotIn("faible.md", self.store.forced_files())
 
     def test_repecher_annule_un_ecart_manuel(self):
         tri.set_config("mode", "filtre")
@@ -334,15 +475,11 @@ class Filtre(Base):
 
 
 class Suggestions(Base):
-    def setUp(self):
-        super().setUp()
-        self.etat = veille.state()
-        self.addCleanup(self.etat.close)
-
     def citer(self, article, *cibles):
-        for cible in cibles:
-            self.etat.execute("INSERT OR IGNORE INTO links VALUES (?, ?)", (article, cible))
-        self.etat.commit()
+        if not self.watch.article_exists(article):
+            self.watch.add_article(article, "s.test", "Titre", "f.md", None, True, dt.datetime.now().astimezone())
+        self.watch.add_links(article, set(cibles) | {c for u, c in self.watch.all_links() if u == article})
+        self.watch.commit()
 
     def lancer_suggestions(self, **options):
         defaut = dict(min=2, max=30, reset=False)
@@ -572,10 +709,9 @@ class CollectionPersonnelle(Base):
         own.mkdir()
         (own / "a.md").write_text('---\ntitle: "Mon article"\nurl: https://x.test/a\n---\n\nCorps de l\'article.\n',
                                   encoding="utf-8")
-        self.connection.execute("INSERT INTO refs VALUES ('p', 'p', 'partage', ?)", (tri.to_blob(vecteur(0)),))
-        self.connection.execute("INSERT INTO refs VALUES ('o', 'o', 'ancienne-etiquette', ?)", (tri.to_blob(vecteur(0)),))
-        self.connection.execute("INSERT INTO refs VALUES ('s', 's', 'signalpm', ?)", (tri.to_blob(vecteur(0)),))
-        self.connection.commit()
+        for url, origine in (("p", "partage"), ("o", "ancienne-etiquette"), ("s", "signalpm")):
+            self.store.put_reference(url, url, origine, vecteur(0))
+        self.store.commit()
         args = argparse.Namespace(claude_export=["x.zip"], without_own=False)
         sortie = io.StringIO()
         with mock.patch.object(tri, "OWN_DIR", own), \
@@ -583,7 +719,7 @@ class CollectionPersonnelle(Base):
                 mock.patch.object(tri.library, "embed", side_effect=lambda textes: [vecteur(0) for _ in textes]), \
                 contextlib.redirect_stdout(sortie):
             tri.cmd_references(args)
-        origines = dict(self.connection.execute("SELECT url, origin FROM refs").fetchall())
+        origines = {url: ref["origin"] for url, ref in self.data.table("refs").items()}
         self.assertEqual(origines.get("https://x.test/a"), watch_paths.OWN_COLLECTION)
         self.assertEqual(origines.get("p"), "partage")
         self.assertNotIn("o", origines)

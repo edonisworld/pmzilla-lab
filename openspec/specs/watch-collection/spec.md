@@ -5,7 +5,9 @@
 Collection of articles from followed sources into a local article folder, with a persistent state, a collection report, source discovery, a reading list and import of the user's own articles.
 
 Source of truth: `tests/watch_lab/test_watch_lab.py`, `tools/watch_lab.py`.
+
 ## Requirements
+
 ### Requirement: Collect new articles from active sources
 The system SHALL read the feed of every active source that has a feed, and write each new recent article as one Markdown file with front matter (title with source name, link, source key, author, publication date, completeness flag) and a body whose repeated leading title is removed. Articles older than the requested period, entries without a link, and entries rejected by the source's include/exclude keyword filter (matched against title and categories, exclude winning over include) SHALL be skipped.
 
@@ -165,6 +167,62 @@ Source: `tests/watch_lab/test_watch_lab.py` (CoucheLocale)
 #### Scenario: Header
 - **WHEN** the tracked sources file is written
 - **THEN** its header mentions the local sources file
+
+### Requirement: Keep the collection state in the database only
+The system SHALL keep the collection state (collected articles, last attempt and error of each source, links cited by each article, whether an article's links were extracted) in the knowledge schema of the local database, for every subcommand that reads or writes it: collect, links, digest and import-medium. Commands that only read the state (the plain reading list, the database check) SHALL connect under the knowledge read-only role. The system SHALL NOT read, create or write any local state file for the collection, and SHALL NOT fall back to one when the database fails.
+
+Source: tests/watch_lab/test_watch_lab.py and tests/watch_store/test_contract.py
+
+#### Scenario: Collection on the database
+- **WHEN** a feed with two new articles is collected
+- **THEN** two article records exist in the database with their source, title, file name, publication date, completeness and collection time, the source's last attempt and success are recorded, and no state file is created in the data folder
+
+#### Scenario: Links extracted flag
+- **WHEN** the links command records the links of an article whose page is reachable
+- **THEN** its links are stored and the article is flagged as extracted, so a second run does not fetch it again, while an unreachable article stays unflagged
+
+#### Scenario: No former path
+- **WHEN** the collection module and the store module are read
+- **THEN** neither imports the SQLite library nor names a state file
+
+### Requirement: Stop before any network read or file write when the database fails
+The system SHALL connect to the database before reading any feed, page, export or link list. When the database does not answer, every collection subcommand SHALL exit with the code and message of design.md D4 for an unreachable database; when the watch tables are absent, with the code and message for absent tables. In both cases it SHALL NOT fetch any feed, SHALL NOT write any article file, reading list or collection report, and the message SHALL NOT contain a password or a driver error text.
+
+Source: tests/watch_lab/test_watch_lab.py
+
+#### Scenario: Database down
+- **WHEN** collect runs and the database does not answer
+- **THEN** the exit code and message are those of design.md D4, no feed is requested, and the article folder and the report file are unchanged
+
+#### Scenario: Tables absent
+- **WHEN** digest runs on a database without the watch tables
+- **THEN** the exit code and message name the missing migration, and no reading list is written
+
+### Requirement: Never leave an article file without its record
+The system SHALL record an article and write its file together: when the record of a newly written article cannot be committed, the system SHALL remove the file written for it in that run, so that a later run collects the article once under its normal name. It SHALL NOT keep an article record whose file was not written. The same rule SHALL apply to the import of the user's own articles.
+
+Source: tests/watch_lab/test_watch_lab.py
+
+#### Scenario: Commit fails after the file is written
+- **WHEN** the database fails while committing the second of two new articles
+- **THEN** the first article has its file and its record, the second has neither, and the next run writes the second under its normal name, without a numeric suffix
+
+### Requirement: Check that the database is ready for the watch
+The system SHALL provide a database check command that connects under the knowledge read-only role, checks that the watch and pre-triage tables exist, and reads nothing else. With a wait option it SHALL retry until the database answers or the wait is over. It SHALL print the ready phrase of design.md D4 and exit 0 when ready, or the message and exit code of design.md D4 for an unreachable database or absent tables. It SHALL NOT write anything and SHALL NOT try to start the database.
+
+Source: tests/watch_lab/test_watch_lab.py
+
+#### Scenario: Ready
+- **WHEN** the database answers and holds the tables
+- **THEN** the command prints "Base de données prête pour la veille" and exits 0
+
+#### Scenario: Answers after a delay
+- **WHEN** the database answers only on the third attempt, within the wait
+- **THEN** the command exits 0 after three attempts
+
+#### Scenario: Still down after the wait
+- **WHEN** the database does not answer before the wait is over
+- **THEN** the command exits with the unreachable-database code, and no start command is run
 
 ## Open questions
 

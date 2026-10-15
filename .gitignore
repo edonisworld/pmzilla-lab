@@ -64,3 +64,6 @@ __pycache__/
 # Réponses d'installation BMAD personnelles (nom de l'utilisateur) et surcharges personnelles
 /_bmad/config.user.toml
 /_bmad/custom/*.user.toml
+
+# Réglage local de session (écrit par tools/worktree.sh)
+.claude/settings.local.json

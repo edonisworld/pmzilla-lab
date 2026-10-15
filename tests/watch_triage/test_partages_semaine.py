@@ -4,7 +4,8 @@ Tests des partages, de l'inventaire hebdomadaire et de la relance de la notation
     uv run --with numpy --with httpx --with pyyaml python -m unittest discover -s tests/watch_triage -v
 
 Articles et comptes inventés ; faux client social (`veille.links_from_bluesky` remplacé), faux modèle (`httpx.post`).
-Aucun réseau, aucun modèle local, aucun dossier réel : tout est dans le dossier temporaire de la classe Base voisine.
+Aucun réseau, aucun modèle local, aucun dossier réel : tout est dans le dossier temporaire et le faux magasin en mémoire de la
+classe Base voisine.
 Couvre : cmd_shares (marquage, références, saut sans identifiant, service arrêté), cmd_week (lignes du fichier, période,
 plafond, aucun texte d'article) et la relance unique d'une réponse anglaise inutilisable (aucune sur une erreur réseau).
 """
@@ -20,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import watch_triage as tri  # noqa: E402
 import watch_lab as veille  # noqa: E402
+import watch_store  # noqa: E402
 import test_watch_triage as voisin  # noqa: E402
 import test_shadow as ombre  # noqa: E402
 
@@ -49,10 +51,12 @@ class Partages(voisin.Base):
         self.ajouter("b.md", 4, url="https://s.test/b")
         self.partages([("https://www.s.test/a?utm_source=x", "2026-10-03"), ("https://ailleurs.test/z", "2026-10-04")])
         sortie = self.lancer(tri.cmd_shares, pages=2)
-        self.assertEqual([tuple(r) for r in self.connection.execute("SELECT file, url, post_date FROM shared")],
-                         [("a.md", "https://s.test/a", "2026-10-03")])
-        partages = [tuple(r) for r in self.connection.execute("SELECT url, title FROM refs WHERE origin = 'partage'")]
+        self.assertEqual([(f, r["url"], r["post_date"]) for f, r in self.data.table("shared").items()],
+                         [("a.md", "https://s.test/a", dt.date(2026, 10, 3))])
+        self.assertEqual(self.data.table("shared")["a.md"]["found"], AUJOURD_HUI)
+        partages = [(url, r["title"]) for url, r in self.data.table("refs").items() if r["origin"] == "partage"]
         self.assertEqual(partages, [("https://s.test/a", "a.md")])
+        self.assertEqual(self.data.roles, ["rw"])
         self.assertEqual(self.faux_lien.call_args.kwargs["max_pages"], 2)
         self.assertIn("2 liens lus", sortie)
         self.assertIn("1 nouveaux articles", sortie)
@@ -63,7 +67,7 @@ class Partages(voisin.Base):
         self.partages([("https://s.test/a", "2026-10-03")])
         self.lancer(tri.cmd_shares, pages=1)
         sortie = self.lancer(tri.cmd_shares, pages=1)
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM shared").fetchone()[0], 1)
+        self.assertEqual(self.store.share_total(), 1)
         self.assertIn("0 nouveaux", sortie)
 
     def test_sans_identifiant_l_etape_est_sautee_sans_rien_changer(self):
@@ -73,7 +77,7 @@ class Partages(voisin.Base):
         sortie = self.lancer(tri.cmd_shares, pages=1)
         self.assertIn("étape sautée", sortie)
         self.faux_lien.assert_not_called()
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM shared").fetchone()[0], 0)
+        self.assertEqual(self.store.share_total(), 0)
 
     def test_service_arrete_le_passage_continue(self):
         self.reglages()
@@ -83,7 +87,7 @@ class Partages(voisin.Base):
         self.addCleanup(patch.stop)
         sortie = self.lancer(tri.cmd_shares, pages=1)   # ne lève rien
         self.assertIn("n'a pas répondu", sortie)
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM shared").fetchone()[0], 0)
+        self.assertEqual(self.store.share_total(), 0)
 
     def test_compte_inconnu_est_traite_comme_un_service_sans_reponse(self):
         self.reglages()
@@ -102,8 +106,7 @@ class Semaine(voisin.Base):
         self.addCleanup(patch.stop)
 
     def dater(self, nom, publie, collecte):
-        self.connection.execute("UPDATE scores SET published = ?, collected = ? WHERE file = ?", (publie, collecte, nom))
-        self.connection.commit()
+        self.modifier_note(nom, published=watch_store.as_date(publie), collected=watch_store.as_moment(collecte))
 
     def semaine(self, **options):
         return self.lancer(tri.cmd_week, **{"days": 7, "max": 40, "per_run": False, **options})
@@ -111,9 +114,10 @@ class Semaine(voisin.Base):
     def test_lignes_du_fichier_et_marque_partage(self):
         self.ajouter("a.md", 4, titre="Un titre inventé", source="s.test", url="https://s.test/a")
         self.dater("a.md", il_y_a(1), il_y_a(1))
-        self.connection.execute("INSERT INTO shared VALUES ('a.md', 'https://s.test/a', '2026-10-03', '2026-10-04')")
-        self.connection.commit()
+        self.store.add_share("a.md", "https://s.test/a", "2026-10-03", "2026-10-04")
+        self.store.commit()
         sortie = self.semaine()
+        self.assertEqual(self.data.roles, ["ro"])           # l'inventaire ne s'ouvre qu'en lecture seule
         texte = self.fichier.read_text(encoding="utf-8")
         self.assertIn("## Un titre inventé", texte)
         self.assertIn(f"- Source : s.test · publié le {il_y_a(1)} · pertinence", texte)

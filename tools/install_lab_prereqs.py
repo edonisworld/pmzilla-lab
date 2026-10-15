@@ -14,7 +14,8 @@ NOM = "prereqs"
 OUTILS = ("git", "uv", "node")      # présents s'ils répondent sur le PATH, qu'ils viennent de Homebrew ou non (Git des outils Xcode, Node installé autrement)
 PAGE_HOMEBREW = "https://brew.sh"
 INSTALLATEUR_CLAUDE = "curl -fsSL https://claude.ai/install.sh | bash"
-RAISONS_RUNTIME = ("database step deferred", "library server registered with the file backend", "backup job not installed")
+APPLICATION_OLLAMA = "Ollama.app"
+RAISONS_RUNTIME = ("database step deferred", "library server step deferred", "backup job not installed")
 RAISONS_OLLAMA = ("watch job not installed", "indexing deferred")
 
 
@@ -94,8 +95,15 @@ def _moteur(ctx: Contexte) -> list[Resultat]:
 
 def _ollama(ctx: Contexte, modeles: list[tuple[str, str, str]]) -> list[Resultat]:
     resultats = []
+    if not ctx.trouver("ollama") and ctx.application_presente(APPLICATION_OLLAMA):
+        # l'application est là, sa ligne de commande n'est pas liée : ne pas réinstaller, demander de l'ouvrir une fois
+        ctx.etat["ollama_ok"] = False
+        _reporter(ctx, RAISONS_OLLAMA)
+        message = f"{APPLICATION_OLLAMA} is installed but its command line is not linked; open it once, then run this script again"
+        ctx.action_manuelle("open -a Ollama", message)
+        return [Resultat(MANUEL, message)]
     if not ctx.trouver("ollama"):
-        r = ctx.act(NOM, "install Ollama through Homebrew", ["brew", "install", "--cask", "ollama"])
+        r = ctx.act(NOM, "install Ollama through Homebrew", ["brew", "install", "--cask", "ollama-app"])
         resultats.append(r)
         if r.etat in (REFUSE, ECHEC):
             if r.etat == REFUSE:
@@ -142,8 +150,8 @@ def executer(ctx: Contexte) -> Resultat:
     echec = next((r for r in resultats if r.etat == ECHEC), None)
     if echec:
         return echec
-    if any(r.etat == REFUSE for r in resultats):
-        return next(r for r in resultats if r.etat == REFUSE)
+    if any(r.etat in (REFUSE, MANUEL) for r in resultats):
+        return next(r for r in resultats if r.etat in (REFUSE, MANUEL))
     if any(r.etat == A_BLANC for r in resultats):
         return Resultat(A_BLANC)
 

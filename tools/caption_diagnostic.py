@@ -20,6 +20,9 @@ rejoue ce retrait et classe par cause chaque légende qui n'a pas été retirée
 
 Il n'affiche que des comptes : jamais le texte du livre, ni une légende, ni le titre ni le chemin du livre. Il ne
 modifie rien, n'écrit aucun fichier et n'ouvre pas l'index.
+
+Exemple :
+    uv run tools/caption_diagnostic.py livre.md
 """
 import copy
 import difflib

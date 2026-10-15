@@ -7,17 +7,17 @@ Describes the dependency report tool: from the link columns of an export (or the
 ## Requirements
 
 ### Requirement: Subcommands and former names
-The system SHALL offer `diagnose` and `compute`, SHALL refuse former subcommand names with exit code 2, and SHALL accept former option names and former `--by` value names with a warning naming the new one, producing the same report. Former setting names SHALL be accepted with a warning; the report SHALL equal the one produced with the new names, and new names SHALL produce no warning.
+The system SHALL offer `diagnose` and `compute`, SHALL refuse former subcommand names with exit code 2, SHALL refuse former option names and former `--by` value names with exit code 2 and a message naming the current one, writing no report, and SHALL refuse former setting names with exit code 1, naming the current key. New names SHALL produce no such message.
 
 Source: tests/dependencies_jira/test_dependencies_jira.py (AnciensNoms)
 
 #### Scenario: Former option and value
-- **WHEN** the former name, "by" and "weeks" options and the former value for project aggregation are used
-- **THEN** warnings name the new option and value, and the JSON equals the one produced with the new names
+- **WHEN** the former name, "by" or "weeks" option, or the former value for project aggregation, is used
+- **THEN** the exit code is 2, the message names the current option or value, and no report is written
 
 #### Scenario: Former setting names
-- **WHEN** settings use former names
-- **THEN** a warning names the new key, and the report equals the new-name report
+- **WHEN** settings use a former name
+- **THEN** the exit code is 1 and the message names the current key; with the new names the run prints no such message
 
 ### Requirement: Direction of links
 The system SHALL read typed link columns (outward and inward per type) and treat a blocking link seen from both ends as a single dependency, with the row team waiting for the column team in the matrix. Link types configured as "waiting" SHALL be read in the opposite direction, and any other link type SHALL be ignored. When links come untyped, the mode SHALL be "undirected", no blockage list SHALL be produced, and the diagnosis SHALL say so.
@@ -137,7 +137,7 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Perimetre)
 - **THEN** all links are counted
 
 ### Requirement: Exclusions
-The system SHALL count dependencies of excluded projects separately (waits for the export and awaited by the export) and remove them from the matrices, SHALL leave decomposition links involving a portfolio-level ticket type out of the main map (counted by type and mapped in a separate portfolio matrix when both ends are of that kind), SHALL accept the former setting name for portfolio types, SHALL attribute tickets without a team to a "no team" label that keeps the project, and SHALL support aggregation by project with `--by project` into a separately named report.
+The system SHALL count dependencies of excluded projects separately (waits for the export and awaited by the export) and remove them from the matrices.
 
 Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
 
@@ -145,13 +145,36 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
 - **WHEN** a project is excluded
 - **THEN** its links appear in the excluded list and not in the dependency count or the matrix
 
+### Requirement: Portfolio decomposition links
+The system SHALL leave decomposition links involving a portfolio-level ticket type out of the main map (counted by type and mapped in a separate portfolio matrix when both ends are of that kind), and SHALL refuse the former setting name for portfolio types (exit code 1, naming the current one).
+
+Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
+
 #### Scenario: Portfolio decomposition
 - **WHEN** an epic points to a story and another epic to an epic
 - **THEN** the first is a decomposition link left out of the total matrix and the second goes to the portfolio matrix
 
+#### Scenario: Former portfolio-types name
+- **WHEN** the settings use the former name of the portfolio-types setting
+- **THEN** the run exits with code 1 and the message names the current setting
+
+### Requirement: Tickets without a team
+The system SHALL attribute tickets without a team to a "no team" label that keeps the project.
+
+Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
+
 #### Scenario: Team missing
 - **WHEN** a ticket has no team
 - **THEN** it appears as "no team" plus its project
+
+### Requirement: Aggregation by project
+The system SHALL support aggregation by project with `--by project` into a separately named report.
+
+Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
+
+#### Scenario: Project matrix
+- **WHEN** `compute` runs with `--by project`
+- **THEN** a separately named report holds the matrix between projects
 
 ### Requirement: Old portfolio epics
 The system SHALL report old portfolio-type tickets that have open links, grouped by team and by vitality: alive (a child changed recently), inactive children, or no delivery child. A recent epic, one without an open link, and children closed without delivery SHALL NOT count as activity.
@@ -176,7 +199,7 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (LeadTime)
 - **THEN** the lead-time table is empty
 
 ### Requirement: Message language
-The system SHALL print messages and reports in French by default and in English with `--language en`, matching the English reference without French words, and accept the former option name with a warning.
+The system SHALL print messages and reports in French by default and in English with `--language en`, matching the English reference without French words, and refuse the former option name with a non-zero exit code and a message naming the current one, printing nothing on stdout.
 
 Source: tests/dependencies_jira/test_language.py
 
@@ -184,6 +207,29 @@ Source: tests/dependencies_jira/test_language.py
 - **WHEN** `--language en` is used
 - **THEN** the output equals the English reference
 
+### Requirement: Aggregation by Mission Team or site
+The system SHALL accept on `compute` the `--by` values `mission-team` and `site` in addition to `team` and `project`. With these values it SHALL read the organisation referential and build the matrices, blockages and graph data between groups, with teams outside the referential grouped under "outside the referential", into a separately named report, on both data sources. A dependency between two teams of the same group SHALL be counted as internal to the group and stated, not hidden. A missing or invalid referential SHALL stop with exit code 1 naming the referential, never a value. The report SHALL NOT divide a dependency count by a headcount and SHALL NOT rank groups.
+
+Source: tests/dependencies_jira/test_par_groupe.py
+
+#### Scenario: Mission Team matrix
+- **WHEN** `compute --by mission-team` runs on links between three teams of two Mission Teams
+- **THEN** the matrix has two rows and columns, the internal dependencies of each Mission Team are stated, and the totals equal those of the team report
+
+#### Scenario: Referential missing
+- **WHEN** `compute --by mission-team` runs without a referential
+- **THEN** the exit code is 1 and no report is written
+
+### Requirement: Labels and versions absent from the dependency report
+The system SHALL NOT write a label or a version name in the diagnosis, the reports or the console of the dependency tool, including with the keys option.
+
+Source: tests/dependencies_jira/test_chaines_distinctives.py; tests/dependencies_jira/test_colonnes_ignorees.py
+
+#### Scenario: Keys option
+- **WHEN** `compute` runs with the keys option on data holding a distinctive label and version
+- **THEN** the console lines hold keys, teams and states only
+
 ## Open questions
 
 1. Exact names of the report files and the graph/diagram output (Mermaid in the Markdown) are not asserted by tests.
+2. The requirement "Project scope" names the word that disables the scope as "all", while the test passes the French word; whether the English word is also accepted is not asserted by a test.

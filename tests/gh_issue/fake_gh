@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Faux `gh` des tests de gh_issue.py et de l'import : un GitHub simulé dans un fichier JSON, aucune requête réseau.
+
+Environnement : FAKE_GH_STATE (fichier JSON de l'état : dépôt, issues, étiquettes, jalons, sous-issues, relations, Project,
+mode), FAKE_GH_LOG (fichier où chaque appel est noté : arguments, entrée standard, écriture ou non).
+Modes (clé `mode` de l'état) : offline, unauth, scope_missing (requêtes GraphQL), fail_after_writes (N écritures puis erreur 502),
+rate_limit_once (première écriture refusée une fois), reject_writes (toute écriture refusée, 422), et les modes de bornes :
+hang_reads (aucune réponse à une lecture), hang_writes_after (N : aucune réponse à l'écriture qui suit N écritures confirmées),
+refuse_after_writes (N : 404 avec en-têtes listant les scopes du jeton), graphql_insufficient (erreur INSUFFICIENT_SCOPES dans
+le corps), offline_after_writes (N : réseau perdu après N écritures confirmées), rate_limit_always (secondes de Retry-After
+sur tout appel), rate_limit_after_writes ([N, secondes]), hide_new_reads (une issue créée est cachée de la liste pendant K
+lectures), node_unresolved_adds (K ajouts au Project refusés « Could not resolve to a node »).
+GET issues/<n>/comments liste les commentaires de l'issue.
+Le journal note aussi `stdin_devnull` (entrée standard = /dev/null) et `prompt_disabled` (GH_PROMPT_DISABLED).
+Ne répond qu'à `repo view` et `api` ; tout autre appel est noté et refusé (code 2).
+"""
+import json
+import os
+import re
+import sys
+import time
+
+args = sys.argv[1:]
+stdin = None if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
+state_path = os.environ["FAKE_GH_STATE"]
+state = json.load(open(state_path, encoding="utf-8"))
+mode = state.setdefault("mode", {})
+
+
+def log(write):
+    with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as f:
+        try:
+            devnull = os.path.samestat(os.fstat(0), os.stat(os.devnull))
+        except OSError:
+            devnull = False
+        f.write(json.dumps({"args": args, "stdin": stdin, "write": write, "stdin_devnull": devnull,
+                            "prompt_disabled": os.environ.get("GH_PROMPT_DISABLED")}) + "\n")
+
+
+def save():
+    json.dump(state, open(state_path, "w", encoding="utf-8"))
+
+
+def fail(msg, code=1):
+    sys.stderr.write(msg + "\n")
+    sys.exit(code)
+
+
+def out(data):
+    if "--include" in args:
+        sys.stdout.write("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n")
+    print(json.dumps(data))
+    sys.exit(0)
+
+
+is_write = False
+if args[:1] == ["api"]:
+    if "graphql" in args:
+        is_write = "mutation" in (json.loads(stdin or "{}").get("query", "").lower())
+    else:
+        is_write = args[args.index("-X") + 1] != "GET" if "-X" in args else False
+log(is_write)
+
+if mode.get("offline"):
+    fail("error connecting to api.github.com")
+if mode.get("hang_reads") and not is_write:
+    time.sleep(60)
+n_writes = mode.get("writes", 0)
+if mode.get("hang_writes_after") is not None and is_write and n_writes >= mode["hang_writes_after"]:
+    time.sleep(60)
+if mode.get("offline_after_writes") is not None and n_writes >= mode["offline_after_writes"]:
+    fail("error connecting to api.github.com")
+if mode.get("rate_limit_always"):
+    fail("gh: You have exceeded a secondary rate limit (HTTP 403)\nRetry-After: %d" % mode["rate_limit_always"])
+if mode.get("rate_limit_after_writes") and n_writes >= mode["rate_limit_after_writes"][0]:
+    fail("gh: You have exceeded a secondary rate limit (HTTP 403)\nRetry-After: %d" % mode["rate_limit_after_writes"][1])
+if mode.get("refuse_after_writes") is not None and n_writes >= mode["refuse_after_writes"]:
+    sys.stdout.write("HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n"
+                     "X-Oauth-Scopes: project, read:org, repo\r\n\r\n{\"message\": \"Not Found\"}\n")
+    fail("gh: Not Found (HTTP 404)")
+if mode.get("unauth"):
+    fail("To get started with GitHub CLI, please run:  gh auth login", 4)
+if args[:2] == ["repo", "view"]:
+    out({"nameWithOwner": state["repo"]})
+if args[:1] != ["api"]:
+    fail("fake gh: appel non pris en charge", 2)
+
+if is_write:
+    if mode.get("reject_writes"):
+        fail(mode.get("reject_message") or "gh: Validation Failed (HTTP 422)")
+    rl = mode.pop("rate_limit_once", False)
+    if rl:
+        save()
+        h = rl if isinstance(rl, dict) else {}
+        if "reset" in h:
+            fail("gh: API rate limit exceeded (HTTP 403)\nX-Ratelimit-Reset: %d" % h["reset"])
+        if h.get("bare"):
+            fail("gh: You have exceeded a secondary rate limit (HTTP 403)")
+        fail("gh: You have exceeded a secondary rate limit (HTTP 403)\nRetry-After: 1")
+    limit = mode.get("fail_after_writes")
+    if limit is not None and mode.get("writes", 0) >= limit:
+        fail("gh: Server Error (HTTP 502)")
+    mode["writes"] = mode.get("writes", 0) + 1
+
+body = json.loads(stdin) if stdin else {}
+
+
+def issue_by_number(n):
+    for i in state["issues"]:
+        if i["number"] == int(n):
+            return i
+    fail("gh: Not Found (HTTP 404)")
+
+
+def issue_by_id(i):
+    for x in state["issues"]:
+        if x["id"] == int(i):
+            return x
+    fail("gh: Not Found (HTTP 404)")
+
+
+def page(items, query):
+    m = re.search(r"(?:^|&)page=(\d+)", query)
+    p = int(m.group(1)) if m else 1
+    return items[(p - 1) * 100:p * 100]
+
+
+if "graphql" in args:
+    q = body.get("query", "")
+    v = body.get("variables", {})
+    proj = state.get("project")
+    if mode.get("graphql_insufficient"):
+        sys.stdout.write("HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n"
+                         + json.dumps({"errors": [{"type": "INSUFFICIENT_SCOPES", "message": "Resource not accessible"}]}) + "\n")
+        fail("gh: Resource not accessible")
+    if mode.get("scope_missing"):
+        fail("gh: Your token has not been granted the required scopes to execute this query. The 'read:project' scope is required.")
+    if "projectsV2" in q:
+        nodes = []
+        if proj:
+            nodes = [{"id": proj["id"], "title": proj["title"],
+                      "fields": {"nodes": [{"id": proj["field_id"], "name": "Status", "options": proj["options"]}]}}]
+        out({"data": {"repositoryOwner": {"projectsV2": {"nodes": nodes}}}})
+    if "items(" in q:
+        items = []
+        for it in proj["items"]:
+            node = {"id": it["id"], "content": {"number": it["number"]}, "fieldValueByName": None}
+            if it.get("status"):
+                node["fieldValueByName"] = {"name": it["status"]}
+            items.append(node)
+        out({"data": {"node": {"items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": items}}}})
+    if "addProjectV2ItemById" in q:
+        if mode.get("node_unresolved_adds", 0) > 0:
+            mode["node_unresolved_adds"] -= 1
+            save()
+            fail("gh: Could not resolve to a node with the global id of '%s'" % v["content"])
+        issue = next(i for i in state["issues"] if i["node_id"] == v["content"])
+        it = next((x for x in proj["items"] if x["number"] == issue["number"]), None)
+        if it is None:
+            it = {"id": "PVTI_%d" % issue["number"], "number": issue["number"], "status": None}
+            proj["items"].append(it)
+        save()
+        out({"data": {"addProjectV2ItemById": {"item": {"id": it["id"]}}}})
+    if "updateProjectV2ItemFieldValue" in q:
+        it = next(x for x in proj["items"] if x["id"] == v["item"])
+        it["status"] = next(o["name"] for o in proj["options"] if o["id"] == v["option"])
+        save()
+        out({"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": it["id"]}}}})
+    fail("fake gh: requête GraphQL inconnue", 2)
+
+method = args[args.index("-X") + 1] if "-X" in args else "GET"
+path = next(a for a in args[1:] if a.startswith("repos/"))
+route, _, query = path.split("/", 3)[3].partition("?")
+parts = route.split("/")
+
+if parts[0] == "issues" and len(parts) == 1:
+    if method == "GET":
+        shown = [i for i in state["issues"] if not i.get("hidden_reads")]
+        if "page=1" in query or "page=" not in query:
+            for i in state["issues"]:
+                if i.get("hidden_reads"):
+                    i["hidden_reads"] -= 1
+            save()
+        out(page(shown, query))
+    n = max([i["number"] for i in state["issues"]] + [0]) + 1
+    issue = {"number": n, "id": 9000 + n, "node_id": "I_%d" % n, "title": body["title"], "body": body.get("body", ""),
+             "state": "open", "state_reason": None, "labels": [{"name": l} for l in body.get("labels", [])], "milestone": None}
+    if body.get("milestone"):
+        m = next(x for x in state["milestones"] if x["number"] == body["milestone"])
+        issue["milestone"] = {"title": m["title"], "number": m["number"]}
+    if mode.get("hide_new_reads"):
+        issue["hidden_reads"] = mode["hide_new_reads"]
+    state["issues"].append(issue)
+    save()
+    out({k: v for k, v in issue.items() if k != "hidden_reads"})
+if parts[0] == "issues" and len(parts) == 2 and method == "PATCH":
+    issue = issue_by_number(parts[1])
+    for k in ("title", "body", "state", "state_reason"):
+        if k in body:
+            issue[k] = body[k]
+    if "labels" in body:
+        issue["labels"] = [{"name": l} for l in body["labels"]]
+    if "milestone" in body:
+        m = next(x for x in state["milestones"] if x["number"] == body["milestone"])
+        issue["milestone"] = {"title": m["title"], "number": m["number"]}
+    save()
+    out(issue)
+if parts[0] == "issues" and len(parts) == 3 and parts[2] == "comments" and method == "GET":
+    out([{"id": k + 1, "body": c["body"]} for k, c in enumerate(state.get("comments", [])) if c["issue"] == int(parts[1])])
+if parts[0] == "issues" and len(parts) == 3 and parts[2] == "comments":
+    state.setdefault("comments", []).append({"issue": int(parts[1]), "body": body["body"]})
+    save()
+    out({"id": 1})
+if parts[0] == "issues" and len(parts) == 3 and parts[2] == "sub_issues":
+    subs = state.setdefault("sub", {}).setdefault(parts[1], [])
+    if method == "GET":
+        out([issue_by_number(n) for n in subs])
+    child = issue_by_id(body["sub_issue_id"])
+    if child["number"] in subs:
+        fail("gh: Sub-issue already exists (HTTP 422)")
+    subs.append(child["number"])
+    save()
+    out(child)
+if parts[0] == "issues" and len(parts) >= 4 and parts[2] == "dependencies":
+    blocked = state.setdefault("blocked", {})
+    if parts[3] == "blocking":
+        out([issue_by_number(n) for n, bl in blocked.items() if int(parts[1]) in bl])
+    lst = blocked.setdefault(parts[1], [])
+    if method == "GET":
+        out([issue_by_number(n) for n in lst])
+    if method == "POST":
+        blocker = issue_by_id(body["issue_id"])
+        if blocker["number"] in lst:
+            fail("gh: Relation already exists (HTTP 422)")
+        lst.append(blocker["number"])
+        save()
+        out(blocker)
+    if method == "DELETE":
+        lst.remove(issue_by_id(parts[4])["number"])
+        save()
+        sys.exit(0)
+if parts[0] == "labels":
+    if method == "GET":
+        out(page(state["labels"], query))
+    if any(l["name"] == body["name"] for l in state["labels"]):
+        fail("gh: Validation Failed (HTTP 422)")
+    state["labels"].append({"name": body["name"], "color": body.get("color")})
+    save()
+    out(body)
+if parts[0] == "milestones":
+    if method == "GET":
+        out(page(state["milestones"], query))
+    if method == "POST":
+        m = {"number": len(state["milestones"]) + 1, "title": body["title"], "state": body.get("state", "open")}
+        state["milestones"].append(m)
+        save()
+        out(m)
+    m = next(x for x in state["milestones"] if x["number"] == int(parts[1]))
+    m.update({k: v for k, v in body.items() if k in ("state", "title")})
+    save()
+    out(m)
+fail("fake gh: route inconnue " + route, 2)

@@ -22,6 +22,8 @@ Follow `openspec/config.yaml` (language, confidentiality, behavior not configura
 - Every behaviour rule of the postures also says what it forbids: the requirement names the action that is excluded, not only the one that is wanted.
 - `design.md` decides exit codes, messages and labels (the exact key phrases, the language of each output); requirements and tasks refer to them instead of leaving them to the implementer.
 
+- **Group tags in `tasks.md`**: every group heading `## <n>. <title>` ends with explicit tags. An agent group has exactly one model tag, `[model: opus]`, `[model: sonnet]` or `[model: haiku]`, chosen for its work (opus for framing, specs, review and diagnosis; sonnet for implementation, tests, documentation; haiku for mechanical searches), plus `[parallel]` when it runs in parallel with others of its wave. A user group carries `[user]` and no model tag. A task line of an agent group that starts, after its number, with `[user]` is a user step of its own. A numbered group with no valid tag is a plan error that makes the import and the sync refuse the change.
+
 ## Sources
 
 Read in this order: tests first (they state expected behaviour), then the code, then `docs/`. Anything still uncertain goes under "Open questions". Never guess.

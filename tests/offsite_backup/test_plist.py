@@ -60,7 +60,15 @@ class Modeles(unittest.TestCase):
         for chemin, (_, sous) in MODELES.items():
             donnees = rendu(chemin, "/home/essai")
             self.assertEqual(donnees["ProgramArguments"],
-                             ["/bin/bash", "/home/essai/PMZilla-Lab/workspace/tools/offsite_backup.sh", sous], chemin.name)
+                             ["/bin/bash", "/home/essai/PMZilla-Lab/offsite_backup.sh", sous], chemin.name)
+
+    def test_le_programme_est_le_lien_du_dossier_du_labo_sans_dossier_de_code(self):
+        """Change run-worktree : chaque modèle lance ~/PMZilla-Lab/offsite_backup.sh (lien), seul HOME est un chemin d'utilisateur."""
+        for chemin in MODELES:
+            programme = rendu(chemin, "/home/essai")["ProgramArguments"][1]
+            self.assertEqual(programme, "/home/essai/PMZilla-Lab/offsite_backup.sh", chemin.name)
+            for dossier in ("/workspace/", "/run/", "/tools/"):
+                self.assertNotIn(dossier, programme, chemin.name)
 
     def test_un_journal_par_tache_et_erreurs_dans_le_meme(self):
         journaux = []

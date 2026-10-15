@@ -18,13 +18,18 @@ Source: tests/flow_board/test_flow_board.py (Fichier)
 - **THEN** its mode is owner read/write and its folder owner-only
 
 ### Requirement: Output naming and options
-The system SHALL accept `--language en|fr` (default English), `--anonymous`, `--output` and `--open`; the default file name SHALL carry the day, a French suffix for French and an anonymous suffix for the anonymous version. Former option names SHALL be accepted with a warning naming the new one. Settings for series SHALL be read under the English or the former names and give the same result. With `--open`, combined or not with the other options, the system SHALL open the page just written in the browser through its file address; without the option it SHALL NOT open anything, and when the generation fails (exit code 1) it SHALL NOT open anything either.
+The system SHALL accept `--language en|fr` (default English), `--anonymous`, `--output` and `--open`; the default file name SHALL carry the day, a French suffix for French and an anonymous suffix for the anonymous version.
 
-Source: tests/flow_board/test_flow_board.py (test_noms_de_fichier_par_langue_et_option, test_anciennes_options_acceptees_avec_avertissement, test_reglages_boards_sous_les_noms_anglais_et_anciens); tests/flow_board/test_ouverture.py
+Source: tests/flow_board/test_flow_board.py (test_noms_de_fichier_par_langue_et_option)
 
 #### Scenario: Output option
 - **WHEN** `--output` names a file
 - **THEN** the page is written there
+
+### Requirement: Opening the page in the browser
+The system SHALL, with `--open`, combined or not with the other options, open the page just written in the browser through its file address; without the option it SHALL NOT open anything, and when the generation fails (exit code 1) it SHALL NOT open anything either.
+
+Source: tests/flow_board/test_ouverture.py
 
 #### Scenario: Open the page
 - **WHEN** the page is generated with `--open`
@@ -34,9 +39,18 @@ Source: tests/flow_board/test_flow_board.py (test_noms_de_fichier_par_langue_et_
 - **WHEN** the page is generated without `--open`, or the generation fails with `--open`
 - **THEN** the browser is not called; the failure exits with code 1
 
+### Requirement: Former option and setting names refused
+The system SHALL refuse a former option name with exit code 2 and a message naming the current option, writing no page, and SHALL stop when a dashboard series setting uses a former key name, naming the key path and its current name. It SHALL NOT accept a former name with a warning and SHALL NOT read it silently.
+
+Source: tests/flow_board/test_flow_board.py (test_anciennes_options_refusees_avec_le_nom_actuel, test_reglages_boards_anciens_noms_refuses)
+
 #### Scenario: Former options
-- **WHEN** the former language and anonymous options are used
-- **THEN** warnings name the new options and the French anonymous file name is produced
+- **WHEN** the former language or anonymous option is used
+- **THEN** the exit code is 2, the message says the option no longer exists and names the current one, and no French anonymous page is written
+
+#### Scenario: Former series setting
+- **WHEN** a series of the dashboard settings uses a former key name
+- **THEN** the program stops with a message naming the key path and its current name; with the current names the settings are read without any message
 
 ### Requirement: Data model of the page
 The system SHALL embed, per configured series, the team list in alphabetical order, views keyed with the product view first (empty key) then one per team alphabetically, and in each view weekly departures and arrivals (same length as the weeks), the cumulative flow, the segments (exits), the delivery lead time with commitment, the flow efficiency, the work-in-progress totals and breakdown, the history of reports, the baseline comparison, the ageing points (age, age in segment, nature among active/waiting/dormant, segment, status, team; no key), and the dependency data. Weeks SHALL be ISO dates. A baseline whose options differ SHALL be flagged with the differences (for example the dormant source). Dependencies SHALL list nodes and edges alphabetically with outside-export last, and loops; when the dependency report has no edges, they SHALL be rebuilt from its matrices. Pure helpers SHALL be consistent (percentile lookup, work-in-progress breakdown from either dormant or waiting data, team sort with special labels last, safe JSON that cannot close the script).
@@ -121,7 +135,9 @@ Source: tests/flow_board/test_flow_board.py (Anonyme, AnonymeJavaScript)
 - **THEN** they are AA, AB and AAA
 
 ### Requirement: Database comparison series ignored
-The system SHALL ignore every series whose name ends with the database suffix of the monthly run (design D6), whether or not series are configured, so that no report of such a series appears in the page data, the page or the file name. It SHALL NOT ignore a series whose name merely contains the suffix elsewhere. Untested until implemented.
+The system SHALL ignore every series whose name ends with the database suffix of the monthly run (design D6), whether or not series are configured, so that no report of such a series appears in the page data, the page or the file name. It SHALL NOT ignore a series whose name merely contains the suffix elsewhere.
+
+Source: tests/flow_board/test_flow_board.py (Robustesse)
 
 #### Scenario: Comparison series present
 - **WHEN** the reports folder holds the reports of a series and of the same series with the database suffix
@@ -130,6 +146,19 @@ The system SHALL ignore every series whose name ends with the database suffix of
 #### Scenario: Suffix inside a name
 - **WHEN** a series name contains the suffix text without ending with it
 - **THEN** the series is shown
+
+### Requirement: Charting library checked before embedding
+The system SHALL stop with exit code 1, pointing to the library download script, when the charting library file is missing, and SHALL refuse a library file whose content does not match its recorded SHA-256 fingerprint. It SHALL NOT embed an unchecked library and SHALL NOT fetch the library from the network.
+
+Source: tests/flow_board/test_flow_board.py (Robustesse: test_bibliotheque_absente, test_empreinte_verifiee)
+
+#### Scenario: Missing library
+- **WHEN** the library path points to no file
+- **THEN** the exit code is 1 and the error names the download script
+
+#### Scenario: Altered library
+- **WHEN** the library content changes after its fingerprint was recorded
+- **THEN** reading it stops with a message that mentions SHA-256
 
 ## Open questions
 

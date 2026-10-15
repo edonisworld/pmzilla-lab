@@ -3,6 +3,9 @@
 # Tourne avant que uv existe : contrôle la plateforme, trouve Homebrew, propose git et uv, clone le dépôt si besoin,
 # puis passe la main à l'orchestrateur Python avec tous les arguments d'origine.
 # Aucun état n'est changé sans confirmation (réponse vide = refus). Aucune option d'acceptation automatique.
+#
+# Exemple :
+#     zsh tools/install_lab.sh
 set -u
 
 PREFIXE="install_lab: "

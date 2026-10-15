@@ -79,11 +79,11 @@ verifie "dbtest : conteneur déjà présent, refus (code 2), ni démarré, ni su
 # --- passage nominal
 remise; lance
 verifie "dbtest : passage nominal, code 0" "$([ $code -eq 0 ]; echo $?)"
-verifie "dbtest : suites par défaut, dans l'ordre" "$([ "$(sed -n 's/^suite=\([^ ]*\) .*/\1/p' "$FX/suites" | tr '\n' ' ')" = "db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend " ]; echo $?)"
+verifie "dbtest : suites par défaut, dans l'ordre" "$([ "$(sed -n 's/^suite=\([^ ]*\) .*/\1/p' "$FX/suites" | tr '\n' ' ')" = "db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library library_backend cases_store watch_store " ]; echo $?)"
 verifie "dbtest : conteneur publié sur 127.0.0.1:55432 seulement, nom fixe, image de docker-compose.yml" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--name pmzilla-lab-test-db' && grep '^docker run' "$FAUX_LOG" | grep -q -- '-p 127.0.0.1:55432:5432' && grep '^docker run' "$FAUX_LOG" | grep -q "$(grep -E '^[[:space:]]+image:' "$racine/docker-compose.yml" | head -1 | sed -E 's/^[[:space:]]+image:[[:space:]]*//; s/["[:space:]]//g')"; echo $?)"
 verifie "dbtest : chaque suite reçoit le port jetable, un mot de passe de 32 caractères, ni URL ni PMZILLA_NO_EVALS" "$(! grep -v 'port=55432 pw_longueur=32 url=absente noevals=absente' "$FX/suites" | grep -q .; echo $?)"
 verifie "dbtest : conteneur supprimé avec ses volumes à la fin" "$(grep -q 'docker rm -f -v pmzilla-lab-test-db' "$FAUX_LOG"; [ $? -eq 0 ] && [ ! -s "$FX/conteneurs" ]; echo $?)"
-verifie "dbtest : résumé vert, aucune suite en échec" "$(grep -q 'Suites vertes : db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library knowledge_import library_backend' "$tmp/s" && grep -q 'Suites en échec : aucune' "$tmp/s"; echo $?)"
+verifie "dbtest : résumé vert, aucune suite en échec" "$(grep -q 'Suites vertes : db flow_import flow_store flow_compare flow_views hybrid_search pmzilla_lab_library library_backend cases_store watch_store' "$tmp/s" && grep -q 'Suites en échec : aucune' "$tmp/s"; echo $?)"
 mdp="$(sed 's/^PW=//' "$FX/pw-recu" | head -1)"
 verifie "dbtest : le mot de passe donné au conteneur est celui des suites (32 caractères hexadécimaux)" "$(printf '%s' "$mdp" | grep -Eq '^[0-9a-f]{32}$' && grep -qx "PW=$mdp" "$FX/pw-vu-par-les-suites"; echo $?)"
 verifie "dbtest : le mot de passe n'apparaît ni à l'affichage ni dans les arguments de docker" "$(! grep -q -- "$mdp" "$tmp/s" && ! grep -q -- "$mdp" "$FAUX_LOG"; echo $?)"
@@ -110,6 +110,21 @@ verifie "dbtest : Ctrl+C pendant une suite : code 130, conteneur supprimé, suit
 # --- hygiène du script
 verifie "dbtest : pas de set -x, pas de docker compose, pas de Trousseau, pas d'export du mot de passe, pas de tube vers les suites" "$(grep -Eq '^[^#]*(set -[a-z]*x|docker compose|security find|export PMZILLA_LAB_DB_PASSWORD|run_all.*\|)' "$racine/tools/dbtest.sh"; [ $? -ne 0 ]; echo $?)"
 verifie "dbtest : le mot de passe n'est jamais affiché (aucun echo ni printf de la variable)" "$(grep -Eq '(echo|printf)[^|#]*\$\{?mdp' "$racine/tools/dbtest.sh"; [ $? -ne 0 ]; echo $?)"
+
+# --- /dev/shm du conteneur jetable : shm_size lu dans docker-compose.yml (R-22), jamais recopié ; repli 1g
+verifie "dbtest : docker run reçoit --shm-size, avec la valeur de shm_size du compose réel" "$(remise; lance db; v="$(grep -E '^[[:space:]]+shm_size:' "$racine/docker-compose.yml" | head -1 | sed -E 's/^[[:space:]]+shm_size:[[:space:]]*//; s/[#].*$//; s/["[:space:]]//g')"; [ -n "$v" ] && grep '^docker run' "$FAUX_LOG" | grep -q -- "--shm-size $v "; echo $?)"
+racine_shm() {   # $1 = ligne shm_size du compose factice (vide : aucune) ; lance une copie du script dans une racine temporaire
+  rm -rf "$tmp/root"; mkdir -p "$tmp/root/tools" "$tmp/root/tests/db"
+  cp "$racine/tools/dbtest.sh" "$tmp/root/tools/"
+  { grep -v 'shm_size' "$racine/docker-compose.yml"; [ -n "$1" ] && echo "    $1"; } > "$tmp/root/docker-compose.yml"
+  remise; bash "$tmp/root/tools/dbtest.sh" db > "$tmp/s" 2>&1; code=$?
+}
+racine_shm "shm_size: 2gb  # commentaire"
+verifie "dbtest : la valeur vient du compose (2gb), commentaire retiré" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 2gb '; echo $?)"
+racine_shm ""
+verifie "dbtest : sans shm_size dans le compose, repli 1g" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 1g '; echo $?)"
+racine_shm "shm_size: grand; rm -rf /"
+verifie "dbtest : shm_size illisible, repli 1g (la valeur n'est jamais passée telle quelle)" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 1g ' && ! grep -q 'rm -rf' "$FAUX_LOG"; echo $?)"
 
 echo "$ok réussis, $ko échec(s)"
 [ "$ko" -eq 0 ]

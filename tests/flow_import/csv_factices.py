@@ -1,6 +1,8 @@
 """Aide des tests de flow_import : CSV factices au format de export_jira_api.py, données inventées (PROJ-n, Alpha, Beta)."""
 import csv
+import datetime
 import sys
+import zoneinfo
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[2]
@@ -10,6 +12,25 @@ import flux_jira  # noqa: E402
 ENTETE = ["Issue key", "Issue Type", "Status", "Status Category", "Created", "Resolved", "Resolution",
           "Status Category Changed", "Updated", "Story Points", "Parent key", "Team", "Team",
           "Outward issue link (Blocks)", "Inward issue link (Blocks)", "Linked Issues"]
+
+
+MOIS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def jour_relatif(jours: int = 30):
+    """Jour d'il y a `jours` jours : une date de résolution fixe finirait sous la règle de conservation d'un an."""
+    return datetime.date.today() - datetime.timedelta(days=jours)
+
+
+def date_export(jour, heure: int = 0, minute: int = 0) -> str:
+    """Date au format de l'export de l'API (jour/mois/année heure:minute), mois en anglais sans dépendre de la locale."""
+    return f"{jour.day:02d}/{MOIS[jour.month - 1]}/{jour.year} {heure:02d}:{minute:02d}"
+
+
+def instant_utc(jour, heure: int = 0, minute: int = 0) -> datetime.datetime:
+    """Instant UTC d'une date de l'export, lue dans le fuseau d'export par défaut (Europe/Paris), été ou hiver."""
+    local = datetime.datetime(jour.year, jour.month, jour.day, heure, minute, tzinfo=zoneinfo.ZoneInfo("Europe/Paris"))
+    return local.astimezone(datetime.timezone.utc)
 
 
 def ligne(cle="PROJ-1", **valeurs):

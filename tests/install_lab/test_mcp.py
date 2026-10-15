@@ -32,7 +32,9 @@ class EtapeMcp(CasDeBase):
     def setUp(self):
         super().setUp()
         self.fx.simulacre("claude", CORPS_CLAUDE)
-        self.fx.simulacre("uv")
+        self.fx.simulacre("uv", 'case "$*" in *"migrate --dry-run"*) echo "Rien à appliquer." ;; esac; exit 0')
+        self.fx.simulacre("docker", 'case "$*" in *"compose ps"*) [ -e "$INSTALL_LAB_ETAT/db-up" ] && echo "db  Up (healthy)" ;; esac; exit 0')
+        self.fx.drapeau("db-up")
         self.fx.drapeau("links-ok")
         self.lien = self.fx.maison / "PMZilla-Lab" / "pmzilla_lab_library.py"
 
@@ -52,20 +54,37 @@ class EtapeMcp(CasDeBase):
             self.assertIn(morceau, a)
         self.assertEqual(p.appels_de("claude mcp remove"), [])
 
-    def test_base_non_prete_enregistre_avec_le_fichier(self):
-        p = self.lancer(reponses="y\n")           # aucun docker : la base n'est pas prête
-        self.assertTrue(p.appels_de("claude mcp add")[0].endswith("serve --backend sqlite"), p.appels)
-
-    def test_base_prete_sans_option_de_secours(self):
-        ctx = c.Contexte(racine=self.fx.racine, maison=self.fx.maison, etat={"base_ok": True})
-        with mock.patch.dict(os.environ, self.fx.environnement()), mock.patch("builtins.input", return_value="y"), \
-                redirect_stdout(io.StringIO()):
-            r = mcp.executer_mcp(ctx)
-        self.assertEqual(r.etat, c.FAIT)
-        ajout = self.fx.lire_appels()[-1]
-        self.assertTrue(ajout.startswith("claude mcp add"), ajout)
+    def test_enregistrement_sans_option_de_backend(self):
+        p = self.lancer(reponses="y\n")
+        ajout = p.appels_de("claude mcp add")[0]
         self.assertTrue(ajout.endswith("serve"), ajout)
-        self.assertNotIn("sqlite", ajout)
+        self.assertNotIn("--backend", ajout)
+
+    def test_base_non_prete_reporte_sans_commande_et_sort_en_quatre(self):
+        for etat_base in ("absente", "refusee"):
+            with self.subTest(etat_base):
+                self.fx.drapeau("db-up", False)
+                if etat_base == "refusee":
+                    self.fx.simulacre("docker", "exit 1")
+                p = self.lancer(reponses="y\n")
+                self.assertEqual(p.code, 4, p.texte)
+                self.assertIn("waiting for step database", p.texte)
+                self.assertEqual(p.appels_de("claude mcp add"), [])
+                self.assertEqual(p.appels_de("claude mcp remove"), [])
+
+    def test_depend_de_links_et_de_database(self):
+        dep = next(e for e in mcp.ETAPES if e.nom == "mcp").depend
+        self.assertEqual(dep, ("links", "database"))
+
+    def test_ancien_enregistrement_avec_backend_remplace_apres_confirmation(self):
+        (self.fx.etat / "mcp").write_text(f"command: uv run {self.lien} serve --backend sqlite\n", encoding="utf-8")
+        p = self.lancer(reponses="")
+        self.assertEqual(p.code, 4, p.texte)
+        self.assertEqual(self.fx.appels_qui_changent(p.appels), [])
+        p = self.lancer(reponses="y\ny\n")
+        self.assertEqual(p.code, 0, p.texte)
+        self.assertEqual(len(p.appels_de("claude mcp remove")), 1)
+        self.assertNotIn("--backend", self.enregistre())
 
     def test_deja_enregistre_saute(self):
         self.lancer(reponses="y\n")
@@ -110,12 +129,13 @@ class EtapeMcp(CasDeBase):
         self.assertIn("dry run: would run claude mcp add", textes)
 
     def test_uv_introuvable_echoue_clairement(self):
-        self.fx.retirer("uv")
-        p = self.lancer(reponses="y\n")
-        self.assertEqual(p.code, 1, p.texte)
-        self.assertIn("uv", p.texte)
-        self.assertIn("mcp", p.texte)
-        self.assertEqual(p.appels_de("claude mcp add"), [])
+        self.fx.retirer("uv")                 # la sonde de la base a besoin de uv : on appelle l'exécution de l'étape seule
+        ctx = c.Contexte(racine=self.fx.racine, maison=self.fx.maison)
+        with mock.patch.dict(os.environ, self.fx.environnement()), redirect_stdout(io.StringIO()) as sortie:
+            r = mcp.executer_mcp(ctx)
+        self.assertEqual(r.etat, c.ECHEC)
+        self.assertIn("uv", sortie.getvalue())
+        self.assertEqual([a for a in self.fx.lire_appels() if a.startswith("claude mcp add")], [])
 
     def test_commande_d_ajout_qui_echoue(self):
         self.fx.simulacre("claude", 'case "$1 $2" in "mcp get") exit 1 ;; "mcp add") exit 1 ;; esac; exit 0')

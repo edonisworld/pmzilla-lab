@@ -11,9 +11,13 @@ commande (`python3 watch_paths.py lab|excluded|config|collection <workspace>` é
 Sans dépendance hors de la bibliothèque standard.
 
 Ce module ne lit aucun dossier de contenu : il ne teste que l'existence des dossiers.
+
+Exemple :
+    python3 tools/watch_paths.py lab workspace
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -40,6 +44,21 @@ def _pick(parent: Path, kind: str) -> Path:
     if not new.is_dir() and old.is_dir():
         raise _refuse(OLD[kind], NEW[kind])
     return new
+
+
+class ReglagesSuivis(SystemExit):
+    """Enregistrement refusé : le dossier de code est le dossier d'exécution (run-worktree D15)."""
+
+
+def refuse_depuis_le_dossier_d_execution(code_root: Path, fichier: Path) -> None:
+    """sources.yaml et tri.yaml sont suivis par Git : les écrire dans le dossier d'exécution le salirait et bloquerait sa mise à jour.
+    Refus (code de sortie 1) quand `code_root` est le dossier d'exécution (PMZILLA_LAB_RUN, par défaut ~/PMZilla-Lab/run) ou en dépend,
+    chemins résolus ; rien n'est écrit."""
+    run = Path(os.environ.get("PMZILLA_LAB_RUN") or "~/PMZilla-Lab/run").expanduser().resolve()
+    code = Path(code_root).resolve()
+    if code == run or run in code.parents:
+        raise ReglagesSuivis(f"PMZilla Lab, enregistrement refusé ({Path(fichier).name}) : réglages suivis par Git : "
+                             "à modifier depuis le dépôt de développement, puis à commiter.")
 
 
 def config_dir(workspace: Path) -> Path:

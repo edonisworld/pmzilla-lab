@@ -2,17 +2,23 @@
 
 ## Purpose
 Make the repository's tools folder the single source of truth for scripts called by launchd, the MCP server and the evaluation runs, by exposing each script as a symbolic link in the lab folder.
+
 ## Requirements
+
 ### Requirement: Create links to tracked scripts
-The system SHALL create, for each listed script, a symbolic link in the lab folder pointing to the script in the tools folder, and SHALL leave an already correct link untouched.
+The system SHALL create, for each listed script, a symbolic link in the lab folder pointing to the script in the tools folder of the run tree, or in the tools folder of the development checkout when the rollback target is chosen, and SHALL leave an already correct link untouched. It SHALL NOT point a link at a work-branch worktree. Untested until implemented for the run tree and the rollback target.
 
 #### Scenario: First run
 - WHEN the installer runs and scripts exist only as copies or are absent
-- THEN each script becomes a working relative link to the tools folder, and executable scripts stay executable through the link
+- THEN each script becomes a working relative link to the run tree's tools folder, and executable scripts stay executable through the link
 
 #### Scenario: Rerun
 - WHEN the installer runs again
 - THEN no link is recreated and no new backup is made
+
+#### Scenario: Rollback target
+- **WHEN** the installer runs with the rollback target
+- **THEN** each link points to the development checkout's tools folder
 
 Source: tests/installation/test_install_links.sh
 
@@ -75,3 +81,28 @@ The system SHALL refuse the former name of the verify option with an error that 
 - **WHEN** the former option name is passed
 - **THEN** the exit code is non-zero, the message names the current option, and no link is created
 
+### Requirement: Links follow the chosen code tree
+The system SHALL replace a link that points into the other code tree and report it; in verify mode it SHALL report such a link as aimed at the wrong tree and exit non-zero, changing nothing. Without the rollback target, it SHALL refuse when the run tree is missing, naming the run-tree script's create command, and SHALL create or change no link. Untested until implemented.
+
+#### Scenario: Switch-over
+- **WHEN** the links point to the development checkout and the installer runs without the rollback target
+- **THEN** every link points into the run tree and the output names each replaced link
+
+#### Scenario: Verify after a switch
+- **WHEN** one link still points to the development checkout and verify mode runs without the rollback target
+- **THEN** verify exits non-zero, names that script as aimed at the wrong tree, and changes nothing
+
+#### Scenario: Run tree missing
+- **WHEN** no run tree exists and the rollback target is not chosen
+- **THEN** the installer exits non-zero, names the create command, and no link is created or changed
+
+### Requirement: Scheduled scripts are linked and find their folder through the link
+The system SHALL include in the link list every script that a scheduler template launches, and SHALL make each such script resolve its own folder through the link, so that a script launched by its lab-folder link finds the files of its code tree. A linked script SHALL NOT take the lab folder as its own folder. Untested until implemented.
+
+#### Scenario: Template scripts in the list
+- **WHEN** the test reads the program of every scheduler template, the watch catch-up and doctor templates included, and the installer's list
+- **THEN** each launched script is in the list, the doctor wrapper included
+
+#### Scenario: Backup through its link
+- **WHEN** the backup script is started through its lab-folder link in a fixture
+- **THEN** it resolves its folder inside the code tree the link points to

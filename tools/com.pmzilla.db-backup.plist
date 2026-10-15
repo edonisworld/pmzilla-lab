@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__HOME__/PMZilla-Lab/workspace/tools/db_backup.sh</string>
+    <string>__HOME__/PMZilla-Lab/db_backup.sh</string>
   </array>
   <!-- Chaque jour à 7 h 45, après la collecte de la veille (7 h 10). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->
   <key>StartCalendarInterval</key>

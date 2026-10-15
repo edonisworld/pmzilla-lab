@@ -3,32 +3,38 @@
 ## Purpose
 
 Describes the local dashboard: a single self-contained HTML page summarising follow-ups, the watch, the library, evaluation quality, flow changes and Critic's mirror, in French or English.
+
 ## Requirements
+
 ### Requirement: Self-contained page without content leaks
-The system SHALL generate a single HTML page with seven sections (to-do, experiments awaiting a result, watch, library, quality, flow, Critic), with inline styles and charts, a dark-mode style, no script, no network address and no em dash, and SHALL NEVER include text or titles of articles or book passages. It SHALL exit successfully.
+The system SHALL generate a single HTML page with nine sections (health, to-do, experiments awaiting a result, watch, library, quality, flow, Critic, components), with inline styles and charts, a dark-mode style, no script, no network address and no em dash, and SHALL NEVER include text or titles of articles or book passages. It SHALL exit successfully.
 
 Source: tests/dashboard/test_dashboard.py
 
 #### Scenario: All sources present
 - **WHEN** every source is available
-- **THEN** the page has the seven sections and none of the sentinel article or book texts, no script, no http address
+- **THEN** the page has the nine sections and none of the sentinel article or book texts, no script, no http address
 
 #### Scenario: Chart readability
 - **WHEN** charts are drawn
 - **THEN** they use a full-width view box and legible text size, with a day/month date under each bar and a score under each point of the curve
 
 ### Requirement: Missing or unreadable sources
-The system SHALL show "no data yet" in each section whose source is missing, SHALL show "unreadable source" for an unreadable source, SHALL never print a traceback into the page, and SHALL still write the page and exit with success.
+The system SHALL show "no data yet" in each section whose source is missing, SHALL show "unreadable source" for an unreadable source, SHALL never print a traceback into the page, and SHALL still write the page and exit with success. A database source that does not answer SHALL be shown as "unreadable source" with the error type only, never the error message. The system SHALL NOT open any SQLite file.
+
+Source: tests/dashboard/test_dashboard.py
 
 #### Scenario: No source
 - WHEN no source exists
 - THEN the page says there is no data yet at least seven times and contains no traceback
 
 #### Scenario: Corrupt sources
-- WHEN the library database and the journal file are unreadable
-- THEN the page is written with the common guarantees and shows "unreadable source"
+- WHEN the library database does not answer and the journal file is unreadable (the former case of a corrupt SQLite library file is removed with the SQLite read, design D9)
+- THEN the page is written with the common guarantees and shows "unreadable source", with the error type and without the error message
 
-Source: tests/dashboard/test_dashboard.py
+#### Scenario: No SQLite file
+- WHEN the page is generated with a data folder that holds no SQLite file
+- THEN no SQLite file is opened or created and the page is written
 
 ### Requirement: Follow-ups from the journal
 The system SHALL list from the coaching journal the overdue follow-ups, those due within seven days relative to today, and experiments whose review is due, each with counts in the heading.
@@ -148,6 +154,59 @@ The system SHALL list, in the section of experiments awaiting a result, the conf
 - **THEN** the section shows "unreadable source" with the error type and without the error message, and the other sections are unchanged
 
 Source: tests/dashboard/test_dashboard.py (Experimentations)
+
+### Requirement: Watch section reads shares, picks and watch counts from the database
+The system SHALL compute the share statistics of the watch section (shares in total and recent, share of shared links that had been proposed since the first recorded pick) from the share and daily-pick tables, and the watch article and indexed passage counts from the knowledge library tables (watch collection matched by exact name), reading under the knowledge read-only role with a short connection timeout. When the database does not answer it SHALL show "unreadable source" with the error type only, never the error message, keep the other sections unchanged, and still write the page with exit code 0. It SHALL NOT open the former watch and triage state files and SHALL NOT write to the database.
+
+Source: tests/dashboard/test_dashboard_db.py, tests/dashboard/test_dashboard.py
+
+#### Scenario: Shared proposals from the database
+- **WHEN** the injected reader returns two shares since the first pick, one of them picked before its post date
+- **THEN** the page shows "1 of 2" as before this change
+
+#### Scenario: Database down
+- **WHEN** the database does not answer
+- **THEN** the share and count blocks show "unreadable source" with the error type and without the error message, the log-based lines of the watch section are unchanged, and the exit code is 0
+
+#### Scenario: Former files present
+- **WHEN** former watch and triage state files exist in the data folder with other counts
+- **THEN** the page shows the database counts and the former files are not opened
+
+### Requirement: Health section
+The system SHALL show, as the first section, the doctor's state file: the check date, one line per check in problem or warning with its level and reason in the page language, or "all good". It SHALL show "no data yet" without the file and "unreadable source" with the error type only when unreadable. It SHALL NOT run the doctor or show a path or branch name. Untested until implemented.
+
+#### Scenario: One problem
+- **WHEN** the state file holds one check in problem and the others ok
+- **THEN** the section shows the check date and one line for that check with its level
+
+#### Scenario: All good
+- **WHEN** every check of the state file is ok or skipped
+- **THEN** the section says "all good" in English or "tout va bien" in French
+
+#### Scenario: No state
+- **WHEN** the state file does not exist
+- **THEN** the section shows "no data yet", the other sections are unchanged and the exit code is 0
+
+### Requirement: Components section
+The system SHALL show, as the last section of the page, the result recorded by the component check in its state file (design.md D13): the date of the last complete check and of the last attempt, an incomplete badge with the number of unreachable sources, the number of components up to date, and a table of novelties with the name, the used and available versions, the nature (update, major version, pre-release, republished tag), the flags (not pinned, requires reindexing) and the suggested job title, with the labels of design.md D13 in the page language. When the last complete check is older than the staleness limit, its date SHALL carry the stale label. It SHALL read only the state file: it SHALL NOT query any network source, run the check or any component command, or write the state. It SHALL show "no data yet" when the state file is absent and "unreadable source" with the error type only when it is unreadable, and SHALL NOT print any address or link in the section. Untested until implemented.
+
+Source: to be covered by tests/dashboard/test_dashboard.py and tests/dashboard/test_language.py (task 5.1)
+
+#### Scenario: Novelties
+- **WHEN** the state holds one update and one major version
+- **THEN** the section lists both with their natures and suggested job titles, and counts the other components as up to date
+
+#### Scenario: Incomplete and stale
+- **WHEN** the state's last attempt is incomplete and its last complete check is older than the staleness limit
+- **THEN** the section shows the incomplete badge with the count and the stale label on the date
+
+#### Scenario: No state
+- **WHEN** the state file does not exist
+- **THEN** the section shows "no data yet", the other sections are unchanged and the exit code is 0
+
+#### Scenario: English page
+- **WHEN** the English language is chosen
+- **THEN** the section title is "Components" and the labels and suggested job titles are the English ones of design.md D13
 
 ## Open questions
 

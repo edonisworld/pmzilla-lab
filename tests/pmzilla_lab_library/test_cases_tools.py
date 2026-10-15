@@ -86,7 +86,7 @@ class Cas(unittest.TestCase):
         return outils, fabrique
 
 
-def serveur(patchs, backend="postgres", lecteur=None, fabrique=None):
+def serveur(patchs, lecteur=None, fabrique=None):
     """Lance serve() avec un faux FastMCP ; renvoie les outils déclarés et la fabrique de lecteur simulée."""
     modules = {"mcp": types.ModuleType("mcp"), "mcp.server": types.ModuleType("mcp.server"),
                "mcp.server.fastmcp": types.ModuleType("mcp.server.fastmcp")}
@@ -96,7 +96,7 @@ def serveur(patchs, backend="postgres", lecteur=None, fabrique=None):
                    mock.patch.object(library, "make_cases_reader", fabrique)])
     for patch in patchs:
         patch.start()
-    library.serve(backend)
+    library.serve()
     patchs[0].stop()
     del patchs[0]
     return FauxFastMCP.instance.tools, fabrique
@@ -137,11 +137,23 @@ class Reponses(Cas):
         outils, _ = self.serveur(lecteur=lecteur)
         self.assertEqual(outils["search_cases"]("une question"), [])
 
-    def test_voie_sqlite_erreur_et_aucun_lecteur(self):
-        outils, fabrique = self.serveur(backend="sqlite", lecteur=FauxLecteur())
-        for appel in (lambda: outils["search_cases"]("q"), lambda: outils["search_experiments"]("q"), lambda: outils["list_due_reviews"]()):
-            self.assertEqual(appel(), {"error": "the cases module requires the PostgreSQL backend"})
-        fabrique.assert_not_called()
+    def test_aucune_branche_de_voie_dans_les_outils_des_cas(self):
+        """Le serveur ne démarre que sur PostgreSQL : ni message « requires the PostgreSQL backend », ni test d'un nom de voie."""
+        source = Path(library.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("requires the PostgreSQL backend", source)
+        arbre = ast.parse(source)
+        serve = next(n for n in ast.walk(arbre) if isinstance(n, ast.FunctionDef) and n.name == "serve")
+        self.assertEqual([a.arg for a in serve.args.args], [])                          # serve() n'a plus de paramètre de voie
+        cases_answer = next(n for n in ast.walk(serve) if isinstance(n, ast.FunctionDef) and n.name == "cases_answer")
+        for noeud in ast.walk(cases_answer):
+            self.assertFalse(isinstance(noeud, ast.Name) and noeud.id == "backend", "cases_answer teste encore une voie")
+            self.assertFalse(isinstance(noeud, ast.Constant) and noeud.value in ("postgres", "sqlite"))
+
+    def test_un_appel_ne_demande_que_la_base_des_cas(self):
+        lecteur = FauxLecteur()
+        outils, fabrique = self.serveur(lecteur=lecteur)
+        self.assertEqual(outils["search_cases"]("q"), [CAS])
+        fabrique.assert_called_once_with()
 
     def test_requete_vide_refusee_sans_lecteur(self):
         outils, fabrique = self.serveur(lecteur=FauxLecteur())

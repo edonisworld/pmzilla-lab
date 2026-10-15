@@ -57,6 +57,9 @@ script ne lit ni titre ni personne (flux_jira.read_export ne les garde pas). Les
 suivi par Git.
 
 Le tirage est reproductible à données, date de calcul et graine identiques.
+
+Exemple :
+    uv run tools/segment_sample.py export.csv
 """
 from __future__ import annotations
 
@@ -422,7 +425,8 @@ def preparer(args: argparse.Namespace, t: Messages) -> dict:
     resolus = [t["resolu"] for t in tickets if t["resolu"]]
     if resolus:
         first_week = max(first_week, fj.week_start(min(resolus)))
-    histoires = fj.charger_historique(Path(args.historique).expanduser() if args.historique else fj.HISTORIQUE_DEFAUT)
+    histoires = fj.charger_historique(Path(args.historique).expanduser() if args.historique else fj.HISTORIQUE_DEFAUT,
+                                  fuseau=fj.fuseau_des_reglages(settings, fj.T_FR))
     segment_de, noms_segments = commun.table_segments(settings)
     if args.segment not in noms_segments:
         sys.exit(t("segment_not_computed", segment=nom_segment(args.segment, t),

@@ -32,7 +32,6 @@ class Recherche(unittest.TestCase):
         self.ecrire("propre.md", "rien à signaler\n")
         self.ecrire("nom.md", f"ligne 1\nmon dossier est /Users/{ID}/travail\n")
         self.ecrire("casse.md", f"{ID.upper()} en majuscules\n")
-        self.ecrire("docs/pmzilla/evolutions.md", f"{ID}\n")
         self.ecrire("docs/pmzilla/version-anglaise.md", f"{ID}\n")
         self.ecrire("docs/pmzilla/bibliotheque-lacunes.md", f"{ID}\n")
         self.ecrire("_bmad-output/pmzilla/table-ronde/2026-01-01-sujet.md", f"{ID}\n")
@@ -59,7 +58,7 @@ class Recherche(unittest.TestCase):
 
     def test_ignore_les_fichiers_hors_edition_non_suivis_et_binaires(self):
         trouves = ip.chercher(self.racine, ip.EXCLUS_PAR_DEFAUT)
-        for nom in ("docs/pmzilla/evolutions.md", "docs/pmzilla/version-anglaise.md",
+        for nom in ("docs/pmzilla/version-anglaise.md",
                     "docs/pmzilla/bibliotheque-lacunes.md", "non-suivi.md", "image.png"):
             self.assertNotIn(nom, trouves)
 
@@ -322,7 +321,7 @@ class Arbre(unittest.TestCase):
             self.ecrire(nom if not nom.endswith("/") else nom + "x.md", f"{ID}\n")
         trouves = ip.chercher_arbre(self.arbre, self.racine)
         self.assertEqual(len(trouves), len(ip.EXCLUS_PAR_DEFAUT))
-        self.assertIn("docs/pmzilla/evolutions.md", trouves)
+        self.assertIn("docs/pmzilla/bibliotheque-lacunes.md", trouves)
 
     def test_exclusion_supplementaire_refusee_code_2(self):
         self.ecrire("a.md", f"{ID}\n")

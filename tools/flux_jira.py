@@ -54,6 +54,23 @@ posture Delivery lit.
         transitions de la base (sans cache de fichier ; la valeur donnée à l'option, s'il y en a une, est ignorée). Les dates
         sont lues dans le fuseau export_timezone de flux.yaml. Défaut : --source csv (comportement inchangé, sans psycopg).
         Base injoignable ou rôle absent : message clair, code de sortie 1, sans mot de passe.
+        Les deux voies lisent les transitions de l'historique dans ce même fuseau (le cache garde le décalage de l'API : il est
+        ramené dans export_timezone à la lecture), donc comptent les mêmes jours pour les mêmes données.
+
+    uv run flux_jira.py compute <export.csv>... --by team|mission-team|site
+        Agrégation du rapport (R-58, tâche 9.1). Défaut team : rapport inchangé. Avec mission-team ou site, le script lit le
+        référentiel Flux-Lab/organisation.yaml (absent ou invalide : code 1, aucun rapport), remplace les sections par équipe par
+        des sections par groupe (les équipes que le référentiel ne décrit pas sont regroupées sous « hors référentiel », avec
+        leur nombre de tickets), ajoute un résumé de structure (équipes et effectifs par groupe, par ordre de nom, sans ratio
+        ni classement) et écrit flux-<nom>-<agrégation>-AAAA-MM-JJ.md (et .json). Sur les deux sources. La console ne porte aucun
+        nom de groupe et la comparaison automatique est sautée (compare --name <nom>-<agrégation> la fait à la demande).
+
+    uv run flux_jira.py cycles --name serie [--scope ABC,DEF]
+        Rapport des cycles (R-58, tâche 9.3), lu UNIQUEMENT dans la base (rôle lecture seule) : un fichier CSV donné est refusé
+        (code 1, « no CSV file may be given »). Écrit Flux-Lab/rapports/cycles-<série>-AAAA-MM-JJ.md et .json, par clé de cycle des
+        réglages (cycles, patches, declared_labels, discovery_workflow) : éléments visés, livrés dans la fenêtre, reportés, up-merge
+        et part contre provision, sans patch, versions non mappées, section Epic Review. Ni clé de ticket, ni personne, ni nom de
+        version ou d'étiquette dans la sortie.
 
     uv run flux_jira.py compare --name equipe [--before AAAA-MM-JJ] [--after AAAA-MM-JJ]
         Compare deux rapports du même périmètre (par défaut les deux plus récents) : ce qui a
@@ -97,6 +114,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 import yaml
@@ -105,6 +123,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config as cfg
 from yaml_strict import charger
 import flow_glossary as glossaire
+import flow_organisation as organisation
 from flux_jira_messages import CATALOGS
 from messages import DEFAULT_LANGUAGE, Messages, add_language_option
 
@@ -216,7 +235,17 @@ SUFFIXE_SANS_EQUIPE = ", tickets sans équipe exclus"
 
 
 def libelle_equipe(equipe: str, tr=None) -> str:
-    return (tr or T_FR)("no_team") if equipe == SANS_EQUIPE else equipe
+    """Équipe (ou groupe) dans la langue du rapport. Les groupes que le rapport par Mission Team ou par site garde en français
+    dans le JSON (« hors référentiel », « sans Mission Team », « sans site ») sont rendus dans la langue demandée."""
+    tr = tr or T_FR
+    if equipe == SANS_EQUIPE:
+        return tr("no_team")
+    if equipe == organisation.outside_label("fr"):
+        return organisation.outside_label(tr.language)
+    for par in organisation.GROUPEMENTS:
+        if equipe == organisation.no_group_label(par, "fr"):
+            return organisation.no_group_label(par, tr.language)
+    return equipe
 
 
 def libelle_motif(motif: str, tr=None) -> str:
@@ -382,7 +411,8 @@ def lire_historique_source(args: argparse.Namespace, settings: dict, tr=None) ->
     tr = tr or T_FR
     if args.source == "db":
         return depuis_la_base(lambda store: store.lire_historique(settings), tr)
-    return charger_historique(Path(args.historique).expanduser() if args.historique else HISTORIQUE_DEFAUT, tr)
+    return charger_historique(Path(args.historique).expanduser() if args.historique else HISTORIQUE_DEFAUT, tr,
+                              fuseau_des_reglages(settings, tr))
 
 
 def par_effectif(compte) -> dict:
@@ -468,8 +498,10 @@ def weekly_throughput(done: list[dict], first_week: dt.date, last_week: dt.date)
     return weeks
 
 
-def charger_historique(chemin: Path, tr=None) -> dict[str, list]:
-    """Transitions de statut par clé (en majuscules), lues dans le cache de history_jira.py."""
+def charger_historique(chemin: Path, tr=None, fuseau: ZoneInfo | None = None) -> dict[str, list]:
+    """Transitions de statut par clé (en majuscules), lues dans le cache de history_jira.py. Avec `fuseau`, chaque date est
+    ramenée dans ce fuseau (export_timezone), comme le fait la lecture de la base : sans cela, le cache garde le décalage de
+    l'API et une transition proche de minuit tomberait un autre jour que dans la voie base."""
     tr = tr or T_FR
     if not chemin.exists():
         sys.exit(tr("history_cache_missing", path=chemin))
@@ -477,6 +509,9 @@ def charger_historique(chemin: Path, tr=None) -> dict[str, list]:
         donnees = commun.lire_cache(chemin)
     except commun.CacheIllisible:
         sys.exit(tr("history_cache_unreadable"))
+    if fuseau is not None:
+        return {str(cle).upper(): [[commun.en_fuseau(d, fuseau), de, vers] for d, de, vers in entree["transitions"]]
+                for cle, entree in donnees.items()}
     return {str(cle).upper(): entree["transitions"] for cle, entree in donnees.items()}
 
 
@@ -709,6 +744,337 @@ def forecast_how_many(throughput: list[int], weeks: int, rng: np.random.Generato
 
 
 # ---------------------------------------------------------------------------
+# Rapport par Mission Team ou par site (R-58, tâche 9.1)
+# ---------------------------------------------------------------------------
+
+AGREGATIONS = ("team", *organisation.GROUPEMENTS)
+# aide du mot « groupe » dans la langue du rapport : (mot des titres, intitulé de colonne)
+CLES_MOTS_GROUPE = {"mission-team": ("group_word_mission_team", "group_column_mission_team"),
+                    "site": ("group_word_site", "group_column_site")}
+TABLES_PAR_EQUIPE = ("team_table", "arrivals_team_table", "segments_team_table")
+
+
+class MessagesGroupes(Messages):
+    """Messages d'un rapport par Mission Team ou par site : les titres, la colonne et les notes « par équipe » parlent de
+    groupes, les autres textes sont ceux du rapport par équipe. Les sections elles-mêmes sont les mêmes : chaque ticket porte
+    le nom de son groupe à la place de son équipe, donc la somme des groupes égale les totaux globaux."""
+
+    def __init__(self, tr: Messages, par: str):
+        super().__init__(tr.catalogs, tr.language)
+        mot, colonne = CLES_MOTS_GROUPE[par]
+        self.par = par
+        self.mot = Messages.__call__(self, mot)
+        self.colonne = Messages.__call__(self, colonne)
+
+    def __call__(self, cle: str, **valeurs) -> str:
+        if cle == "by_team_heading":
+            return super().__call__("group_heading", name=self.mot)
+        if cle == "by_team_subheading":
+            return super().__call__("group_subheading", name=self.mot)
+        if cle == "team_column":
+            return self.colonne
+        if cle in ("teams_note", "teams_not_compared"):
+            return super().__call__("groups_not_compared")
+        if cle == "done_per_week_intro":
+            return super().__call__("done_per_group_intro")
+        if cle == "segments_team_exited":
+            return super().__call__("segments_group_exited")
+        if cle == "segments_team_inside":
+            return super().__call__("segments_group_inside")
+        texte = super().__call__(cle, **valeurs)
+        if cle in TABLES_PAR_EQUIPE:                       # première colonne : le groupe, pas l'équipe
+            texte = re.sub(r"^\| [^|]+\|", f"| {self.colonne} |", texte, count=1)
+        return texte
+
+
+def lire_referentiel() -> organisation.Referentiel:
+    """Référentiel d'organisation du dossier de flux (organisation.yaml, comme flux.yaml : le dossier suit PMZILLA_LAB_WORKSPACE).
+    Absent ou invalide : `ErreurConfig` (code 1), qui nomme la clé et la ligne, jamais une valeur. À lire avant tout ticket."""
+    return organisation.charger_fichier(FLUX_DIR / "organisation.yaml")
+
+
+def regrouper(tickets: list[dict], referentiel: organisation.Referentiel, par: str) -> None:
+    """Remplace l'équipe de chaque ticket par son groupe (Mission Team ou site). Les noms de groupe internes sont en français
+    (le JSON ne change pas avec la langue) ; `libelle_equipe` les rend dans la langue du rapport. Un ticket sans équipe reste sans
+    équipe ; une équipe absente du référentiel va au groupe « hors référentiel ». L'équipe d'origine est gardée pour le décompte."""
+    for t in tickets:
+        t["equipe_source"] = t["equipe"]
+        if t["equipe"] != SANS_EQUIPE:
+            t["equipe"] = referentiel.group_of(t["equipe"], par, "fr")
+
+
+def hors_referentiel(tickets: list[dict], referentiel: organisation.Referentiel) -> dict:
+    """Équipes de l'export absentes du référentiel et nombre de leurs tickets (parmi les tickets du rapport)."""
+    hors = [t for t in tickets if t["equipe_source"] != SANS_EQUIPE and t["equipe_source"] not in referentiel.teams]
+    return {"equipes": len({t["equipe_source"] for t in hors}), "tickets": len(hors)}
+
+
+def structure_lines(r: dict, tr) -> list[str]:
+    """Résumé de structure d'un rapport par groupe : équipes et effectif par groupe, par ordre de nom. L'effectif décrit la
+    structure seulement : aucun ratio, aucun classement par un chiffre."""
+    g = r.get("regroupement")
+    if not g:
+        return []
+    lines = [tr("group_structure_heading"), "", tr("group_structure_intro", name=tr.mot), "",
+             tr("group_structure_table", column=tr.colonne), "|---|---|---|"]
+    for ligne in g["structure"]:
+        lines.append(f"| {libelle_equipe(ligne['group'], tr)} | {ligne['teams']} | {ligne['headcount']} |")
+    h = g["hors_referentiel"]
+    if h["tickets"]:
+        lines += ["", tr("group_outside_line", teams=h["equipes"], tickets=h["tickets"],
+                         label=organisation.outside_label(tr.language))]
+    return lines + [""]
+
+
+# ---------------------------------------------------------------------------
+# Cycles (R-58, tâche 9.3) : calcul sur des structures en mémoire, lecture dans la base, rapport
+# ---------------------------------------------------------------------------
+#
+# Un « élément » est un dictionnaire {"type", "projet", "etat", "resolu" (jour dans le fuseau d'export ou None), "motif",
+# "labels": [(étiquette, ajoutée, retirée)], "versions": [(version, ajoutée, retirée)], "transitions": [(instant, départ,
+# arrivée)]} ; les instants sont avec fuseau, `retirée` vaut None tant que la période est ouverte. Les fonctions ci-dessous ne
+# touchent ni la base ni un fichier. Aucune clé de ticket, aucun nom de version ou d'étiquette ne sort du résultat : les cycles
+# et les patches y sont désignés par leur clé neutre (conception D12).
+
+def jour_local(instant: dt.datetime, fuseau: ZoneInfo) -> dt.date:
+    """Jour de l'instant dans le fuseau d'export (jamais en UTC)."""
+    return instant.astimezone(fuseau).date()
+
+
+def statut_a_la_fin_du_jour(element: dict, retrait: dt.datetime, fuseau: ZoneInfo) -> str | None:
+    """Statut de l'élément à la fin du jour du retrait, le jour et sa fin étant lus dans le fuseau d'export : l'arrivée de la
+    dernière transition avant minuit local (début du jour suivant). Aucune transition avant : le départ de la première
+    (statut initial). Aucune transition du tout : le statut courant."""
+    fin_du_jour = dt.datetime.combine(jour_local(retrait, fuseau) + dt.timedelta(days=1), dt.time.min, tzinfo=fuseau)
+    transitions = sorted(element.get("transitions") or [], key=lambda x: x[0])
+    avant = [x for x in transitions if x[0] < fin_du_jour]
+    if avant:
+        return avant[-1][2]
+    return transitions[0][1] if transitions else element.get("etat")
+
+
+def colonne_du_statut(statut: str | None, discovery: dict) -> str | None:
+    """Colonne du Discovery Workflow qui contient le statut (sans casse), ou None."""
+    if not statut:
+        return None
+    voulu = statut.strip().casefold()
+    return next((nom for nom, statuts in discovery["columns"].items() if any(s.strip().casefold() == voulu for s in statuts)), None)
+
+
+def part_de(n: int, total: int) -> float | None:
+    return n / total if total else None
+
+
+def calculer_cycles(elements: list[dict], cycles: list, patches: dict[str, list[str]], etiquettes: dict | None,
+                    discovery: dict | None, exclusions: tuple[set[str], set[str]], motifs_exclus: set[str],
+                    fuseau: ZoneInfo) -> dict:
+    """Rapport des cycles à partir d'éléments en mémoire (voir l'en-tête de la section). Règles :
+
+    - cycle visé d'un élément : sa version corrigée COURANTE mappée à un cycle (la plus tardive s'il y en a plusieurs) ; jamais
+      déduit de l'étiquette de cycle ;
+    - up-merge : exactement une des deux étiquettes d'up-merge courantes. Il compte dans son patch (version mappée à une clé
+      de patch, la plus tardive s'il y en a plusieurs) et pas dans le flux du cycle ; sans version de patch mappée, il va sur la
+      ligne « sans patch » et reste dans la part ; il ne s'arrête rien et rien n'est écarté ;
+    - deux étiquettes d'up-merge : comptées à part, hors de la part et hors du flux ;
+    - livré : date de résolution dans [début, fin] du cycle, motif de résolution non exclu ;
+    - reporté : l'élément a eu une période de version de ce cycle, plus tard retirée, et vise maintenant un cycle ultérieur ;
+    - types de niveau portefeuille et projets exclus : hors du flux et des up-merge (mais l'Epic Review les lit) ;
+    - Epic Review : soumissions = ajouts de l'étiquette déclarée par période, toujours ; passages, rejets, statut non mappé et
+      délai seulement si la correspondance du Discovery Workflow est validée."""
+    par_version = {c.fix_version: c for c in cycles}
+    par_patch = {v: cle for cle, versions in patches.items() for v in versions}
+    declarees = etiquettes or {}
+    legal, hotfix = (declarees["up_merge"]["labels"][:2] + [None, None])[:2] if "up_merge" in declarees else (None, None)
+    etiquettes_cycle = set(declarees.get("cycle", {}).get("labels", []))
+    etiquettes_revue = set(declarees.get("epic_review", {}).get("labels", []))
+    types_exclus, projets_exclus = exclusions
+    valide = bool(discovery and discovery["validated"])
+    sorties = {c.key: {"cle": c.key, "version_de_base": c.base_version, "fenetre": [c.start.isoformat(), c.end.isoformat()],
+                       "vises": 0, "livres": 0, "reportes": 0,
+                       "up_merge": {"resolus": 0, "livres": 0, "part": None, "provision": c.provision, "par_patch": {},
+                                    "sans_patch": 0, "deux_etiquettes": 0},
+                       "epic_review": {"soumissions": 0, "passages": 0, "rejets": 0, "statut_non_mappe": 0,
+                                       "delai": None, "sans_depart": 0}}
+               for c in cycles}
+    delais: dict[str, list[int]] = {c.key: [] for c in cycles}
+    versions_inconnues: set[str] = set()
+    tickets_versions_inconnues = etiquette_cycle_sans_cycle = 0
+
+    def fenetres(jour: dt.date | None):
+        return [c for c in cycles if jour and c.start <= jour <= c.end]
+
+    for e in elements:
+        courantes = {nom for nom, _, retire in e["labels"] if retire is None}
+        versions_courantes = {v for v, _, retire in e["versions"] if retire is None}
+        cycles_courants = [par_version[v] for v in versions_courantes if v in par_version]
+        cible = max(cycles_courants, key=lambda c: (c.start, c.key)) if cycles_courants else None
+        inconnues = {v for v in versions_courantes if v not in par_version and v not in par_patch}
+        if inconnues:
+            versions_inconnues |= inconnues
+            tickets_versions_inconnues += 1
+        if courantes & etiquettes_cycle and cible is None:
+            etiquette_cycle_sans_cycle += 1
+
+        # Epic Review : lue sur tous les éléments qui ont porté l'étiquette déclarée, quel que soit leur type
+        periodes_revue = sorted(((ajout, retrait) for nom, ajout, retrait in e["labels"] if nom in etiquettes_revue),
+                                key=lambda periode: periode[0])
+        if periodes_revue:
+            for ajout, retrait in periodes_revue:
+                for c in fenetres(jour_local(ajout, fuseau)):
+                    sorties[c.key]["epic_review"]["soumissions"] += 1
+                if valide and retrait is not None:
+                    colonne = colonne_du_statut(statut_a_la_fin_du_jour(e, retrait, fuseau), discovery)
+                    for c in fenetres(jour_local(retrait, fuseau)):
+                        revue = sorties[c.key]["epic_review"]
+                        if colonne is None:
+                            revue["statut_non_mappe"] += 1
+                        elif colonne in discovery["review_passed_columns"]:
+                            revue["passages"] += 1
+                        else:
+                            revue["rejets"] += 1
+            if valide:
+                premier_ajout = periodes_revue[0][0]
+                depart = discovery.get("start_column")
+                entree = next((instant for instant, _, vers in sorted(e.get("transitions") or [], key=lambda x: x[0])
+                               if depart and colonne_du_statut(vers, discovery) == depart), None)
+                for c in fenetres(jour_local(premier_ajout, fuseau)):
+                    if entree is not None and jour_local(entree, fuseau) <= jour_local(premier_ajout, fuseau):
+                        delais[c.key].append((jour_local(premier_ajout, fuseau) - jour_local(entree, fuseau)).days)
+                    else:
+                        sorties[c.key]["epic_review"]["sans_depart"] += 1
+
+        # flux des cycles et up-merge : les types de niveau portefeuille et les projets exclus n'y entrent pas
+        if e["type"].casefold() in types_exclus or (e["projet"] and e["projet"].upper() in projets_exclus):
+            continue
+        nb_up_merge = (legal in courantes) + (hotfix in courantes) if legal else 0
+        livre = bool(e["resolu"]) and (e.get("motif") or "").casefold() not in motifs_exclus
+        if nb_up_merge == 2:
+            for c in fenetres(e["resolu"] if livre else None):
+                sorties[c.key]["up_merge"]["deux_etiquettes"] += 1
+        elif nb_up_merge == 1:
+            patchs = sorted({par_patch[v] for v in versions_courantes if v in par_patch})
+            for c in fenetres(e["resolu"] if livre else None):
+                up = sorties[c.key]["up_merge"]
+                up["resolus"] += 1
+                if patchs:
+                    up["par_patch"][patchs[-1]] = up["par_patch"].get(patchs[-1], 0) + 1
+                else:
+                    up["sans_patch"] += 1
+        elif cible is not None:
+            sorties[cible.key]["vises"] += 1
+            if livre and cible.start <= e["resolu"] <= cible.end:
+                sorties[cible.key]["livres"] += 1
+            anciens = {par_version[v] for v, _, retire in e["versions"] if retire is not None and v in par_version}
+            for ancien in anciens:
+                if ancien.key != cible.key and cible.start > ancien.start and not (
+                        livre and ancien.start <= e["resolu"] <= ancien.end):
+                    sorties[ancien.key]["reportes"] += 1
+
+    for c in cycles:
+        s = sorties[c.key]
+        up = s["up_merge"]
+        up["par_patch"] = dict(sorted(up["par_patch"].items()))
+        s["up_merge"]["livres"] = s["livres"]
+        up["part"] = part_de(up["resolus"], s["livres"] + up["resolus"])
+        valeurs = delais[c.key]
+        if valide and discovery.get("start_column"):
+            s["epic_review"]["delai"] = ({"n": len(valeurs), "p50": float(np.percentile(valeurs, 50)),
+                                          "p85": float(np.percentile(valeurs, 85))} if valeurs else {"n": 0, "p50": None, "p85": None})
+        if not valide:
+            for cle in ("passages", "rejets", "statut_non_mappe", "sans_depart"):
+                s["epic_review"].pop(cle)
+            s["epic_review"].pop("delai")
+    return {"cycles": list(sorties.values()),
+            "versions_non_mappees": {"versions": len(versions_inconnues), "tickets": tickets_versions_inconnues},
+            "etiquette_cycle_sans_cycle": etiquette_cycle_sans_cycle,
+            "deux_etiquettes": sum(s["up_merge"]["deux_etiquettes"] for s in sorties.values()),
+            "etiquette_up_merge_declaree": legal is not None,
+            "discovery_valide": valide}
+
+
+def lignes_cycles(r: dict, tr) -> list[str]:
+    """Rapport Markdown des cycles : sections par clé de cycle, étiquettes Jira (up-merge, cycle), versions, Epic Review."""
+    nom = tr("name_suffix", name=r["serie"]) if r["serie"] else ""
+    lignes = [tr("cycles_title", name=nom, date=r["date"]), "", tr("cycles_intro"), ""]
+    for c in r["cycles"]:
+        en_tete = c["cle"] + (f" ({tr('cycles_base_version')})" if c["version_de_base"] else "")
+        lignes += [tr("cycles_cycle_heading", cycle=en_tete), "", tr("cycles_window", start=c["fenetre"][0], end=c["fenetre"][1]), "",
+                   tr("cycles_targeted", n=c["vises"]), tr("cycles_delivered", n=c["livres"]),
+                   tr("cycles_carried", n=c["reportes"]), ""]
+    lignes += [tr("cycles_labels_heading"), "", tr("cycles_labels_intro"), ""]
+    if not r["etiquette_up_merge_declaree"]:
+        lignes += [tr("cycles_labels_not_declared"), ""]
+    else:
+        for c in r["cycles"]:
+            up = c["up_merge"]
+            provision = pourcent(up["provision"], tr) if up["provision"] is not None else tr("cycles_provision_none")
+            patchs = ", ".join(f"{cle} {n}" for cle, n in up["par_patch"].items()) or tr("none_word")
+            lignes += [tr("cycles_up_merge_heading", cycle=c["cle"]), "", tr("cycles_up_merge_resolved", n=up["resolus"]),
+                       tr("cycles_up_merge_share", n=up["resolus"], total=up["livres"] + up["resolus"],
+                          share=pourcent(up["part"], tr), provision=provision),
+                       tr("cycles_per_patch", list=patchs), tr("cycles_without_patch", n=up["sans_patch"]),
+                       tr("cycles_two_labels", phrase=tr("up_merge_two_labels", n=up["deux_etiquettes"])), ""]
+    lignes += [tr("cycles_cycle_label_no_cycle", n=r["etiquette_cycle_sans_cycle"]), "",
+               tr("cycles_versions_heading"), "",
+               tr("cycles_unmapped_versions", versions=r["versions_non_mappees"]["versions"],
+                  tickets=r["versions_non_mappees"]["tickets"]), "",
+               tr("cycles_epic_heading"), "", tr("cycles_epic_intro"), ""]
+    if not r["discovery_valide"]:
+        lignes += [tr("cycles_epic_not_validated"), ""]
+    for c in r["cycles"]:
+        revue = c["epic_review"]
+        valeurs = [tr("epic_submissions", n=revue["soumissions"])]
+        if r["discovery_valide"]:
+            valeurs += [tr("epic_passes", n=revue["passages"]), tr("epic_rejections", n=revue["rejets"]),
+                        tr("epic_status_unmapped", n=revue["statut_non_mappe"])]
+        lignes.append(tr("cycles_epic_line", cycle=c["cle"], values=" ; ".join(valeurs) if tr.language == "fr" else "; ".join(valeurs)))
+        if r["discovery_valide"] and revue["delai"] is not None:
+            d = revue["delai"]
+            lignes.append(tr("cycles_epic_delay", n=d["n"], p50=j(d["p50"], tr=tr), p85=j(d["p85"], tr=tr)) if d["n"]
+                          else tr("cycles_epic_delay_none"))
+    return lignes + ["", tr("cycles_limits"), ""]
+
+
+def fuseau_des_reglages(settings: dict, tr) -> ZoneInfo:
+    """Fuseau export_timezone de flux.yaml (Europe/Paris par défaut), comme export_jira_api.fuseau_export."""
+    try:
+        return ZoneInfo(str(settings.get("export_fuseau") or "Europe/Paris").strip())
+    except (ZoneInfoNotFoundError, ValueError):
+        sys.exit(tr("cycles_timezone_unknown"))
+
+
+def cmd_cycles(args: argparse.Namespace) -> None:
+    """Sous-commande cycles : la base seulement (rôle lecture seule). Un fichier CSV donné est refusé avant toute connexion."""
+    tr = Messages(CATALOGS, args.language)
+    if args.export:
+        sys.exit(tr("cycles_no_csv"))
+    settings = config(tr)
+    cycles = cfg.cycles(settings)
+    if not cycles:
+        sys.exit(tr("cycles_none_configured"))
+    etiquettes = cfg.declared_labels(settings)
+    fuseau = fuseau_des_reglages(settings, tr)
+    revue = list((etiquettes or {}).get("epic_review", {}).get("labels", []))
+    elements = depuis_la_base(lambda store: store.lire_donnees_cycles(settings, revue), tr)
+    perimetre = lire_perimetre(args.perimetre, tr)
+    if perimetre:
+        elements = [e for e in elements if e["projet"] in set(perimetre)]
+    aujourdhui = dt.date.fromisoformat(args.aujourdhui) if args.aujourdhui else dt.date.today()
+    motifs_exclus = {m.casefold() for m in settings.get("motifs_exclus") or []}
+    resultat = calculer_cycles(elements, cycles, cfg.patches(settings), etiquettes, cfg.discovery_workflow(settings),
+                               commun.ensembles_exclus(settings, True), motifs_exclus, fuseau)
+    resultat = {"serie": args.nom, "date": aujourdhui.isoformat(), **resultat}
+    lignes = lignes_cycles(resultat, tr)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"cycles-{args.nom}-{resultat['date']}" if args.nom else f"cycles-{resultat['date']}"
+    (REPORT_DIR / f"{stem}.md").write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    (REPORT_DIR / f"{stem}.json").write_text(json.dumps(resultat, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("\n".join(lignes))
+    print(tr("up_merge_two_labels", n=resultat["deux_etiquettes"]))
+    print(tr("report_path", path=REPORT_DIR / (stem + ".md")))
+
+
+# ---------------------------------------------------------------------------
 # Commandes
 # ---------------------------------------------------------------------------
 
@@ -778,10 +1144,18 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     if args.dormants is not None:
         sys.exit(tr("dormants_removed"))
     settings = config(tr)
+    referentiel = lire_referentiel() if args.par != "team" else None     # avant toute lecture de ticket : sans lui, rien n'est écrit
+    if referentiel:
+        tr_texte = MessagesGroupes(tr, args.par)                         # textes des sections du rapport
+        nom_rapport = f"{args.nom}-{args.par}" if args.nom else args.par   # le nom du rapport porte l'agrégation
+    else:
+        tr_texte, nom_rapport = tr, args.nom
     perimetre = lire_perimetre(args.perimetre, tr)
     tickets, found, _, doublons = lire_tickets(args, settings, tr)
     if not found["resolu"]:
         sys.exit(tr("resolved_column_missing"))
+    if referentiel:
+        regrouper(tickets, referentiel, args.par)
     perimetre_retenu = None
     if perimetre is not None:
         lus = len(tickets)
@@ -986,7 +1360,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         if illisibles:
             segments_calcules["dates_illisibles"] = illisibles
     result = {
-        "nom": args.nom, "date": today.isoformat(), "periode": [first_week.isoformat(),
+        "nom": nom_rapport, "date": today.isoformat(), "periode": [first_week.isoformat(),
                                                                (last_week + dt.timedelta(days=6)).isoformat()],
         "semaines": len(throughput),
         "types": (args.types or "tous") + (", tickets sans équipe exclus" if args.equipes_seulement else ""),
@@ -1052,17 +1426,22 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         result["classement"] = "catégorie d'état"
     if len(args.export) > 1:
         result["exports"] = {"fichiers": len(args.export), "doublons_retires": doublons if found.get("cle") else None}
-    write_report(result, tr)
+    if referentiel:
+        result["regroupement"] = {"par": args.par, "hors_referentiel": hors_referentiel(tickets, referentiel),
+                                  "structure": referentiel.structure_summary(args.par, "fr")}
+    write_report(result, tr_texte)
     if args.points:
-        ecrire_points(args.nom, today, wip, age_of, est_dormant, est_attente,
+        ecrire_points(nom_rapport, today, wip, age_of, est_dormant, est_attente,
                       periodes if args.historique is not None else None,
                       segment_de if args.historique is not None else None,
                       noms_segments if args.historique is not None else [],
                       "début" if reference_age is ages_from_start else "création", tr)
     if not args.sans_comparaison:
-        reports = find_reports(args.nom)
+        reports = find_reports(nom_rapport)
         earlier = [day for day in reports if day < result["date"]]
-        if earlier:
+        if earlier and referentiel:       # la comparaison afficherait des noms de groupe : elle se lance à la demande
+            print(tr("group_comparison_skipped", name=nom_rapport))
+        elif earlier:
             print("\n" + "=" * 72 + "\n")
             compare(load_report(reports[earlier[-1]]), load_report(reports[result["date"]]), tr)
 
@@ -1288,6 +1667,7 @@ def write_report(r: dict, tr=None) -> None:
                   + "".join(tr(cle) + ", ".join(f"{a} {n}" for a, n in v.items())
                             for cle, v in (("excluded_part_type", ec["par_type"]),
                                            ("excluded_part_project", ec["par_projet"])) if v) + ".", ""]
+    lines += structure_lines(r, tr)
     lines += [
         tr("throughput_heading"),
         tr("throughput_total", n=r["termines"], avg=f"{deb['moyenne']:.1f}", median=f"{deb['mediane']:.0f}",
@@ -1420,7 +1800,11 @@ def write_report(r: dict, tr=None) -> None:
     (REPORT_DIR / f"{stem}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (REPORT_DIR / f"{stem}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2, default=str),
                                              encoding="utf-8")
-    print("\n".join(lines))
+    if r.get("regroupement"):       # rapport par groupe : les noms de groupe restent dans le fichier, jamais en console
+        g = r["regroupement"]
+        print(tr("group_console", by=g["par"], groups=len(r.get("par_equipe") or {}), outside=g["hors_referentiel"]["tickets"]))
+    else:
+        print("\n".join(lines))
     print(tr("report_path", path=REPORT_DIR / (stem + ".md")))
 
 
@@ -1831,6 +2215,9 @@ def main(argv: list[str] | None = None) -> None:
     calc.add_argument("--target-date", dest="date_cible", help="date (AAAA-MM-JJ) pour la prévision « combien d'ici là »")
     calc.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous » ; sans "
                                           "l'option, tous les tickets de l'export (flux.yaml n'est pas lu pour ce réglage)")
+    calc.add_argument("--by", dest="par", choices=AGREGATIONS, default="team",
+                      help="agrégation du rapport : team (défaut, rapport inchangé), mission-team ou site (lit "
+                           "Flux-Lab/organisation.yaml ; rapport par groupe, nom de rapport suffixé)")
     calc.add_argument("--types", help="types de tickets retenus, séparés par des virgules")
     calc.add_argument("--teams-only", dest="equipes_seulement", action="store_true",
                       help="exclure les tickets sans équipe (flux à part, absent du WIP)")
@@ -1852,6 +2239,12 @@ def main(argv: list[str] | None = None) -> None:
                            "batch_closure_resolutions de flux.yaml pour ce calcul")
     calc.add_argument("--today", dest="aujourdhui", help=argparse.SUPPRESS)   # pour les tests
     add_language_option(calc)
+    cyc = commands.add_parser("cycles", help="rapport des cycles, lu dans la base seulement (aucun fichier CSV)")
+    cyc.add_argument("export", nargs="*", help="refusé : cycles lit la base, jamais un fichier CSV")
+    cyc.add_argument("--name", dest="nom", default="", help="nom de la série, pour le rapport cycles-<série>-AAAA-MM-JJ")
+    cyc.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous »")
+    cyc.add_argument("--today", dest="aujourdhui", help=argparse.SUPPRESS)   # pour les tests
+    add_language_option(cyc)
     comp = commands.add_parser("compare", help="ce qui a bougé entre deux rapports du même périmètre")
     comp.add_argument("--name", dest="nom", default="", help="nom du périmètre, comme dans compute --name")
     comp.add_argument("--before", dest="avant", help="date (AAAA-MM-JJ) du rapport de départ (défaut : celui qui précède --after)")
@@ -1866,7 +2259,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(cfg.refuse_old_options(sys.argv[1:] if argv is None else argv, OPTIONS_RENOMMEES))
     if args.command in ("statuses", "compute") and args.source == "csv" and not args.export:
         parser.error("the following arguments are required: export")
-    {"statuses": cmd_statuts, "compute": cmd_calcul, "compare": cmd_comparer, "config": cmd_config}[args.command](args)
+    {"statuses": cmd_statuts, "compute": cmd_calcul, "cycles": cmd_cycles, "compare": cmd_comparer,
+     "config": cmd_config}[args.command](args)
 
 
 if __name__ == "__main__":

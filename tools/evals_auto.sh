@@ -13,6 +13,9 @@
 #      commitées : la session les commiterait avec le reste, au risque de prendre le travail d'une autre session ;
 #   4. affiche une notification macOS avec le bilan.
 # Un seul passage à la fois : un second lancement pendant un passage en demande un autre à la fin.
+#
+# Exemple :
+#     bash tools/evals_auto.sh
 set -u
 AVEC_README=0
 for argument in "$@"; do

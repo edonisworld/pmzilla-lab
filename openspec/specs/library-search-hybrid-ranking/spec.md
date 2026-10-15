@@ -5,7 +5,9 @@
 Hybrid ranking of library passages: a semantic list and a keyword list fused by reciprocal rank, a freshness bonus for recent watch articles, tie-breaking rules, filters, and the SQL formulation of the same ranking for the PostgreSQL path.
 
 Source of truth: `tests/hybrid_search/test_hybrid_search.py`, `tests/pmzilla_lab_library/test_pmzilla_lab_library.py`, `tools/hybrid_search.py`, `tools/pmzilla_lab_library.py`.
+
 ## Requirements
+
 ### Requirement: Fuse a semantic ranking and a keyword ranking by reciprocal rank
 The system SHALL rank passages by building a semantic list (vector similarity, dot product without renormalisation) and a keyword list, and SHALL score each passage by the sum of a reciprocal-rank contribution over the lists in which it appears, plus a freshness bonus. A passage present in both lists SHALL outrank a passage present in only one at the same position.
 
@@ -23,19 +25,10 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_fusi
 - **WHEN** a limit smaller than the number of fused passages is given
 - **THEN** only that many best passages are returned
 
-### Requirement: Keep the pure-Python fusion identical to the SQLite path
-The system SHALL expose the fusion and the freshness bonus as pure functions that give the same order and the same scores (rounded) as the SQLite search path, and SHALL share the fusion constants with that path.
-
-Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_memes_constantes_que_la_voie_sqlite, FusionEtFraicheur.test_fusion_identique_a_library_search)
-
-#### Scenario: Same ranking on a demo library
-- **WHEN** several questions (French, English, no known word) are run through the pure fusion and through the SQLite search on the same demo library
-- **THEN** the ordered passage identifiers and the rounded scores are equal
-
 ### Requirement: Split a question into words
 The system SHALL split a question into word tokens on Unicode word characters, so that apostrophes, hyphens and punctuation separate words and a question made only of punctuation yields no word.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_mots_comme_la_voie_sqlite), `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_requete_sans_mot)
+Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes, the word-split test with its frozen word lists), `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_requete_sans_mot)
 
 #### Scenario: Elision and hyphens
 - **WHEN** the question "Le flux, l'équipe et l'état-de-l'art !" is split
@@ -48,7 +41,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_mots_comme_
 ### Requirement: Match any word of the question in the keyword list
 The system SHALL build the keyword list as a disjunction of the question words (at least one word matches), ranked by a relevance score that weighs rare words more than common words, and SHALL NOT require all words to be present.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_plein_texte_ou_de_mots_comme_fts5, MotsCourantsContreMotRare.test_reference_sqlite_le_mot_rare_passe_devant)
+Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_plein_texte_ou_de_mots_comme_fts5, MotsCourantsContreMotRare)
 
 #### Scenario: Rare word beats common words
 - **WHEN** one passage contains a rare word of the question and another contains only repeated common words of the question
@@ -61,7 +54,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 ### Requirement: Rank the semantic list by dot product
 The system SHALL rank the semantic list by dot product between the question vector and each passage vector without renormalising, so that a zero vector scores zero and never ranks first, and a vector of larger norm scores higher than a unit vector at the same angle.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (VecteursDegeneres.test_la_voie_sqlite_est_un_produit_scalaire)
+Source: `tests/hybrid_search/test_hybrid_search.py` (VecteursDegeneres)
 
 #### Scenario: Zero vector
 - **WHEN** a passage has a zero vector
@@ -74,7 +67,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (VecteursDegeneres.test_la_v
 ### Requirement: Give a freshness bonus to recent dated watch articles
 The system SHALL add a bonus that decays with the age of the document for documents that belong to the watch collection, carry a valid publication date and do not belong to the author's own collection. The system SHALL give half of the maximum bonus (neutral value) to every other passage: undated documents, books, documents of the author's own collection, and documents whose date is unreadable.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonus_cas_limites, FusionEtFraicheur.test_bonus_de_fraicheur_identique_a_la_voie_sqlite)
+Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonus_cas_limites, FusionEtFraicheur, the freshness test with its frozen values)
 
 #### Scenario: Article published today
 - **WHEN** a watch article is dated today
@@ -91,7 +84,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonu
 ### Requirement: Order equal relevance by freshness then by identifier
 The system SHALL order passages of equal rounded relevance inside each list by freshness (most recent watch article first), then by identifier, and SHALL break ties in the final fused score by semantic rank, then keyword rank (passages absent from a list last), then identifier.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_ordre_final_rang_vectoriel_puis_plein_texte_puis_id, VecteursDegeneres.test_le_bonus_de_fraicheur_peut_depasser_un_rang_sur_la_voie_sqlite_aussi)
+Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_ordre_final_rang_vectoriel_puis_plein_texte_puis_id, VecteursDegeneres)
 
 #### Scenario: Final tie
 - **WHEN** two passages have the same fused score
@@ -99,7 +92,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 
 #### Scenario: Freshness can outweigh one rank
 - **WHEN** a recent watch article ranks one place below an older passage in the semantic list
-- **THEN** its freshness bonus may still place it first in the fused result, on both paths
+- **THEN** its freshness bonus may still place it first in the fused result
 
 ### Requirement: Restrict a search by collection, date and passage type
 The system SHALL restrict results to passages of the requested collections, to documents published on or after a given date (keeping undated books), and to the requested passage types. A filter that is not requested SHALL NOT appear in the query. On the PostgreSQL path, the collection filter, the date filter and the passage-type filter SHALL all be applied before the keyword candidate limit (the collection and date filters as a list of book identifiers, without a join in the keyword query), so that a collection holding none of the globally best keyword matches still gets its own keyword candidates.
@@ -215,19 +208,6 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_execution_lit_
 - **WHEN** the search is executed
 - **THEN** one query is sent, results are returned best first and the transaction is rolled back
 
-### Requirement: Match accents case-insensitively and give the same results as the SQLite path
-The system SHALL ignore case and accents when matching words, and SHALL return on a disposable PostgreSQL database the same passages as the SQLite path on the same demo data, including accented queries, figures, collections and the date filter, for the approximate scan as for the exact one on a small corpus, where the keyword candidate limit never cuts. On a real library, a search restricted by collection or date MAY differ between the two paths by design, because the PostgreSQL path filters before the keyword limit and the SQLite path after it.
-
-Source: `tests/hybrid_search/test_hybrid_search.py` (AvecBase.test_memes_resultats_que_la_voie_sqlite, AvecBase.test_accents_et_figures_et_collections_et_since, AvecBase.test_ann_donne_les_memes_resultats_sur_ce_petit_corpus) (skipped when no database is available)
-
-#### Scenario: Accented question
-- **WHEN** a question is typed without accents
-- **THEN** passages containing the accented words are found
-
-#### Scenario: Restricted query on a real library
-- **WHEN** a search is restricted by collection or date on a library where the keyword limit cuts
-- **THEN** the two paths may return different passages by design, and the parity report shows such queries apart
-
 ### Requirement: Offer a diagnostic view that does not change the ranking
 The system SHALL offer a diagnostic query that adds to each result the intermediate values (semantic rank and score, keyword rank and raw score, reciprocal-rank sum before bonus, bonus) while ranking identically to the production query.
 
@@ -238,7 +218,7 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 - **THEN** their ordering and limit clauses are identical and only the diagnostic one exposes intermediate columns
 
 ### Requirement: Use one generic name for the personal collection
-The system SHALL name the collection of the user's own articles with a single fixed generic name, identical for every user and free of any personal identifier, defined once and read by both search paths, the watch collection, the pre-sort, the dashboard and the tests. The name SHALL be made of lower-case letters, digits and hyphens, start with a letter, and differ from the watch collection name and its former name. Both search paths SHALL exclude documents of that collection from the freshness bonus under that name only.
+The system SHALL name the collection of the user's own articles with a single fixed generic name, identical for every user and free of any personal identifier, defined once and read by the search, the watch collection, the pre-sort, the dashboard and the tests. The name SHALL be made of lower-case letters, digits and hyphens, start with a letter, and differ from the watch collection name and its former name. The search SHALL exclude documents of that collection from the freshness bonus under that name only.
 
 Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_nom_de_la_collection_personnelle, FusionEtFraicheur.test_bonus_cas_limites)
 
@@ -252,7 +232,29 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_nom_de_la_c
 
 #### Scenario: Personal article
 - **WHEN** a dated document belongs to the personal collection
-- **THEN** it receives the neutral half bonus on both paths
+- **THEN** it receives the neutral half bonus
+
+### Requirement: Keep the pure-Python fusion consistent with the SQL ranking
+The system SHALL expose the fusion and the freshness bonus as pure functions that give the order and the rounded scores frozen in the tests for hand-computed inputs, and the same order and rounded scores as the SQL search on the invented demo library, and SHALL share the fusion constants with the SQL query builder. It SHALL NOT keep a second search implementation to compare with.
+
+#### Scenario: Hand-computed values
+- **WHEN** fixed semantic and keyword lists are fused
+- **THEN** the order and the rounded scores equal the values frozen in the test
+
+#### Scenario: Same ranking as the SQL search
+- **WHEN** several questions (French, English, no known word) are run through the pure fusion and through the SQL search on the demo library in a disposable database
+- **THEN** the ordered passage identifiers and the rounded scores are equal
+
+### Requirement: Match accents case-insensitively and return the frozen results on the demo library
+The system SHALL ignore case and accents when matching words, and SHALL return, on a disposable PostgreSQL database holding the invented demo library, the passages frozen in the tests, including accented queries, figures, collections and the date filter, for the approximate scan as for the exact one, since the keyword candidate limit never cuts on that small corpus.
+
+#### Scenario: Accented question
+- **WHEN** a question is typed without accents
+- **THEN** passages containing the accented words are found
+
+#### Scenario: Frozen results
+- **WHEN** the demo library is searched with the approximate scan and with the exact scan
+- **THEN** both return the ordered passages frozen in the test
 
 ## Open questions
 

@@ -1732,13 +1732,13 @@ class CasDeCommandes(Base):
         self.assertEqual(self.options[0]["env"]["PMZILLA_LAB_KNOWLEDGE_DBNAME"], "pmzilla_eval_inventee")
         serveur = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
         self.assertEqual(serveur["env"], {"PMZILLA_LAB_KNOWLEDGE_DBNAME": "pmzilla_eval_inventee"})
-        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertNotIn("--backend", serveur["args"])
         self.assertNotEqual(config.name, "mcp.json")         # la configuration de l'installation n'est pas écrasée
 
     def test_case_library_sans_base_jetable_n_indexe_rien(self):
         with self.assertRaises(essai.LibraryUnavailable) as erreur:
             self.bibliotheque(base=None)
-        self.assertEqual(str(erreur.exception), "bibliothèque jetable indisponible : base jetable absente")
+        self.assertEqual(str(erreur.exception), "throwaway library unavailable")
         self.assertEqual((self.vidages, self.commandes), ([], []))
 
     def test_case_library_indexation_en_echec(self):
@@ -1748,7 +1748,7 @@ class CasDeCommandes(Base):
                 self.reponses.append(self.termine("", code, "Database unreachable: nothing was indexed."))
                 with self.assertRaises(essai.LibraryUnavailable) as erreur:
                     self.bibliotheque()
-                self.assertIn(f"bibliothèque jetable indisponible : indexation en échec (code {code})", str(erreur.exception))
+                self.assertIn(f"throwaway library unavailable : indexation en échec (code {code})", str(erreur.exception))
                 self.assertIn("Database unreachable", str(erreur.exception))
 
     def test_mcp_config_sans_index_jetable_garde_l_installation(self):
@@ -1813,7 +1813,7 @@ class PassageAvecBibliothequeJetable(Base):
 
     def test_sans_base_jetable_le_cas_est_non_evaluable_et_rien_n_est_indexe(self):
         resultats = self.lancer(None)
-        self.assertEqual(resultats["lib"]["non_evaluable"], ["bibliothèque jetable indisponible : base jetable absente"])
+        self.assertEqual(resultats["lib"]["non_evaluable"], ["throwaway library unavailable"])
         self.assertNotIn("non_evaluable", resultats["std"])
         self.assertEqual([q for q, _ in self.seances], ["Question std ?"])
         self.assertFalse(any("index" in commande for commande in self.commandes))
@@ -1831,7 +1831,7 @@ class PassageAvecBibliothequeJetable(Base):
         self.assertEqual(self.lecteurs, ["pmzilla_eval_inventee", None])          # prérequis du cas lib : la base jetable
         mcp = dict(self.seances)
         serveur = json.loads(mcp["Question lib ?"].read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
-        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertNotIn("--backend", serveur["args"])
         self.assertEqual(serveur["env"]["PMZILLA_LAB_KNOWLEDGE_DBNAME"], "pmzilla_eval_inventee")
         self.assertNotIn("PMZILLA_LAB_DATA", serveur["env"])
         standard = json.loads(mcp["Question std ?"].read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]

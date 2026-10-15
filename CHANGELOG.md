@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to PMZilla Lab are listed here, newest first. This file starts at the first public edition.
+All notable changes to PMZilla Lab are listed here, newest first. This file starts at the first public edition. Later versions are described in the releases of the public repository, one per milestone.
 
 ## First public edition
 

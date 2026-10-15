@@ -2,7 +2,9 @@ schema: spec-driven
 
 context: |
   Scope: OpenSpec describes WHAT PMZilla Lab does (observable behavior). The
-  WHY and the roadmap stay in docs/pmzilla/application.md.
+  WHY stays in docs/pmzilla/application.md. The work queue (the roadmap)
+  lives in the issues of the private repository; application.md keeps its
+  rationale.
   - openspec/specs/ describes the existing system (baseline).
   - openspec/changes/ describes evolutions (proposal, design, tasks, delta specs).
 
@@ -34,6 +36,6 @@ rules:
     - Keep the language free of names, ticket keys, personal identifiers and book excerpts.
     - Describe behavior only; never copy configuration values.
   proposal:
-    - State the user-visible change and its motivation briefly; link to docs/pmzilla/application.md for the roadmap rationale instead of repeating it.
+    - State the user-visible change and its motivation briefly; link to docs/pmzilla/application.md for the rationale of the work queue instead of repeating it.
   tasks:
     - Keep tasks small and verifiable; each one names the test suite that covers it when one exists.

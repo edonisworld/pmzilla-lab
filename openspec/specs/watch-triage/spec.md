@@ -5,7 +5,9 @@
 Pre-sorting of collected articles by a local model: scoring, ranking, mode observation versus mode filter, calibration, thresholds, shares, weekly inventory, source suggestions and the triage settings file.
 
 Source of truth: `tests/watch_triage/test_watch_triage.py`, `tests/watch_triage/test_robustesse.py`, `tools/watch_triage.py`, `tools/watch_config.py`.
+
 ## Requirements
+
 ### Requirement: Create and edit the triage settings preserving comments
 The system SHALL create the triage settings file on first use with observation mode by default, an explicit French `language` line, no social handle key and a comment pointing to the local settings file. It SHALL update one setting in place without losing comments, appending the key when absent. Updating a setting SHALL write only the tracked settings file, never the local one.
 
@@ -165,23 +167,30 @@ Source: `tools/watch_triage.py` (cmd_week); `tests/watch_triage/test_partages_se
 - **THEN** both are parsed and applied to the period computation
 
 ### Requirement: Export calibration sheet and propose thresholds from user opinions
-The system SHALL export scored articles to a semicolon-separated sheet with the filter's verdict, relevance, missing criteria, flags and an empty opinion column (keep/discard).
+The system SHALL keep the calibration in the database: one calibration entry per scored article, holding the values shown at the last export (the filter's verdict, relevance, substance, missing criteria, flags) and the user's opinion (keep, discard or none).
+
+The `calibration` command SHALL refresh the calibration entries from the current scores, keep every opinion already stored (including for an article no longer scored), and export a semicolon-separated sheet with the filter's verdict, relevance, missing criteria, flags and an opinion column (keep/discard) pre-filled with the stored opinions. The import option of `calibration` SHALL read the opinion column of the edited sheet and store it: a keep or discard opinion is stored, an empty cell removes the stored opinion, a row naming an article without a calibration entry is counted and ignored; it SHALL print the counts of design.md D3 only, and SHALL refuse with exit code 1 when the sheet is absent. No other command SHALL read or write the sheet.
 
 The `thresholds` command SHALL:
-- refuse to run without the sheet or with too few opinions, stating the count;
+- read the opinions and the exported values from the database, never from the sheet;
+- refuse to run without any stored opinion (message of design.md D3) or with too few opinions, stating the count;
 - compare opinions with every possible substance threshold, print the table and propose the substance threshold that loses the fewest wanted articles, then keeps the fewest weak ones, then is the least strict;
-- read relevance from the sheet without re-exporting it, and print a matrix of wanted articles lost and weak articles kept for every pair of substance threshold and relevance threshold in steps of ten (zero meaning no relevance filtering);
+- print a matrix of wanted articles lost and weak articles kept for every pair of substance threshold and relevance threshold in steps of ten (zero meaning no relevance filtering), using the relevance of the last export;
 - propose the pair with the highest agreement, then the fewest wanted lost, then the lowest relevance threshold, then the lowest substance threshold, listing the wanted articles that pair loses with the command to restore each;
 - report disagreements caused by fixed rules (compilation, promotional) and by wrongly kept articles, with the command to fix each;
-- write nothing unless asked to save.
+- write nothing unless asked to save, and never change a calibration entry.
 
 When saving, it SHALL write the substance and relevance thresholds of the combined proposal, keep comments, and keep the mode unchanged.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 
 #### Scenario: Too few opinions
-- **WHEN** only two opinions are filled
+- **WHEN** only two opinions are stored
 - **THEN** the command exits with an error mentioning "2 avis"
+
+#### Scenario: No opinion stored
+- **WHEN** thresholds runs and no calibration opinion is stored
+- **THEN** the command exits with code 1 and the message of design.md D3, whether or not a sheet exists
 
 #### Scenario: Proposal without saving
 - **WHEN** thresholds runs with opinions and without save
@@ -196,8 +205,20 @@ Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 - **THEN** both thresholds of the combined proposal are stored, comments are kept and the mode remains observation
 
 #### Scenario: Sheet not rewritten
-- **WHEN** thresholds runs, with or without save
+- **WHEN** thresholds runs, with or without save, while a calibration sheet exists
 - **THEN** the calibration sheet is byte-identical afterwards
+
+#### Scenario: Sheet not read by thresholds
+- **WHEN** opinions are imported, the sheet is deleted, and thresholds runs
+- **THEN** the output is the same as with the sheet present, and the calibration entries are unchanged
+
+#### Scenario: Re-export keeps opinions
+- **WHEN** calibration runs again after opinions were imported
+- **THEN** the exported sheet shows the stored opinions in its opinion column and no opinion is lost
+
+#### Scenario: Import
+- **WHEN** an edited sheet with one keep, one discard, one emptied opinion and one unknown file is imported
+- **THEN** the counts printed are 1 to keep, 1 to discard, 1 cleared and 1 unknown, and the stored opinions match the sheet
 
 ### Requirement: Suggest new sources from citations
 The system SHALL propose, as inactive sources with feed discovery, hosts cited by at least a minimum number of distinct citing sources among retained articles (or by retained compilations even from a single source), up to a maximum, most cited first. It SHALL NOT count citations from discarded articles, repeated citations from the same source, home pages, images, shop or social links, hosts already followed, or hosts cited once. An already suggested source SHALL be updated (counts) while keeping its feed, active flag and suggestion date, with no new feed search. The reset option SHALL remove suggestions never activated and keep active and manually added sources. With no scored article, the command SHALL end without error, say so and point to scoring, still honour reset, and make no network call.
@@ -333,6 +354,78 @@ Source: to be covered by `tests/watch_triage/test_watch_triage.py` and `tests/wa
 #### Scenario: Writing a setting
 - **WHEN** a command updates a setting while a local file exists
 - **THEN** only the tracked file changes, and the local file is byte-identical
+
+### Requirement: Keep the triage state in the database only
+The system SHALL keep the pre-triage state (references, scores, manual rescues, manual exclusions, shares, daily picks, calibration) in the knowledge schema of the local database, for every subcommand: references, score, apply, restore, exclude, shares, digest, week, suggestions, calibration and thresholds. Commands that write no row (week, thresholds) SHALL connect under the knowledge read-only role. The system SHALL NOT read, create or write any local triage state file and SHALL NOT fall back to one when the database fails. Decisions (relevance, discard reasons, reading lists, moves) SHALL be the same as before this change for the same stored state.
+
+Source: tests/watch_triage/ and tests/watch_store/test_contract.py
+
+#### Scenario: Scoring on the database
+- **WHEN** two articles are scored
+- **THEN** two score rows exist in the database with their vector, criteria, justifications, flags, summary and why-it-matters, and no triage state file is created
+
+#### Scenario: Read-only command
+- **WHEN** week runs
+- **THEN** it connects under the knowledge read-only role and writes no row
+
+#### Scenario: No former path
+- **WHEN** the triage module is read
+- **THEN** it does not import the SQLite library and names no triage state file
+
+### Requirement: Stop before any model call or file move when the database fails
+The system SHALL connect to the database before any model call, social-network read, file move or file write. When the database does not answer, or the watch tables are absent, every triage subcommand SHALL exit with the code and message of design.md D4, and SHALL NOT call the model, read the user's posts, move an article or write a reading list, inventory or sheet. The message SHALL NOT contain a password or a driver error text.
+
+Source: tests/watch_triage/test_robustesse.py
+
+#### Scenario: Database down before scoring
+- **WHEN** score runs and the database does not answer
+- **THEN** the exit code and message are those of design.md D4 and the fake model receives no call
+
+#### Scenario: Database down before apply
+- **WHEN** apply runs in filter mode and the database does not answer
+- **THEN** no article file is moved
+
+### Requirement: Never move an article without recording its location
+The system SHALL record the new location of an article in the same step as its move: when the location of a moved article cannot be committed (apply, restore), the system SHALL move the file back. It SHALL NOT leave an article in a folder that disagrees with its recorded location.
+
+Source: tests/watch_triage/test_watch_triage.py
+
+#### Scenario: Commit fails during apply
+- **WHEN** the database fails while recording the move of the second of two discarded articles
+- **THEN** the first is in the excluded folder with its new location recorded, and the second is back in the library folder with its location unchanged
+
+### Requirement: Break ranking ties by file name, never by storage order
+The system SHALL keep the current ordering rules of the ranked reading list, the top picks and the weekly inventory, and SHALL order articles that those rules leave equal (same relevance and same publication date) by file name, whatever the order in which their rows were written or copied. It SHALL NOT depend on the insertion order of rows.
+
+Source: tests/watch_triage/test_robustesse.py
+
+#### Scenario: Rows written in reverse order
+- **WHEN** three articles of equal relevance and date are stored in reverse file-name order
+- **THEN** the reading list shows them in file-name order
+
+### Requirement: List the discard reasons in the order of the criteria
+The system SHALL list the discard reasons of an article in the order of the criteria, whatever the order in which the keys were read from the database.
+
+Source: tests/watch_triage/test_langue_pertinence.py
+
+#### Scenario: Keys read in another order
+- **WHEN** the criteria of an article are read from the database in an order different from the order of the criteria
+- **THEN** its discard reasons are listed in the order of the criteria
+
+### Requirement: Record the count of articles kept by the day's run
+The system SHALL, each time it writes the ranked reading list, record in the lab data folder, atomically and owner-only, the date of the run and the count of articles collected by that run that carry no discard reason, observation mode included (design D3 of change morning-summary). It SHALL record no title, link, source or path. The plain reading list SHALL NOT write this count. A failure to write it SHALL be reported and SHALL NOT fail the reading list. Untested until implemented.
+
+#### Scenario: Ranked list written
+- **WHEN** the ranked reading list is written and three of today's five collected articles have no discard reason
+- **THEN** the count file holds today's date and the count 3, only its owner can read it, and it holds no title
+
+#### Scenario: Plain list only
+- **WHEN** only the plain reading list is written
+- **THEN** the count file is unchanged
+
+#### Scenario: Data folder read-only
+- **WHEN** the count file cannot be written
+- **THEN** the reading list is still written, a message says the count was not recorded, and the exit code is that of the reading list
 
 ## Open questions
 

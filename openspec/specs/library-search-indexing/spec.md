@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Building and maintaining the SQLite library index from Markdown collections: incremental indexing, passage splitting, figure passages, forced recomputation, collection renaming, schema migration, and the caption diagnostic.
+Building and maintaining the library index from Markdown collections, written directly into the knowledge schema of the database: incremental indexing, passage splitting, figure passages, forced recomputation, collection renaming, the BM25 probe and status counts, and the caption diagnostic.
 
 Source of truth: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py`, `tests/pmzilla_lab_library/test_figures.py`, `tests/pmzilla_lab_library/test_serve_wrapper.py` (catalogue), `tests/pmzilla_lab_library/test_caption_diagnostic.py`, `tests/convert_books/test_noms_options.py`, `tools/pmzilla_lab_library.py`, `tools/caption_diagnostic.py`.
 ## Requirements
@@ -320,7 +320,7 @@ The system SHALL provide a status command that prints, under the read-only role,
 
 ## Note on the BM25 index
 
-The full-text index of the PostgreSQL route (`knowledge.chunks_bm25`, migration 0005) can become unreadable ("bitmap intersection stream … claimed twice", pg_search 0.26.0). Detection and the rebuild procedure are specified in `library-search-knowledge-import` (probe of the verification command) and `watch-pipeline` (daily check); the SQLite indexing described here is the fallback while the index is damaged.
+The full-text index of the PostgreSQL route (`knowledge.chunks_bm25`, migration 0005) can become unreadable ("bitmap intersection stream … claimed twice", pg_search 0.26.0). Detection is the indexer's probe command (requirement "Probe the BM25 index on request" above), run after every successful indexing by `watch-pipeline` (daily check); the rebuild procedure is section 14.6 of the installation guide. There is no fallback route: while the index is damaged, a search tool answers an error object (library-search-mcp-server), and the snapshot comparison of library-search-parity checks after the rebuild that the search ranks as before.
 
 ## Open questions
 

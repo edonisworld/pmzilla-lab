@@ -5,7 +5,8 @@ Tests de la notation « en ombre » du pré-tri (lot 5b anglais) : tools/watch_t
 
 Faux modèle : `httpx.post` est remplacé par une fonction qui répond comme Ollama, en français ou en anglais selon le
 prompt système reçu, et `library.embed` par un vecteur déterministe. Aucun accès réseau, aucun modèle local, aucun
-dossier réel (Watch-Lab, watch/, ~/.pmzilla-lab) : tout est dans le dossier temporaire de la classe Base du fichier voisin.
+dossier réel (Watch-Lab, watch/, ~/.pmzilla-lab) : tout est dans le dossier temporaire et le faux magasin en mémoire de la
+classe Base du fichier voisin.
 Couvre : réglage `shadow` (défaut, validation stricte), aucune notation en plus quand l'ombre est inactive, une ligne
 par article quand elle est active (avec l'empreinte des prompts), PREUVE que l'ombre ne change aucune décision
 (scores, classement, _to-read.md, articles écartés), échecs de l'ombre sans effet sur la note française, shadow-report
@@ -116,17 +117,17 @@ class Ombre(voisin.Base):
         return self.lancer(tri.cmd_score, **{**ARGS_SCORE, **options})
 
     def lignes_ombre(self):
-        return [dict(r) for r in self.connection.execute("SELECT * FROM shadow_scores ORDER BY url")]
+        return self.store.shadow_rows()
 
     def photo(self):
         """Tout ce que le pré-tri décide : notes, classement, liste à lire, articles écartés."""
-        notes = [tuple(r) for r in self.connection.execute(
-            "SELECT file, url, title, source, published, collected, complete, vector, criteria, substance, resume, "
-            "pourquoi, model, location, justifications, compilation, in_themes, promo FROM scores ORDER BY file")]
-        self.lancer(tri.cmd_digest)
         # scored_at est l'heure de la notation (à la seconde) : deux passages à cheval sur une seconde la font différer,
         # sans que cela soit une décision du pré-tri (cause de l'instabilité de test_l_ombre_ne_change_aucune_decision)
-        classement = [{k: v for k, v in ligne.items() if k != "scored_at"} for ligne in tri.ranked(self.connection)]
+        notes = [{k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in note.items() if k != "scored_at"}
+                 for note in self.store.all_scores()]
+        self.lancer(tri.cmd_digest)
+        classement = [{k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in ligne.items() if k != "scored_at"}
+                      for ligne in tri.ranked(self.store)]
         return {"scores": notes, "ranked": classement,
                 "to_read": veille.to_read_file().read_text(encoding="utf-8")}
 
@@ -135,13 +136,20 @@ class Ombre(voisin.Base):
         self.lancer(tri.cmd_apply)
         photo["ecartes"] = sorted(p.name for p in self.archive.glob("*.md"))
         photo["restants"] = sorted(p.name for p in self.articles.glob("*.md"))
-        photo["locations"] = [tuple(r) for r in self.connection.execute("SELECT file, location FROM scores ORDER BY file")]
+        photo["locations"] = [(n["file"], n["location"]) for n in self.store.all_scores()]
         return photo
 
+    def remettre_a_zero_sauf_les_notes(self):
+        """Vide la table de l'ombre seule et remet les articles écartés dans la bibliothèque (les emplacements enregistrés restent)."""
+        self.data.edit(lambda tables: tables["shadow"].clear())
+        for nom in ("a1.md", "a2.md", "a3.md", "a4.md", "a5.md", "a6.md"):
+            self.modifier_note(nom, location="watch")
+        for p in list(self.archive.glob("*.md")) if self.archive.exists() else []:
+            p.rename(self.articles / p.name)
+        veille.to_read_file().unlink(missing_ok=True)
+
     def remettre_a_zero(self):
-        for table in ("scores", "shadow_scores", "picks"):
-            self.connection.execute(f"DELETE FROM {table}")
-        self.connection.commit()
+        self.data.edit(lambda tables: [tables[nom].clear() for nom in ("scores", "shadow", "picks")])
         for p in list(self.archive.glob("*.md")) if self.archive.exists() else []:
             p.rename(self.articles / p.name)
         veille.to_read_file().unlink(missing_ok=True)
@@ -227,9 +235,10 @@ class Notation(Ombre):
         self.assertRegex(lignes[0]["prompts_hash"], r"^[0-9a-f]{12}$")
         par_url = {l["url"]: l for l in lignes}
         self.assertEqual(par_url["https://s.test/a2.md"]["substance"], 2)    # 4 en français, 2 en anglais (§SHIFT)
-        self.assertEqual(self.connection.execute("SELECT substance FROM scores WHERE file = 'a2.md'").fetchone()[0], 4)
-        self.assertEqual(json.loads(par_url["https://s.test/a1.md"]["criteria"]), {k: True for k in CRITERES})
+        self.assertEqual(self.note_de("a2.md")["substance"], 4)
+        self.assertEqual(par_url["https://s.test/a1.md"]["criteria"], {k: True for k in CRITERES})
         self.assertIsNotNone(par_url["https://s.test/a1.md"]["scored_at"])
+        self.assertEqual(list(self.tmp.rglob("*.sqlite")), [])           # aucun fichier local ne porte les notes en ombre
         self.assertRegex(sortie, r"Notation en ombre \(en\) : 6 notés, 0 échec\(s\), \+\d+ s")
 
     def test_l_empreinte_change_avec_les_prompts(self):
@@ -247,8 +256,8 @@ class Notation(Ombre):
         with mock.patch.object(httpx, "post", FauxModele()):
             self.noter()
         avant = self.photo()
-        self.connection.execute("UPDATE scores SET scored_at = '2000-01-01T00:00:01'")
-        self.connection.commit()
+        for nom in ("a1.md", "a2.md", "a3.md", "a4.md", "a5.md", "a6.md"):
+            self.modifier_note(nom, scored_at=dt.datetime(2000, 1, 1, 0, 0, 1).astimezone())
         self.assertEqual(self.photo(), avant)
 
     def test_l_ombre_ne_change_aucune_decision(self):
@@ -284,7 +293,7 @@ class Notation(Ombre):
                 faux = FauxModele(echec_en=echec)
                 with mock.patch.object(httpx, "post", faux):
                     sortie = self.noter()          # aucune exception
-                self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM scores").fetchone()[0], 6)
+                self.assertEqual(len(self.store.all_scores()), 6)
                 self.assertEqual(self.lignes_ombre(), [])
                 self.assertIn("0 notés, 6 échec(s)", sortie)
                 self.assertEqual(faux.appels["fr"], 6)
@@ -309,7 +318,7 @@ class Notation(Ombre):
         with mock.patch.object(tri, "load_shadow_prompts", side_effect=ImportError("absent")), \
                 mock.patch.object(httpx, "post", FauxModele()):
             sortie = self.noter()
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM scores").fetchone()[0], 6)
+        self.assertEqual(len(self.store.all_scores()), 6)
         self.assertIn("désactivée pour ce passage", sortie)
 
     def test_sans_modele_pas_d_ombre(self):
@@ -329,6 +338,20 @@ class Notation(Ombre):
             self.noter(rescore=True)
         self.assertEqual(len(self.lignes_ombre()), 1)
 
+    def test_les_decisions_ignorent_la_table_de_l_ombre(self):
+        self.reglages(ombre=True)
+        self.corpus()
+        with mock.patch.object(httpx, "post", FauxModele()):
+            self.noter()
+        self.assertEqual(len(self.lignes_ombre()), 6)
+        avec = self.photo_apres_apply()
+        self.remettre_a_zero_sauf_les_notes()
+        self.assertEqual(self.lignes_ombre(), [])
+        sans = self.photo_apres_apply()
+        for cle in ("to_read", "ecartes", "restants", "locations"):
+            self.assertEqual(sans[cle], avec[cle], cle)
+        self.assertEqual([(r["file"], r["reasons"]) for r in sans["ranked"]], [(r["file"], r["reasons"]) for r in avec["ranked"]])
+
     def test_le_francais_garde_sa_charge_utile(self):
         """judge sans jeu de prompts : exactement les prompts français d'avant."""
         envoyees = []
@@ -347,28 +370,33 @@ class Notation(Ombre):
 
 class Rapport(Ombre):
     def ombre(self, nom, substance, *, in_themes=1, promo=0, compilation=0):
-        url = self.connection.execute("SELECT url FROM scores WHERE file = ?", (nom,)).fetchone()[0]
+        url = self.note_de(nom)["url"]
         criteres = {k: i < substance for i, k in enumerate(CRITERES)}
-        self.connection.execute(
-            "INSERT INTO shadow_scores VALUES (?, 'en', 'faux', 'abc', ?, ?, ?, ?, ?, 'now')",
-            (url, json.dumps(criteres), substance, compilation, in_themes, promo))
-        self.connection.commit()
+        self.store.put_shadow(url=url, language="en", model="faux", prompts_hash="abc", criteria=criteres, substance=substance,
+                              is_compilation=bool(compilation), in_themes=bool(in_themes), is_promo=bool(promo),
+                              scored_at=dt.datetime.now().astimezone())
+        self.store.commit()
 
-    def monter(self):
+    def monter(self, avis_en_base=True):
         self.reglages(ombre=True)
         for nom, fr, en, flags in (("a1.md", 5, 5, {}), ("a2.md", 4, 2, {}), ("a3.md", 1, 1, {}), ("a4.md", 3, 3, {"in_themes": 0})):
             self.ajouter(nom, fr)
             self.ombre(nom, en, **flags)
         self.ajouter("a5.md", 4)    # noté en français seulement : hors comparaison
+        # la feuille existe toujours, mais seuls les avis stockés en base comptent
         tri.CALIBRATION_FILE.write_text("fichier;titre;avis\na1.md;x;g\na2.md;x;g\na3.md;x;e\na4.md;x;g\na5.md;x;g\n",
                                         encoding="utf-8")
-        self.connection.execute("INSERT INTO forced VALUES ('a2.md', 'now')")
-        self.connection.execute("INSERT INTO excluded VALUES ('a3.md', 'now')")
-        self.connection.commit()
+        if avis_en_base:
+            self.store.refresh_calibration([dict(file=f, verdict="keep") for f in ("a1.md", "a2.md", "a3.md", "a4.md", "a5.md")],
+                                           dt.datetime.now().astimezone())
+            self.store.apply_opinions({"a1.md": True, "a2.md": True, "a3.md": False, "a4.md": True, "a5.md": True})
+        self.store.restore("a2.md", "2026-10-02")
+        self.store.exclude("a3.md", "2026-10-02")
+        self.store.commit()
 
     def fichiers(self):
         return {str(p.relative_to(self.tmp)): (p.stat().st_mtime_ns, p.stat().st_size)
-                for p in self.tmp.rglob("*") if p.is_file() and p.name != "tri.sqlite"}
+                for p in self.tmp.rglob("*") if p.is_file()}
 
     def test_comparaison_des_deux_langues(self):
         self.monter()
@@ -399,10 +427,11 @@ class Rapport(Ombre):
     def test_le_rapport_n_ecrit_aucun_fichier(self):
         self.monter()
         avant = self.fichiers()
-        base_avant = [tuple(r) for r in self.connection.execute("SELECT * FROM shadow_scores")]
+        base_avant = (self.store.shadow_rows(), self.store.calibration_entries(), len(self.store.all_scores()))
         self.lancer(tri.cmd_shadow_report, limit=20)
         self.assertEqual(self.fichiers(), avant)
-        self.assertEqual([tuple(r) for r in self.connection.execute("SELECT * FROM shadow_scores")], base_avant)
+        self.assertEqual((self.store.shadow_rows(), self.store.calibration_entries(), len(self.store.all_scores())), base_avant)
+        self.assertEqual(self.data.roles, ["ro"])           # une seule ouverture, en lecture seule
 
     def test_sortie_vide_sans_reglages_ni_note(self):
         self.assertFalse(tri.CONFIG_FILE.exists())
@@ -418,11 +447,13 @@ class Rapport(Ombre):
         self.ajouter("a1.md", 4)
         self.assertIn("est active", self.lancer(tri.cmd_shadow_report, limit=20))
 
-    def test_sans_fichier_de_calibration(self):
-        self.monter()
-        tri.CALIBRATION_FILE.unlink()
+    def test_sans_avis_en_base_meme_avec_une_feuille(self):
+        self.monter(avis_en_base=False)
+        self.assertTrue(tri.CALIBRATION_FILE.exists())
         sortie = self.lancer(tri.cmd_shadow_report, limit=20)
         self.assertIn("avis de calibration : aucun article en commun", sortie)
+        tri.CALIBRATION_FILE.unlink()
+        self.assertIn("avis de calibration : aucun article en commun", self.lancer(tri.cmd_shadow_report, limit=20))
 
     def test_ranked_utilise_la_meme_regle(self):
         """La fonction partagée donne les raisons de ranked, hors repêchage et rejet à la main."""

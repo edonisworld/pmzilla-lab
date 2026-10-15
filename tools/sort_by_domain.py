@@ -25,6 +25,9 @@ Domaines (nom du dossier = nom de collection dans le serveur) et agents qui les 
     facilitation  Facilitation · BMAD Scrum Master
     tech          Delivery · BMAD Architect, Dev, Test Architect
     (Critic cherche dans toute la bibliothèque)
+
+Exemple :
+    python3 tools/sort_by_domain.py livres-md collections
 """
 import shutil
 import sys

@@ -84,6 +84,32 @@ Source: tests/flow_store/test_ordre_rapports.py
 - **WHEN** the "closed without delivery" list is read
 - **THEN** its entries are sorted by count descending then name
 
+### Requirement: Out-of-export tickets left out of database reads
+The system SHALL leave out of every database reader (flow tickets, dependency data, history) the tickets carrying an out-of-export instant, so that a report computed from the database equals the report computed from the CSV files of the same day. A link towards a marked ticket SHALL be read as a link towards a ticket outside the export. The readers SHALL NOT count marked tickets in work in progress, to-do, ages, dormant tickets, throughput or dependencies.
+
+Source: tests/flow_store
+
+#### Scenario: Marked open ticket
+- **WHEN** the database holds an open ticket marked out of the export and the CSV of the day does not hold it
+- **THEN** the flow report from the database equals the flow report from the CSV, and the work in progress does not count it
+
+#### Scenario: Link to a marked ticket
+- **WHEN** a ticket waits for a marked ticket
+- **THEN** the dependency report from the database shows that wait towards the "outside the export" node, as the CSV report does
+
+### Requirement: Readers for the cycles report
+The system SHALL provide, under the read-only role, a cycles-report reader returning each ticket with its declared-label and fix-version periods and its resolution day in the export time zone, plus status transitions only for tickets with a requested Epic Review label. No query SHALL return a marked ticket or the out-of-export instant.
+
+Source: tests/flow_store/test_lecteurs_cycles.py
+
+#### Scenario: Resolution day
+- **WHEN** a ticket is resolved late in the evening UTC and the export time zone is ahead of UTC
+- **THEN** its resolution day is the next local day
+
+#### Scenario: Marked ticket
+- **WHEN** a ticket carrying declared-label periods is marked out of the export
+- **THEN** neither the ticket nor its periods are returned
+
 ## Open questions
 
 1. `tests/flow_store/test_flow_store.py` (test_format_sans_heure) still passes the retired date-format setting with a format without time of day and expects the CSV and database reads to be equal with an empty resolution-to-the-minute field. The CSV readers now use the fixed export format (date with time), under which such dates are unreadable, and the database reader always fills the resolution minute. The test runs only with a disposable database and was not run for this baseline; whether it still passes, and whether it should be removed or rewritten, is not established.

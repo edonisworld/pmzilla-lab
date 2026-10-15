@@ -3,15 +3,17 @@
 ## Purpose
 
 Describes the tool that collects the status history of tickets from the Jira API into a local cache (only date, starting status and arrival status of each transition), and checks that cache against an export. It also covers the shared history-reading rules (date normalisation, chronological sorting, segments, dormant tickets) used by the flow report. Sources are the tests in `tests/history_jira/`.
-## Requirements
-### Requirement: Connection test
-The system SHALL provide a `test` subcommand that checks the connection to Jira and prints only "connexion OK" on success, or only the HTTP status code on failure (exit 1), never the site, account, token or any name returned by Jira. With the scoped-token mode it SHALL go through the cloud identifier of the site without printing it. Missing settings SHALL produce an error naming the missing setting, without printing any value of the settings. A non-secure remote site address SHALL be refused before any call. The token SHALL be read from the operating-system keychain; a missing token SHALL give a message without traceback.
 
-Source: tests/history_jira/test_history_jira.py (Connexion)
+## Requirements
+
+### Requirement: Connection test
+The system SHALL provide a `test` subcommand that checks the connection to Jira and prints only "connexion OK" on success, or only the HTTP status code on failure (exit 1), never the site, account, token, cloud identifier or any name returned by Jira. It SHALL go through the cloud gateway with the cloud identifier of the settings, then probe each resource the tools read (design D19) and print the expiry lines of design D15. Missing settings SHALL produce an error naming the missing setting, without printing any value of the settings. A non-secure remote site address SHALL be refused before any call. The token SHALL be read from the operating-system keychain; a missing token SHALL give a message without traceback. The system SHALL NOT print, log or write the token, and SHALL NOT retry a refused token.
+
+Source: tests/history_jira/test_history_jira.py (Connexion); tests/history_jira/test_jeton_scopes.py
 
 #### Scenario: Connection succeeds
 - **WHEN** `test` runs with valid settings
-- **THEN** the output is exactly the success text and the exit code is 0
+- **THEN** the output holds the success text and one OK line per probed resource, and the exit code is 0
 
 #### Scenario: Credentials refused
 - **WHEN** Jira answers 401
@@ -26,51 +28,67 @@ Source: tests/history_jira/test_history_jira.py (Connexion)
 - **THEN** the system asks the keychain for the generic password of the dedicated service, and prints a no-traceback message if it is not found
 
 ### Requirement: Scoped-token authentication sequence
-The system SHALL, in the scoped-token mode, first read the cloud identifier from the site without authentication, then send the authenticated request through the cloud gateway address built from that identifier; `test` SHALL make exactly these two calls. A refused token SHALL print only the HTTP status code (exit 1), never the cloud identifier, the site, the account or the token, and SHALL NOT be retried. A missing, empty or unsafe cloud identifier (one that contains path characters) SHALL stop the run with exit 1 and a "cloudId introuvable" message, without traceback and before any authenticated call.
+The system SHALL send every authenticated request through the cloud gateway address built from the cloud identifier read in the settings (`jira_cloud_id`), with Basic authentication by account email and token, and SHALL NOT read the cloud identifier from the site in `export`, `collect` or `check`. In `test` only, it SHALL also read the site's cloud identifier without authentication and, when it differs from the settings, stop with exit code 1 and the mismatch key phrase of design D19 before any authenticated call. A refused token SHALL print only the HTTP status code (exit 1), never the cloud identifier, the site, the account or the token, and SHALL NOT be retried. A missing, empty or unsafe cloud identifier in the settings (one that contains path characters) SHALL stop the run with exit 1 and a "cloudId introuvable" message, without traceback and before any authenticated call.
 
-Source: tests/history_jira/test_jeton_scopes.py
+Source: tests/history_jira/test_jeton_scopes.py (SequenceScopes)
 
 #### Scenario: Full sequence
-- **WHEN** `test` runs in the scoped-token mode with valid settings
-- **THEN** the output is exactly the success text, the first call reads the cloud identifier on the site without authentication, and the second is one authenticated search through the gateway address
+- **WHEN** `test` runs with valid settings
+- **THEN** the first call reads the cloud identifier on the site without authentication, the following calls are authenticated through the gateway address built from the settings, and the output holds the success text
+
+#### Scenario: Collection without tenant call
+- **WHEN** `collect` runs
+- **THEN** no call reads the site's tenant information, and every call goes to the gateway
+
+#### Scenario: Mismatch
+- **WHEN** the site's cloud identifier differs from the settings
+- **THEN** the output holds "cloudId differs from the site's", neither identifier is printed, no authenticated call is made, and the exit code is 1
 
 #### Scenario: Token refused
 - **WHEN** the gateway refuses the token
 - **THEN** the output is the status code alone, with no cloud identifier, site, account, token or traceback, and no further call is made
 
 #### Scenario: Unusable cloud identifier
-- **WHEN** the site returns no cloud identifier, an empty one, or one containing a path
+- **WHEN** the settings hold no cloud identifier, an empty one, or one containing a path
 - **THEN** the exit code is 1, the message says the cloud identifier was not found, and no authenticated call is made
 
 ### Requirement: Former names
-The system SHALL accept former option names and former setting names (and former setting values) with a warning naming the new name, SHALL refuse former subcommand names with exit code 2 without any call to Jira, and SHALL cite the new setting name in missing-setting messages.
+The system SHALL refuse former option names with exit code 2, and former setting names and former setting values with a non-zero exit code, each with a message naming the current name and without any call to Jira; it SHALL refuse former subcommand names with exit code 2 without any call to Jira, and SHALL cite the new setting name in missing-setting messages.
 
 Source: tests/history_jira/test_history_jira.py (AnciensNoms)
 
 #### Scenario: Former options
 - **WHEN** a former name of the team, refresh or key option is used
-- **THEN** it works and a warning gives the new option name
+- **THEN** the exit code is 2, the message says the option no longer exists and names the current one, and Jira is not called
 
 #### Scenario: New names
 - **WHEN** only new names are used
 - **THEN** no warning is printed
 
 ### Requirement: History collection keeps only date and states
-The system SHALL provide a `collect` subcommand that reads one or more export CSV files, merges the tickets by key, and for each ticket stores in the cache only a finished flag and the list of status transitions as (date, starting status, arrival status). Changes to other fields SHALL be discarded and the author SHALL never be stored. The console SHALL report the mode, the tickets processed, the transition count and the error count, without ticket keys, team names, token, titles, site address or author.
+The system SHALL provide a `collect` subcommand that reads one or more export CSV files, merges the tickets by key, and for each ticket stores in the cache only a finished flag, the resolution date, the last date the ticket was seen in an export, the list of status transitions as (date, starting status, arrival status), the add and remove events of fix versions and, when declared labels are configured, of declared labels, as (date, added or removed, value). Changes to other fields and to undeclared labels SHALL be discarded and the author SHALL never be stored. Tickets resolved longer ago than the retention period SHALL be skipped and counted with the key phrase of design D19. The console SHALL report the mode, the tickets processed, the transition count and the error count, without ticket keys, team names, token, titles, labels, version names, site address or author.
 
-Source: tests/history_jira/test_history_jira.py (Collecte)
+Source: tests/history_jira/test_history_jira.py (Collecte); tests/history_jira/test_collecte_etendue.py
 
 #### Scenario: Grouped mode
-- **WHEN** the grouped history API is available
-- **THEN** each cache entry holds exactly the finished flag and its three-element transitions, the assignee change is dropped, and the console says the mode is grouped
+- **WHEN** the grouped history API is available, no label is declared and no fix version changed
+- **THEN** each cache entry holds the finished flag, the two dates and its three-element transitions, the assignee change is dropped, and the console says the mode is grouped
+
+#### Scenario: Declared label events
+- **WHEN** the changelog adds a declared label, adds an undeclared one and changes the fix version
+- **THEN** the entry holds the declared-label add and the fix-version remove and add with their instants, and nothing about the undeclared label
 
 #### Scenario: Nothing sensitive written
 - **WHEN** a collection ends
-- **THEN** neither the console nor any file written contains the token, the author, the author's address, a title, the assignee field name or the account address
+- **THEN** neither the console nor any file written contains the token, the author, the author's address, a title, the assignee field name, the account address or an undeclared label
 
 #### Scenario: Export without key column
 - **WHEN** the export has no key column
 - **THEN** the exit code is 1 and the message mentions the key column
+
+#### Scenario: Ticket past the rule
+- **WHEN** an export row was resolved before the retention period
+- **THEN** its history is not requested and the console prints "tickets past retention, skipped: 1"
 
 ### Requirement: Pagination and fallback
 The system SHALL follow pagination of the key search, of the grouped history (including a ticket split between two pages) and of the per-ticket history. It SHALL fall back to a per-ticket mode when the grouped API is unavailable, and in that mode SHALL read until the last page, or until an empty page when the API gives no last-page indicator.
@@ -192,7 +210,7 @@ Source: tests/history_jira/test_history_jira.py (Controle)
 - **THEN** exit 1, no traceback, and the message names the replacement
 
 ### Requirement: Message language
-The system SHALL print messages in French by default and English with `--language en`, refuse other languages with exit 2, not keep the language between runs, accept the former option name with a warning, and produce English output matching the recorded reference without French words.
+The system SHALL print messages in French by default and English with `--language en`, refuse other languages with exit 2, not keep the language between runs, refuse the former option name with exit 2 naming the current one, and produce English output matching the recorded reference without French words.
 
 Source: tests/history_jira/test_language.py
 
@@ -201,7 +219,9 @@ Source: tests/history_jira/test_language.py
 - **THEN** the output equals the English reference and contains no French
 
 ### Requirement: Strict option for collection errors
-The system SHALL accept on the collect subcommand an opt-in strict option. With it, when the error count of the run is above zero, the system SHALL print its usual report, leave the cache exactly as it would without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name a key, a team or a value. An access error SHALL keep its current exit code 1. Without the option, the exit code and the output SHALL stay unchanged. Untested until implemented.
+The system SHALL accept on the collect subcommand an opt-in strict option. With it, when the error count of the run is above zero, the system SHALL print its usual report, leave the cache exactly as it would without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name a key, a team or a value. An access error SHALL keep its current exit code 1. Without the option, the exit code and the output SHALL stay unchanged.
+
+Source: tests/history_jira
 
 #### Scenario: Persistent throttling with the option
 - **WHEN** every call answers 429 and the collection runs with the strict option
@@ -214,6 +234,41 @@ The system SHALL accept on the collect subcommand an opt-in strict option. With 
 #### Scenario: Without the option
 - **WHEN** every call answers 429 and the option is not given
 - **THEN** the exit code is 0, as before this change
+
+### Requirement: Scoped token only
+The system SHALL use the scoped-token mode when the token-type setting is absent, and SHALL refuse the classic value with exit code 1 and the classic-token key phrase of design D19, before reading the keychain and before any call, in every subcommand that calls Jira (and in the export, which uses the same client). The system SHALL NOT call the site address with an authenticated request.
+
+Source: tests/history_jira/test_jeton_scopes.py; tests/export_jira_api/test_export_jira_api.py
+
+#### Scenario: Classic setting
+- **WHEN** the token type is set to classic and `test` runs
+- **THEN** the output holds "classic token refused: use a scoped token", the keychain is not read, no call is made, and the exit code is 1
+
+#### Scenario: Setting absent
+- **WHEN** the token type is not set
+- **THEN** the gateway address is used
+
+### Requirement: Resource probe
+The system SHALL, in `test`, make one read request per resource the tools use (ticket search, history, field list), each limited to one result, and print one line per resource with OK or the HTTP status code, following design D19. The exit code SHALL be 1 when any resource fails. The probe SHALL NOT print a value returned by Jira, a key or a field name.
+
+Source: tests/history_jira/test_jeton_scopes.py (SondeEtExpiration)
+
+#### Scenario: Missing scope
+- **WHEN** the history request answers 403 and the others succeed
+- **THEN** the output holds "access history: 403" and the OK lines of the other resources, and the exit code is 1
+
+### Requirement: Token expiry warning
+The system SHALL read the non-secret expiry date of the token from the settings (`jira_token_expires`) and, in `test`, print the expiry-soon key phrase with the number of days when the date is within a configurable number of days, the expiry-passed key phrase when the date has passed, and the not-set key phrase when the setting is absent. The expiry lines SHALL NOT change the exit code of a successful test, except that a passed date with a refused call keeps exit code 1. The system SHALL NOT read the expiry from the token or from Jira. An unreadable date SHALL stop with exit code 1 naming the setting, not the value.
+
+Source: tests/history_jira/test_jeton_scopes.py (SondeEtExpiration)
+
+#### Scenario: Expiry soon
+- **WHEN** the date is ten days ahead and the warning period is longer
+- **THEN** the output holds "API token expires in 10 days" and the exit code is 0
+
+#### Scenario: Not set
+- **WHEN** the setting is absent
+- **THEN** the output holds "token expiry date not set"
 
 ## Open questions
 

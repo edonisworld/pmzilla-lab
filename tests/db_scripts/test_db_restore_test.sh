@@ -61,6 +61,7 @@ case "${1:-}" in
         contenu="$(cat)"
         case "$contenu" in *"DUMP ${FAUX_RESTORE_ECHEC:-aucun}"*) echo "COPY flow.issues: $BRUIT_FAUX" >&2; exit 1 ;; esac
         exit 0 ;;
+      *"DROP SCHEMA"*) [ "${FAUX_DROP_ECHEC:-0}" = "1" ] && { echo "ERROR: drop: $BRUIT_FAUX" >&2; exit 1; }; exit 0 ;;
       *psql*)
         echo "$BRUIT_FAUX"
         case "$args" in *"schema_migrations order"*) cat "$FX/mig-restauree" ;; *) cat "$FX/comptes-restaures" ;; esac
@@ -150,6 +151,39 @@ verifie "restore : mot de passe jetable aléatoire, passé par l'environnement, 
 # --- sortie : seulement des noms de tables et des comptes
 verifie "restore : la sortie ne contient aucune valeur parasite ni mot de passe" "$(grep -q "$BRUIT" "$tmp/s"; r1=$?; grep -q "$MDP_REEL" "$tmp/s"; r2=$?; grep -q "$mdp_jetable" "$tmp/s"; r3=$?; [ $r1 -ne 0 ] && [ $r2 -ne 0 ] && [ $r3 -ne 0 ]; echo $?)"
 verifie "restore : les lignes de comptes ne portent que table, deux nombres et un statut" "$(grep -E '^  (cases|flow|knowledge|public)\.' "$tmp/s" | grep -Evq '^  [a-z_]+\.[a-z_]+ +[0-9]+ / [0-9]+ +OK$'; [ $? -ne 0 ]; echo $?)"
+
+# --- schéma vidé dans le conteneur jetable avant pg_restore (R-22 : knowledge a plus de tables que la sauvegarde)
+etat_nominal
+lance
+verifie "restore : chaque schéma est vidé (DROP SCHEMA IF EXISTS … CASCADE) dans le conteneur jetable, juste avant son pg_restore" "$(
+  suite="$(grep -E '^docker exec (-i )?pmzilla-lab-restore-test-.*(DROP SCHEMA|pg_restore)' "$FAUX_LOG" | sed -E 's/^docker exec (-i )?pmzilla-lab-restore-test-[0-9]+-[0-9]+ .*DROP SCHEMA IF EXISTS ([a-z_]+) CASCADE.*/D:\2/; s/^docker exec -i .*pg_restore.*/R/' | tr '\n' ' ')"
+  [ "$suite" = "D:knowledge R D:cases R D:flow R " ]; echo $?)"
+verifie "restore : le vidage ne vise que le conteneur jetable (jamais docker compose)" "$(! grep '^docker compose' "$FAUX_LOG" | grep -qi 'drop'; echo $?)"
+verifie "restore : le vidage précède la restauration mais les migrations restent appliquées avant (uv avant le premier DROP)" "$([ "$(grep -n '^uv ' "$FAUX_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'DROP SCHEMA' "$FAUX_LOG" | head -1 | cut -d: -f1)" ]; echo $?)"
+verifie "restore : pg_restore garde --clean --if-exists --exit-on-error --single-transaction" "$(grep -q 'pg_restore -U postgres -d pmzilla --clean --if-exists --exit-on-error --single-transaction' "$FAUX_LOG"; echo $?)"
+etat_nominal
+FAUX_DROP_ECHEC=1 lance
+verifie "restore : vidage en échec, code 1, schéma nommé, pg_restore non lancé, valeurs masquées" "$([ $code -eq 1 ] && grep -q 'ÉCHEC knowledge' "$tmp/s" && ! grep -q 'pg_restore' "$FAUX_LOG" && ! grep -q "$BRUIT" "$tmp/s" && [ ! -s "$FX/conteneurs" ]; echo $?)"
+etat_nominal
+DB_RESTORE_SCHEMAS='knowledge; drop table x' lance
+verifie "restore : nom de schéma invalide refusé (code 2) avant tout conteneur" "$([ $code -eq 2 ] && grep -q 'Nom de schéma invalide' "$tmp/s" && ! grep -q 'docker run' "$FAUX_LOG"; echo $?)"
+
+# --- /dev/shm du conteneur jetable : shm_size lu dans docker-compose.yml (R-22), jamais recopié ; repli 1g
+etat_nominal; lance
+shm_reel="$(grep -E '^[[:space:]]+shm_size:' "$racine/docker-compose.yml" | head -1 | sed -E 's/^[[:space:]]+shm_size:[[:space:]]*//; s/[#].*$//; s/["[:space:]]//g')"
+verifie "restore : docker run reçoit --shm-size avec la valeur de shm_size du compose réel" "$([ -n "$shm_reel" ] && grep '^docker run' "$FAUX_LOG" | grep -q -- "--shm-size $shm_reel "; echo $?)"
+racine_shm() {   # $1 = ligne shm_size du compose factice (vide : aucune)
+  rm -rf "$tmp/root"; mkdir -p "$tmp/root/tools" "$tmp/root/db"
+  cp "$racine/tools/db_restore_test.sh" "$tmp/root/tools/"; cp -R "$racine/db/migrations" "$tmp/root/db/"
+  { grep -v 'shm_size' "$racine/docker-compose.yml"; [ -n "$1" ] && echo "    $1"; } > "$tmp/root/docker-compose.yml"
+  etat_nominal; bash "$tmp/root/tools/db_restore_test.sh" > "$tmp/s" 2>&1; code=$?
+}
+racine_shm "shm_size: 2gb  # commentaire"
+verifie "restore : la valeur vient du compose (2gb), commentaire retiré" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 2gb '; echo $?)"
+racine_shm ""
+verifie "restore : sans shm_size dans le compose, repli 1g" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 1g '; echo $?)"
+racine_shm "shm_size: grand; rm -rf /"
+verifie "restore : shm_size illisible, repli 1g (la valeur n'est jamais passée telle quelle)" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 1g ' && ! grep -q 'rm -rf' "$FAUX_LOG"; echo $?)"
 
 # --- écart de lignes : attendu possible, code 0
 etat_nominal; sed -i.bak 's/^flow.issues|120/flow.issues|100/' "$FX/comptes-restaures"

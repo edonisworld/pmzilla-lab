@@ -34,7 +34,8 @@ import select_suites  # noqa: E402
 CETTE_SUITE = "correspondance_suites"
 
 DOSSIERS_DE_DONNEES = {
-    "fixtures_library": "bibliothèque inventée importée par les suites du lot 4 (knowledge_import, hybrid_search, library_backend, parity)",
+    "fixtures_library": "bibliothèque inventée importée par les suites du lot 4 (hybrid_search, library_backend, parity)",
+    "fixtures_watch": "faux magasin en mémoire de la veille et du pré-tri (fake_store.py), importé par les suites watch_store, watch_lab, watch_triage, watch_sh et dashboard",
     "postures": "jeu d'essai des postures (cas, contextes neutres, vocabulaire), lu par posture_evals",
 }
 
@@ -49,6 +50,7 @@ SUITES_TRANSVERSALES = {
     "postures_skills": "skills de posture traduits en anglais, pas un outil",
     "private_guards": "réglages réels de la veille suivis (watch/sources.yaml, watch/tri.yaml)",
     "references_postures": "références des postures et sanctum (tools/references_postures.yaml)",
+    "sqlite_guard": "garde-fou : plus de SQLite dans tools/ ni dans les fixtures de tests/ (change remove-sqlite)",
     "run_all": "lanceur tests/run_all.sh",
     "script_dependencies": "en-têtes PEP 723 de tous les scripts lancés par uv run",
     "settings_deny": "règles de .claude/settings.json",

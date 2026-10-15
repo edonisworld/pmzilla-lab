@@ -19,7 +19,6 @@ class GardesEtMapping(unittest.TestCase):
     def test_tous_les_ecartes_sont_dans_gardes_et_inversement(self):
         ecartes_reels = {k for k, codes in mapping_lab.MAPPING.items() if not codes}
         self.assertEqual(ecartes_reels, set(ecartes.GARDES))
-        self.assertEqual(len(ecartes_reels), 11)
 
     def test_chaque_livre_garde_existe_et_est_copie(self):
         for ecarte, garde in ecartes.GARDES.items():

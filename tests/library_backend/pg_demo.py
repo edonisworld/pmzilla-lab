@@ -1,8 +1,8 @@
 """Aides de test : base PostgreSQL jetable chargée avec la bibliothèque inventée (tests/fixtures_library/demo_library.py).
 
-Le chargement se fait par de simples INSERT (le futur knowledge_import.py est testé par ses propres tests). Les noms de collections
-sont stockés comme dans SQLite (« veille » reste « veille »). Rien n'est lu ni écrit dans les schémas réels : la base est créée sous
-le nom pmzilla_test_<hex> et supprimée dans tous les cas.
+Le chargement se fait par de simples INSERT : c'est le constructeur de la bibliothèque inventée dans une base jetable (comptes attendus :
+`demo.expected_counts()`). `add_book` ajoute un livre de plus (corpus d'un test). Rien n'est lu ni écrit dans les schémas réels : la base
+est créée sous le nom pmzilla_test_<hex> et supprimée dans tous les cas.
 """
 import contextlib
 import json
@@ -79,6 +79,21 @@ class ThrowawayDatabase:
             conn.execute("INSERT INTO knowledge.chunks (book_id, position, section, text, embedding, kind, ref) "
                          "VALUES (%s, %s, %s, %s, %s::halfvec, %s, %s::jsonb)",
                          (book_ids[file_name], position, section, text, literal(angle), KIND[kind], json.dumps(ref)))
+        conn.execute("RESET ROLE")
+        conn.commit()
+
+    def add_book(self, file_name: str, passages, collection: str = "produit") -> None:
+        """Ajoute un livre sans métadonnées à une collection existante. `passages` : [(position, texte, vecteur numpy de 1024 valeurs)]."""
+        conn = self._raw()
+        conn.execute("SET ROLE pmzilla_knowledge")
+        collection_id = conn.execute("SELECT id FROM knowledge.collections WHERE name = %s", (collection,)).fetchone()[0]
+        book_id = conn.execute(
+            "INSERT INTO knowledge.books (file_name, title, meta, sha256, model, indexed_at) VALUES (%s, %s, '{}'::jsonb, 'x', %s, now()) RETURNING id",
+            (file_name, file_name, demo.MODEL)).fetchone()[0]
+        conn.execute("INSERT INTO knowledge.book_collections VALUES (%s, %s)", (book_id, collection_id))
+        for position, texte, vecteur in passages:
+            conn.execute("INSERT INTO knowledge.chunks (book_id, position, section, text, embedding) VALUES (%s, %s, 'Début', %s, %s::halfvec)",
+                         (book_id, position, texte, literal_of(vecteur)))
         conn.execute("RESET ROLE")
         conn.commit()
 

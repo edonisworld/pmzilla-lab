@@ -1,5 +1,5 @@
 """
-PMZilla Lab : Étape launchd : tâches de la veille et de la sauvegarde de la base (design D4, D14).
+PMZilla Lab : Étape launchd : tâches de la veille, de la sauvegarde de la base et du doctor (design D4, D14).
 Module du script d'installation (orchestrateur du même nom sans suffixe) ; ne se lance pas seul.
 
 Chaque tâche : rendu du gabarit (le marqueur du dossier personnel est remplacé), fichier sous Library/LaunchAgents, `xattr -c`,
@@ -22,14 +22,17 @@ MARQUEUR = "__HOME__"
 @dataclass
 class Tache:
     gabarit: str          # nom du fichier modèle dans tools/
-    drapeau: str          # clé de ctx.etat qui dit si le prérequis est prêt
+    drapeau: str          # clé de ctx.etat qui dit si le prérequis est prêt ; vide : aucun prérequis
     report: str           # ligne de ctx.reportes quand le prérequis manque
     prerequis: str        # texte affiché quand la tâche est reportée
 
 
 TACHES = (
     Tache("com.pmzilla.watch.plist", "ollama_ok", "watch job not installed", "Ollama and its models are not ready"),
+    Tache("com.pmzilla.watch-catchup.plist", "ollama_ok", "watch catch-up job not installed", "Ollama and its models are not ready"),
     Tache("com.pmzilla.db-backup.plist", "base_ok", "backup job not installed", "the database is not ready"),
+    # le doctor ne dépend ni d'Ollama ni du conteneur : il est installé même quand les deux autres sont reportés
+    Tache("com.pmzilla.doctor.plist", "", "", ""),
 )
 
 
@@ -73,6 +76,8 @@ def _tache_en_place(ctx: Contexte, tache: Tache) -> bool:
 
 
 def _prerequis_pret(ctx: Contexte, tache: Tache) -> bool:
+    if not tache.drapeau:
+        return True
     if tache.drapeau in ctx.etat:
         return bool(ctx.etat[tache.drapeau])
     if tache.drapeau == "ollama_ok":

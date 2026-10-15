@@ -18,9 +18,11 @@ lus dans d'autres fichiers (logs de la veille, rapports d'essai et du flux, jour
 Sources lues (chacune peut manquer : la section affiche « pas encore de données ») :
     ~/Library/Logs/pmzilla-watch.log et pmzilla-essai.log
     _bmad-output/essais/essai-*.md, _bmad-output/pmzilla/{veille,miroir}/
-    ~/.pmzilla-lab/{library,tri}.sqlite (veille : nombre d'articles de la collection watch ; partages et pré-tri)
+    base de la veille (schéma knowledge, rôle pmzilla_knowledge_ro, délai de connexion de 2 s) : articles et passages de la collection
+    watch (tables de la bibliothèque, nom exact de la collection), partages et sélections du jour (tables triage_*) ; base qui ne répond
+    pas : « source illisible » avec le seul type de l'erreur. Aucun ancien fichier d'état n'est ouvert.
     base de la bibliothèque (schéma knowledge : livres, collections, passages ; rôle pmzilla_knowledge_ro, délai de connexion
-    de 2 s, base nommée par PMZILLA_LAB_KNOWLEDGE_DBNAME si elle est posée) : section bibliothèque, jamais l'index SQLite.
+    de 2 s, base nommée par PMZILLA_LAB_KNOWLEDGE_DBNAME si elle est posée) : section bibliothèque.
     Base qui ne répond pas : « source illisible » avec le seul type de l'erreur ; aucun livre : « pas encore de données »
     tools/book_catalog.yaml (pas lu directement : l'index porte déjà les auteurs),
     tools/mapping_lab.py (commentaire des livres absents), watch/tri.yaml
@@ -40,7 +42,6 @@ import html
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -51,7 +52,8 @@ import watch_paths
 from dashboard_messages import CATALOGS
 from messages import Messages, add_language_option
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()   # dossier de contenu
+CODE_ROOT = Path(__file__).resolve().parent.parent   # dossier de code : réglages suivis et scripts, liens suivis
 DATA = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser()
 LOGS = Path(os.environ.get("PMZILLA_LAB_LOGS", "~/Library/Logs")).expanduser()
 OUT = Path(os.environ.get("PMZILLA_LAB_OUTPUT", "~/PMZilla-Lab/tableau-de-bord.html")).expanduser()
@@ -108,15 +110,6 @@ def read_text(path: Path) -> str:
     if not path.is_file():
         raise PasDeDonnees
     return path.read_text(encoding="utf-8", errors="replace")
-
-
-def connect(name: str) -> sqlite3.Connection:
-    path = DATA / name
-    if not path.is_file():
-        raise PasDeDonnees
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    return db
 
 
 # --- petits éléments graphiques -------------------------------------------------------------
@@ -180,6 +173,40 @@ def table(headers: list[str], rows: list[list[str]], cls: str = "") -> str:
 
 def badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{esc(text)}</span>'
+
+
+# --- 0. Santé --------------------------------------------------------------------------------
+
+def health_reason(check: dict) -> str:
+    """Raison d'une ligne du fichier d'état dans la langue de la page, avec les catalogues du doctor (clé inconnue : la clé)."""
+    from doctor_messages import CATALOGS as DOCTOR_CATALOGS
+    from messages import fields
+    dt_ = Messages(DOCTOR_CATALOGS, t.language)
+    reason = check.get("reason") or {}
+    key, counts = str(reason.get("key", "")), reason.get("counts") or {}
+    full = DOCTOR_CATALOGS["fr"]
+    name = f"raison_{str(check.get('id', '')).replace('-', '_')}_{key}"
+    if name not in full:
+        name = f"raison_{key}"
+    if name not in full:
+        return key
+    values = {f: (counts.get(f, 0) if f != "noms" else "") for f in fields(full[name])}
+    return dt_(name, **values)
+
+
+def section_sante() -> str:
+    """Le fichier d'état écrit par `doctor.py --record` (version 1) : jamais de lancement du doctor, aucun autre fichier."""
+    from doctor_messages import CATALOGS as DOCTOR_CATALOGS
+    state = json.loads(read_text(DATA / "doctor-etat.json"))
+    checked = dt.datetime.fromisoformat(state["checked_at"])
+    head = f'<p class="legend">{esc(t("health_checked", date=checked.strftime(t("stamp_format"))))}</p>'
+    lines = [c for c in state["checks"] if c["level"] in ("problem", "warning")]
+    if not lines:
+        return head + f'<p>{badge(t("health_all_good"), "ok")}</p>'
+    level_texts = Messages(DOCTOR_CATALOGS, t.language)
+    rows = [[esc(c["id"]), badge(level_texts(f"niveau_{c['level']}"), "warn" if c["level"] == "warning" else "ko"),
+             esc(health_reason(c))] for c in lines]
+    return head + table([t("health_check"), t("health_level"), t("health_reason")], rows)
 
 
 # --- 1. À faire ------------------------------------------------------------------------------
@@ -264,7 +291,7 @@ def cadence_block() -> str:
 
 def mode_block() -> str:
     import yaml
-    raw = read_text(watch_paths.config_dir(WORKSPACE) / "tri.yaml")
+    raw = read_text(watch_paths.config_dir(CODE_ROOT) / "tri.yaml")
     mode = (yaml.safe_load(raw) or {}).get("mode", t("mode_unknown"))
     kind = "warn" if mode == "observation" else "ok"
     detail = t("mode_detail_observation") if mode == "observation" else t("mode_detail_filter")
@@ -390,32 +417,65 @@ def veille_log_block() -> str:
     return "".join(out)
 
 
-def veille_base_block() -> str:
-    db = connect("library.sqlite")
-    articles = db.execute("SELECT COUNT(*) FROM books WHERE collections LIKE '%watch%'").fetchone()[0]
-    passages = db.execute("SELECT COUNT(*) FROM chunks c JOIN books b ON b.id = c.book_id WHERE b.collections LIKE '%watch%'").fetchone()[0]
-    return t("veille_collection", articles=pb(articles, "article"), passages=pl(passages, "indexed_passage"))
+WATCH_COUNTS_SQL = (
+    "WITH watch_books AS (SELECT b.id FROM knowledge.books b WHERE EXISTS (SELECT 1 FROM knowledge.book_collections bc "
+    "JOIN knowledge.collections co ON co.id = bc.collection_id WHERE bc.book_id = b.id AND co.name = ANY(%s))) "
+    "SELECT (SELECT count(*) FROM watch_books), (SELECT count(*) FROM knowledge.chunks c WHERE c.book_id IN (SELECT id FROM watch_books))")
+SHARES_SQL = (
+    "SELECT (SELECT count(*) FROM knowledge.triage_shared), "
+    "(SELECT count(*) FROM knowledge.triage_shared WHERE post_date >= %(recent)s), "
+    "(SELECT min(day) FROM knowledge.triage_daily_picks)")
+EVALUABLE_SQL = (
+    "SELECT count(*), count(*) FILTER (WHERE EXISTS (SELECT 1 FROM knowledge.triage_daily_picks p WHERE p.file = s.file AND p.day <= s.post_date)) "
+    "FROM knowledge.triage_shared s WHERE s.post_date >= %(first)s")
 
 
-def partages_block() -> str:
-    db = connect("tri.sqlite")
-    now = today()
-    total = db.execute("SELECT COUNT(*) FROM shared").fetchone()[0]
-    recent = db.execute("SELECT COUNT(*) FROM shared WHERE substr(post_date, 1, 10) >= ?", ((now - dt.timedelta(days=14)).isoformat(),)).fetchone()[0]
-    out = [t("shares_total", total=total, recent=recent)]
-    first_pick = db.execute("SELECT MIN(day) FROM picks").fetchone()[0]
-    if total == 0:
+def fetch_watch_counts(connect=None) -> dict:
+    """Lecteur réel : articles et passages indexés de la collection de la veille (nom actuel ou ancien, par nom exact), sous le
+    rôle de lecture seule. Lève si la base ne répond pas. `connect` est injectable ; la connexion est toujours fermée."""
+    conn = (connect or connect_knowledge)()
+    try:
+        articles, passages = conn.execute(WATCH_COUNTS_SQL, (sorted(WATCH_COLLECTIONS),)).fetchone()
+    finally:
+        conn.close()
+    return {"articles": int(articles), "passages": int(passages)}
+
+
+def fetch_shares(day: dt.date, connect=None) -> dict:
+    """Lecteur réel : partages, partages des 14 derniers jours, premier jour des sélections, partages postérieurs à ce jour et
+    ceux qui figuraient déjà dans les « à lire » avant d'être partagés. Lève si la base ne répond pas."""
+    conn = (connect or connect_knowledge)()
+    try:
+        total, recent, first_pick = conn.execute(SHARES_SQL, {"recent": day - dt.timedelta(days=14)}).fetchone()
+        evaluable = hits = 0
+        if first_pick is not None:
+            evaluable, hits = conn.execute(EVALUABLE_SQL, {"first": first_pick}).fetchone()
+    finally:
+        conn.close()
+    return {"total": int(total), "recent": int(recent), "first_pick": first_pick.isoformat() if first_pick else None,
+            "evaluable": int(evaluable), "hits": int(hits)}
+
+
+def veille_base_block(fetch=None) -> str:
+    """`fetch()` est injectable (tests) ; par défaut, fetch_watch_counts (cherché à l'appel)."""
+    counts = (fetch or fetch_watch_counts)()
+    return t("veille_collection", articles=pb(counts["articles"], "article"), passages=pl(counts["passages"], "indexed_passage"))
+
+
+def partages_block(fetch=None) -> str:
+    """`fetch(jour)` est injectable (tests) ; par défaut, fetch_shares (cherché à l'appel)."""
+    shares = (fetch or fetch_shares)(today())
+    out = [t("shares_total", total=shares["total"], recent=shares["recent"])]
+    first_pick = shares["first_pick"]
+    if shares["total"] == 0:
         out.append(nd(t("shares_none")))
     elif first_pick is None:
         out.append(nd(t("shares_no_picks")))
+    elif not shares["evaluable"]:
+        out.append(nd(t("shares_not_evaluable", date=first_pick)))
     else:
-        evaluables = db.execute("SELECT file, substr(post_date, 1, 10) AS d FROM shared WHERE substr(post_date, 1, 10) >= ?", (first_pick,)).fetchall()
-        if not evaluables:
-            out.append(nd(t("shares_not_evaluable", date=first_pick)))
-        else:
-            hits = sum(1 for row in evaluables if db.execute("SELECT 1 FROM picks WHERE file = ? AND day <= ?", (row["file"], row["d"])).fetchone())
-            out.append(t("shares_hits", hits=hits, total=len(evaluables), percent=round(100 * hits / len(evaluables)),
-                         date=esc(first_pick)))
+        out.append(t("shares_hits", hits=shares["hits"], total=shares["evaluable"],
+                     percent=round(100 * shares["hits"] / shares["evaluable"]), date=esc(first_pick)))
     return "".join(out)
 
 
@@ -453,7 +513,7 @@ def fetch_library_books(connect=None) -> list[dict]:
 
 
 def library_books(read=None) -> list[dict]:
-    """`read()` est injectable (tests) ; par défaut, fetch_library_books (cherché à l'appel). Jamais l'index SQLite."""
+    """`read()` est injectable (tests) ; par défaut, fetch_library_books (cherché à l'appel)."""
     return (read or fetch_library_books)()
 
 
@@ -525,7 +585,7 @@ def titres_absents(lines: list[str]) -> list[str]:
 
 
 def absents_block() -> str:
-    path = WORKSPACE / "tools" / "mapping_lab.py"
+    path = CODE_ROOT / "tools" / "mapping_lab.py"
     if not path.is_file():
         path = Path("~/PMZilla-Lab/mapping_lab.py").expanduser()
     titres = titres_absents(read_text(path).splitlines())
@@ -727,14 +787,59 @@ def safe(block) -> str:
         return nd(t("unreadable_source", error=type(exc).__name__))
 
 
+def section_composants() -> str:
+    """Le fichier d'état écrit par `composants.py check` (version 1) : jamais de réseau, jamais de lancement, jamais d'écriture."""
+    state = json.loads(read_text(DATA / "composants-etat.json"))
+    now = today()
+    complete = state.get("last_complete")
+    limite = dt.timedelta(weeks=state.get("stale_weeks") or 3)
+    if complete:
+        day = dt.date.fromisoformat(complete)
+        stale = now - day > limite
+        last = esc(fr_date(day)) + (f" {badge(t('components_stale'), 'warn')}" if stale else "")
+    else:
+        last = esc(t("components_never")) + f" {badge(t('components_stale'), 'warn')}"
+    attempt = state.get("last_attempt")
+    parts = [f'<p>{esc(t("components_last_complete"))} : {last}</p>']
+    if attempt:
+        parts.append(f'<p class="legend">{esc(t("components_last_attempt"))} : {esc(fr_date(dt.date.fromisoformat(attempt)))}</p>')
+    if not state.get("complete", True):
+        parts.append(f'<p>{badge(t("components_incomplete"), "warn")} {esc(pl(int(state.get("unreachable") or 0), "components_unreachable"))}</p>')
+    rows, up_to_date = [], 0
+    for name, comp in sorted((state.get("components") or {}).items()):
+        novelties = comp.get("novelties") or []
+        if not novelties and not comp.get("incomplete"):
+            up_to_date += 1
+        raw = list(comp.get("flags") or [])
+        flags = [t(f"components_flag_{f}") if f"components_flag_{f}" in t.catalogs["fr"] else f for f in raw]
+        if comp.get("pinned") is False:
+            flags.append(t("components_not_pinned"))
+            raw.append("not-pinned")
+        for nov in novelties:
+            nature = nov.get("nature", "")
+            label = t(f"components_nature_{nature}") if f"components_nature_{nature}" in t.catalogs["fr"] else nature
+            # la veille seule ne vaut que pour une version majeure : un correctif de la même ligne reste une mise à jour simple
+            shown = [f for f, k in zip(flags, raw) if k != "major-watch-only" or nature == "major"]
+            job = t("components_job", name=name, used=nov.get("used", ""), available=nov.get("available", ""))
+            if comp.get("procedure"):
+                job += f" ({comp['procedure']})"
+            rows.append([esc(name), esc(nov.get("used", "")), esc(nov.get("available", "")), esc(label),
+                         esc(", ".join(shown)), esc(job)])
+    parts.append(f'<p>{badge(t("components_up_to_date", n=up_to_date), "ok")}</p>')
+    heads = [t(f"components_head_{k}") for k in ("name", "used", "available", "nature", "flags", "job")]
+    parts.append(table(heads, rows) if rows else nd(t("components_none_new")))
+    return "".join(parts)
+
+
 def section_experimentations() -> str:
     return safe(section_experiences)
 
 
-SECTIONS = [("a-faire", "section_todo", section_a_faire),
+SECTIONS = [("sante", "section_health", section_sante), ("a-faire", "section_todo", section_a_faire),
             ("experimentations", "section_experiments", section_experimentations), ("veille", "section_veille", section_veille),
             ("bibliotheque", "section_library", section_bibliotheque), ("qualite", "section_quality", section_qualite),
-            ("flux", "section_flux", section_flux), ("critic", "section_critic", section_critic)]
+            ("flux", "section_flux", section_flux), ("critic", "section_critic", section_critic),
+            ("composants", "section_components", section_composants)]
 
 CSS = """
 :root{--bg:#f7f6f2;--fg:#1d1d1b;--mut:#6b6a63;--card:#fff;--line:#dedcd3;--acc:#1f6f6b;--ok:#2b7a3d;--warn:#a85b00;--ko:#b3261e}
@@ -744,7 +849,7 @@ header,main{max-width:980px;margin:0 auto;padding:16px}h1{font-size:1.6rem;margi
 section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:16px 0}h2{margin:.2rem 0 .6rem;font-size:1.2rem}h3{font-size:1rem;margin:1rem 0 .3rem}
 table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:600}
 .nd,.legend{color:var(--mut);font-size:.88rem}.badge{display:inline-block;padding:1px 9px;border-radius:99px;border:1px solid var(--line);font-size:.82rem}
-.badge.ok,.cell.ok{color:var(--ok)}.badge.warn{color:var(--warn)}.cell.ko,.late td:first-child{color:var(--ko)}.cell{font-variant-numeric:tabular-nums}
+.badge.ok,.cell.ok{color:var(--ok)}.badge.warn{color:var(--warn)}.badge.ko,.cell.ko,.late td:first-child{color:var(--ko)}.cell{font-variant-numeric:tabular-nums}
 .spark polyline{stroke:var(--acc);stroke-width:2.2}svg text{fill:var(--mut);font-size:11.5px}svg .axe{font-size:11px}.spark circle{fill:var(--acc)}.spark,.bars{width:100%;max-width:none;height:auto;display:block}.bars rect{fill:var(--acc)}
 code,pre{font-family:ui-monospace,Menlo,monospace;font-size:.85rem}pre{white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:6px;border:1px solid var(--line)}
 @media (max-width:560px){header,main{padding:10px}section{padding:10px 12px}}

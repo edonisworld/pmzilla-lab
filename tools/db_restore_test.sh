@@ -8,11 +8,13 @@
 #
 # Ce que fait le script :
 #   1. cherche la dernière sauvegarde dans ~/.pmzilla-lab/sauvegardes/ (dossier db-AAAA-MM-JJ de tools/db_backup.sh) ;
-#   2. démarre un conteneur JETABLE (même image fixée que docker-compose.yml, nom unique, port 127.0.0.1 choisi par Docker, mot
+#   2. démarre un conteneur JETABLE (même image fixée et même shm_size que docker-compose.yml, nom unique, port 127.0.0.1 choisi par Docker, mot
 #      de passe aléatoire propre au conteneur : le mot de passe de la vraie base n'est ni lu ni utilisé) ;
 #   3. applique les migrations (uv run tools/db.py migrate : rôles, extensions, schémas), car les sauvegardes sont faites par
 #      schéma (pg_dump -n) et ne contiennent ni les rôles, ni les extensions, ni public.schema_migrations ; puis restaure
-#      chaque schéma avec pg_restore ;
+#      chaque schéma avec pg_restore, après l'avoir VIDÉ (DROP SCHEMA IF EXISTS … CASCADE, dans le conteneur jetable seulement) : une
+#      sauvegarde faite avant une migration ne contient pas les tables ajoutées depuis (ex. la 0007, veille et pré-tri), et le DROP SCHEMA
+#      sans CASCADE de pg_restore --clean échouerait (« cannot drop schema … because other objects depend on it ») ;
 #   4. compare le nombre de lignes par table (knowledge, cases, flow, public.schema_migrations) avec la vraie base, lue en COMPTES
 #      seulement (docker compose exec, socket locale, aucune valeur lue) ;
 #   5. compare l'empreinte des migrations : fichiers de db/migrations/ (sha256, comme tools/db.py), base restaurée, vraie base ;
@@ -20,6 +22,8 @@
 #
 # La vraie base n'est jamais modifiée et aucune sauvegarde n'est faite. Le script n'affiche que des noms de tables et des comptes.
 # Un écart de lignes est attendu si la vraie base a changé depuis la sauvegarde : il est signalé mais ne fait pas échouer.
+# Une table que la sauvegarde ne contient pas (migration postérieure à la sauvegarde) est signalée MANQUE et fait échouer le test : le
+# vidage rend la restauration possible, il ne masque pas l'écart.
 # Code de sortie : 0 tout est cohérent ; 1 restauration en échec, table manquante ou empreinte des migrations différente ;
 # 2 prérequis absent ou usage incorrect (rien n'a été restauré).
 #
@@ -31,6 +35,9 @@ cd "$RACINE" || exit 2
 DEST="${DB_BACKUP_SAUVEGARDES:-$HOME/.pmzilla-lab/sauvegardes}"
 SCHEMAS="${DB_RESTORE_SCHEMAS:-knowledge cases flow}"
 ATTENTE="${DB_RESTORE_ATTENTE:-120}"
+for schema in $SCHEMAS; do
+  printf '%s' "$schema" | grep -Eq '^[a-z_][a-z0-9_]*$' || { echo "Nom de schéma invalide : « $schema » (minuscules, chiffres et tiret bas seulement)"; exit 2; }
+done
 PREFIXE="pmzilla-lab-restore-test"
 
 SAUVEGARDE=""; PORT_DEMANDE=""; DETAIL=0
@@ -81,6 +88,9 @@ case "$IMAGE" in
   */*:[0-9]*) ;;
   *) echo "Image de docker-compose.yml introuvable ou non fixée : « $IMAGE »"; exit 2 ;;
 esac
+# /dev/shm du conteneur jetable : la valeur de shm_size de docker-compose.yml (64 Mo par défaut sinon, trop peu pour l'index BM25), repli 1g.
+SHM="$(grep -E '^[[:space:]]+shm_size:' docker-compose.yml | head -1 | sed -E 's/^[[:space:]]+shm_size:[[:space:]]*//; s/[#].*$//; s/["[:space:]]//g')"
+printf '%s' "$SHM" | grep -Eiq '^[0-9]+[bkmg]b?$' || SHM="1g"
 if command -v shasum >/dev/null 2>&1; then SHA() { shasum -a 256 "$1" | cut -d' ' -f1; }
 elif command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$1" | cut -d' ' -f1; }
 else echo "shasum et sha256sum sont introuvables"; exit 2; fi
@@ -114,7 +124,7 @@ mdp_jetable="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 if [ -z "$mdp_jetable" ]; then echo "Impossible de générer le mot de passe du conteneur jetable"; exit 2; fi
 if [ -n "$PORT_DEMANDE" ]; then PUBLICATION="127.0.0.1:$PORT_DEMANDE:5432"; else PUBLICATION="127.0.0.1::5432"; fi
 if POSTGRES_PASSWORD="$mdp_jetable" docker run -d --name "$NOM" --label pmzilla-lab-restore-test=1 \
-     -e POSTGRES_PASSWORD -e POSTGRES_DB=pmzilla -p "$PUBLICATION" "$IMAGE" >/dev/null 2>"$TMP/run.err"; then
+     --shm-size "$SHM" -e POSTGRES_PASSWORD -e POSTGRES_DB=pmzilla -p "$PUBLICATION" "$IMAGE" >/dev/null 2>"$TMP/run.err"; then
   CONTENEUR="$NOM"
 else
   CONTENEUR="$NOM"   # le nettoyage tente quand même la suppression
@@ -148,6 +158,14 @@ echo "Restauration :"
 for schema in $SCHEMAS; do
   fichier="$SAUVEGARDE/$schema.dump"
   if [ ! -s "$fichier" ]; then echo "  ÉCHEC $schema : fichier $schema.dump absent ou vide"; echec=1; continue; fi
+  # Vidage du schéma dans le conteneur jetable (jamais la vraie base : docker exec sur le nom du conteneur créé plus haut, jamais compose).
+  # Aucun objet d'un autre schéma ne dépend de knowledge, cases ou flow : le CASCADE n'emporte que le schéma visé (tests/db/test_restore_knowledge.py).
+  case "$CONTENEUR" in "$PREFIXE"-*) ;; *) echo "Refus : le conteneur visé n'est pas un conteneur jetable"; exit 1 ;; esac
+  if ! docker exec "$CONTENEUR" psql -U postgres -d pmzilla -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $schema CASCADE" > /dev/null 2> "$TMP/vidage-$schema.err"; then
+    echo "  ÉCHEC $schema : le vidage du schéma dans le conteneur jetable a échoué (détail masqué, relancer avec --detail)"
+    [ "$DETAIL" -eq 1 ] && sed 's/^/    /' "$TMP/vidage-$schema.err" | head -10
+    echec=1; continue
+  fi
   if docker exec -i "$CONTENEUR" pg_restore -U postgres -d pmzilla --clean --if-exists --exit-on-error --single-transaction \
        < "$fichier" > /dev/null 2> "$TMP/restore-$schema.err"; then
     echo "  OK $schema"

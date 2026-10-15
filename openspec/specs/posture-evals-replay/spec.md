@@ -82,27 +82,6 @@ The system SHALL run each case as a non-interactive session with a strict librar
 
 Source: tests/posture_evals/test_posture_evals.py (Seance, ChoixDuModele); tests/posture_evals/test_cases_fixture.py (EnvironnementDesSeances)
 
-### Requirement: Library back-end choice
-The system SHALL let the user choose the library back-end of a run (file-based or database) and SHALL pass that choice to the library server configuration of the run; without the option, the server configuration SHALL name no back-end, so the server keeps its default. The throwaway library of a case SHALL never receive the back-end choice. An unknown back-end SHALL be refused before anything runs.
-
-#### Scenario: Back-end given
-- WHEN a run is started with the database back-end, or with the file-based one
-- THEN the library server configuration of the run ends with that back-end choice
-
-#### Scenario: No back-end given
-- WHEN no back-end option is given
-- THEN the library server configuration names no back-end
-
-#### Scenario: Throwaway library
-- WHEN a case uses a throwaway library during a run on the database back-end
-- THEN the configuration of that library names no back-end
-
-#### Scenario: Unknown back-end
-- WHEN an unknown back-end is given
-- THEN the command line is refused
-
-Source: tests/posture_evals/test_gaps_posture_evals.py (VoieDeLaBibliotheque); tests/posture_evals/test_gaps_a_voies.py (MemesResultatsSurLesDeuxVoies, skipped without a database)
-
 ### Requirement: Reading a trace
 The system SHALL read a session trace to extract the tools called with their results, the sections returned by the library, chapter or part mentions found in passages, the cost, the number of turns, the error state, refused tools (deduplicated, truncated), the final answer, and the text of the main thread only (sub-agent text excluded). An empty trace or a trace without a final result SHALL be an error; in the latter case the main-thread text is used as the answer.
 
@@ -200,6 +179,17 @@ The system SHALL warn at the end of a run when the workspace status changed duri
 - THEN no warning is printed
 
 Source: tools/posture_evals.py; tests/posture_evals/test_gaps_posture_evals.py (ChangementDuWorkspace)
+
+### Requirement: Former back-end option refused
+The system SHALL refuse the former library back-end option, whatever its value, before anything runs (no copy, no database, no session), with exit code 2 and the key phrase of design D7 ("--backend n'existe plus : la bibliothèque est lue dans PostgreSQL seulement"). The library server configuration of every run and of every case SHALL name no back-end. The system SHALL NOT read the former back-end environment variable.
+
+#### Scenario: Option given
+- **WHEN** a run is started with the back-end option set to the file-based route or to the database
+- **THEN** it stops with exit code 2 and the key phrase, and no copy, database or session is created
+
+#### Scenario: Configuration
+- **WHEN** the library server configuration of a run is produced, with the former variable set in the environment
+- **THEN** it declares the server launched in serve mode with no back-end argument
 
 ## Open questions
 

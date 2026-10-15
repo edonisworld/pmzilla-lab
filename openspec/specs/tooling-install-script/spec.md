@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change install-script. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Fresh mode and an ordered list of steps
 The system SHALL provide an install script with one mode, the fresh mode, for the published edition with no personal data. The mode option SHALL be required. It SHALL run the steps of the mode in a fixed order, and SHALL list them on request. The fresh mode SHALL NOT create or copy any personal data. Any mode value other than fresh SHALL be refused with exit code 2 and the key phrase of design D17 that points to the "Install script" section of the installation guide, and no step SHALL run. The system SHALL NOT accept a bundle option, a dumps option or a pack subcommand; each SHALL give exit code 2 as an unknown option or argument. A missing mode, an unknown option or an unknown step SHALL also give exit code 2. Exit codes and messages are those of design.md (D13, D17). Untested until implemented.
 
@@ -110,14 +112,14 @@ The system SHALL provide a shell bootstrap that refuses any platform other than 
 ### Requirement: Missing container runtime or Ollama is offered, never forced
 The system SHALL use the container runtime that answers. When none answers, it SHALL offer to install and start a container runtime through Homebrew, one confirmation per command, and SHALL NOT start a desktop container application. When the user declines:
 - the database step SHALL be deferred;
-- the library server SHALL be registered with its file backend;
+- the library server step SHALL be deferred, waiting for the database step;
 - the backup job SHALL NOT be installed.
 
-When Ollama is absent, the system SHALL offer to install it, and SHALL offer each required model with its own confirmation showing its approximate size. When Ollama or a model is declined, the watch job SHALL NOT be installed and indexing SHALL be listed as deferred. Untested until implemented.
+The system SHALL NOT register the library server with any file backend. When Ollama is absent, the system SHALL offer to install it with the Homebrew cask `ollama-app` (when Ollama.app is already installed without its command line, it SHALL NOT install it again but SHALL ask the user to open the application once, and Ollama counts as declined for that run), and SHALL offer each required model with its own confirmation showing its approximate size. When Ollama or a model is declined, the watch job SHALL NOT be installed and indexing SHALL be listed as deferred. Untested until implemented.
 
 #### Scenario: Runtime declined
 - **WHEN** no container runtime answers and the user declines its installation
-- **THEN** the database step is deferred, the library server is registered with the file backend, the backup job is not installed, and the report lists each
+- **THEN** the database step is deferred, the library server step is deferred waiting for the database step, the backup job is not installed, the report lists each, and no registration command is run
 
 #### Scenario: Model declined
 - **WHEN** the user declines a model pull
@@ -135,11 +137,19 @@ The system SHALL render each launchd template by replacing the home placeholder 
 - **THEN** the job is reported as done
 
 ### Requirement: The library server is registered for the user
-The system SHALL register the library server for the user in Claude Code, launched through the lab-folder link with the Python launcher found on the search path. It SHALL skip the step when the server is already registered with that link. It SHALL replace a different registration only after confirmation, and SHALL NOT replace it without one. Untested until implemented.
+The system SHALL register the library server for the user in Claude Code, launched through the lab-folder link with the Python launcher found on the search path, in serve mode with no backend argument. The step SHALL depend on the lab-folder links step and on the database step: when the database step is declined, deferred, failed or waiting for a manual action, the step SHALL be deferred with the reason "waiting for step database" of design D8 and SHALL run no registration command. It SHALL skip the step when the server is already registered with that link and without a backend argument. It SHALL replace a different registration, including one that carries a backend argument, only after confirmation, and SHALL NOT replace it without one. Untested until implemented.
 
 #### Scenario: Already registered
-- **WHEN** the server query succeeds and names the lab-folder link
+- **WHEN** the server query succeeds, names the lab-folder link and shows no backend argument
 - **THEN** the step is skipped
+
+#### Scenario: Database not ready
+- **WHEN** the database step was deferred in the same run
+- **THEN** the library server step is deferred waiting for step database, no registration command is called, and the exit code is 4
+
+#### Scenario: Former file-backend registration
+- **WHEN** the server is registered with the lab-folder link and a backend argument, and the user confirms the replacement
+- **THEN** the former registration is removed and the server is registered in serve mode with no backend argument
 
 #### Scenario: Different registration declined
 - **WHEN** the server is registered differently and the user declines the replacement
@@ -183,3 +193,43 @@ The suite SHALL NOT need the network, Docker, the Keychain or a real launchd ses
 - **WHEN** the script text holds an absolute path to a command or a user folder
 - **THEN** a test of the suite fails and names it
 
+### Requirement: The doctor job is installed with the other jobs
+The system SHALL install and load the doctor's launchd job in the launchd step, with the same rendering, confirmation and already-done rules as the other jobs. It SHALL install it even when the watch or backup job is not installed, since it needs neither Ollama nor the container runtime. It SHALL NOT run the doctor or its wrapper during the installation. Untested until implemented.
+
+#### Scenario: Runtime declined
+- **WHEN** the container runtime and Ollama are declined
+- **THEN** the doctor job is still installed and loaded, and the backup and watch jobs are not
+
+#### Scenario: Second run
+- **WHEN** the doctor job is installed identical and loaded
+- **THEN** it is skipped as already done and no load command is called
+
+### Requirement: The watch catch-up job is installed with the watch job
+The system SHALL render, install and load the watch catch-up template right after the watch job, under the same prerequisites, and SHALL defer both watch jobs when Ollama or a model is missing, while the backup and doctor jobs keep their own rules. Loading SHALL be the only start: the step SHALL NOT kickstart it. The run started at load SHALL go through the scheduled-mode guard, so a watch already run today is not run again. Untested until implemented.
+
+#### Scenario: Fresh install
+- **WHEN** the launchd step runs with every prerequisite ready
+- **THEN** the watch, catch-up, backup and doctor jobs are rendered, written and loaded, and no kickstart command is called
+
+#### Scenario: Ollama missing
+- **WHEN** Ollama or a model is not ready
+- **THEN** neither watch job is installed, the backup and doctor jobs are, and the report lists the catch-up job as not installed
+
+#### Scenario: Already in place
+- **WHEN** the installed catch-up file equals the rendered template and the job is loaded
+- **THEN** the job is skipped as already done and no load command is called
+
+### Requirement: The run tree is created before the links and the jobs
+The system SHALL run, in the fresh mode, a run-tree step after the clone and the hooks and before the lab-folder links, the library server and the launchd jobs. After confirmation it SHALL call the run-tree script's create subcommand, then its status. A run tree clean at the tip of `main` SHALL be skipped as already done. It SHALL NOT update, reset or remove an existing run tree. Untested until implemented.
+
+#### Scenario: Fresh machine
+- **WHEN** the run-tree step runs after confirmation and no run tree exists
+- **THEN** the create subcommand is called, then the status, and the step is done when the status exits 0
+
+#### Scenario: Run tree behind main
+- **WHEN** the status reports the run tree behind `main`
+- **THEN** the step is reported as a manual action with the update command, and no update is called
+
+#### Scenario: Order
+- **WHEN** the steps of the fresh mode are listed
+- **THEN** the run-tree step comes after the hooks and before the links, the library server and the launchd jobs

@@ -41,6 +41,15 @@ Source: tests/flow_compare/test_flow_compare.py (test_comparer_dicts_ne_montre_q
 - **WHEN** an export is imported and then compared with itself
 - **THEN** there is no difference, and after altering a status and deleting a ticket in the database the output counts "CSV only 1" and "status differs 1" without values
 
+### Requirement: Data route covers both report inputs
+The system SHALL, with `data`, read the given exports through the CSV readers and the database readers of the flow and dependency tools, and compare the flow tickets, the dependency tickets and the links (counts of links on one side only). It SHALL NOT compare the reports' text in this mode, and SHALL print only the error type, never its message, for an unexpected error (exit code 2).
+
+Source: tests/flow_compare/test_flow_compare.py (AvecBase); error output untested.
+
+#### Scenario: Same export on both routes
+- **WHEN** an export with typed and untyped links is imported, then compared with itself
+- **THEN** the flow tickets, the dependency tickets and the links give no difference and the exit code is 0
+
 ### Requirement: History comparison by instant
 The system SHALL compare history by instants (not text), tolerate different offsets and formats, flag a 30-minute shift as one difference, ignore keys outside the export, and flag a difference in which tickets have history.
 

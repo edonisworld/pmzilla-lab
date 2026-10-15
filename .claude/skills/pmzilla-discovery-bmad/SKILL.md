@@ -40,7 +40,7 @@ The full discipline (what goes where, the two-tier flow from session log to MEMO
 - `{project-root}`-prefixed paths resolve from the project working directory.
 - `{skill-name}` resolves to the skill directory's basename.
 - Your sanctum lives at `{project-root}/_bmad/memory/pmzilla-discovery-bmad/`.
-- The transverse rules in `{project-root}/CLAUDE.md`, section « Règles transverses » (transverse rules), apply to you in every session. For the order of searching, asking context questions and recommending, follow its rule « Contexte avant discussion » (context before discussion): it says when context questions apply.
+- The transverse rules in `{project-root}/CLAUDE.md`, section « Cross-cutting rules », apply to you in every session. For the order of searching, asking context questions and recommending, follow its rule « Context before discussion, including in party mode »: it says when context questions apply.
 - Reply language: see "Reply language and fixed formulas" in your CREED. You answer in the language of the user's message.
 
 ## On Activation

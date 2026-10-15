@@ -36,6 +36,14 @@ class Lecteur(unittest.TestCase):
         self.assertEqual(t["resolu"].utcoffset(), dt.timedelta(hours=2))     # été
         self.assertEqual(t["resolu"].astimezone(dt.timezone.utc).hour, 12)
 
+    def test_date_relative_des_tests_avec_base_lue_comme_instant_attendu(self):
+        """Les tests avec base datent la résolution d'il y a 30 jours (cf.jour_relatif) : le lecteur doit rendre l'instant que
+        calcule cf.instant_utc, été comme hiver, sinon ces tests (sautés sans base) seraient faux sans qu'on le voie."""
+        for jours in (30, 200, 330):
+            jour = cf.jour_relatif(jours)
+            t = self.lire([cf.ligne("PROJ-1", Resolved=cf.date_export(jour, 14, 5))])["tickets"][0]
+            self.assertEqual(t["resolu"].astimezone(dt.timezone.utc), cf.instant_utc(jour, 14, 5), jours)
+
     def test_story_points(self):
         r = self.lire([cf.ligne("PROJ-1", **{"Story Points": "5"}), cf.ligne("PROJ-2", **{"Story Points": "0.5"}),
                        cf.ligne("PROJ-3", **{"Story Points": ""}), cf.ligne("PROJ-4", **{"Story Points": "abc"})])

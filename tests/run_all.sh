@@ -23,7 +23,10 @@
 #
 # Aucun appel réseau ni payant ; chaque suite travaille dans un dossier temporaire (voir son en-tête).
 # Variables (pour les tests de ce script) : RUN_ALL_ROOT (racine du dépôt), RUN_ALL_DEPS (options `uv run --with …`).
+# Délai par suite : RUN_ALL_SUITE_TIMEOUT (secondes entières, défaut 900). Une suite plus longue est arrêtée avec ses processus
+# (TERM puis KILL sur son groupe), comptée en échec « délai dépassé », et le lanceur passe à la suivante. Valeur invalide : code 2.
 set -u
+exec </dev/null   # entrée standard fermée : aucune suite, aucun outil lancé par une suite ne peut attendre le clavier (D1)
 RACINE="${RUN_ALL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 DEPS="${RUN_ALL_DEPS---with numpy --with httpx --with pyyaml --with requests --with feedparser --with trafilatura --with beautifulsoup4 --with markdownify --with pymupdf4llm --with ebooklib --with "psycopg[binary]"}"
 BAVARD=0
@@ -36,6 +39,10 @@ if [ "$CIBLE" -eq 1 ] && [ ${#NOMS[@]} -gt 0 ]; then
   echo "run_all : --staged ne se combine pas avec des noms de suites (${NOMS[*]})"
   exit 2
 fi
+DELAI="${RUN_ALL_SUITE_TIMEOUT-900}"
+case "$DELAI" in
+  ''|*[!0-9]*|0*) echo "run_all : délai par suite invalide ($DELAI) : un nombre entier de secondes est attendu"; exit 2 ;;
+esac
 cd "$RACINE" || { echo "Racine introuvable : $RACINE"; exit 2; }
 
 if [ -n "${PMZILLA_NO_EVALS+x}" ]; then
@@ -72,6 +79,34 @@ voulue() {   # sans nom donné, tout est voulu
   return 1
 }
 
+TMP_SORTIE=$(mktemp "${TMPDIR:-/tmp}/run_all.XXXXXX") || { echo "run_all : fichier temporaire impossible"; exit 2; }
+trap 'rm -f "$TMP_SORTIE"' EXIT
+
+# Lance une commande dans son propre groupe de processus (set -m ; pas de commande timeout sur le bash 3.2 de macOS) avec un
+# chien de garde : TERM sur le groupe à l'échéance, puis KILL après 2 s. Sortie dans $sortie, code dans $code, $delai_depasse = 1 si coupée.
+lancer_borne() {
+  delai_depasse=0
+  local drapeau="$TMP_SORTIE.delai" pid garde
+  rm -f "$drapeau"
+  set -m
+  "$@" >"$TMP_SORTIE" 2>&1 &
+  pid=$!
+  ( sleep "$DELAI"; : >"$drapeau"; kill -TERM -- "-$pid"; sleep 2; kill -KILL -- "-$pid" ) >/dev/null 2>&1 &
+  garde=$!
+  set +m
+  { wait "$pid"; code=$?; } 2>/dev/null
+  if [ -f "$drapeau" ]; then
+    delai_depasse=1
+    { wait "$garde"; } 2>/dev/null   # le chien de garde finit son KILL : plus aucun processus de la suite
+  else
+    kill -TERM -- "-$garde" >/dev/null 2>&1
+    { wait "$garde"; } 2>/dev/null
+    kill -KILL -- "-$pid" >/dev/null 2>&1   # descendants éventuels restés après la fin normale
+  fi
+  rm -f "$drapeau"
+  sortie=$(cat "$TMP_SORTIE")
+}
+
 total=0; ignores=0; suites=0; echecs=0; echouees=()
 ligne() { printf "%-22s %5s tests · %s\n" "$1" "$2" "$3"; }
 
@@ -80,7 +115,13 @@ for dossier in tests/*/; do
   ls "$dossier"test_*.py >/dev/null 2>&1 || continue
   voulue "$nom" || continue
   # shellcheck disable=SC2086
-  sortie=$(uv run $DEPS python -W ignore -m unittest discover -s "$dossier" 2>&1); code=$?
+  lancer_borne uv run $DEPS python -W ignore -m unittest discover -s "$dossier"
+  if [ "$delai_depasse" -eq 1 ]; then
+    ligne "$nom" "?" "ÉCHEC : délai dépassé ($DELAI s)"
+    printf '%s\n' "$sortie" | tail -30 | sed 's/^/    /'
+    suites=$((suites + 1)); echecs=$((echecs + 1)); echouees+=("$nom (délai dépassé)")
+    continue
+  fi
   n=$(printf '%s\n' "$sortie" | sed -n 's/^Ran \([0-9][0-9]*\) test.*/\1/p' | tail -1)
   bilan=$(printf '%s\n' "$sortie" | tail -1)
   suites=$((suites + 1)); total=$((total + ${n:-0}))
@@ -94,7 +135,7 @@ for dossier in tests/*/; do
   fi
 done
 
-for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/hooks/test_post_commit.sh:post-commit:sh tests/hooks/test_commit_msg.sh:commit-msg:sh tests/hooks/test_pre_commit_green.sh:pre-commit-green:sh tests/hooks/test_pre_push.sh:pre-push:sh tests/evals_auto/test_evals_auto.sh:evals_auto:sh tests/installation/test_install_links.sh:installation:zsh tests/installation/test_install_hooks.sh:install_hooks:sh tests/db_scripts/test_db_scripts.sh:db_scripts:bash tests/db_scripts/test_dbtest.sh:dbtest:bash tests/offsite_backup/test_offsite_backup.sh:offsite_backup:bash tests/finish_branch/test_finish_branch.sh:finish_branch:bash; do
+for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/hooks/test_post_commit.sh:post-commit:sh tests/hooks/test_commit_msg.sh:commit-msg:sh tests/hooks/test_pre_commit_green.sh:pre-commit-green:sh tests/hooks/test_pre_push.sh:pre-push:sh tests/evals_auto/test_evals_auto.sh:evals_auto:sh tests/installation/test_install_links.sh:installation:zsh tests/installation/test_install_hooks.sh:install_hooks:sh tests/db_scripts/test_db_scripts.sh:db_scripts:bash tests/db_scripts/test_dbtest.sh:dbtest:bash tests/offsite_backup/test_offsite_backup.sh:offsite_backup:bash tests/finish_branch/test_finish_branch.sh:finish_branch:bash tests/worktree/test_worktree.sh:worktree:bash tests/finish_worktree/test_finish_worktree.sh:finish_worktree:bash tests/run_worktree/test_run_worktree.sh:run_worktree:bash; do
   chemin=${test%%:*}; reste=${test#*:}; nom=${reste%%:*}; interprete=${reste#*:}
   voulue "$nom" || continue
   if [ ! -f "$chemin" ]; then
@@ -102,7 +143,13 @@ for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/hooks/test_post_commit
     suites=$((suites + 1)); echecs=$((echecs + 1)); echouees+=("$nom ($chemin absent)")
     continue
   fi
-  sortie=$("$interprete" "$chemin" 2>&1); code=$?
+  lancer_borne "$interprete" "$chemin"
+  if [ "$delai_depasse" -eq 1 ]; then
+    ligne "$nom (shell)" "?" "ÉCHEC : délai dépassé ($DELAI s)"
+    printf '%s\n' "$sortie" | tail -30 | sed 's/^/    /'
+    suites=$((suites + 1)); echecs=$((echecs + 1)); echouees+=("$nom (délai dépassé)")
+    continue
+  fi
   reussis=$(printf '%s\n' "$sortie" | sed -n 's/^\([0-9][0-9]*\) réussis, [0-9][0-9]* échec.*/\1/p' | tail -1)
   rates=$(printf '%s\n' "$sortie" | sed -n 's/^[0-9][0-9]* réussis, \([0-9][0-9]*\) échec.*/\1/p' | tail -1)
   n=$(( ${reussis:-0} + ${rates:-0} ))

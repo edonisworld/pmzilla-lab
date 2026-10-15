@@ -3,7 +3,9 @@
 ## Purpose
 
 Schemas, least-privilege roles, the Jira flow tables and aggregated masked views, and the knowledge-library schema with full-text, vector and BM25 search (`db/migrations/0001` to `0005`).
+
 ## Requirements
+
 ### Requirement: Role privileges are isolated per schema
 The system SHALL give each schema a read-write role and a read-only role; a read-write role SHALL read and write only its own schema, a read-only role SHALL only read its own schema, no role SHALL read another schema, and no application role SHALL create or drop objects in its schema or in the default schema (objects are owned by a dedicated owner role).
 
@@ -22,17 +24,21 @@ Source: tests/db/test_db.py (TestAvecBase.test_droits_des_roles); tests/db/test_
 - THEN the statement is refused
 
 ### Requirement: Flow tables hold tickets, teams, teams per ticket, transitions and links, with no personal or textual fields
-The system SHALL provide flow tables for teams, issues, issue-team membership, status transitions and issue links, and SHALL define no column named like a title, summary, description, assignee, reporter, creator, author, label, comment or person name. An issue SHALL record its identity, classification, lifecycle instants, team and parent, and whether history was collected for it. The history flag SHALL be a non-null boolean that is false for an issue inserted without it, SHALL be settable to true, and SHALL refuse a null value; its migration SHALL add it without inserting data.
+The system SHALL provide flow tables for teams, issues, issue-team membership, status transitions, issue links, declared label periods and fix version periods, and SHALL define no column named like a title, summary, description, assignee, reporter, creator, author, comment, product owner or person name, and no column holding personal data (design D3, D20). A label SHALL be stored only in the declared label periods table; no other table SHALL have a label column. An issue SHALL record its identity, classification, lifecycle instants, team and parent, whether history was collected for it, and the optional out-of-export instant. The history flag SHALL be a non-null boolean that is false for an issue inserted without it, SHALL be settable to true, and SHALL refuse a null value; its migration SHALL add it without inserting data. Deleting an issue SHALL delete its team memberships, transitions, links, label periods and version periods. The migration of this change SHALL add its columns and tables without inserting data.
 
-Source: tests/db/test_flow_schema.py (test_tables_vues_et_colonnes); tests/db/test_lacunes_base.py (ColonneHasHistory, SansBase.test_migration_0003_ajoute_la_colonne_sans_donnee)
+Source: tests/db/test_flow_schema.py (test_tables_vues_et_colonnes); tests/db/test_lacunes_base.py (ColonneHasHistory, SansBase.test_migration_0003_ajoute_la_colonne_sans_donnee); new entities untested until implemented.
 
 #### Scenario: Schema inspection
-- WHEN the flow schema's tables and columns are listed after migration
-- THEN all five tables exist and no forbidden column name appears
+- **WHEN** the flow schema's tables and columns are listed after migration
+- **THEN** all seven tables exist, no forbidden column name appears, a label column exists only in the declared label periods table, and no table has a PO or other personal column
 
 #### Scenario: History flag
 - **WHEN** an issue is inserted without the history flag, then flagged, then set to null
 - **THEN** the flag reads false, then true, and the null update is refused by a not-null violation
+
+#### Scenario: Cascade
+- **WHEN** an issue with teams, transitions, links, a label period and a version period is deleted by the import role
+- **THEN** none of its dependent rows remains
 
 ### Requirement: Flow data integrity constraints
 The system SHALL reject a transition duplicating an existing one (same ticket, same instant whatever the time zone, same from and to status), a duplicated link, a link whose direction is neither inward nor outward, and a transition referring to an unknown ticket.
@@ -115,13 +121,13 @@ Source: tests/db/test_flow_schema.py (test_connexion_sous_un_role_limite_avec_so
 - **THEN** it is accepted, while the read-write knowledge and flow roles are still refused
 
 ### Requirement: Knowledge schema stores books, collections, memberships and chunks
-The system SHALL provide in the knowledge schema exactly four tables (books, collections, book-to-collection links, chunks), owned by the owner role; chunks SHALL carry a vector embedding, a full-text vector, a JSON reference and a kind, with indexes for vector similarity, full text, book and position, kind, and book content hash. The migration SHALL insert no data.
+The system SHALL provide in the knowledge schema four library tables (books, collections, book-to-collection links, chunks) and, in addition, only the watch and pre-triage tables of the requirement "Knowledge schema stores the watch and pre-triage state", all owned by the owner role; chunks SHALL carry a vector embedding, a full-text vector, a JSON reference and a kind, with indexes for vector similarity, full text, book and position, kind, and book content hash. No migration SHALL insert data.
 
 Source: tests/db/test_knowledge_schema.py (test_tables_colonnes_et_index, test_aucune_donnee_dans_les_tables_apres_migration)
 
 #### Scenario: Schema inspection
-- WHEN the knowledge schema is inspected after migration
-- THEN exactly those four tables exist, all owned by the owner role, the expected columns have the expected types, the expected indexes exist, and every table is empty
+- **WHEN** the knowledge schema is inspected after migration
+- **THEN** the four library tables and the watch and pre-triage tables exist and no other, all owned by the owner role, the expected library columns have the expected types, the expected indexes exist, and every table is empty
 
 ### Requirement: Book author and publication date derive from metadata
 The system SHALL expose each book's author and publication date derived from its JSON metadata, null when absent.
@@ -190,6 +196,51 @@ Source: tests/db/test_knowledge_schema.py (test_droits_du_role_d_acces_et_du_rol
 #### Scenario: Denied statements
 - WHEN the read-only role inserts a collection, deletes chunks or creates a table
 - THEN each raises an error, while its select returns the stored count
+
+### Requirement: Views leave out tickets out of the export
+The system SHALL leave out of the four aggregated views the issues carrying an out-of-export instant. Untested until implemented.
+
+#### Scenario: Marked ticket
+- **WHEN** a team has six open tickets of which one is marked out of the export
+- **THEN** the status view counts five open tickets for that team
+
+### Requirement: Knowledge schema stores the watch and pre-triage state
+The system SHALL provide, through a migration of the knowledge schema, tables for: collected watch articles (one per cleaned address, with a flag telling whether its cited links were extracted), the last collection attempt of each source, the links cited by each article, the pre-triage references, the article scores, the manual rescues, the manual exclusions, the user's shares, the daily picks (one per day and article), the shadow scores (one per article address and language) and the calibration (one entry per article, holding the values shown at the last export and the user's opinion). A cited link SHALL refer to a recorded article and SHALL be deleted with it. A calibration verdict and opinion SHALL be restricted to keep or discard (an opinion may be absent). The migration SHALL insert no data, set no password and alter no role.
+
+Source: tests/db/test_watch_schema.py
+
+#### Scenario: Fresh migration
+- **WHEN** all migrations are applied to a throwaway database
+- **THEN** the eleven watch and pre-triage tables exist in the knowledge schema, owned by the owner role, and are empty
+
+#### Scenario: Uniqueness
+- **WHEN** a second article with the same address, a second shadow score for the same address and language, or a second pick for the same day and file is inserted
+- **THEN** a uniqueness violation is raised
+
+#### Scenario: Link of an unknown article
+- **WHEN** a cited link is inserted for an article that is not recorded
+- **THEN** a foreign-key violation is raised, and deleting a recorded article deletes its links
+
+#### Scenario: Calibration values
+- **WHEN** a calibration entry is written with an opinion other than keep, discard or none
+- **THEN** a check violation is raised
+
+### Requirement: Knowledge roles' rights on the watch and pre-triage tables
+The system SHALL let the knowledge read-write role read, insert, update and delete rows of every watch and pre-triage table, and SHALL let the knowledge read-only role only read them. Neither role SHALL create, alter or drop these tables, and no role of another schema SHALL read them.
+
+Source: tests/db/test_watch_schema.py
+
+#### Scenario: Read-write role
+- **WHEN** the knowledge read-write role inserts, updates and deletes an article, a score and a calibration entry
+- **THEN** each statement succeeds, and creating a table in the knowledge schema is refused
+
+#### Scenario: Read-only role
+- **WHEN** the knowledge read-only role selects from each table, then inserts a score or deletes a pick
+- **THEN** the selects succeed and the writes are refused for insufficient privilege
+
+#### Scenario: Other schemas' roles
+- **WHEN** the cases read-write role or the flow view role reads a watch table
+- **THEN** the statement is refused
 
 ## Open questions
 

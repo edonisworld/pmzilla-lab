@@ -7,20 +7,33 @@ Describes the flow report tool: it reads one or more API-export CSV files (or th
 ## Requirements
 
 ### Requirement: Subcommands and former names
-The system SHALL offer the subcommands `statuses`, `compute`, `compare` and `config`. It SHALL refuse former French subcommand names with exit code 2 ("invalid choice"), and SHALL accept former option names with a warning that names the new option, producing the same report as the new names.
+The system SHALL offer the subcommands `statuses`, `compute`, `compare`, `config` and `cycles` (the last one reading the database only, jira-flow-cycles capability). It SHALL refuse former French subcommand names with exit code 2 ("invalid choice").
 
-Source: tests/flux_jira/test_noms_anglais.py (AncienEtNouveau)
-
-#### Scenario: Former options
-- **WHEN** former names of the name, today, no-comparison, scope and weeks options are used
-- **THEN** each produces a warning "renamed" naming the new option and the report equals the one produced with new names
+Source: tests/flux_jira/test_noms_anglais.py (AncienEtNouveau); tests/flux_jira/test_cycles_commande.py (Aide)
 
 #### Scenario: Former subcommands
 - **WHEN** a former subcommand name is used
 - **THEN** the exit code is 2
 
+#### Scenario: Cycles listed
+- **WHEN** the help is printed
+- **THEN** `cycles` is listed with the other subcommands
+
+### Requirement: Former option and setting names refused
+The system SHALL refuse former option names with exit code 2 and a message naming the current option, and SHALL refuse former setting names naming the current one; in both cases no report SHALL be written.
+
+Source: tests/flux_jira/test_noms_anglais.py (AncienEtNouveau)
+
+#### Scenario: Former options
+- **WHEN** former names of the name, today, no-comparison, scope and weeks options are used
+- **THEN** each run exits with code 2, says the option no longer exists and names the current one, and no report is written
+
+#### Scenario: Former setting names
+- **WHEN** the settings use a former name for the in-progress states
+- **THEN** the run fails naming the current setting and writes no report, while the same settings under the new names run without any message
+
 ### Requirement: Input is the API export only
-The system SHALL read only CSV files in the layout of the API export (English column headers, day/abbreviated-month/year hour:minute dates) and SHALL refuse a manual export with non-English headers, for both `statuses` and `compute`, with a message pointing to the API export tool and without a traceback. Rows with an unreadable creation date SHALL be counted and reported, naming the API export tool. A legacy date-format setting and French column-alias names in the settings SHALL be ignored with a warning, without changing the computation.
+The system SHALL read only CSV files in the layout of the API export (English column headers, day/abbreviated-month/year hour:minute dates) and SHALL refuse a manual export with non-English headers, for both `statuses` and `compute`, with a message pointing to the API export tool and without a traceback. Rows with an unreadable creation date SHALL be counted and reported, naming the API export tool.
 
 Source: tests/flux_jira/test_flux_jira.py (ExportDeLApiSeulement)
 
@@ -28,9 +41,14 @@ Source: tests/flux_jira/test_flux_jira.py (ExportDeLApiSeulement)
 - **WHEN** an export with French headers is given to `statuses` or `compute`
 - **THEN** the exit code is non-zero and the message points to the API export subcommand
 
+### Requirement: Legacy settings stop the report
+The system SHALL stop the run when the settings hold a legacy date-format setting or a French column alias (jira-flow-config capability); it SHALL NOT ignore them with a warning.
+
+Source: tests/flux_config/test_flux_config.py (test_un_flux_yaml_ancien_est_refuse_par_les_scripts)
+
 #### Scenario: Legacy settings
-- **WHEN** the settings hold a legacy date format and French column aliases
-- **THEN** warnings state they are ignored, and the report equals the one computed without them
+- **WHEN** the settings hold a legacy date format
+- **THEN** the run stops with a message that the setting no longer exists, without its value
 
 ### Requirement: Data source selection
 The system SHALL read tickets from CSV files by default (no source, or `csv`), or from the local database when the source option is `--source db`, which is the target path for the flow report; with the database source it SHALL NOT read any CSV file and SHALL pass the settings to the database reader. An unknown source SHALL stop with a message naming the value and listing the allowed values ("csv, db"), in French or English. Files given together with `db` SHALL be refused rather than ignored, before any database read, with "no CSV file may be given" (French equivalent in French). A database error SHALL stop the run with the database-read message followed by the error detail; any other error SHALL NOT be masked by that message.
@@ -63,13 +81,22 @@ Source: tests/flux_jira/test_flux_jira.py (MultiProjets.test_fusion_par_cle)
 - **THEN** the JSON reports two files and seven duplicates removed, and the Markdown mentions the merge of two exports by key
 
 ### Requirement: Exclusions applied to every count
-The system SHALL exclude tickets of portfolio-level types and of excluded projects from every count (throughput, lead time, work in progress, to-do, ages, teams, arrivals, forecasts), SHALL report what was excluded by type and by project in the report, and SHALL produce a report identical (apart from the exclusion note and merge info) to one computed on an export from which those tickets were already removed. A former setting name for portfolio types SHALL be accepted.
+The system SHALL exclude tickets of portfolio-level types and of excluded projects from every count (throughput, lead time, work in progress, to-do, ages, teams, arrivals, forecasts), SHALL report what was excluded by type and by project in the report, and SHALL produce a report identical (apart from the exclusion note and merge info) to one computed on an export from which those tickets were already removed.
 
-Source: tests/flux_jira/test_flux_jira.py (MultiProjets, ExclusionPartout), tests/flux_jira/test_noms_anglais.py
+Source: tests/flux_jira/test_flux_jira.py (MultiProjets, ExclusionPartout)
 
 #### Scenario: Exclusion note
 - **WHEN** epics and one project are excluded
 - **THEN** the report's excluded section counts them by type and by project
+
+### Requirement: Former portfolio-types setting refused
+The system SHALL refuse the former setting name for portfolio types, naming the current setting.
+
+Source: tests/flux_jira/test_noms_anglais.py (GrandeMigration)
+
+#### Scenario: Former portfolio-types name
+- **WHEN** the settings use either former name of the portfolio-types setting
+- **THEN** `compute` fails naming the current setting, and after `config migrate` the setting applies
 
 ### Requirement: State classification
 The system SHALL classify open tickets as in progress or to do by the state-category column when it is present (the category decides, and the report states that classification is by state category), and by the lists in the settings otherwise or for tickets without a category. States that are neither SHALL be reported as unclassified.
@@ -234,17 +261,31 @@ Source: tests/flux_jira/test_flux_jira.py (Perimetre.test_comparaison_signale_un
 - **THEN** the comparability notes say "different scopes" and name both
 
 ### Requirement: Settings migration
-The system SHALL provide `config migrate` that rewrites the settings file with English names (keeping comments), keeps the old file beside it with a suffix, lists changes as "line: old -> new" using names only and never values, says nothing to migrate on a second run, supports `--dry-run` (writes nothing), stops with exit 1 without writing when two old names map to the same new name, and stops when the file does not exist. A report computed after migration SHALL equal the one computed before, without warnings. Both former and new names SHALL be accepted by `compute`, with a warning naming the new key for each former key.
+The system SHALL provide `config migrate` that rewrites the settings file with English names (keeping comments), keeps the old file beside it with a suffix, lists changes as "line: old -> new" using names only and never values, says nothing to migrate on a second run, supports `--dry-run` (writes nothing), and stops when the file does not exist.
 
-Source: tests/flux_jira/test_noms_anglais.py (ConfigMigrate, GrandeMigration)
+Source: tests/flux_jira/test_noms_anglais.py (ConfigMigrate)
+
+#### Scenario: Dry run
+- **WHEN** `--dry-run` is used
+- **THEN** the changes that would be made are listed and the file is unchanged
+
+### Requirement: Migration conflict stops config migrate
+The system SHALL stop `config migrate` with exit 1, without writing, when two old names map to the same new name.
+
+Source: tests/flux_jira/test_noms_anglais.py (GrandeMigration)
 
 #### Scenario: Conflict
 - **WHEN** two former keys map to one new key
 - **THEN** exit code 1, the message names the lines and keys, no value appears, and nothing is written
 
-#### Scenario: Dry run
-- **WHEN** `--dry-run` is used
-- **THEN** the changes that would be made are listed and the file is unchanged
+### Requirement: Report after migration
+The system SHALL compute, after migration, a report equal to the one computed with the new names, without any message. `compute` SHALL refuse a file with former names, naming the current key, and SHALL NOT accept it with a warning.
+
+Source: tests/flux_jira/test_noms_anglais.py (ConfigMigrate, GrandeMigration)
+
+#### Scenario: Migrated file
+- **WHEN** a file with former names is refused by `compute`, then migrated
+- **THEN** `compute` runs without any message and the report equals the one computed with the new names
 
 ### Requirement: Statuses listing
 The system SHALL provide `statuses` that lists the columns found for each role, the number of tickets and the creation and resolution ranges, each state with its count and a tag (in progress, to do, done or unclassified, mixed, waiting), the excluded counts, the types with counts, and a warning when the resolution column is absent. The text SHALL name the new settings.
@@ -256,13 +297,35 @@ Source: tests/flux_jira/test_noms_anglais.py (test_statuses_et_compare_existent)
 - **THEN** the output mentions the in-progress and to-do setting names and no former name
 
 ### Requirement: Message language
-The system SHALL print messages and write reports in French by default and in English with `--language en`, with the same files and the same JSON data in both languages, refuse other languages with exit 2, accept the former option name with a warning, and produce English output matching the recorded reference without French leftovers or former setting names.
+The system SHALL print messages and write reports in French by default and in English with `--language en`, with the same files and the same JSON data in both languages, refuse other languages with exit 2, refuse the former option name with exit 2 naming the current one, and produce English output matching the recorded reference without French leftovers or former setting names.
 
 Source: tests/flux_jira/test_language.py
 
 #### Scenario: English written report
 - **WHEN** `--language en` is given
 - **THEN** the written report is English and the JSON equals the French run's JSON
+
+### Requirement: Aggregation by team, Mission Team or site
+The system SHALL accept on `compute` the option `--by team|mission-team|site`, default `team`. With `mission-team` or `site`, it SHALL read the organisation referential, replace the per-team sections by per-group sections following the jira-flow-organisation capability, and write a report whose name carries the aggregation, on both data sources. Without the option, the report SHALL stay unchanged. A missing or invalid referential with a group aggregation SHALL stop with exit code 1, naming the referential and never a value.
+
+Source: tests/flux_jira/test_regroupement.py
+
+#### Scenario: Default
+- **WHEN** `compute` runs without `--by`
+- **THEN** the report is identical to the report of the previous version
+
+#### Scenario: Referential missing
+- **WHEN** `compute --by site` runs without a referential
+- **THEN** the exit code is 1 and no report is written
+
+### Requirement: Labels and versions absent from the flow report
+The system SHALL NOT write a label or a version name in a flow report, an evolution report, an ageing-points file or the console of the flow report tool; cycles appear only by their neutral keys.
+
+Source: tests/flux_jira/test_chaines_distinctives.py; tests/flux_jira/test_cycles_commande.py (SortiesSansValeurDistinctive)
+
+#### Scenario: Distinctive values
+- **WHEN** the data hold a distinctive string as declared label and as fix version
+- **THEN** none appears in any output of `statuses`, `compute`, `compare` or `cycles`
 
 ## Open questions
 

@@ -17,7 +17,7 @@ sys.path.insert(0, str(TOOLS_REELS))
 import install_lab as noyau            # noqa: E402
 import install_lab_context as c        # noqa: E402
 
-ETAPES = ["prereqs", "repo", "hooks", "links", "database", "launchd", "mcp", "check"]
+ETAPES = ["prereqs", "repo", "hooks", "runtree", "links", "database", "launchd", "mcp", "check"]
 PHRASE_MODE = 'is not available in this version, see the "Install script" section of docs/pmzilla/installation.md'
 
 

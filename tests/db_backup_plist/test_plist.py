@@ -37,7 +37,7 @@ class ModelePlist(unittest.TestCase):
         self.assertGreater((planning["Hour"], planning["Minute"]), (veille["Hour"], veille["Minute"]))
 
     def test_chemins_avec_home_et_aucun_chemin_reel(self):
-        self.assertIn("<string>__HOME__/PMZilla-Lab/workspace/tools/db_backup.sh</string>", self.texte)
+        self.assertIn("<string>__HOME__/PMZilla-Lab/db_backup.sh</string>", self.texte)
         self.assertEqual(self.texte.count("<string>__HOME__/Library/Logs/pmzilla-db-backup.log</string>"), 2)
         self.assertNotIn("/Users/", self.texte)
         reste = re.findall(r"<string>(/[^<]*)</string>", self.texte)
@@ -45,10 +45,17 @@ class ModelePlist(unittest.TestCase):
 
     def test_rendu_sans_residu_et_chemins_attendus(self):
         donnees = self.rendu("/home/essai")
-        self.assertEqual(donnees["ProgramArguments"], ["/bin/bash", "/home/essai/PMZilla-Lab/workspace/tools/db_backup.sh"])
+        self.assertEqual(donnees["ProgramArguments"], ["/bin/bash", "/home/essai/PMZilla-Lab/db_backup.sh"])
         self.assertEqual(donnees["StandardOutPath"], "/home/essai/Library/Logs/pmzilla-db-backup.log")
         self.assertEqual(donnees["StandardErrorPath"], donnees["StandardOutPath"])
         self.assertNotIn("__HOME__", repr(donnees))
+
+    def test_le_programme_est_le_lien_du_dossier_du_labo_sans_dossier_de_code(self):
+        """Change run-worktree : le modèle lance ~/PMZilla-Lab/db_backup.sh (lien), jamais un dossier de code."""
+        programme = self.rendu("/home/essai")["ProgramArguments"][1]
+        self.assertEqual(programme, "/home/essai/PMZilla-Lab/db_backup.sh")
+        for dossier in ("/workspace/", "/run/", "/tools/"):
+            self.assertNotIn(dossier, programme)
 
     def test_notification_activee_et_aucun_secret(self):
         env = self.rendu()["EnvironmentVariables"]

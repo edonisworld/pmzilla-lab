@@ -45,6 +45,7 @@ case "$args" in
     echo 1; exit 0 ;;
   *pg_dump*)
     schema="${args##*-n }"; schema="${schema%% *}"
+    echo "MARQ $(cat "${PMZILLA_LAB_DATA:-/inexistant}/sauvegarde.encours/pid" 2>/dev/null) PPID=$PPID" >> "$FAUX_LOG"
     echo "DUMP $schema"; exit 0 ;;
 esac
 exit 0
@@ -179,6 +180,58 @@ verifie "db_backup : sauvegarde réussie sous launchd, code 0, aucune notificati
 FAUX_ABSENTS="flow" DB_BACKUP_NOTIFIER=1 DB_BACKUP_SAUVEGARDES="$notif" DB_BACKUP_DATE="2026-10-12" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : schéma absent sous launchd, code 1 et notification" "$([ $code -eq 1 ] && grep -q 'code 1' "$OSA_LOG"; echo $?)"
 verifie "db_backup : aucune notification ne contient de mot de passe, de chemin de dump ni de contenu" "$(grep -Eq "$MDP|DUMP |\.dump" "$OSA_LOG"; [ $? -ne 0 ]; echo $?)"
+
+# --- change run-worktree (D14) : repère de passage sauvegarde.encours, dossier de contenu, âge maximal
+donnees="$tmp/donnees-labo"; mkdir -p "$donnees"; export PMZILLA_LAB_DATA="$donnees"
+repere="$donnees/sauvegarde.encours"
+unset DB_BACKUP_GARDER
+: > "$FAUX_LOG"
+DB_BACKUP_DATE="2027-01-01" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : pendant la sauvegarde, le dossier existe et porte l'identifiant du processus du script" "$(l=$(grep -m1 '^MARQ' "$FAUX_LOG"); [ -n "$l" ] && [ "$(echo "$l" | sed -E 's/^MARQ ([0-9]*) PPID=.*/\1/')" = "$(echo "$l" | sed -E 's/.*PPID=//')" ] && echo "$l" | grep -Eq '^MARQ [0-9]+ '; echo $?)"
+verifie "repère : après la sauvegarde, plus de repère, code 0" "$([ $code -eq 0 ] && [ ! -e "$repere" ]; echo $?)"
+
+DB_BACKUP_DATE="2027-01-01" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : sauvegarde du jour déjà présente (code 0) : aucun repère laissé" "$([ $code -eq 0 ] && grep -q 'existe déjà' "$tmp/s" && [ ! -e "$repere" ]; echo $?)"
+DB_BACKUP_DATE="demain" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : refus d'argument (code 2) : aucun repère créé ni laissé" "$([ $code -eq 2 ] && [ ! -e "$repere" ] && ! grep -q 'Repère' "$tmp/s"; echo $?)"
+
+mkdir -p "$donnees/veille.verrou"; echo 4242 > "$donnees/veille.verrou/pid"
+FAUX_ABSENTS="flow" DB_BACKUP_DATE="2027-01-02" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : schéma absent (code 1) : plus de repère, et le verrou de la veille est intact" "$([ $code -eq 1 ] && [ ! -e "$repere" ] && [ "$(cat "$donnees/veille.verrou/pid")" = 4242 ]; echo $?)"
+rm -rf "$donnees/veille.verrou"
+
+( : ) & mort=$!; wait "$mort" 2>/dev/null
+mkdir "$repere"; echo "$mort" > "$repere/pid"; date +%s > "$repere/debut"
+DB_BACKUP_DATE="2027-01-03" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : périmé (processus mort) : repris et journalisé, sauvegarde faite, aucun repère laissé" "$([ $code -eq 0 ] && grep -q '^Repère de passage périmé, repris$' "$tmp/s" && [ -s "$sauv/db-2027-01-03/cases.dump" ] && [ ! -e "$repere" ]; echo $?)"
+
+mkdir "$repere"; echo "$$" > "$repere/pid"; date +%s > "$repere/debut"
+DB_BACKUP_DATE="2027-01-04" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : tenu par un processus vivant : sauvegarde faite sans repère propre, ligne journalisée, dossier intact" "$([ $code -eq 0 ] && grep -q '^Repère de passage déjà tenu : passage sans repère propre$' "$tmp/s" && [ -s "$sauv/db-2027-01-04/cases.dump" ] && [ "$(cat "$repere/pid")" = "$$" ]; echo $?)"
+rm -rf "$repere"
+
+mkdir "$repere"; echo "$$" > "$repere/pid"; echo 1 > "$repere/debut"
+PMZILLA_RUN_MARKER_MAX_AGE=100 PMZILLA_RUN_NOW=5000 DB_BACKUP_DATE="2027-01-05" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "repère : processus vivant mais plus vieux que l'âge maximal : périmé, repris" "$([ $code -eq 0 ] && grep -q '^Repère de passage périmé, repris$' "$tmp/s" && [ ! -e "$repere" ]; echo $?)"
+
+if [ "$(id -u)" != 0 ]; then
+  ro="$tmp/donnees-ro"; mkdir -p "$ro"; chmod 500 "$ro"
+  PMZILLA_LAB_DATA="$ro" DB_BACKUP_DATE="2027-01-06" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+  verifie "repère : dossier de données non inscriptible : ligne journalisée, dumps écrits, code inchangé (0)" "$([ $code -eq 0 ] && grep -q '^Repère de passage impossible à écrire$' "$tmp/s" && [ -s "$sauv/db-2027-01-06/cases.dump" ]; echo $?)"
+  FAUX_ABSENTS="flow" PMZILLA_LAB_DATA="$ro" DB_BACKUP_DATE="2027-01-07" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+  verifie "repère : dossier de données non inscriptible et schéma absent : le code reste 1" "$([ $code -eq 1 ]; echo $?)"
+  chmod 700 "$ro"
+else
+  echo "saut : lancé en administrateur, dossier non inscriptible non simulable"
+fi
+
+verifie "contenu : le script exporte PMZILLA_LAB_WORKSPACE" "$(grep -Eq '^export PMZILLA_LAB_WORKSPACE' "$racine/tools/db_backup.sh"; echo $?)"
+
+defaut_db="$(grep -E '^[^#]*PMZILLA_RUN_MARKER_MAX_AGE:-[0-9]+' "$racine/tools/db_backup.sh" | head -1 | sed -E 's/.*PMZILLA_RUN_MARKER_MAX_AGE:-([0-9]+).*/\1/')"
+defaut_run="$(grep -E '^[^#]*PMZILLA_RUN_MARKER_MAX_AGE:-[0-9]+' "$racine/tools/run_worktree.sh" | head -1 | sed -E 's/.*PMZILLA_RUN_MARKER_MAX_AGE:-([0-9]+).*/\1/')"
+verifie "âge maximal du repère : la constante par défaut de db_backup.sh vaut 21600" "$([ "$defaut_db" = 21600 ]; echo $?)"
+verifie "âge maximal du repère : la constante de db_backup.sh est celle de run_worktree.sh" "$([ -n "$defaut_db" ] && [ "$defaut_db" = "$defaut_run" ]; echo $?)"
+unset PMZILLA_LAB_DATA
 
 # --- docker-compose.yml : le mot de passe n'est pas exigé à l'interpolation (défaut constaté sur la vraie instance)
 verifie "compose : POSTGRES_PASSWORD n'est pas déclaré obligatoire (pas de \${POSTGRES_PASSWORD:?)" "$(grep -q '\${POSTGRES_PASSWORD:?' "$racine/docker-compose.yml"; [ $? -ne 0 ]; echo $?)"

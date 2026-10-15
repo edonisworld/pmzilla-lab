@@ -136,7 +136,7 @@ class BibliothequeJetableIndexee(AvecDossierDeDonnees):
         self.assertEqual(self.livres(), attendus)                           # rien de la bibliothèque d'avant
         serveur = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["pmzilla-library"]
         self.assertEqual(serveur["env"], {essai.KNOWLEDGE_DBNAME_VARIABLE: self.pg.name})
-        self.assertEqual(serveur["args"][-2:], ["--backend", "postgres"])
+        self.assertNotIn("--backend", serveur["args"])
         lecteur = essai.LibraryReader(self.pg.connect())
         self.assertEqual(essai.unmet_prerequisites([{"collection": "watch", "minimum": len(attendus)}], reader=lecteur), [])
         self.assertFalse(list((self.tmp / "donnees").glob("*.sqlite")))     # aucun index fichier

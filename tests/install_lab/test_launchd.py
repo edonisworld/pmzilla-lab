@@ -15,7 +15,7 @@ sys.path.insert(0, str(TOOLS_REELS))
 import install_lab_context as c        # noqa: E402
 import install_lab_launchd as ll       # noqa: E402
 
-ETIQUETTES = ("com.pmzilla.watch", "com.pmzilla.db-backup")
+ETIQUETTES = ("com.pmzilla.watch", "com.pmzilla.watch-catchup", "com.pmzilla.db-backup", "com.pmzilla.doctor")
 
 # launchctl à état : un fichier « charge-<label> » par tâche chargée. Drapeaux : bootstrap-erreur-5 (charge puis rend 5),
 # bootstrap-echec (rend 5 sans charger).
@@ -76,7 +76,7 @@ class CasLaunchd(CasDeBase):
 
 
 class Rendu(CasLaunchd):
-    def test_installation_rend_et_charge_les_deux_taches(self):
+    def test_installation_rend_et_charge_les_quatre_taches(self):
         self.installer_tout()
         for e in ETIQUETTES:
             texte = self.fichier(e).read_text(encoding="utf-8")
@@ -125,8 +125,11 @@ class Prerequis(CasLaunchd):
         r = self.lancer(reponses="y\n" * 10, etat={"ollama_ok": False, "base_ok": True})
         self.assertEqual(r.etat, c.REPORTE)
         self.assertIn("watch job not installed", self.ctx.reportes)
+        self.assertIn("watch catch-up job not installed", self.ctx.reportes)
         self.assertFalse(self.fichier("com.pmzilla.watch").exists())
+        self.assertFalse(self.fichier("com.pmzilla.watch-catchup").exists())
         self.assertTrue(self.fichier("com.pmzilla.db-backup").exists())
+        self.assertTrue(self.fichier("com.pmzilla.doctor").exists())
 
     def test_sans_base_la_sauvegarde_est_reportee(self):
         r = self.lancer(reponses="y\n" * 10, etat={"ollama_ok": True, "base_ok": False})
@@ -135,12 +138,23 @@ class Prerequis(CasLaunchd):
         self.assertFalse(self.fichier("com.pmzilla.db-backup").exists())
         self.assertTrue(self.fichier("com.pmzilla.watch").exists())
 
+    def test_la_tache_du_doctor_est_installee_sans_ollama_ni_base(self):
+        r = self.lancer(reponses="y\n" * 10, etat={"ollama_ok": False, "base_ok": False})
+        self.assertEqual(r.etat, c.REPORTE)
+        self.assertTrue(self.fichier("com.pmzilla.doctor").exists())
+        self.assertTrue(self.fx.a_drapeau("charge-com.pmzilla.doctor"))
+        self.assertFalse(self.fichier("com.pmzilla.watch").exists())
+        self.assertFalse(self.fichier("com.pmzilla.watch-catchup").exists())
+        self.assertFalse(self.fichier("com.pmzilla.db-backup").exists())
+        self.assertEqual(len([x for x in self.ctx.reportes if "doctor" in x]), 0)
+
     def test_ligne_de_report_non_dupliquee(self):
         ctx = c.Contexte(racine=self.fx.racine, maison=self.fx.maison, etat={"ollama_ok": False, "base_ok": False},
                          reportes=["watch job not installed"])
         with mock.patch.dict(os.environ, self.fx.environnement()), mock.patch("sys.stdout", new=__import__("io").StringIO()):
             ll.executer(ctx)
         self.assertEqual(ctx.reportes.count("watch job not installed"), 1)
+        self.assertEqual(ctx.reportes.count("watch catch-up job not installed"), 1)
         self.assertEqual(ctx.reportes.count("backup job not installed"), 1)
 
     def test_repli_sur_les_sondes_partagees(self):
@@ -150,6 +164,7 @@ class Prerequis(CasLaunchd):
             r = self.lancer(reponses="y\n" * 10, etat={})
         self.assertEqual(r.etat, c.REPORTE)
         self.assertTrue(self.fichier("com.pmzilla.watch").exists())
+        self.assertTrue(self.fichier("com.pmzilla.watch-catchup").exists())
         self.assertFalse(self.fichier("com.pmzilla.db-backup").exists())
 
 
@@ -189,6 +204,33 @@ class Chargement(CasLaunchd):
         self.assertEqual(chemin.read_text(encoding="utf-8"), "different")
         self.assertTrue(self.fx.a_drapeau("charge-com.pmzilla.watch"))
         self.assertEqual(self.fx.appels_qui_changent(self.appels), [])
+
+
+class ModelesSansDossierDeCode(unittest.TestCase):
+    """Change run-worktree (D5) : aucun modèle rendu ne nomme un dossier de code ; chaque tâche lance un lien du dossier du labo."""
+    MODELES = ("com.pmzilla.watch.plist", "com.pmzilla.watch-catchup.plist", "com.pmzilla.db-backup.plist",
+               "com.pmzilla.offsite-copy.plist", "com.pmzilla.offsite-restore-test.plist", "com.pmzilla.doctor.plist")
+    MAISON = "/home/essai"
+
+    def rendu(self, nom):
+        texte = (TOOLS_REELS / nom).read_text(encoding="utf-8").replace(ll.MARQUEUR, self.MAISON)
+        return plistlib.loads(texte.encode("utf-8"))
+
+    def test_les_six_modeles_existent(self):
+        for nom in self.MODELES:
+            self.assertTrue((TOOLS_REELS / nom).is_file(), nom)
+
+    def test_aucun_modele_rendu_ne_nomme_un_dossier_de_code(self):
+        for nom in self.MODELES:
+            donnees = self.rendu(nom)
+            programme = donnees["ProgramArguments"][1]
+            self.assertRegex(programme, rf"^{self.MAISON}/PMZilla-Lab/[A-Za-z0-9_]+\.(sh|py)$", f"{nom} : {programme}")
+            for dossier in ("/workspace/", "/run/", "/tools/", "/wt-"):
+                self.assertNotIn(dossier, repr(donnees), f"{nom} nomme {dossier}")
+
+    def test_les_modeles_rendus_par_l_etape_ne_nomment_pas_non_plus_un_dossier_de_code(self):
+        for tache in ll.TACHES:
+            self.assertIn(tache.gabarit, self.MODELES)
 
 
 class ViaOrchestrateur(CasDeBase):

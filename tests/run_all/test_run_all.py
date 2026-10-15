@@ -149,6 +149,119 @@ class Lanceur(unittest.TestCase):
         self.assertIn("test_pre_commit.sh", resultat.stdout)
 
 
+SUITE_LIT_ENTREE = ("import sys, unittest\nclass T(unittest.TestCase):\n"
+                    "    def test_a(self): self.assertEqual(sys.stdin.read(), '')\n")
+SUITE_DORT = "import time, unittest\nclass T(unittest.TestCase):\n    def test_a(self): time.sleep(60)\n"
+SUITE_FILS = ("import os, subprocess, unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n"
+              "        p = subprocess.Popen(['sleep', '300'])\n        open(os.environ['FILS_PID'], 'w').write(str(p.pid))\n"
+              "        p.wait()\n")
+
+
+class EntreeEtDelai(unittest.TestCase):
+    """Entrée standard fermée par le lanceur ; délai par suite : échec nommé, suivantes lancées, aucun processus restant."""
+
+    def setUp(self):
+        self.racine = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.racine, True)
+
+    def suite(self, nom, texte):
+        dossier = self.racine / "tests" / nom
+        dossier.mkdir(parents=True)
+        (dossier / f"test_{nom}.py").write_text(texte)
+
+    def env(self, **variables):
+        env = {k: v for k, v in os.environ.items() if k not in ("PMZILLA_ENTREES_JUGE_CHANGEES", "PMZILLA_NO_EVALS",
+                                                                "RUN_ALL_SUITE_TIMEOUT")}
+        env.update({"RUN_ALL_ROOT": str(self.racine), "RUN_ALL_DEPS": ""}, **variables)
+        return env
+
+    def lancer(self, *arguments, **variables):
+        return subprocess.run(["bash", str(RUN_ALL), *arguments], env=self.env(**variables), capture_output=True,
+                              text=True, timeout=120, stdin=subprocess.DEVNULL)
+
+    def test_une_suite_qui_lit_son_entree_lit_la_fin_de_fichier(self):
+        self.suite("alpha", SUITE_LIT_ENTREE)
+        processus = subprocess.Popen(["bash", str(RUN_ALL), "alpha"], env=self.env(), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)   # entrée ouverte, jamais fermée
+        self.addCleanup(processus.kill)
+        self.addCleanup(processus.stdin.close)
+        self.addCleanup(processus.stdout.close)
+        sortie = processus.stdout.read()
+        processus.wait(timeout=30)
+        self.assertEqual(processus.returncode, 0, sortie)
+        self.assertIn("TOTAL : 1 tests dans 1 suites · tous réussis", sortie)
+
+    def test_une_suite_shell_qui_lit_son_entree_lit_la_fin_de_fichier(self):
+        chemin = self.racine / "tests" / "installation" / "test_install_links.sh"
+        chemin.parent.mkdir(parents=True)
+        chemin.write_text('if read -r ligne; then echo "1 réussis, 1 échec(s)"; else echo "1 réussis, 0 échec(s)"; fi\n')
+        processus = subprocess.Popen(["bash", str(RUN_ALL), "installation"], env=self.env(), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(processus.kill)
+        self.addCleanup(processus.stdin.close)
+        self.addCleanup(processus.stdout.close)
+        sortie = processus.stdout.read()
+        processus.wait(timeout=30)
+        self.assertEqual(processus.returncode, 0, sortie)
+
+    def test_suite_python_trop_lente_est_un_echec_nomme_et_les_autres_passent(self):
+        self.suite("alpha", SUITE_OK)
+        self.suite("lente", SUITE_DORT)
+        resultat = self.lancer(RUN_ALL_SUITE_TIMEOUT="1")
+        self.assertEqual(resultat.returncode, 1, resultat.stdout)
+        self.assertRegex(resultat.stdout, r"lente\s+\? tests · ÉCHEC : délai dépassé \(1 s\)")
+        self.assertRegex(resultat.stdout, r"alpha\s+2 tests · OK")
+        self.assertIn("lente (délai dépassé)", resultat.stdout.splitlines()[-1])
+
+    def test_suite_shell_trop_lente_est_un_echec_nomme(self):
+        self.suite("alpha", SUITE_OK)
+        self.shell_lent = self.racine / "tests" / "hooks" / "test_pre_commit.sh"
+        self.shell_lent.parent.mkdir(parents=True)
+        self.shell_lent.write_text("sleep 60\n")
+        resultat = self.lancer("alpha", "hooks", RUN_ALL_SUITE_TIMEOUT="1")
+        self.assertEqual(resultat.returncode, 1, resultat.stdout)
+        self.assertRegex(resultat.stdout, r"hooks \(shell\)\s+\? tests · ÉCHEC : délai dépassé \(1 s\)")
+        self.assertRegex(resultat.stdout, r"alpha\s+2 tests · OK")
+        self.assertIn("1 suite(s) en échec : hooks (délai dépassé)", resultat.stdout)
+
+    def test_aucun_processus_fils_ne_reste_apres_le_delai(self):
+        self.suite("fils", SUITE_FILS)
+        fichier = self.racine / "fils.pid"
+        resultat = self.lancer("fils", RUN_ALL_SUITE_TIMEOUT="1", FILS_PID=str(fichier))
+        self.assertEqual(resultat.returncode, 1, resultat.stdout)
+        self.assertIn("délai dépassé", resultat.stdout)
+        pid = int(fichier.read_text())
+        try:
+            os.kill(pid, 0)
+            vivant = True
+        except ProcessLookupError:
+            vivant = False
+        if vivant:
+            os.kill(pid, 9)
+        self.assertFalse(vivant, "le processus fils de la suite arrêtée tourne encore")
+
+    def test_aucune_empreinte_apres_un_delai_depasse(self):
+        self.suite("lente", SUITE_DORT)
+        for chemin in re.findall(r"(tests/\S+\.sh):", RUN_ALL.read_text(encoding="utf-8")):
+            cible = self.racine / chemin
+            cible.parent.mkdir(parents=True, exist_ok=True)
+            cible.write_text(SHELL_OK)
+        subprocess.run(["git", "init", "-q"], cwd=self.racine, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.racine, check=True)
+        resultat = self.lancer(RUN_ALL_SUITE_TIMEOUT="1")
+        self.assertEqual(resultat.returncode, 1, resultat.stdout)
+        self.assertFalse((self.racine / ".git" / "pmzilla-run-all-ok").exists())
+
+    def test_delai_invalide_sort_en_2_sans_lancer_de_suite(self):
+        self.suite("alpha", SUITE_OK)
+        for valeur in ("abc", "0", "-5", "1.5", ""):
+            resultat = self.lancer("alpha", RUN_ALL_SUITE_TIMEOUT=valeur)
+            self.assertEqual(resultat.returncode, 2, (valeur, resultat.stdout))
+            self.assertIn(f"run_all : délai par suite invalide ({valeur}) : un nombre entier de secondes est attendu", resultat.stdout)
+            self.assertNotIn("TOTAL", resultat.stdout)
+            self.assertNotRegex(resultat.stdout, r"alpha\s+2 tests")
+
+
 class EmpreinteDeCommit(unittest.TestCase):
     """PMZILLA_NO_EVALS fait refuser le lancement ; un lancement complet et vert écrit l'empreinte de l'index."""
 

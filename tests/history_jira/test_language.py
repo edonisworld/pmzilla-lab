@@ -5,6 +5,7 @@
 Le même parcours (connexion, collecte, contrôle, erreurs) est lancé en anglais et comparé à un instantané versionné
 (reference_en.md) ; pour le régénérer après un changement voulu : PMZILLA_UPDATE_SNAPSHOTS=1. Aucune donnée réelle.
 """
+import datetime as dt
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_history_jira as base           # noqa: E402
@@ -30,10 +32,14 @@ class Parcours(base.Base):
     """Un parcours complet, rejoué dans la langue demandée."""
 
     def parcours(self, *extra: str) -> str:
+        with mock.patch.object(base.hj, "aujourd_hui", lambda: dt.date(2026, 10, 13)):
+            return self._parcours(*extra)
+
+    def _parcours(self, *extra: str) -> str:
         blocs: list[str] = []
         self.faux.__init__()                                    # état neuf : un parcours peut être rejoué dans le même test
         shutil.rmtree(self.ws / "Flux-Lab" / "historique", ignore_errors=True)
-        self.ecrire_reglages("classique")
+        self.ecrire_reglages("scopes")
 
         def lancer(nom: str, *argv: str) -> tuple[int, str]:
             code, sortie = self.lancer(*argv, *extra)
@@ -49,10 +55,41 @@ class Parcours(base.Base):
         flux = self.ws / "Flux-Lab" / "flux.yaml"
         flux.write_text("jira_email: a@example.org\n", encoding="utf-8")
         lancer("missing settings", "test")
-        flux.write_text("jira_site: http://exemple.atlassian.net\njira_email: a@example.org\njira_token_type: classic\n", encoding="utf-8")
+        flux.write_text("jira_site: http://exemple.atlassian.net\njira_email: a@example.org\njira_token_type: scoped\n"
+                        f"jira_cloud_id: {base.CLOUD_ID}\n", encoding="utf-8")
         lancer("remote http", "test")
         flux.write_text(f"jira_site: {self.url}\njira_email: a@example.org\njira_token_type: autre\n", encoding="utf-8")
         lancer("token type", "test")
+        self.ecrire_reglages("classique")
+        jeton, base.hj.lire_jeton = base.hj.lire_jeton, lambda: self.fail("le Trousseau ne doit pas être lu")
+        try:
+            lancer("test, classic token", "test")
+            lancer("collect, classic token", "collect", self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)]))
+        finally:
+            base.hj.lire_jeton = jeton
+        self.ecrire_reglages("scopes", cloud=None)
+        lancer("test, cloud id missing", "test")
+        self.ecrire_reglages("scopes", cloud="a/b")
+        lancer("test, cloud id with path characters", "test")
+        self.ecrire_reglages("scopes")
+        self.faux.cloud_site = "autre-identifiant"
+        lancer("test, cloud id differs from the site's", "test")
+        self.faux.cloud_site = base.CLOUD_ID
+        self.faux.refus = {"history": 403}
+        lancer("test, missing scope on history", "test")
+        self.faux.refus = {"search": 403, "fields": 403}
+        lancer("test, missing scopes on search and fields", "test")
+        self.faux.refus = {}
+        self.ecrire_reglages("scopes", expiration="2026-10-23")
+        lancer("test, token expires soon", "test")
+        self.ecrire_reglages("scopes", expiration="2026-10-01")
+        lancer("test, token expiry passed", "test")
+        self.faux.refus = {"fields": 403}
+        lancer("test, token expiry passed and a refused call", "test")
+        self.faux.refus = {}
+        self.ecrire_reglages("scopes", expiration=None)
+        lancer("test, no token expiry date", "test")
+        self.ecrire_reglages("scopes")
         flux.write_text(reglages, encoding="utf-8")
 
         lignes = self.inventer(5, termines=("ABC-1", "ABC-2", "ABC-3", "ABC-4"))
@@ -62,6 +99,10 @@ class Parcours(base.Base):
         lancer("collect, --refresh", "collect", export, "--refresh")
         lancer("collect, --team", "collect", export, "--team", "Equipe Test")
         lancer("collect, unknown team", "collect", export, "--team", "Inconnue")
+        ancien = self.ws / "ancien.csv"
+        ancien.write_text("Issue key,Issue Type,Status,Resolved,Team\nABC-1,Story,Done,01/Jan/2025 10:00,Equipe Test\n"
+                          "ABC-5,Story,Open,,Equipe Test\n", encoding="utf-8")
+        lancer("collect, tickets past retention", "collect", str(ancien))
         self.faux.groupe = False
         self.faux.introuvables = {"ABC-2"}
         lancer("collect, ticket by ticket with one error", "collect", export, "--refresh")

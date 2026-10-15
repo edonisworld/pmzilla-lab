@@ -9,6 +9,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>__HOME__/PMZilla-Lab/watch.sh</string>
+    <string>--if-due</string>
   </array>
   <!-- Chaque jour à 7 h 10. Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->
   <key>StartCalendarInterval</key>

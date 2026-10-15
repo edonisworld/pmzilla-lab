@@ -1,5 +1,5 @@
 """
-Tests des figures dans la bibliothèque (tools/pmzilla_lab_library.py) : migration de l'index, passages de type
+Tests des figures dans la bibliothèque (tools/pmzilla_lab_library.py) : passages de type
 figure, légende PDF sans doublon, paramètre `types` de la recherche, `ref` et chemin de l'image en texte,
 aucun accès aux images.
 
@@ -7,9 +7,9 @@ aucun accès aux images.
         --with beautifulsoup4 python -m unittest discover -s tests/pmzilla_lab_library -v
 
 Livres Markdown inventés dans un dossier temporaire ; l'embedding d'Ollama est remplacé par un plongement
-déterministe ; l'indexeur écrit dans un faux magasin en mémoire (fake_store.FakeStore) ; les tests de la voie de
-lecture SQLite (`Library`) le recopient dans un index SQLite temporaire. Jamais Bibliotheque-MD,
-Bibliotheque-Images, le vrai index ni la vraie base. (Le test d'intégration sur un vrai PDF
+déterministe ; l'indexeur écrit dans un faux magasin en mémoire (fake_store.FakeStore) ; les tests de recherche par
+`types` (classe Types) indexent dans une base jetable et lisent par PostgresLibrary (sautés sans base, lancés par
+tools/dbtest.sh). Jamais Bibliotheque-MD, Bibliotheque-Images, le vrai index ni la vraie base. (Le test d'intégration sur un vrai PDF
 fabriqué est ignoré quand PyMuPDF n'est pas installé.)
 """
 import ast
@@ -20,20 +20,20 @@ import io
 import json
 import os
 import shutil
-import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pmzilla_lab_library as library  # noqa: E402
-from fake_store import FakeStore, export_sqlite  # noqa: E402
-from test_pmzilla_lab_library import fake_embed  # noqa: E402
+from fake_store import FakeStore  # noqa: E402
+import knowledge_library  # noqa: E402
+from test_pmzilla_lab_library import fake_embed, fake_embed_1024  # noqa: E402
+
+RACINE = Path(__file__).resolve().parents[2]
 
 TEXTE = ("Un paragraphe de texte courant assez long pour former un passage : le flux, la limite de travail en "
          "cours, le délai de livraison et la prévision, expliqués avec soin pour dépasser le seuil de longueur. ")
@@ -110,8 +110,6 @@ class Base(unittest.TestCase):
             return fake_embed(texts)
 
         for patch in (
-            mock.patch.object(library, "DATA_DIR", self.tmp / "data"),
-            mock.patch.object(library, "DB_PATH", self.tmp / "data" / "library.sqlite"),
             mock.patch.object(library, "CATALOGUE_PATH", self.tmp / "catalogue.yaml"),
             mock.patch.object(library, "embed", embed),
         ):
@@ -136,19 +134,17 @@ class Base(unittest.TestCase):
                 for nom, b in sorted(self.store.books.items()) if fichier in (None, nom)
                 for p in sorted(b["passages"], key=lambda p: p["position"]) if kind in (None, p["kind"])]
 
-    def bibliotheque(self) -> "library.Library":
-        """La voie de lecture SQLite (Library) sur le contenu du faux magasin."""
-        export_sqlite(self.store)
-        return library.Library()
-
 
 class Livres(Base):
     def setUp(self):
         super().setUp()
+        self.ecrire_livres()
+        self.sortie = self.indexer()
+
+    def ecrire_livres(self):
         self.ecrire("flow/pdf-livre.md", LIVRE_PDF)
         self.ecrire("organisation/epub-livre.md", LIVRE_EPUB)
         self.ecrire("flow/texte.md", LIVRE_TEXTE)
-        self.sortie = self.indexer()
 
 
 class PassagesFigure(Livres):
@@ -456,9 +452,28 @@ class PhraseDeRenvoi(unittest.TestCase):
 
 
 class Types(Livres):
+    """Le paramètre `types` de la recherche, lu par PostgresLibrary dans une base jetable (sautée sans base)."""
+
     def setUp(self):
-        super().setUp()
-        self.biblio = self.bibliotheque()
+        Base.setUp(self)             # pas Livres.setUp : l'indexation se fait ici dans la base jetable, pas dans le faux magasin
+        sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
+        import pg_demo
+        self.base = pg_demo.ThrowawayDatabase(self)            # saute le test sans base
+        brut = self.base._raw()
+        brut.execute("TRUNCATE knowledge.chunks, knowledge.book_collections, knowledge.books, knowledge.collections")
+        brut.commit()
+
+        def connexion():
+            conn = pg_demo.db.connect(self.base.url, password=pg_demo.base.MOT_DE_PASSE)
+            self.base.opened.append(conn)
+            return conn
+        self.store = library.KnowledgeStore(connect=connexion)
+        patch = mock.patch.object(library, "embed", fake_embed_1024)        # 1024 dimensions, comme la base
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.ecrire_livres()
+        self.sortie = self.indexer()
+        self.biblio = knowledge_library.PostgresLibrary(connect=self.base.connect, embed=fake_embed_1024)
 
     def test_texte_seul_par_defaut(self):
         hits = self.biblio.search("tableau kanban limite de travail", None, 10)
@@ -469,8 +484,7 @@ class Types(Livres):
     def test_figures_seules(self):
         hits = self.biblio.search("tableau kanban", None, 10, types=["figure"])
         self.assertEqual({h["kind"] for h in hits}, {"figure"})
-        premier = hits[0]
-        self.assertEqual(premier["ref"]["label"], "Figure 1.1")
+        premier = next(h for h in hits if h["file"] == "pdf-livre.md" and h["ref"]["label"] == "Figure 1.1")
         self.assertEqual(premier["ref"]["page"], 1)
         self.assertEqual(premier["ref"]["image"], "Bibliotheque-Images/pdf-livre/fig-0001.png")
         self.assertIsInstance(premier["ref"]["image"], str)                 # un simple texte
@@ -500,7 +514,7 @@ class Types(Livres):
         sections = "".join(f"## Section {n}\n\n{TEXTE}kanban kanban kanban numéro {n}.\n\n" for n in range(260))
         self.ecrire("flow/long.md", "# Long\n\n" + sections)
         self.indexer()
-        hits = self.bibliotheque().search("kanban", None, 10, types=["figure"])
+        hits = self.biblio.search("kanban", None, 10, types=["figure"])
         self.assertEqual({h["kind"] for h in hits}, {"figure"})
         self.assertGreaterEqual(len(hits), 1)
 
@@ -520,21 +534,6 @@ class Types(Livres):
     def test_liste_des_livres_compte_les_figures(self):
         par_fichier = {b["file"]: b["figures"] for b in self.biblio.books(None)}
         self.assertEqual(par_fichier, {"pdf-livre.md": 2, "epub-livre.md": 2, "texte.md": 0})
-
-    def test_serveur_ne_declare_que_quatre_outils_sans_acces_aux_images(self):
-        source = (Path(library.__file__)).read_text(encoding="utf-8")
-        outils = [n.name for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
-                  and any("tool" in ast.unparse(d) for d in n.decorator_list)]
-        self.assertEqual(sorted(outils), ["list_books", "list_collections", "list_due_reviews", "read_passage", "search_cases",
-                                          "search_experiments", "search_library"])
-        for nom in outils:
-            for verbe in ("start", "note", "postpone", "drop", "close"):
-                self.assertNotIn(verbe, nom)
-        for interdit in ("get_figure", "base64", "read_bytes", "webbrowser", "subprocess", "Pixmap", "get_pixmap"):
-            self.assertNotIn(interdit, source)
-        signature = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
-                         and n.name == "search_library")
-        self.assertIn("types", [a.arg for a in signature.args.args])
 
     def test_aucun_acces_aux_images_en_indexant_cherchant_et_lisant(self):
         """Le chemin d'une image n'est qu'un texte : aucune ouverture, lecture ou test d'existence d'un fichier sous
@@ -564,10 +563,26 @@ class Types(Livres):
                 pile.enter_context(mock.patch.object(Path, nom, surveille_methode(getattr(Path, nom))))
             self.ecrire("flow/autre.md", LIVRE_PDF.replace("Livre PDF inventé", "Autre livre"))
             self.indexer()
-            biblio = self.bibliotheque()
-            for hit in biblio.search("tableau kanban", None, 10, types=["texte", "figure"]):
-                biblio.read(hit["passage_id"], 2, 2)
+            for hit in self.biblio.search("tableau kanban", None, 10, types=["texte", "figure"]):
+                self.biblio.read(hit["passage_id"], 2, 2)
         self.assertEqual(acces, [])
+
+
+class ServeurSansImages(unittest.TestCase):
+    def test_serveur_ne_declare_que_quatre_outils_sans_acces_aux_images(self):
+        source = (Path(library.__file__)).read_text(encoding="utf-8")
+        outils = [n.name for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
+                  and any("tool" in ast.unparse(d) for d in n.decorator_list)]
+        self.assertEqual(sorted(outils), ["list_books", "list_collections", "list_due_reviews", "read_passage", "search_cases",
+                                          "search_experiments", "search_library"])
+        for nom in outils:
+            for verbe in ("start", "note", "postpone", "drop", "close"):
+                self.assertNotIn(verbe, nom)
+        for interdit in ("get_figure", "base64", "read_bytes", "webbrowser", "subprocess", "Pixmap", "get_pixmap"):
+            self.assertNotIn(interdit, source)
+        signature = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
+                         and n.name == "search_library")
+        self.assertIn("types", [a.arg for a in signature.args.args])
 
 
 class Regles(unittest.TestCase):
@@ -576,72 +591,6 @@ class Regles(unittest.TestCase):
         for attendu in ("**Figures.**", 'types ["figure"]', "Figure X.Y", "page", "section", "inference formula",
                         "you cannot open", "caption", "redrawn"):
             self.assertIn(attendu, regle, attendu)
-
-
-class Migration(Base):
-    ANCIEN = """
-    CREATE TABLE books (id INTEGER PRIMARY KEY, file_name TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
-        sha256 TEXT NOT NULL, collections TEXT NOT NULL, model TEXT NOT NULL, indexed_at REAL NOT NULL,
-        meta TEXT NOT NULL DEFAULT '{}');
-    CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-        position INTEGER NOT NULL, section TEXT NOT NULL, text TEXT NOT NULL, embedding BLOB NOT NULL);
-    CREATE INDEX chunks_book ON chunks(book_id, position);
-    CREATE VIRTUAL TABLE chunks_fts USING fts5(text, section, content='chunks', content_rowid='id',
-        tokenize='unicode61 remove_diacritics 2');
-    CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
-        INSERT INTO chunks_fts(rowid, text, section) VALUES (new.id, new.text, new.section); END;
-    CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
-        INSERT INTO chunks_fts(chunks_fts, rowid, text, section) VALUES ('delete', old.id, old.text, old.section); END;
-    """
-
-    def ancien_index(self) -> dict:
-        (self.tmp / "data").mkdir()
-        db = sqlite3.connect(library.DB_PATH)
-        db.executescript(self.ANCIEN)
-        db.execute("INSERT INTO books (id, file_name, title, sha256, collections, model, indexed_at) "
-                   "VALUES (1, 'ancien.md', 'Ancien livre', 'abc', 'flow', ?, 0)", (library.EMBED_MODEL,))
-        attendus = {}
-        for position, (section, texte) in enumerate([("Partie", "Le kanban limite le travail en cours " * 4),
-                                                     ("Autre", "La prévision probabiliste par le débit " * 4)]):
-            vecteur = fake_embed([f"Ancien livre\n{section}\n{texte}"])[0].astype(np.float16).tobytes()
-            db.execute("INSERT INTO chunks (book_id, position, section, text, embedding) VALUES (1, ?, ?, ?, ?)",
-                       (position, section, texte, vecteur))
-            attendus[position] = (section, texte, vecteur)
-        db.commit()
-        db.close()
-        return attendus
-
-    def test_migration_sans_perte(self):
-        attendus = self.ancien_index()
-        db = library.connect()
-        colonnes = {r[1] for r in db.execute("PRAGMA table_info(chunks)")}
-        self.assertTrue({"kind", "ref"} <= colonnes)
-        lignes = db.execute("SELECT position, section, text, embedding, kind, ref FROM chunks ORDER BY position").fetchall()
-        self.assertEqual(len(lignes), 2)
-        for position, section, texte, embedding, kind, ref in lignes:
-            self.assertEqual((section, texte, embedding), attendus[position])    # rien n'est modifié
-            self.assertEqual((kind, ref), ("texte", "{}"))
-        # le plein texte et la table des livres sont intacts
-        self.assertEqual(db.execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'kanban'").fetchone()[0], 1)
-        self.assertEqual(db.execute("SELECT title FROM books").fetchone()[0], "Ancien livre")
-        db.close()
-
-    def test_migration_idempotente_et_recherche_sur_l_ancien_index(self):
-        self.ancien_index()
-        library.connect().close()
-        library.connect().close()
-        biblio = library.Library()
-        hits = biblio.search("kanban travail en cours", None, 5)
-        self.assertTrue(hits)
-        self.assertEqual({h["kind"] for h in hits}, {"texte"})
-        self.assertEqual(hits[0]["book"], "Ancien livre")
-        self.assertEqual(biblio.search("kanban", None, 5, types=["figure"]), [])
-        self.assertEqual(biblio.books(None)[0]["figures"], 0)
-
-    def test_un_index_neuf_a_les_colonnes_et_l_index_kind(self):
-        db = library.connect()
-        self.assertTrue({"kind", "ref"} <= {r[1] for r in db.execute("PRAGMA table_info(chunks)")})
-        self.assertIn("chunks_kind", [r[1] for r in db.execute("PRAGMA index_list(chunks)")])
 
 
 if __name__ == "__main__":

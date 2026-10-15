@@ -1,76 +1,24 @@
 """
 Tests complémentaires du jeu d'essai (tools/posture_evals.py), partie A : openspec/test-gaps.md, section posture-evals.
-Mêmes résultats sur les deux voies de la bibliothèque, ligne de rapport du fichier de cas de commandes, rejugement sans verrou.
+Ligne de rapport du fichier de cas de commandes, rejugement sans verrou.
 
     bash tests/run_all.sh posture_evals
 
-Aucun appel à Claude, aucun réseau, aucune vraie base : les séances sont remplacées par une réponse fixe, la voie PostgreSQL
-tourne sur la base jetable des tests de la bibliothèque (sautée sans base). Données inventées (bibliothèque de démonstration).
+Aucun appel à Claude, aucun réseau, aucune vraie base : les séances sont remplacées par une réponse fixe. La voie unique de la bibliothèque est
+vérifiée contre les valeurs figées dans tests/library_backend (demo_expected).
 """
 import contextlib
 import io
 import json
 import sys
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import yaml
 
-RACINE = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(RACINE / "tests" / "library_backend"))
-import pg_demo                  # noqa: E402  (ajoute tools/, tests/db et tests/fixtures_library au chemin)
-import demo_library as demo     # noqa: E402
-import knowledge_library as kl  # noqa: E402
-import pmzilla_lab_library as library  # noqa: E402
-
 import test_posture_evals as socle
 import test_gaps_posture_evals as gaps
 import posture_evals as essai
-
-QUESTIONS = [("le flux de travail", None, None), ("hypothesis experiment", ["produit"], None), ("prévision", ["watch"], None)]
-# « watch » : la bibliothèque inventée ne stocke plus « veille » depuis la fin des anciens noms (R-5) ; filtrer sur « veille » ne
-# trouvait rien sur aucune des deux voies (le test, avec base seulement, ne tournait pas dans dbtest.sh).
-
-
-class MemesResultatsSurLesDeuxVoies(gaps.PassageFictif):
-    """La voie est transmise au serveur MCP par la configuration du passage (testé ailleurs) ; ici, la voie que cette configuration
-    désigne est ouverte comme le fait `serve` (choose_backend, puis la bibliothèque de la voie) sur la même bibliothèque inventée.
-    Les passages d'une séance sont ceux que rend `search_library` : on compare ces résultats, pas ceux d'une séance Claude."""
-
-    def setUp(self):
-        super().setUp()
-        self.pg = pg_demo.ThrowawayDatabase(self)          # saute le test sans base jetable
-        chemin = self.tmp / "library.sqlite"
-        demo.build_sqlite(chemin)
-        for patch in (mock.patch.object(library, "DATA_DIR", self.tmp), mock.patch.object(library, "DB_PATH", chemin),
-                      mock.patch.object(library, "embed", demo.fake_embed)):
-            patch.start()
-            self.addCleanup(patch.stop)
-
-    def voie_du_passage(self, option: str) -> str:
-        """La voie lue par le serveur dans la configuration MCP écrite pour un passage lancé avec `--backend option`."""
-        self.lancer("--cases", "c1", "--backend", option)
-        config = json.loads(max(essai.DATA.glob("*/mcp.json"), key=lambda p: p.stat().st_mtime_ns).read_text(encoding="utf-8"))
-        args = config["mcpServers"]["pmzilla-library"]["args"]
-        return library.choose_backend(args[args.index("--backend") + 1])
-
-    def ouvrir(self, voie: str):
-        if voie == "postgres":
-            return kl.PostgresLibrary(connect=self.pg.connect, embed=demo.fake_embed)
-        return library.Library()
-
-    def test_memes_passages_sur_la_voie_fichier_et_la_voie_base(self):
-        fichier, base = (self.ouvrir(self.voie_du_passage(option)) for option in ("sqlite", "postgres"))
-        self.assertIsInstance(fichier, library.Library)
-        self.assertIsInstance(base, kl.PostgresLibrary)
-        for question, collections, types in QUESTIONS:
-            with self.subTest(question=question, collections=collections):
-                a = fichier.search(question, collections, 14, None, types)
-                b = base.search(question, collections, 14, None, types)
-                self.assertTrue(a)                                       # la fixture répond : l'égalité n'est pas vide
-                self.assertEqual({(r["file"], r["position"]) for r in a}, {(r["file"], r["position"]) for r in b})
-                self.assertEqual((a[0]["file"], a[0]["position"]), (b[0]["file"], b[0]["position"]))
 
 
 class LigneDuFichierDeCasDeCommandes(gaps.PassageFictif):

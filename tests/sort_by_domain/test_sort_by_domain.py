@@ -5,8 +5,9 @@ Tests de la ventilation par domaine (tools/sort_by_domain.py) sur un faux MAPPIN
 
 Le MAPPING est remplacé le temps du test ; les fichiers sont inventés, dans un dossier temporaire. Jamais
 Bibliotheque-MD ni Bibliotheque-Lab. Le dernier groupe de tests lit seulement le texte source de mapping_lab.py
-(sans lire un seul livre) pour vérifier la cohérence du vrai MAPPING : codes connus, clés uniques, noms de
-fichiers copiés uniques.
+(sans lire un seul livre) pour vérifier la cohérence de MAPPING : codes connus, clés uniques, noms de
+fichiers copiés uniques. Ce groupe vaut pour la table privée comme pour la table neutre de l'édition ; ce qui tient
+au contenu de la table privée est dans test_mapping_prive.py (absent de l'édition).
 """
 import ast
 import collections
@@ -230,29 +231,6 @@ class DossiersRenommes(Base):
         self.assertEqual(self.copies(), {"flow": ["cfd.md"]})
 
 
-class TroisLivresDuPilote(Base):
-    """Le vrai MAPPING copie bien les trois derniers livres de la généralisation (faux fichiers dans un dossier
-    temporaire ; aucun livre réel n'est lu)."""
-
-    LIVRES = {
-        "Team Topologies - Matthew Skelton 2nd ed.md": ("organisation", "flow", "tech"),
-        "Books/The_Fearless_Organization_Creating_Psychological_Safety_in_the_Workplace.md": ("facilitation", "organisation"),
-        "Books/The Surprising Power of Liberating Structures - Henri Lipmanowicz, Keith McCandless.md": ("facilitation",),
-    }
-
-    def test_copies_dans_les_bons_domaines(self):
-        for relatif in self.LIVRES:
-            self.livre("Livres - Ressources/" + relatif)
-        with mock.patch.object(sys, "argv", ["sort_by_domain.py", str(self.src), str(self.dst)]), \
-                contextlib.redirect_stdout(io.StringIO()) as sortie:
-            ventiler.main()
-        copies = self.copies()
-        for relatif, domaines in self.LIVRES.items():
-            nom = relatif.rsplit("/", 1)[-1]
-            self.assertEqual(sorted(d for d, noms in copies.items() if nom in noms), sorted(domaines), nom)
-            self.assertNotIn(relatif, sortie.getvalue().split("Introuvables")[0])   # pas dans « non classés »
-
-
 class MappingReel(unittest.TestCase):
     """Cohérence du vrai MAPPING, lu dans le texte source : aucun livre n'est lu."""
 
@@ -284,28 +262,12 @@ class MappingReel(unittest.TestCase):
                           f"{source} -> {cible}")
             self.assertTrue(dict(zip(self.cles, self.codes))[cible], f"{cible} est écarté de la ventilation")
 
-    def test_sources_explicites_attendues_sans_doublon_de_cible(self):
-        import mapping_lab
-        attendues = {
-            "01 Agile & Scrum/Stacia Viscardi - The Professional ScrumMaster_s Handbook.pdf",
-            "03 Lean, Flow & Kanban/The Goal A Process of Ongoing Improvement By Eliyahu M. Goldratt, Jeff Cox.epub",
-            "04 Product, Discovery & UX/Radical Focus Wodtke.epub",
-            "04 Product, Discovery & UX/Jobs to Be Done Theory to Practice Anthony W_ Ulwick 2016.epub",
-        }
-        presentes = {unicodedata.normalize("NFC", k) for k in mapping_lab.SOURCES}
-        self.assertTrue({unicodedata.normalize("NFC", a) for a in attendues} <= presentes)
-        self.assertEqual(len(mapping_lab.SOURCES), 8)
-        cibles = [unicodedata.normalize("NFC", c) for c in mapping_lab.SOURCES.values()]
-        self.assertEqual(len(set(cibles)), len(cibles))                          # deux sources ne visent pas le même Markdown
-
     def test_exclusions_avec_raison_et_distinctes_des_sources(self):
         import mapping_lab
         self.assertTrue(mapping_lab.EXCLUSIONS)
         for source, raison in mapping_lab.EXCLUSIONS.items():
             self.assertTrue(raison.strip(), source)
             self.assertNotIn(source, mapping_lab.SOURCES)                        # une source exclue n'est pas aussi reliée
-        self.assertIn("02 Coaching, Facilitation & Training/Gamestorming.Jouer pour innover.Sunni Brown.epub",
-                      mapping_lab.EXCLUSIONS)
 
     def test_cles_uniques(self):
         compte = collections.Counter(unicodedata.normalize("NFC", c) for c in self.cles)

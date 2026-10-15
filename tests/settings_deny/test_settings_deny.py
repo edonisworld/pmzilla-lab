@@ -250,6 +250,18 @@ class JiraEnBase(Base):
                          "bash tests/run_all.sh finish_branch"):
             self.assertFalse(self.interdite(commande), commande)
 
+    def test_script_de_fin_de_worktree_interdit_a_la_session(self):
+        """tools/finish_worktree.sh retire un worktree puis lance tools/finish_branch.sh (fusion, push) : il ne se lance que depuis le Terminal de l'utilisateur (design D12)."""
+        for lanceur, chemin, option in itertools.product(
+                ("bash", "sh", "zsh", "uv run", ""),
+                ("tools/{s}", "./tools/{s}", "~/PMZilla-Lab/workspace/tools/{s}", "$HOME/PMZilla-Lab/workspace/tools/{s}",
+                 "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}"), (" feat/ma-branche", " --help")):
+            commande = f"{lanceur} {chemin.format(s='finish_worktree.sh')}{option}".strip()
+            self.assertTrue(self.interdite(commande), commande)
+        for commande in ("cat tools/finish_worktree.sh", "bash tests/finish_worktree/test_finish_worktree.sh",
+                         "bash tests/run_all.sh finish_worktree"):
+            self.assertFalse(self.interdite(commande), commande)
+
     def test_import_de_la_bibliotheque_interdit_a_la_session(self):
         """knowledge_import.py import, verify, status (avec ou sans --dry-run) écrivent ou lisent la vraie base : jamais depuis Claude Code."""
         for sous, option, lanceur, chemin in itertools.product(

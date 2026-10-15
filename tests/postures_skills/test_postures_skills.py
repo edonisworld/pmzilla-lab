@@ -48,6 +48,40 @@ def fichiers_texte(posture: str, sans_memlog: bool = False):
             yield chemin
 
 
+class RenvoisVersClaudeMd(unittest.TestCase):
+    """Les titres de CLAUDE.md cités entre guillemets français dans les SKILL.md et les CREED-template.md existent."""
+    CITE = re.compile(r"« (.+?) »(?: \([^)]*\))? (?:of|de) (?:the )?CLAUDE\.md")
+
+    def titres_claude_md(self):
+        claude = (RACINE / "CLAUDE.md").read_text(encoding="utf-8")
+        sections = set(re.findall(r"(?m)^#+ (.+)$", claude))
+        gras = {t.rstrip(".") for t in re.findall(r"\*\*(.+?)\*\*", claude)}
+        return sections, gras
+
+    def test_les_titres_cites_par_chaque_skill_md_existent_dans_claude_md(self):
+        sections, gras = self.titres_claude_md()
+        for posture in POSTURES:
+            texte = (skill(posture) / "SKILL.md").read_text(encoding="utf-8")
+            ligne = next(l for l in texte.splitlines() if "CLAUDE.md" in l and "«" in l)
+            titres = re.findall(r"« (.+?) »", ligne)
+            self.assertEqual(len(titres), 2, ligne)
+            with self.subTest(posture=posture, titre=titres[0]):
+                self.assertIn(titres[0], sections)
+            with self.subTest(posture=posture, titre=titres[1]):
+                self.assertIn(titres[1].rstrip("."), gras)
+
+    def test_les_titres_cites_par_chaque_creed_template_existent_dans_claude_md(self):
+        sections, gras = self.titres_claude_md()
+        for posture in POSTURES:
+            texte = (skill(posture) / "assets" / "CREED-template.md").read_text(encoding="utf-8")
+            titres = self.CITE.findall(texte)
+            with self.subTest(posture=posture):
+                self.assertEqual(len(titres), 2, titres)
+            for titre in titres:
+                with self.subTest(posture=posture, titre=titre):
+                    self.assertTrue(titre in sections or titre.rstrip(".") in gras)
+
+
 class Renvois(unittest.TestCase):
     def test_chaque_renvoi_a_une_fiche_pointe_vers_un_fichier_existant(self):
         for posture in POSTURES:

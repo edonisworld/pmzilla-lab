@@ -5,16 +5,22 @@
 """
 PMZilla Lab : collecte de l'historique des états des tickets Jira (étape 1 de la mesure du temps par état).
 
-Seul le champ « status » est lu dans l'historique de chaque ticket : la date de la transition, l'état de
-départ et l'état d'arrivée. L'auteur et tous les autres champs sont écartés dès la lecture de la réponse :
-ils ne sont ni gardés, ni écrits, ni affichés. Les chiffres qui en sortiront sont agrégés par équipe, sans
-aucune donnée individuelle.
+Trois champs sont lus dans l'historique de chaque ticket : « status » (la date de la transition, l'état de départ et
+l'état d'arrivée), « Fix Version » (les ajouts et retraits de version, avec leur instant) et, seulement si des étiquettes
+sont déclarées (réglage declared_labels), « labels » (les ajouts et retraits des étiquettes déclarées). L'auteur, les
+autres champs et les étiquettes non déclarées sont écartés dès la lecture de la réponse : ils ne sont ni gardés, ni
+écrits, ni affichés. Chaque entrée du cache garde aussi le drapeau « terminé », la date de résolution (colonne Resolved de
+l'export) et le dernier jour vu dans un export (le jour de la collecte). Les chiffres qui en sortiront sont agrégés par
+équipe, sans aucune donnée individuelle.
 
     uv run tools/history_jira.py test
-        Vérifie la connexion. N'affiche que « connexion OK » ou le code HTTP, jamais un nom ni une adresse.
+        Vérifie la connexion. N'affiche que « connexion OK » et une ligne d'accès par ressource, ou le code HTTP, jamais un nom ni une adresse.
 
     uv run tools/history_jira.py collect <export.csv>... [--team <nom>] [--refresh]
-        Lit les clés des exports (en mémoire seulement), puis récupère l'historique du champ status de chacune.
+        Lit les clés des exports (en mémoire seulement), puis récupère l'historique des champs status, labels et
+        fixVersions de chacune. Les tickets résolus depuis plus que la durée de conservation (réglage
+        retention.period_days, un an au plus) ne sont pas interrogés : ils sont comptés. Leur entrée de cache
+        n'est pas supprimée ici (c'est la purge de flow_retention.py).
         Utilise l'API de récupération groupée des historiques si l'instance l'offre, sinon l'historique
         ticket par ticket. Délais d'attente, reprises avec attente croissante, Retry-After respecté (429).
         Cache local dans Flux-Lab/historique/ (hors Git, illisible par Claude Code), incrémental : une relance
@@ -34,9 +40,11 @@ aucune donnée individuelle.
         L'ancienne option --dormants (export CSV des dormants) est refusée : les dormants se déduisent de l'historique
         (flux_jira.py --dormant-from-history).
 
-Réglages (Flux-Lab/flux.yaml) : jira_site (https://<site>.atlassian.net), jira_email, jira_token_type (« scoped »
-pour un jeton à droits limités, « classic » sinon). Un jeton « scoped » passe par
-https://api.atlassian.com/ex/jira/<cloudId>, le cloudId étant lu sur <site>/_edge/tenant_info.
+Réglages (Flux-Lab/flux.yaml) : jira_site (https://<site>.atlassian.net), jira_email, jira_cloud_id (identifiant du
+site, jamais lu sur le site hors `test`), jira_token_type (« scoped », valeur par défaut : le jeton « classic » est refusé),
+jira_token_expires (date AAAA-MM-JJ, non secrète) et jira_token_warning_days. Tous les appels passent par
+https://api.atlassian.com/ex/jira/<cloudId>. `test` lit le cloudId du site sans authentification et refuse un identifiant
+différent, puis sonde chaque ressource lue (recherche, historique, champs) et signale l'échéance du jeton.
 
 Le jeton est lu uniquement dans le Trousseau macOS (security find-generic-password -s pmzilla-jira -w). Il
 n'est jamais affiché, journalisé, écrit dans un fichier ni inclus dans un message d'erreur. Les types
@@ -63,7 +71,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config
-from yaml_strict import charger
+from yaml_strict import ErreurConfig, charger
 import history_common as commun
 from history_jira_messages import CATALOGS
 from messages import Messages, add_language_option
@@ -151,14 +159,32 @@ def reglages() -> dict:
 
 
 def reglages_jira(settings: dict) -> tuple[str, str, str]:
-    manquants = [k for k in ("jira_site", "jira_email", "jira_jeton") if not str(settings.get(k) or "").strip()]
+    """(site, email, mode). Le mode à droits limités est le seul : le réglage absent vaut « scopes », « classique » est refusé
+    ici, donc avant la lecture du Trousseau et avant tout appel."""
+    manquants = [k for k in ("jira_site", "jira_email") if not str(settings.get(k) or "").strip()]
     if manquants:
         raise ErreurSimple(t("settings_missing", file=CONFIG_FILE, names=", ".join(flux_config.TOP.get(k, k) for k in manquants)))
-    site, email, mode = (str(settings[k]).strip() for k in ("jira_site", "jira_email", "jira_jeton"))
-    if mode not in ("scopes", "classique"):
+    site, email = (str(settings[k]).strip() for k in ("jira_site", "jira_email"))
+    mode = str(settings.get("jira_jeton") or "scopes").strip()
+    if mode == "classique":
+        raise ErreurSimple(t("classic_refused"))
+    if mode != "scopes":
         raise ErreurSimple(t("token_type_invalid"))
     verifier_url(site)
     return site.rstrip("/"), email, mode
+
+
+def identifiant_cloud(settings: dict) -> str:
+    """cloudId de jira_cloud_id. Jamais lu sur le site hors `test` : absent, vide ou avec des caractères de chemin, il arrête
+    le script (un identifiant mal formé changerait l'adresse de la passerelle)."""
+    identifiant = flux_config.cloud_id(settings)
+    if not isinstance(identifiant, str) or not re.fullmatch(r"[0-9A-Za-z-]+", identifiant.strip()):
+        raise ErreurSimple(t("cloud_id_not_found"))
+    return identifiant.strip()
+
+
+def aujourd_hui() -> dt.date:
+    return dt.date.today()
 
 
 def verifier_url(url: str) -> None:
@@ -234,19 +260,15 @@ class Client:
 
 
 def construire_client(settings: dict) -> Client:
+    """Client de la passerelle api.atlassian.com/ex/jira/<cloudId>, le cloudId venant des réglages. Les refus de réglage
+    (classic, cloudId) précèdent la lecture du Trousseau ; aucun appel authentifié ne va à l'adresse du site."""
     global _JETON
-    site, email, mode = reglages_jira(settings)
+    _, email, _ = reglages_jira(settings)
+    cloud_id = identifiant_cloud(settings)
+    verifier_url(API_ATLASSIAN)
     jeton = lire_jeton()
     _JETON = jeton
-    if mode == "scopes":
-        # le cloudId se lit sur le site, sans authentification ; les appels passent par api.atlassian.com
-        infos = Client(site).json("GET", "/_edge/tenant_info")
-        cloud_id = str(infos.get("cloudId") or "")
-        if not re.fullmatch(r"[0-9A-Za-z-]+", cloud_id):
-            raise ErreurSimple(t("cloud_id_not_found"))
-        verifier_url(API_ATLASSIAN)
-        return Client(f"{API_ATLASSIAN}/ex/jira/{cloud_id}", (email, jeton))
-    return Client(site, (email, jeton))
+    return Client(f"{API_ATLASSIAN}/ex/jira/{cloud_id}", (email, jeton))
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +313,7 @@ def lire_exports(chemins: list[str], settings: dict) -> list[dict]:
                             equipes.append(valeur.strip())
                 par_cle[cle.upper()] = {"equipes": equipes, "cle": cle, "projet": cle.rsplit("-", 1)[0].upper() if "-" in cle else "",
                                         "type": cellule("type"), "termine": bool(cellule("resolu")),
+                                        "resolu": commun.parse_moment(cellule("resolu")),
                                         "etat": cellule("etat") if idx["etat"] is not None else None,
                                         "cree": commun.parse_jour(cellule("cree")),
                                         "equipe": cellule("equipe") if idx["equipe"] is not None else None}
@@ -300,6 +323,20 @@ def lire_exports(chemins: list[str], settings: dict) -> list[dict]:
 def ecarter(tickets: list[dict], settings: dict) -> tuple[list[dict], int]:
     types, projets = commun.ensembles_exclus(settings)
     gardes = [t for t in tickets if t["type"].casefold() not in types and t["projet"] not in projets]
+    return gardes, len(tickets) - len(gardes)
+
+
+def date_resolution(ticket: dict) -> str | None:
+    """Date de résolution de l'export au format ISO sans décalage (le fuseau de l'export n'est pas connu ici), None sans date."""
+    return ticket["resolu"].isoformat(timespec="seconds") if ticket.get("resolu") else None
+
+
+def ecarter_hors_conservation(tickets: list[dict], jours: int) -> tuple[list[dict], int]:
+    """(tickets à collecter, nombre de tickets ignorés). Un ticket résolu depuis plus de `jours` jours est ignoré : son
+    historique n'est pas demandé (horloge du design D1 : un an après la résolution). Un ticket non résolu, ou dont la date
+    de résolution est illisible, est gardé."""
+    limite = aujourd_hui() - dt.timedelta(days=jours)
+    gardes = [t for t in tickets if t.get("resolu") is None or t["resolu"].date() >= limite]
     return gardes, len(tickets) - len(gardes)
 
 
@@ -325,15 +362,44 @@ def sauver_cache(cache: dict) -> None:
 # Historique : seules la date, l'état de départ et l'état d'arrivée sont gardés
 # ---------------------------------------------------------------------------
 
-def transitions_de(historiques: list[dict]) -> list[list]:
-    """Extrait [date, de, vers] des seuls éléments du champ status. L'auteur et les autres champs sont ignorés."""
-    sortie = []
+def etiquettes_declarees(settings: dict) -> set[str]:
+    """Étiquettes déclarées de flux.yaml (declared_labels), tous rôles confondus ; vide sans bloc : aucune étiquette gardée."""
+    bloc = flux_config.declared_labels(settings) or {}
+    return {etiquette for role in bloc.values() for etiquette in role["labels"]}
+
+
+def _champ(element: dict, identifiant: str, nom: str) -> bool:
+    return element.get("fieldId") == identifiant or element.get("field") == nom
+
+
+def evenements_de(historiques: list[dict], declarees: set[str] | None = None) -> tuple[list[list], list[list], list[list]]:
+    """(transitions, versions, étiquettes) d'un historique. Transitions : [date, de, vers] des seuls éléments du champ status.
+    Versions : [date, "add"|"remove", valeur] du champ « Fix Version » (une valeur d'origine est un retrait, une valeur
+    d'arrivée un ajout). Étiquettes : mêmes événements pour le champ « labels », déduits par différence d'ensembles entre
+    les textes de départ et d'arrivée (étiquettes séparées par des espaces) et limités aux étiquettes `declarees` : sans
+    étiquette déclarée, aucune n'est gardée. L'auteur et tous les autres champs sont ignorés."""
+    declarees = declarees or set()
+    transitions, versions, etiquettes = [], [], []
     for historique in historiques or []:
         date = commun.normaliser_date(historique.get("created"))
         for element in historique.get("items") or []:
-            if element.get("fieldId") == "status" or element.get("field") == "status":
-                sortie.append([date, element.get("fromString"), element.get("toString")])
-    return sorted(sortie, key=lambda t: commun.instant(t[0]))      # tri stable : à instant égal, l'ordre de l'API est gardé
+            if _champ(element, "status", "status"):
+                transitions.append([date, element.get("fromString"), element.get("toString")])
+            elif _champ(element, "fixVersions", "Fix Version"):
+                if element.get("fromString"):
+                    versions.append([date, "remove", element["fromString"]])
+                if element.get("toString"):
+                    versions.append([date, "add", element["toString"]])
+            elif declarees and _champ(element, "labels", "labels"):
+                avant, apres = (str(element.get(c) or "").split() for c in ("fromString", "toString"))
+                etiquettes += [[date, "remove", e] for e in avant if e not in apres and e in declarees]
+                etiquettes += [[date, "add", e] for e in apres if e not in avant and e in declarees]
+    return commun.trier(transitions), commun.trier_evenements(versions), commun.trier_evenements(etiquettes)
+
+
+def transitions_de(historiques: list[dict]) -> list[list]:
+    """Extrait [date, de, vers] des seuls éléments du champ status (tri stable : à instant égal, l'ordre de l'API est gardé)."""
+    return evenements_de(historiques)[0]
 
 
 def historiques_ticket(client: Client, cle: str) -> list[dict]:
@@ -376,7 +442,7 @@ def historiques_groupes(client: Client, cles: list[str]) -> tuple[dict[str, list
     if id_vers_cle:
         jeton_page = None
         while True:
-            corps = {"issueIdsOrKeys": list(id_vers_cle), "fieldIds": ["status"], "maxResults": 1000}
+            corps = {"issueIdsOrKeys": list(id_vers_cle), "fieldIds": ["status", "labels", "fixVersions"], "maxResults": 1000}
             if jeton_page:
                 corps["nextPageToken"] = jeton_page
             reponse = client.json("POST", "/rest/api/3/changelog/bulkfetch", json=corps)
@@ -395,15 +461,58 @@ def historiques_groupes(client: Client, cles: list[str]) -> tuple[dict[str, list
 # Commandes
 # ---------------------------------------------------------------------------
 
+CLE_SONDE = "PROJ-1"        # clé de repli de la sonde de l'historique quand la recherche ne rend aucun ticket
+
+
+def sonder(client: Client, methode: str, chemin: str, **kwargs) -> int:
+    """Code HTTP d'une requête de sonde (0 : pas de réponse). Rien de la réponse n'est lu."""
+    try:
+        return client.requete(methode, chemin, **kwargs).status_code
+    except ErreurHTTP as erreur:
+        return erreur.code
+
+
 def cmd_test(args: argparse.Namespace) -> None:
-    client = construire_client(reglages())
-    r = client.requete("GET", "/rest/api/3/search/jql",
-                       params={"jql": "created >= -1d", "maxResults": 1, "fields": "key"})
+    """Connexion, puis une requête de lecture par ressource (recherche, historique, champs), chacune limitée à un résultat,
+    puis les lignes d'expiration du jeton (date des réglages, jamais lue dans le jeton ni dans Jira)."""
+    settings = reglages()
+    site, _, _ = reglages_jira(settings)
+    cloud_id = identifiant_cloud(settings)
+    echeance, delai = flux_config.token_expiry(settings)      # date illisible : refusée par flux_config, avant tout appel
+    # seul `test` lit le cloudId du site, sans authentification : un autre identifiant enverrait les appels à un autre tenant
+    if str(Client(site).json("GET", "/_edge/tenant_info").get("cloudId") or "") != cloud_id:
+        raise ErreurSimple(t("cloud_id_mismatch"))
+    client = construire_client(settings)
+    ticket = None
+    resultats: list[tuple[str, int]] = []
+    r = client.requete("GET", "/rest/api/3/search/jql", params={"jql": "created >= -1d", "maxResults": 1, "fields": "key"})
+    if r.status_code == 401:       # identifiants refusés : le code seul, sans autre appel
+        afficher(t("http_code", code=401))
+        sys.exit(1)
+    resultats.append(("search", r.status_code))
     if r.status_code == 200:
-        afficher(t("connection_ok"))
-        return
-    afficher(t("http_code", code=r.status_code))
-    sys.exit(1)
+        try:
+            ticket = ((r.json().get("issues") or [{}])[0]).get("key")
+        except (ValueError, AttributeError, IndexError):
+            ticket = None
+    # la clé du ticket ne sert qu'à l'appel : elle n'est jamais affichée ; sans ticket, un 404 sur la clé de repli prouve
+    # que la ressource répond (un scope manquant donne 401 ou 403)
+    code = sonder(client, "GET", f"/rest/api/3/issue/{quote(str(ticket or CLE_SONDE))}/changelog", params={"maxResults": 1})
+    resultats.append(("history", 200 if code == 404 and not ticket else code))
+    resultats.append(("fields", sonder(client, "GET", "/rest/api/3/field/search", params={"maxResults": 1})))
+    afficher(t("connection_ok"))
+    for ressource, code in resultats:
+        statut = t("access_ok") if code == 200 else (code or t("network_short"))
+        afficher(t("access_line", resource=ressource, status=statut))
+    refus = any(code != 200 for _, code in resultats)
+    if echeance is None:
+        afficher(t("token_expiry_missing"))
+    elif echeance < aujourd_hui():
+        afficher(t("token_expired"))
+    elif (echeance - aujourd_hui()).days <= delai:
+        afficher(t("token_expires_soon", days=(echeance - aujourd_hui()).days))
+    if refus:
+        sys.exit(1)
 
 
 def selectionner(args: argparse.Namespace, settings: dict) -> tuple[list[dict], int, int, int]:
@@ -427,8 +536,12 @@ def selectionner(args: argparse.Namespace, settings: dict) -> tuple[list[dict], 
 
 def cmd_collect(args: argparse.Namespace) -> None:
     settings = reglages()
+    jours = flux_config.retention_days(settings)       # au-delà d'un an : refusé ici, avant toute lecture et tout appel
+    declarees = etiquettes_declarees(settings)
     tickets, lus, ecartes, hors_equipe = selectionner(args, settings)
+    tickets, hors_conservation = ecarter_hors_conservation(tickets, jours)
     cache = charger_cache()
+    jour = aujourd_hui().isoformat()
     if args.rafraichir:
         en_cache, a_interroger = [], list(tickets)
     else:
@@ -438,6 +551,16 @@ def cmd_collect(args: argparse.Namespace) -> None:
              else t("collect_read", read=lus, discarded=ecartes))
     afficher(t("collect_cache_ignored", todo=len(a_interroger)) if args.rafraichir
              else t("collect_cached", cached=len(en_cache), todo=len(a_interroger)))
+    afficher(t("past_retention", skipped=hors_conservation))
+    # un ticket en cache et terminé n'est pas réinterrogé, mais il est encore dans l'export : son dernier jour vu avance et sa
+    # date de résolution est complétée (ancien cache) ; ses transitions, versions et étiquettes ne changent pas
+    for ticket in en_cache:
+        fiche = cache[ticket["cle"]]
+        fiche["vu_le"] = jour
+        if not fiche.get("resolu"):
+            fiche["resolu"] = date_resolution(ticket)
+    if en_cache:
+        sauver_cache(cache)
     if not a_interroger:
         return
 
@@ -448,8 +571,13 @@ def cmd_collect(args: argparse.Namespace) -> None:
 
     def enregistrer(ticket: dict, historiques: list[dict]) -> None:
         nonlocal traites, nouvelles_transitions
-        transitions = transitions_de(historiques)
-        cache[ticket["cle"]] = {"termine": ticket["termine"], "transitions": transitions}
+        transitions, versions, etiquettes = evenements_de(historiques, declarees)
+        fiche = {"termine": ticket["termine"], "resolu": date_resolution(ticket), "vu_le": jour, "transitions": transitions}
+        if versions:
+            fiche["versions"] = versions
+        if etiquettes:
+            fiche["etiquettes"] = etiquettes
+        cache[ticket["cle"]] = fiche
         traites += 1
         nouvelles_transitions += len(transitions)
 
@@ -636,6 +764,9 @@ def main(argv: list[str] | None = None) -> None:
     set_language(args.language)
     try:
         {"test": cmd_test, "collect": cmd_collect, "check": cmd_check}[args.commande](args)
+    except ErreurConfig as erreur:       # avant SystemExit, dont elle hérite : le message nomme le réglage, jamais sa valeur
+        afficher(t("error_line", message=erreur))
+        sys.exit(1)
     except SystemExit:
         raise
     except ErreurHTTP as erreur:

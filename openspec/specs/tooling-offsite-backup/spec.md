@@ -2,7 +2,9 @@
 
 ## Purpose
 The off-site backup: `tools/offsite_backup.sh` copies the newest database and sanctum backups to an encrypted external APFS volume identified by its UUID, rotates the copies, defers when the disk is absent, and runs a monthly restore test of the off-site copy in a throwaway database; nothing goes to an online service (work-queue job R-46).
+
 ## Requirements
+
 ### Requirement: The off-site disk is identified by its volume identifier
 The system SHALL provide a setup subcommand that, after the destination checks and a confirmation by the user, records the identifier of one external volume in a local, owner-only configuration file of the lab data folder, and creates the off-site folder with its fixed name at the volume's root, owner-only. Every other subcommand SHALL find the volume by that identifier only. The system SHALL NOT find the volume by its name or by a mount path, SHALL NOT print the volume's name outside setup, and SHALL NOT write the identifier in any tracked file. Without a configuration, every subcommand except help and status SHALL exit with code 2 and the key phrase of design D13. Untested until implemented.
 
@@ -141,3 +143,40 @@ The system SHALL provide two launchd job templates that run the copy daily at a 
 - **WHEN** the raw templates are read
 - **THEN** they contain no password mention, no Keychain command, no identifier and no user path other than the placeholder
 
+### Requirement: Flow dumps are removed from old off-site copies
+The system SHALL, after a verified copy and after the rotation, remove the flow dump from every database copy of the off-site folder older than a configurable flow age (design D9), rewrite that copy's manifest without the removed file, verify the rewritten manifest, and print one "flux retiré" line per copy. It SHALL keep the knowledge and cases dumps of those copies, SHALL NOT remove the flow dump of the newest complete copy, and SHALL NOT touch a sanctum copy. An invalid flow age (zero, negative, non-numeric) SHALL be refused with exit code 2, creating and deleting nothing. The status subcommand SHALL print the number of copies holding a flow dump older than the flow age, which the retention check reads. Untested until implemented.
+
+#### Scenario: Old copy
+- **WHEN** the disk holds a database copy older than the flow age with three dumps
+- **THEN** after the run it holds the knowledge and cases dumps, its manifest lists only them, and the output holds "flux retiré" once
+
+#### Scenario: Recent copies
+- **WHEN** every copy is younger than the flow age
+- **THEN** no dump is removed and no manifest is rewritten
+
+#### Scenario: Restore test after removal
+- **WHEN** the monthly restore test checks the manifest of a copy whose flow dump was removed
+- **THEN** the manifest check passes, because the rewritten manifest no longer lists the flow dump
+
+### Requirement: The off-site jobs run from the run tree and mark their run
+The system SHALL make the copy and restore-test templates launch the off-site script through its lab-folder link, and SHALL make the copy and the restore-test subcommands each mark their run with their own folder by the rules of design D14, removed at exit by their own process, whatever the exit code, a deferred run included. Other subcommands SHALL create no marker. A marker SHALL NOT stop a run, and the script SHALL NOT remove another job's marker or the watch lock. Untested until implemented.
+
+#### Scenario: Rendered templates
+- **WHEN** the two off-site templates are rendered
+- **THEN** each program is the off-site script's lab-folder link, the home placeholder stays the only user path, and no code-tree folder is named
+
+#### Scenario: Disk absent
+- **WHEN** the copy is deferred because the disk is absent
+- **THEN** the copy's marker existed during the run and no longer exists after it
+
+#### Scenario: One marker per subcommand
+- **WHEN** the restore test runs while the copy's marker is held
+- **THEN** the restore test creates and removes its own marker, and the copy's marker is untouched
+
+#### Scenario: Stale marker taken over
+- **WHEN** the copy starts while its marker folder holds the identifier of a dead process
+- **THEN** the log holds the "stale, taken over" line of design D14 and no marker is left after the run
+
+#### Scenario: Status creates none
+- **WHEN** the status subcommand runs
+- **THEN** no marker folder is created in the lab data folder

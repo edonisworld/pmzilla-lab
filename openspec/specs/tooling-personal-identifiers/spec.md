@@ -173,16 +173,28 @@ Source: tests/identifiants_personnels/test_identifiants_personnels.py (Configura
 - **THEN** the configuration test fails and names that file
 
 ### Requirement: Scan a generated tree
-The system SHALL offer a tree mode, given a folder through a tree option, that searches every regular text file under that folder, case-insensitively, whether or not the folder is a Git repository. In this mode:
-- the identifiers SHALL be those of the root option (the private workspace): account, home folder name, root path, local identifiers file and cases author;
-- the sanctums SHALL be instantiated from the posture skills found in the given folder;
-- the output and exit-code rules SHALL stay those of the tracked-file search, with paths relative to the given folder.
-
-In tree mode, the system SHALL NOT apply the default exclusions. It SHALL refuse an extra exclusion with exit code 2, and SHALL exit with code 2 when the folder does not exist. The tree mode SHALL NOT read the local identifiers file or the cases configuration of the given folder. Untested until implemented.
+The system SHALL offer a tree mode, given a folder through a tree option, that searches every regular text file under that folder, case-insensitively, whether or not the folder is a Git repository, with the identifiers of the root option (the private workspace), with the sanctums instantiated from the posture skills found in the given folder, and with the output and exit-code rules of the tracked-file search, paths relative to the given folder.
 
 #### Scenario: Identifier in a tree without Git
 - **WHEN** a folder that is not a Git repository holds a file containing an identifier of the private workspace
 - **THEN** the file and line are reported, the output holds no identifier nor line text, and the exit code is 1
+
+#### Scenario: Cases author of the root
+- **WHEN** the root's cases configuration gives an author identifier and a file of the tree contains it in capitals
+- **THEN** that file is reported
+
+#### Scenario: Sanctums of the tree
+- **WHEN** a posture skill of the tree generates a sanctum file containing the private root path
+- **THEN** it is reported under the sanctum-prefixed key
+
+#### Scenario: Clean tree
+- **WHEN** no file of the tree and no generated sanctum contains an identifier
+- **THEN** the total is zero and the exit code is 0
+
+Source: tests/identifiants_personnels/test_identifiants_personnels.py (Arbre)
+
+### Requirement: The tree mode applies no exclusion and takes nothing from the tree
+The system SHALL NOT apply the default exclusions in tree mode. It SHALL refuse an extra exclusion with exit code 2 and scan nothing, and SHALL exit with code 2 when the folder does not exist. It SHALL NOT read the local identifiers file or the cases configuration of the given folder. It SHALL skip symbolic links and files that cannot be read as text.
 
 #### Scenario: Default exclusions not applied
 - **WHEN** the tree holds a file at a path that is excluded by default, and that file contains an identifier
@@ -192,11 +204,17 @@ In tree mode, the system SHALL NOT apply the default exclusions. It SHALL refuse
 - **WHEN** the tree mode is combined with an extra exclusion
 - **THEN** the scanner exits with code 2 and scans nothing
 
-#### Scenario: Sanctums of the tree
-- **WHEN** a posture skill of the tree generates a sanctum file containing the private root path
-- **THEN** it is reported under the sanctum-prefixed key
+#### Scenario: Missing folder
+- **WHEN** the given folder does not exist
+- **THEN** the scanner exits with code 2 and names the folder
 
-#### Scenario: Clean tree
-- **WHEN** no file of the tree and no generated sanctum contains an identifier
-- **THEN** the total is zero and the exit code is 0
+#### Scenario: Binary file skipped
+- **WHEN** the tree holds a file that is not valid text and that contains an identifier
+- **THEN** it is not reported
+
+#### Scenario: Files of the given folder not read as identifiers
+- **WHEN** the given folder holds its own local identifiers file and cases configuration, and a file that contains their values
+- **THEN** nothing is reported
+
+Source: tests/identifiants_personnels/test_identifiants_personnels.py (Arbre); skipping symbolic links is untested
 

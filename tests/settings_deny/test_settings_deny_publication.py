@@ -3,7 +3,7 @@
 La session ne lance jamais tools/publish_edition.py (`--help` compris), ne fait ni commit ni push dans la copie locale du dépôt
 public (dossier permanent edition-en, ancien nom edition-en-3), et ne lit pas la liste des versions produit
 Flux-Lab/versions-produit.txt. Lire le texte de l'outil, lancer sa suite, lancer le lanceur de tests et commiter dans l'espace de
-travail privé restent permis.
+travail privé restent permis. Le push depuis l'espace privé est refusé (change team-names-readable, D11).
 
 Aucune commande n'est lancée ; le test ne lit que .claude/settings.json (ou le fichier nommé par la variable
 PMZILLA_SETTINGS_POUR_TEST, utile pour vérifier une proposition de règles sur une copie temporaire).
@@ -105,12 +105,13 @@ class CeQuiResteAutorise(BasePublication):
             self.assertFalse(self.interdite(commande), commande)
 
     def test_commit_et_push_dans_l_espace_de_travail_prive(self):
-        for commande in ("git commit -m x", "git push", "git push origin feat/edition-publish-tooling",
+        """Seuls les commits restent permis dans l'espace privé : le push y est refusé à la session (team-names-readable, D11, tâche 10.2),
+        ses cinq formes sont des cas refusés de test_settings_deny_push_merge.py."""
+        for commande in ("git commit -m x",
                          "git -C /Users/quelquun/PMZilla-Lab/workspace commit -m x",
-                         "git -C ~/PMZilla-Lab/workspace push", "git -C $HOME/PMZilla-Lab/workspace commit -m x",
+                         "git -C $HOME/PMZilla-Lab/workspace commit -m x",
                          "cd /Users/quelquun/PMZilla-Lab/workspace && git commit -m x",
-                         "cd ~/PMZilla-Lab/workspace && git push", "cd ~/PMZilla-Lab/workspace; git commit -m x",
-                         "git --git-dir=/Users/quelquun/PMZilla-Lab/workspace/.git push",
+                         "cd ~/PMZilla-Lab/workspace; git commit -m x",
                          "git --git-dir=~/PMZilla-Lab/edition-en/.git log --oneline -3"):
             self.assertFalse(self.interdite(commande), commande)
 

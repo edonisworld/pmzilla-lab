@@ -105,6 +105,13 @@ class Transcript:
     def launch_critic(self):
         return self.call("Agent", {"subagent_type": "pmzilla-critic", "description": SENT_QUERY, "prompt": SENT_QUERY})
 
+    def text_result(self, identifier, content):
+        """tool_result dont le contenu est du texte libre : chaîne, ou liste de blocs text."""
+        if isinstance(content, list):
+            content = [{"type": "text", "text": t} for t in content]
+        self._add("user", [{"type": "tool_result", "tool_use_id": identifier, "content": content}])
+        return self
+
     def launch_other(self):
         return self.call("Task", {"subagent_type": "Explore", "prompt": SENT_QUERY})
 
@@ -137,11 +144,12 @@ class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        tmp = Path(self._tmp.name)
+        tmp = Path(self._tmp.name).resolve()   # chemins résolus : le module partagé résout le dossier de contenu
         self.projects = tmp / "projets" / "workspace"
         self.other = tmp / "projets" / "copie-jetable"
         self.data = tmp / "data"
         self.workspace = tmp / "workspace"
+        self.workspace.mkdir()     # le module partagé refuse un dossier de contenu absent (code 78)
         self.env = {"PMZILLA_LAB_TRANSCRIPTS": str(self.projects), "PMZILLA_LAB_DATA": str(self.data),
                     "PMZILLA_LAB_WORKSPACE": str(self.workspace)}
         self._old = {k: os.environ.get(k) for k in self.env}

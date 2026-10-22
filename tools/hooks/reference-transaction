@@ -1,0 +1,50 @@
+#!/bin/sh
+# PMZilla Lab : hook reference-transaction (change finish-under-lock, design D17 ; Git 2.28 ou plus). Installé par tools/install_hooks.sh
+# en lien relatif.
+#
+# Git le lance à chaque transaction de références, avec l'état en argument et une ligne « <ancien> <nouveau> <référence> » par mise à jour sur
+# l'entrée standard. Il n'agit que dans l'état « prepared » et que si une ligne vise exactement refs/heads/main : avance rapide, reset --hard,
+# pull, update-ref, fin de rebase sur main. Dans tout autre cas il sort 0 tout de suite. Sans dossier de verrou dans le dossier Git commun, il
+# sort 0 sans lancer Python. Sinon il lit le verrou par tools/finish_lock.py : un verrou vivant d'un autre jeton (FINISH_LOCK_TOKEN) refuse
+# (code 1, Git abandonne la transaction) ; le jeton du verrou, ou un verrou périmé (dit sur une ligne), laisse passer. Aucune variable ne lève
+# ce refus. Le hook lit le verrou seulement : il ne le crée, ne le retire ni ne le modifie jamais. Procédure de déblocage : guide d'installation.
+etat=${1:-}
+vise_main=0
+while read -r ancien nouveau reference; do
+  # toute ligne qui vise refs/heads/main compte, valeurs égales ou nulles comprises (une suppression sans valeur attendue arrive avec deux
+  # valeurs nulles). Limite (relecture du 2026-10-20) : le rangement de git pack-refs (ou gc --auto) retire le fichier libre de main comme
+  # une suppression ; sous le verrou d'une autre fin il est refusé, main reste inchangée, et la commande qui a lancé gc --auto n'en est pas changée.
+  [ "$reference" = "refs/heads/main" ] && vise_main=1
+done
+[ "$etat" = "prepared" ] || exit 0
+[ "$vise_main" -eq 1 ] || exit 0
+commun=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+[ -d "$commun/pmzilla-fin-en-cours" ] || exit 0
+# dossier tools/ du dépôt : celui du fichier lié (.git/hooks/reference-transaction -> ../../tools/hooks/reference-transaction)
+ici=$(cd "$(dirname "$0")" && pwd -P) || exit 1
+lien=$(readlink "$0" 2>/dev/null)
+if [ -n "$lien" ]; then
+  case "$lien" in
+    /*) crochets=$(cd "$(dirname "$lien")" && pwd -P) ;;
+    *) crochets=$(cd "$ici/$(dirname "$lien")" && pwd -P) ;;
+  esac || exit 1
+else
+  crochets=$ici
+fi
+outils=$(dirname "$crochets")
+exec python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import finish_lock
+verrou = finish_lock.read_lock(sys.argv[2])
+if verrou is None:
+    sys.exit(0)
+if verrou["stale"]:
+    print("reference-transaction : verrou de fin périmé, ignoré", file=sys.stderr)
+    sys.exit(0)
+bloquant = finish_lock.blocking(sys.argv[2], os.environ.get("FINISH_LOCK_TOKEN", ""))
+if bloquant is None:
+    sys.exit(0)
+print("reference-transaction : fin de branche en cours (%s), mise à jour de main refusée" % bloquant["branch"], file=sys.stderr)
+sys.exit(1)
+' "$outils" "$commun"

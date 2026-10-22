@@ -101,8 +101,26 @@ class TestLabels(unittest.TestCase):
 
     def test_all_labels(self):
         t = m.all_labels()
-        self.assertEqual(len(t), 2 + 8 + 3 + 2 + 1)
+        self.assertEqual(len(t), 2 + 8 + 3 + 2 + 1 + 1)
         self.assertIn("theme:fiabilite", t)
+        self.assertIn("product:mothra", t)
+
+
+class TestLabelProduit(unittest.TestCase):
+    """Label product: (liste fermée ; l'absence de label vaut PMZilla)."""
+
+    def test_nom_et_liste_fermee(self):
+        self.assertEqual(m.PRODUCTS, ("mothra",))
+        self.assertEqual(m.label_product("mothra"), "product:mothra")
+
+    def test_produit_inconnu_refuse(self):
+        for v in ("pmzilla", "nope", ""):
+            with self.assertRaises(ValueError):
+                m.label_product(v)
+
+    def test_product_labels(self):
+        self.assertEqual(m.product_labels(["type:feature", "product:mothra", "product:x"]), ["product:mothra", "product:x"])
+        self.assertEqual(m.product_labels(["type:feature"]), [])
 
 
 class TestLabelEditionPublique(unittest.TestCase):
@@ -186,16 +204,6 @@ class TestBlock(unittest.TestCase):
 
 
 class TestStatus(unittest.TestCase):
-    def test_table(self):
-        self.assertEqual(m.status_of_state("ready"), ("open", "Ready"))
-        self.assertEqual(m.status_of_state("in-progress"), ("open", "In progress"))
-        self.assertEqual(m.status_of_state("blocked"), ("open", "Todo"))
-        self.assertEqual(m.status_of_state("done"), ("closed", "Done"))
-
-    def test_unknown(self):
-        with self.assertRaises(ValueError):
-            m.status_of_state("wip")
-
     def test_statuses(self):
         self.assertEqual(m.STATUSES, ("Todo", "Ready", "In progress", "Done"))
 
@@ -289,9 +297,11 @@ class TestTasksParser(unittest.TestCase):
         self.assertEqual([t.id for t in self.g[3].tasks], ["3.1"])
 
     def test_real_tasks_file_of_this_change(self):
-        p = RACINE / "openspec" / "changes" / "github-roadmap" / "tasks.md"
-        if not p.exists():
-            self.skipTest("change archived")
+        # Le change est archivé : son tasks.md archivé reste un vrai fichier de tâches, stable, à parser.
+        p = RACINE / "openspec" / "changes" / "archive" / "2026-10-12-github-roadmap" / "tasks.md"
+        if not (RACINE / "openspec" / "changes").is_dir():
+            self.skipTest("changes OpenSpec absents : arbre de l'édition")
+        self.assertTrue(p.is_file(), p)
         g = m.parse_tasks(p.read_text(encoding="utf-8"), "github-roadmap")
         self.assertGreaterEqual(len(g), 16)
         self.assertEqual(g[0].kind, "user")

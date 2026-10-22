@@ -81,6 +81,7 @@ class Rendu(CasLaunchd):
         for e in ETIQUETTES:
             texte = self.fichier(e).read_text(encoding="utf-8")
             self.assertNotIn("__HOME__", texte)
+            self.assertNotIn("__LAB__", texte)
             self.assertIn(str(self.fx.maison), texte)
             self.assertEqual(plistlib.loads(texte.encode())["Label"], e)
             self.assertTrue(self.fx.a_drapeau(f"charge-{e}"))
@@ -89,6 +90,21 @@ class Rendu(CasLaunchd):
             self.assertIn(f"launchctl bootstrap gui/{uid} {self.fichier(e)}", self.appels)
             self.assertIn(f"xattr -c {self.fichier(e)}", self.appels)
         self.assertEqual([a for a in self.appels if a.startswith("launchctl kickstart")], [])
+
+    def test_le_dossier_du_lab_vient_du_module_partage(self):
+        self.installer_tout()
+        programme = plistlib.loads(self.fichier("com.pmzilla.doctor").read_bytes())["ProgramArguments"][1]
+        self.assertEqual(os.path.realpath(programme), os.path.realpath(f"{self.fx.maison}/PMZilla-Lab/doctor.sh"))
+
+    def test_sans_dossier_de_contenu_l_installation_s_arrete_avec_le_code_78(self):
+        ctx = c.Contexte(racine=self.fx.racine, maison=self.fx.maison, etat={"ollama_ok": True, "base_ok": True})
+        env = {k: v for k, v in self.fx.environnement().items() if k != "PMZILLA_LAB_WORKSPACE"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch("sys.stderr", new=__import__("io").StringIO()) as erreur:
+            with self.assertRaises(SystemExit) as arret:
+                ll.executer(ctx)
+        self.assertEqual(arret.exception.code, 78)
+        self.assertIn("content folder not found", erreur.getvalue())
+        self.assertNotIn(str(self.fx.maison), erreur.getvalue())
 
     def test_second_passage_saute_sans_appel_qui_change(self):
         self.installer_tout()
@@ -213,7 +229,7 @@ class ModelesSansDossierDeCode(unittest.TestCase):
     MAISON = "/home/essai"
 
     def rendu(self, nom):
-        texte = (TOOLS_REELS / nom).read_text(encoding="utf-8").replace(ll.MARQUEUR, self.MAISON)
+        texte = (TOOLS_REELS / nom).read_text(encoding="utf-8").replace(ll.MARQUEUR, self.MAISON).replace(ll.MARQUEUR_LAB, self.MAISON + "/PMZilla-Lab")
         return plistlib.loads(texte.encode("utf-8"))
 
     def test_les_six_modeles_existent(self):

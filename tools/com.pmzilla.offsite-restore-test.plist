@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Modèle : __HOME__ est remplacé par le dossier personnel à l'installation (voir docs/pmzilla/installation.md, section 14). Installé et chargé par l'utilisateur, jamais par une session Claude Code. -->
+<!-- Modèle : __HOME__ est remplacé par le dossier personnel et __LAB__ par le dossier du lab (le parent du dépôt de développement) à l'installation (voir docs/pmzilla/installation.md, section 14). Installé et chargé par l'utilisateur, jamais par une session Claude Code. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__HOME__/PMZilla-Lab/offsite_backup.sh</string>
+    <string>__LAB__/offsite_backup.sh</string>
     <string>restore-test</string>
   </array>
   <!-- Chaque jour à 8 h 45, après la copie hors du Mac (8 h 15). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->

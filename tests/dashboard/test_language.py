@@ -51,6 +51,7 @@ def scenarios(*options) -> str:
         morceaux.append(page(root, env, *options)[1])
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        (root / "absent-ws").mkdir()   # dossier de contenu vide : un dossier absent arrête l'outil (code 78, R-77)
         env = {"PMZILLA_LAB_WORKSPACE": str(root / "absent-ws"), "PMZILLA_LAB_DATA": str(root / "absent-data"),
                "PMZILLA_LAB_LOGS": str(root / "absent-logs")}
         morceaux.append(page(root, env, *options)[1])

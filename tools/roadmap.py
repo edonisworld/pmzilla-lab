@@ -18,6 +18,10 @@ chacune la branche, le modèle de lancement et le genre de session (cadrage ou e
 fichiers partagés. Lecture seule, en direct seulement. Codes : 0 (liste éventuellement vide), 1 file invalide (une ligne par problème),
 2 usage (jalon absent, inconnu ou fermé), 5 GitHub injoignable (`GitHub unreachable; a batch needs a live read`, instantané ou non).
 
+`--product mothra|pmzilla` (next, batch, status, board) : `mothra` garde les features étiquetées `product:mothra`, `pmzilla` celles sans label
+`product:` ; sans option, toute la file. Les blocages se calculent toujours sur toute la file. `check` accepte zéro ou un label `product:`
+connu (aujourd'hui mothra) sur une feature ou une tâche et refuse un produit inconnu ou deux labels.
+
 Interdit à l'outil : écrire dans GitHub, réordonner la file, calculer une date autre que la comparaison avec aujourd'hui.
 La date du jour peut être imposée avec --today AAAA-MM-JJ ou ROADMAP_TODAY (tests).
 
@@ -183,10 +187,11 @@ def cmd_next(args) -> int:
     return cmd_next_github(args, budget, jour)
 
 
-def vue(jobs: list, archives: list) -> dict:
-    """Ce que montrent `status` et `board` : comptes, en cours, prochains prêts, bloqués, faits par semaine."""
+def vue(jobs: list, archives: list, etat_global: dict | None = None) -> dict:
+    """Ce que montrent `status` et `board` : comptes, en cours, prochains prêts, bloqués, faits par semaine.
+    `etat_global` : état de toute la file quand `jobs` et `archives` sont filtrés (les blocages se calculent sur toute la file)."""
     tous = jobs + archives
-    etat = {j["id"]: j["state"] for j in tous}
+    etat = {**(etat_global or {}), **{j["id"]: j["state"] for j in tous}}
     par_theme = {th: [0, 0] for th in THEMES}        # [faits, total]
     for j in tous:
         par_theme[j["theme"]][1] += 1
@@ -505,6 +510,31 @@ def ident(i: dict) -> str:
     return f"R-{t[0]}" if t else f"#{i['number']}"
 
 
+PRODUITS = ("pmzilla", *rm.PRODUCTS)   # filtres permis de --product ; PMZilla = aucun label product:
+
+
+def produit_des(labels: list[str], nom: str, pb: list[str]):
+    """Produit d'une issue d'après ses labels `product:` : zéro (None, c'est PMZilla) ou un connu. Sinon un problème est ajouté à `pb`."""
+    trouves = rm.product_labels(labels)
+    if len(trouves) > 1:
+        pb.append(f"{nom} : labels : au plus un label {rm.LABEL_PRODUCT_PREFIX} attendu ({len(trouves)} trouvés)")
+        return None
+    if not trouves:
+        return None
+    valeur = trouves[0][len(rm.LABEL_PRODUCT_PREFIX):]
+    if valeur not in rm.PRODUCTS:
+        pb.append(f"{nom} : labels : produit inconnu {valeur}")
+        return None
+    return valeur
+
+
+def du_produit(f: dict, produit) -> bool:
+    """La feature passe-t-elle le filtre ? Sans filtre, toutes ; `pmzilla` : celles sans label product: ; sinon le produit nommé."""
+    if not produit:
+        return True
+    return f.get("product") is None if produit == "pmzilla" else f.get("product") == produit
+
+
 def analyse_github(issues: list[dict]):
     """(features dans l'ordre du rang, sous-issues, problèmes). Un problème est « identifiant : champ : message »."""
     pb: list[str] = []
@@ -538,6 +568,7 @@ def analyse_github(issues: list[dict]):
             pb.append(f"{nom} : labels : exactement un label theme: attendu ({len(themes)} trouvés)")
         elif theme not in rm.THEMES:
             pb.append(f"{nom} : labels : thème inconnu {theme}")
+        produit = produit_des(labels, nom, pb)
         if i["milestone"] is None:
             pb.append(f"{nom} : milestone : jalon absent")
         bloc = None
@@ -560,7 +591,7 @@ def analyse_github(issues: list[dict]):
             continue
         feats[nom] = {"id": nom, "number": i["number"], "title": titre[1] if titre else i["title"], "open": ouvert,
                       "status": i["status"], "milestone": (i["milestone"] or {}).get("title"), "block": bloc or {},
-                      "blocker_numbers": i["blocked_by"], "issue": i}
+                      "blocker_numbers": i["blocked_by"], "issue": i, "product": produit}
     par_numero = {f["number"]: f for f in feats.values()}
     rangs: dict = collections.defaultdict(list)
     for f in feats.values():
@@ -613,6 +644,7 @@ def analyse_github(issues: list[dict]):
     for i in sous:
         cle = rm.parse_marker(i["body"]) or f"#{i['number']}"
         labels = i["labels"]
+        produit_des(labels, cle, pb)
         if par_numero.get(i["parent"]) is None:
             pb.append(f"{cle} : parent : une feature est attendue")
         if rm.LABEL_TASK not in labels:
@@ -672,9 +704,12 @@ def en_job(f: dict) -> dict:
     return j
 
 
-def vue_github(feats: list[dict]) -> dict:
+def vue_github(feats: list[dict], produit=None) -> dict:
+    """La vue de la file, restreinte au produit demandé ; l'état des bloqueurs reste celui de toute la file."""
     jobs = [en_job(f) for f in feats]
-    return vue([j for j in jobs if j["state"] != "done"], [j for j in jobs if j["state"] == "done"])
+    etat_global = {j["id"]: j["state"] for j in jobs}
+    gardes = [j for f, j in zip(feats, jobs) if du_produit(f, produit)]
+    return vue([j for j in gardes if j["state"] != "done"], [j for j in gardes if j["state"] == "done"], etat_global)
 
 
 def cmd_check_github(args) -> int:
@@ -747,9 +782,10 @@ def lancement(f: dict) -> dict:
             "modele": modele if modele in ("opus", "sonnet", "haiku") else "sonnet", "invite": f"/start {f['id']}"}
 
 
-def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path):
+def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path, produit=None):
     """(retenues, écartées, partagés) : retenues = [(feature, lancement, fichiers connus ou None)], écartées = [(feature, raison)],
-    partagés = {chemin: [identifiants]}."""
+    partagés = {chemin: [identifiants]}. `produit` : ne propose que les features de ce produit (les features en cours des autres
+    produits comptent toujours pour les fichiers communs, les blocages se calculent sur toute la file)."""
     ouvert = {f["id"]: f["open"] for f in feats}
     connus: dict[str, set[str] | None] = {}
     for f in feats:
@@ -760,7 +796,7 @@ def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path):
     for f in feats:
         b = f["block"]
         if (not f["open"] or f["status"] != "Ready" or f["milestone"] != jalon or any(ouvert[x] for x in f["blockers"])
-                or ("not_before" in b and en_date(b["not_before"]) > jour)):
+                or not du_produit(f, produit) or ("not_before" in b and en_date(b["not_before"]) > jour)):
             continue
         nom = b.get("change")
         if nom and connus[f["id"]] is None:
@@ -809,7 +845,7 @@ def cmd_batch(args) -> int:
         pb.append(release)
     if pb:
         return sortie_invalide(pb)
-    retenues, ecartees, partages = lot(feats, args.milestone, jour, ARBRE)
+    retenues, ecartees, partages = lot(feats, args.milestone, jour, ARBRE, getattr(args, "product", None))
     print(f"{PREFIXE}lot du jalon {args.milestone}")
     print(f"{PREFIXE}release courante : {release_courante() or 'aucune'}")
     if not retenues:
@@ -848,6 +884,8 @@ def cmd_next_github(args, budget: int, jour: datetime.date) -> int:
             continue
         if args.milestone and f["milestone"] != args.milestone:
             continue
+        if not du_produit(f, getattr(args, "product", None)):
+            continue
         if "not_before" in b and en_date(b["not_before"]) > jour:
             continue
         candidats.append(en_job(f))
@@ -859,7 +897,7 @@ def cmd_status_github(args) -> int:
     feats, _, pb = etat_github(args)
     if pb:
         return sortie_invalide(pb)
-    imprime_status(vue_github(feats))
+    imprime_status(vue_github(feats, getattr(args, "product", None)))
     return 0
 
 
@@ -869,7 +907,7 @@ def cmd_board_github(args) -> int:
         return sortie_invalide(pb)
     sortie = dossier_donnees() / "feuille-de-route.html"
     sortie.parent.mkdir(parents=True, exist_ok=True)
-    sortie.write_text(page_board(vue_github(feats), aujourdhui(args)), encoding="utf-8")
+    sortie.write_text(page_board(vue_github(feats, getattr(args, "product", None)), aujourdhui(args)), encoding="utf-8")
     print(f"{PREFIXE}tableau écrit : {sortie.name}")
     if args.open:
         ouvre(sortie)
@@ -993,6 +1031,9 @@ def main(argv=None) -> int:
             s.add_argument("--milestone", default=None)
         if nom in ("next", "batch", "board", "check", "status", "show"):
             s.add_argument("--today", default=None)
+        if nom in ("next", "batch", "board", "status"):
+            s.add_argument("--product", choices=PRODUITS, default=None,
+                           help="mothra : features étiquetées product:mothra ; pmzilla : features sans label product: ; sans option : toute la file")
         if nom == "show":
             s.add_argument("id")
         if nom == "board":

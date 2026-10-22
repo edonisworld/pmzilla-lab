@@ -29,7 +29,8 @@ class CatalogueParDefaut(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.racine, True)
         self.run = self.racine / "run"
         (self.run / "tools").mkdir(parents=True)
-        for nom in ("pmzilla_lab_library.py", "watch_paths.py"):
+        # private_collections.py : l'indexeur l'importe depuis organisation-context (la liste des modules copiés suit ses imports)
+        for nom in ("pmzilla_lab_library.py", "watch_paths.py", "lab_paths.py", "private_collections.py"):
             shutil.copy(TOOLS / nom, self.run / "tools" / nom)
         (self.run / "tools" / "book_catalog.yaml").write_text("books: []\n", encoding="utf-8")
         (self.racine / "PMZilla-Lab" / "workspace" / "tools").mkdir(parents=True)            # le chemin fixe d'avant : un autre catalogue

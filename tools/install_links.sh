@@ -1,8 +1,8 @@
 #!/bin/zsh
 # PMZilla Lab : une seule source de vérité pour les scripts.
 # Les scripts lancés par launchd (watch.sh), par le serveur MCP (pmzilla_lab_library.py) et par l'essai des postures
-# sont appelés par leur chemin ~/PMZilla-Lab/<script>. Ce chemin devient un lien symbolique vers
-# ~/PMZilla-Lab/run/tools/<script> (le dossier d'exécution, change run-worktree) : tools/ (suivi par Git) fait foi, il n'y a plus jamais de copie à refaire.
+# sont appelés par leur chemin <dossier du lab>/<script>. Ce chemin devient un lien symbolique vers
+# <dossier du lab>/run/tools/<script> (le dossier d'exécution, change run-worktree) : tools/ (suivi par Git) fait foi, il n'y a plus jamais de copie à refaire.
 #
 #   zsh tools/install_links.sh                        crée les liens vers le dossier d'exécution (sauvegarde d'abord les copies qui existent)
 #   zsh tools/install_links.sh --verify               dit l'état de chaque lien, sans rien changer
@@ -11,8 +11,8 @@
 #
 # Sans dossier d'exécution (et sans --target workspace), le script refuse et ne crée ni ne change aucun lien : le créer d'abord avec
 # bash tools/run_worktree.sh create. Un lien qui vise l'autre dossier est refait (« mauvais dossier » en mode --verify, code non nul).
-# Variable : PMZILLA_LAB_RUN, emplacement du dossier d'exécution (défaut ~/PMZilla-Lab/run).
-# Chaque copie remplacée est déplacée dans ~/PMZilla-Lab/copies-avant-liens-AAAA-MM-JJ-HHMMSS/, jamais supprimée.
+# Variable : PMZILLA_LAB_RUN, emplacement du dossier d'exécution (défaut : le dossier run du dossier du lab, par tools/lab_paths.sh).
+# Chaque copie remplacée est déplacée dans <dossier du lab>/copies-avant-liens-AAAA-MM-JJ-HHMMSS/, jamais supprimée.
 # Relançable sans risque : un lien déjà correct n'est pas touché.
 # Ce script utilise zsh. Lancé par bash ou sh (« bash tools/install_links.sh »), il ne parcourait que le premier
 # script du tableau et annonçait « Tous les liens sont en place » : on repasse donc par zsh, ou on s'arrête.
@@ -22,10 +22,13 @@ if [ -z "${ZSH_VERSION:-}" ]; then
 fi
 set -u
 
-LAB="$HOME/PMZilla-Lab"
-RUN="${PMZILLA_LAB_RUN:-$LAB/run}"
+# Dossiers du lab par le module partagé tools/lab_paths.sh (R-77) : dossier du lab, dossier d'exécution, dépôt de développement.
+. "${${(%):-%x}:A:h}/lab_paths.sh"
+lab_paths_init || exit $?
+LAB="$LAB_FOLDER"
+RUN="$LAB_RUN_TREE"
 # Les scripts que lance un modèle launchd (watch.sh, db_backup.sh, offsite_backup.sh, doctor.sh) y figurent : un modèle ne nomme jamais un dossier de code.
-SCRIPTS=(convert_books.py posture_evals.py flux_jira.py history_common.py
+SCRIPTS=(convert_books.py posture_evals.py flux_jira.py
          mapping_lab.py pmzilla_lab_library.py watch_triage.py watch_lab.py sort_by_domain.py morning_summary.py watch.sh
          db_backup.sh offsite_backup.sh doctor.sh)
 RELIQUATS=(pmzilla_lab_library.py.avant-veille)     # anciennes sauvegardes à ranger avec les copies
@@ -47,7 +50,7 @@ done
 
 # Dossier de code visé : le dossier d'exécution (défaut) ou le dépôt de développement (retour en arrière). Le lien est relatif au dossier du labo
 # quand le dossier visé est dans le dossier du labo (cas normal), absolu sinon.
-DEV_TOOLS="$LAB/workspace/tools"
+DEV_TOOLS="$LAB_CONTENT_ROOT/tools"
 RUN_TOOLS="$RUN/tools"
 relatif() { [[ "$1" == "$LAB/"* ]] && print -r -- "${1#$LAB/}" || print -r -- "$1"; }
 if [[ "$CIBLE_ARBRE" == workspace ]]; then
@@ -57,7 +60,7 @@ else
   [[ -d "$RUN" ]] || { echo "Dossier d'exécution introuvable : $RUN. Le créer d'abord : bash tools/run_worktree.sh create (aucun lien créé ni changé)." >&2; exit 1; }
 fi
 
-[[ -d "$TOOLS" ]] || { echo "Dossier introuvable : $TOOLS (le dépôt doit être cloné dans ~/PMZilla-Lab/workspace, le dossier d'exécution créé par bash tools/run_worktree.sh create)." >&2; exit 1; }
+[[ -d "$TOOLS" ]] || { echo "Dossier introuvable : $TOOLS (le dépôt de développement doit être cloné, le dossier d'exécution créé par bash tools/run_worktree.sh create)." >&2; exit 1; }
 manquants=()
 for f in "${SCRIPTS[@]}"; do [[ -f "$TOOLS/$f" ]] || manquants+=("$f"); done
 (( ${#manquants} )) && { echo "Absents de $TOOLS : ${manquants[*]}" >&2; exit 1; }

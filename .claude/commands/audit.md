@@ -2,7 +2,7 @@
 description: Read-only repository audit, end-of-session check (default, about 5 minutes) or full audit with parallel agents
 argument-hint: "[complet]"
 model: sonnet
-allowed-tools: Read, Grep, Glob, Agent, Write(.pmzilla/audit/**), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git branch:*), Bash(git stash list:*), Bash(git rev-parse:*), Bash(bash tools/run_worktree.sh status:*), Bash(git ls-files:*), Bash(git grep:*), Bash(git show:*), Bash(ls:*), Bash(find:*), Bash(date:*), Bash(uv run tools/identifiants_personnels.py:*), Bash(uv run --with pyyaml python -I -c:*)
+allowed-tools: Read, Grep, Glob, Agent, Write(.pmzilla/audit/**), Bash(git status:*), Bash(git log:*), Bash(git diff:*), Bash(git branch:*), Bash(git stash list:*), Bash(git rev-parse:*), Bash(bash tools/run_worktree.sh status:*), Bash(git ls-files:*), Bash(git grep:*), Bash(git show:*), Bash(ls:*), Bash(date:*), Bash(uv run tools/identifiants_personnels.py:*)
 ---
 
 PMZilla Lab repository audit: $ARGUMENTS
@@ -16,7 +16,7 @@ Two modes, chosen by the first word of the arguments. No argument: default mode.
 ## Rules of both modes
 
 - Read only. You modify, move and delete no file and you make no commit. The only files you write are `.pmzilla/audit/AAAA-MM-JJ.md` (the report; if it already exists today, read it and add a section for this pass) and `.pmzilla/audit/dernier-commit` (the full hash of `HEAD` at the end of the pass, written last).
-- No command on the database (no psql, no docker exec, no script of yours that connects to it), no Jira tool, no posture evaluation set, no test suite. Your Python is limited to loading YAML files and comparing lists, never anything that opens the database.
+- No command on the database (no psql, no docker exec, no script of yours that connects to it), no Jira tool, no posture evaluation set, no test suite. Your Python is limited to loading YAML files and comparing lists, never anything that opens the database. A Python one-liner (`uv run --with pyyaml python -I -c …`) and `find` are not pre-approved by this command: no deny rule stops `python -c` or `find -exec`, so each one asks the user's agreement; prefer Read, Grep, Glob, `ls` and `git grep`.
 - Same reading bans as always: you read neither `Bibliotheque-*`, nor `Flux-Lab/` (except `rapports/` and `flux.yaml`), nor `Journal-Lab/`, nor `Watch-Lab/`, nor the backups, the exports or the books. In `.pmzilla/` you read only file names, plus `contexte.md`, `audit/dernier-commit` and the earlier reports of `audit/`.
 - Nothing already covered by an OpenSpec change in progress: before listing a finding, check the `proposal.md` and `tasks.md` of the changes under `openspec/changes/` (not `archive/`); if the point is there, write "covered by <change>, task <n>" in the report instead of a finding.
 - No team name, project name or person name in the report or the message: roles and generic designations.

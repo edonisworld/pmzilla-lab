@@ -1,5 +1,6 @@
 """Hook de début de session : .claude/settings.json déclare deux commandes SessionStart, dans cet ordre
-(rappel des revues dues, puis rappel de la file GitHub de la spec github-roadmap), et aucun autre hook.
+(rappel des revues dues, puis rappel de la file GitHub de la spec github-roadmap), et aucun autre hook que, une fois posée,
+l'entrée de la garde des tubes (change deny-rules-review, D9).
 
     python3 -m unittest discover -s tests/journal_lab -v
 """
@@ -24,7 +25,9 @@ class HookDeSession(unittest.TestCase):
         self.assertEqual(commandes, COMMANDES)
 
     def test_aucun_autre_hook_n_est_declare(self):
-        self.assertEqual(list(self.hooks), ["SessionStart"])
+        """Sauf, une fois posée, l'entrée PreToolUse de la garde des tubes (change deny-rules-review, D9, forme B choisie par l'auteur le
+        2026-10-19), vérifiée par tests/settings_deny ; la forme PostToolUse n'est pas admise."""
+        self.assertIn(sorted(self.hooks), (["SessionStart"], ["PreToolUse", "SessionStart"]))
 
 
 if __name__ == "__main__":

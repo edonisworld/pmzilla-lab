@@ -23,9 +23,9 @@ RACINE = Path(__file__).resolve().parents[2]
 TOOLS = RACINE / "tools"
 
 # scripts exécutables du lot 6 (et ceux qu'il a modifiés)
-SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "publish_edition", "install_lab", "flow_monthly", "book_usage", "epic_statuses", "flow_retention", "doctor", "manual", "composants", "morning_summary")
+SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "publish_edition", "install_lab", "flow_monthly", "book_usage", "epic_statuses", "flow_retention", "doctor", "manual", "composants", "morning_summary", "story_quality", "context_lab")
 # nom du module importé -> nom du paquet à déclarer
-PAQUETS = {"yaml": "pyyaml", "numpy": "numpy", "psycopg": "psycopg", "requests": "requests", "httpx": "httpx", "mcp": "mcp",
+PAQUETS = {"yaml": "pyyaml", "numpy": "numpy", "psycopg": "psycopg", "requests": "requests", "httpx": "httpx", "mcp": "mcp", "jsonschema": "jsonschema",
            "feedparser": "feedparser", "bs4": "beautifulsoup4", "markdownify": "markdownify", "trafilatura": "trafilatura",
            "ebooklib": "ebooklib", "pymupdf": "pymupdf", "pymupdf4llm": "pymupdf4llm"}
 ERREURS_RESEAU = ("failed to fetch", "network", "offline", "dns", "connection", "no solution found", "timed out", "tls")
@@ -95,7 +95,7 @@ class Declaration(unittest.TestCase):
             self.assertEqual(sorted(tiers - declarees), [], f"{script}.py : dépendances non déclarées (imports indirects compris)")
 
     def test_psycopg_declare_pour_la_lecture_de_la_base(self):
-        for script in ("flux_jira", "dependencies_jira", "flow_import", "flow_compare", "flow_views", "db"):
+        for script in ("flux_jira", "dependencies_jira", "flow_import", "flow_views", "db"):
             self.assertIn("psycopg", dependances_declarees(TOOLS / f"{script}.py"), script)
 
     def test_une_extra_entre_crochets_ne_coupe_pas_la_liste(self):
@@ -118,11 +118,22 @@ class Declaration(unittest.TestCase):
 EXEMPTES = {"caption_diagnostic", "convert_books", "critic_mirror", "dashboard", "final_messages_check", "flow_board", "history_jira",
             "outside_library", "library_parity", "migrate_watch", "pmzilla_lab_library", "roadmap", "gh_issue",
             "segment_sample", "watch_lab", "watch_triage", "identifiants_personnels", "journal_lab_messages", "sanctum_refresh",
-            "select_suites", "sensitive_names", "sort_by_domain", "mapping_lab", "bmad_remplacements", "sorting_exclusions", "watch_paths"}
+            "select_suites", "sensitive_names", "sort_by_domain", "mapping_lab", "bmad_remplacements", "sorting_exclusions", "watch_paths", "lab_paths",
+            "pilot", "pipe_guard", "light_validate"}   # R-75, deny-rules-review : bibliothèque standard seulement, aucun paquet tiers à déclarer ni à verrouiller
+
+
+EXEMPTES = EXEMPTES | {"posture_eval_fingerprint"}   # posture-evals-on-branch-tip : bibliothèque standard seulement (ligne à part pour ne pas heurter la ligne commune à la fusion)
+EXEMPTES = EXEMPTES | {"secret_scan"}   # pre-commit-secret-scan (D1) : bibliothèque standard seulement, importé par le crochet pre-commit sous python3 nu
 
 
 def scripts_d_entree() -> set[str]:
     return {p.stem for p in TOOLS.glob("*.py") if re.search(r'^if __name__ == ["\']__main__["\']', p.read_text(encoding="utf-8"), re.M)}
+
+
+# masking-mutation-tests (D1) : mutateur maison, bibliothèque standard seulement (ligne à part, loin des autres ajouts, pour la fusion)
+EXEMPTES = EXEMPTES | {"mutation_masking"}
+# fix/sorties-et-masquage (point 3) : bibliothèque standard seulement, lancé par les crochets commit-msg et pre-push sous python3 nu
+EXEMPTES = EXEMPTES | {"commit_names_scan"}
 
 
 class Decouverte(unittest.TestCase):

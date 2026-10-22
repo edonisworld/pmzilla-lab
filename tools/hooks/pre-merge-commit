@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""PMZilla Lab : hook pre-merge-commit (change finish-under-lock, design D17). Installé par tools/install_hooks.sh en lien relatif.
+
+Git le lance avant de créer un commit de fusion (git merge sans conflit ; l'option qui saute les crochets est refusée aux sessions). Il ne fait qu'une chose :
+la même lecture du verrou de fin de branche que le gel du hook pre-commit (tools/finish_lock.py, dossier pmzilla-fin-en-cours du dossier
+Git commun, jeton FINISH_LOCK_TOKEN). Un verrou vivant d'un autre jeton refuse la fusion (code 1) ; le jeton du verrou, l'absence de verrou
+ou un verrou périmé (dit sur une ligne) la laissent passer. Ni lancement vert, ni garde des noms : le contenu fusionné a été contrôlé des deux
+côtés. Aucune variable ne lève ce refus. Le hook lit le verrou seulement : il ne le crée, ne le retire ni ne le modifie jamais.
+"""
+import os
+import subprocess
+import sys
+
+OUTILS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, OUTILS)
+import finish_lock  # noqa: E402
+
+
+def main():
+    try:
+        commun = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, check=True,
+                                text=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return 0
+    verrou = finish_lock.read_lock(commun)
+    if verrou is None:
+        return 0
+    if verrou["stale"]:
+        print("pre-merge-commit : verrou de fin périmé, ignoré", file=sys.stderr)
+        return 0
+    bloquant = finish_lock.blocking(commun, os.environ.get("FINISH_LOCK_TOKEN", ""))
+    if bloquant is None:
+        return 0
+    print(f"pre-merge-commit : fin de branche en cours ({bloquant['branch']}), fusion refusée", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

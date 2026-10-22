@@ -9,7 +9,8 @@ PMZilla Lab : commande doctor, un contrôle de santé du laboratoire en lecture 
 
 Lance les contrôles du design D5 et affiche une ligne par contrôle (`<contrôle> : <niveau> : <raison>`), puis une phrase de
 résumé. Niveaux : ok, avertissement, problème, ignoré (avec sa raison). Contrôles : db, ollama, models, launchd, watch,
-backup, offsite, parity (seulement tant qu'une fenêtre de parité est ouverte), disk, jira, branches, run-worktree.
+backup, offsite, disk, jira, branches, run-worktree, mothra-npm (change mothra-npm-ready, D3 : avertissement seulement, une ligne
+par constat ; la commande `node` est prise dans le PATH).
 
 Options : --json affiche le résultat au format du fichier d'état ; --quiet n'affiche que les contrôles qui ne sont pas ok, puis le
 résumé ; --record écrit le fichier d'état `doctor-etat.json` du dossier de données et peut notifier (seul l'enveloppeur planifié
@@ -58,6 +59,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import lab_paths  # noqa: E402
 from doctor_messages import CATALOGS  # noqa: E402
 from messages import Messages, add_language_option, fields  # noqa: E402
 
@@ -77,16 +79,18 @@ TOUTES_LES_RAISONS = [
     ("watch", "interrupted"), ("watch", "postponed"), ("watch", "missed"), ("watch", "record_not_writable"),
     ("backup", "ok"), ("backup", "missing"), ("backup", "short"), ("backup", "not_due"),
     ("offsite", "ok"), ("offsite", "warn_old"), ("offsite", "problem_old"), ("offsite", "never"), ("offsite", "not_set_up"),
-    ("parity", "ok"), ("parity", "divergence"), ("parity", "no_verdict"),
+    ("offsite", "not_permitted"), ("offsite", "incomplete"),
     ("disk", "ok"), ("disk", "low"), ("disk", "critical"),
     ("jira", "ok"), ("jira", "expired"), ("jira", "expiring"), ("jira", "unknown"), ("jira", "unreadable"),
     ("branches", "ok"), ("branches", "stale"),
     ("run-worktree", "ok"), ("run-worktree", "wrong_branch"), ("run-worktree", "missing"), ("run-worktree", "behind"),
     ("run-worktree", "off_history"), ("run-worktree", "dirty"),
+    ("mothra-npm", "ok"), ("mothra-npm", "no_lock"), ("mothra-npm", "node_version"), ("mothra-npm", "node_missing"),
+    ("mothra-npm", "modules_missing"), ("mothra-npm", "modules_stale"),
 ]
 
 
-ORDRE = ["db", "ollama", "models", "launchd", "watch", "backup", "offsite", "parity", "disk", "jira", "branches", "run-worktree"]
+ORDRE = ["db", "ollama", "models", "launchd", "watch", "backup", "offsite", "disk", "jira", "branches", "run-worktree", "mothra-npm"]
 
 
 class ImpossibleDeLancer(Exception):
@@ -100,6 +104,8 @@ class Resultat:
     cle: str
     compteurs: dict = dataclasses.field(default_factory=dict)   # nombres seulement : c'est ce que le fichier d'état garde
     noms: list = dataclasses.field(default_factory=list)        # noms de branches, de tâches, de rôles : le Terminal seulement
+    valeurs: dict = dataclasses.field(default_factory=dict)     # textes des champs de la raison (versions) : le Terminal seulement
+    constats: list = dataclasses.field(default_factory=list)    # sous-résultats du même contrôle : une ligne chacun (mothra-npm, D3)
 
 
 def raison(resultat: Resultat, t: Messages) -> str:
@@ -107,14 +113,16 @@ def raison(resultat: Resultat, t: Messages) -> str:
     if cle not in t.catalogs["fr"]:
         cle = f"raison_{resultat.cle}"
     modele = t.catalogs["fr"][cle]
-    valeurs = {nom: resultat.compteurs.get(nom, 0) for nom in fields(modele)}
+    valeurs = {nom: resultat.valeurs.get(nom, resultat.compteurs.get(nom, 0)) for nom in fields(modele)}
     if "noms" in valeurs:
         valeurs["noms"] = ", ".join(resultat.noms)
     return t(cle, **valeurs)
 
 
 def ligne(resultat: Resultat, t: Messages) -> str:
-    return t("ligne", check=resultat.id, level=t(f"niveau_{resultat.niveau}"), reason=raison(resultat, t))
+    """Une ligne par contrôle ; un contrôle à plusieurs constats en donne une par constat, sous le même identifiant et le même niveau."""
+    return "\n".join(t("ligne", check=resultat.id, level=t(f"niveau_{resultat.niveau}"), reason=raison(constat, t))
+                     for constat in (resultat.constats or [resultat]))
 
 
 def compter(resultats: list[Resultat]) -> dict[str, int]:
@@ -281,7 +289,7 @@ def controle_disk(ctx: Contexte, _precedents) -> Resultat:
     return Resultat("disk", "ok", "ok", compteurs)
 
 
-# --- launchd, watch, backup, offsite, parity (D5.3 à D5.7) --------------------------------------------------------------
+# --- launchd, watch, backup, offsite (D5.3 à D5.7) --------------------------------------------------------------
 def controle_launchd(ctx: Contexte, _precedents) -> Resultat:
     """Pour chaque gabarit du dépôt dont le fichier rendu est installé, la tâche doit être chargée (état de launchd, en lecture)."""
     dossier = ctx.maison / "Library" / "LaunchAgents"
@@ -354,7 +362,8 @@ def controle_backup(ctx: Contexte, _precedents) -> Resultat:
     """Le dossier daté du jour et le nombre de dumps, par noms et nombre seulement : aucun fichier n'est ouvert, aucun nom n'est affiché."""
     racine = Path(ctx.env.get("DOCTOR_BACKUPS") or ctx.donnees / "sauvegardes")
     dossier = racine / f"db-{ctx.aujourdhui.isoformat()}"
-    attendus = len((ctx.env.get("DOCTOR_SCHEMAS") or "knowledge cases flow").split())
+    # un dump par schéma, plus le dump partiel de quality, obligatoire (tools/db_backup.sh, change story-quality-audit, D10)
+    attendus = len((ctx.env.get("DOCTOR_SCHEMAS") or "knowledge cases flow").split()) + 1
     try:
         trouves = sum(1 for nom in os.listdir(dossier) if nom.endswith(".dump"))
     except OSError:
@@ -364,6 +373,28 @@ def controle_backup(ctx: Contexte, _precedents) -> Resultat:
     if trouves < attendus:
         return Resultat("backup", "problem", "short", {"found": trouves, "expected": attendus})
     return Resultat("backup", "ok", "ok", {"found": trouves})
+
+
+LIGNES_JOURNAL_OFFSITE = 40
+
+
+def echec_journal_offsite(ctx: Contexte, derniere_reussite: dt.date) -> str | None:
+    """Clé de raison (« not_permitted » ou « incomplete ») quand la fin du journal de la copie hors du Mac (pmzilla-offsite-copy.log)
+    porte « Operation not permitted » ou « copie incomplète », et que le journal a été écrit après la dernière réussite (une copie à
+    la main réussie après l'échec planifié n'est plus signalée). Ne lit que les 40 dernières lignes, n'en sort aucun texte."""
+    chemin = ctx.journaux / "pmzilla-offsite-copy.log"
+    try:
+        ecrit = dt.datetime.fromtimestamp(chemin.stat().st_mtime).date()
+        fin = chemin.read_text(encoding="utf-8", errors="replace").splitlines()[-LIGNES_JOURNAL_OFFSITE:]
+    except OSError:
+        return None
+    if ecrit <= derniere_reussite:
+        return None
+    if any("Operation not permitted" in ligne for ligne in fin):
+        return "not_permitted"
+    if any(ligne.startswith("copie incomplète") for ligne in fin):
+        return "incomplete"
+    return None
 
 
 def controle_offsite(ctx: Contexte, _precedents) -> Resultat:
@@ -386,36 +417,14 @@ def controle_offsite(ctx: Contexte, _precedents) -> Resultat:
     if jour is None:
         return Resultat("offsite", "problem", "never")
     jours = (ctx.aujourdhui - jour).days
+    echec = echec_journal_offsite(ctx, jour)
+    if echec:
+        return Resultat("offsite", "problem", echec, {"days": jours})
     if jours > ctx.reglage("DOCTOR_OFFSITE_PROBLEM_DAYS", 15):
         return Resultat("offsite", "problem", "problem_old", {"days": jours})
-    if jours > ctx.reglage("DOCTOR_OFFSITE_WARN_DAYS", 8):
+    if jours > ctx.reglage("DOCTOR_OFFSITE_WARN_DAYS", 1):
         return Resultat("offsite", "warning", "warn_old", {"days": jours})
     return Resultat("offsite", "ok", "ok", {"days": jours})
-
-
-# Fenêtre de parité de la bibliothèque : le marqueur et le journal des verdicts du dossier de données. Sur `main`, la veille n'en tient
-# qu'une seule (watch.sh) ; la parité de l'état de la veille est une sous-commande manuelle de l'outil de copie, sans marqueur ni verdict.
-# Le contrôle ne dépend que du marqueur : quand R-27 retire la fenêtre et son marqueur, il disparaît sans changement de code.
-MARQUEUR_PARITE = "parite-sqlite"
-JOURNAL_PARITE = "parite-sqlite.log"
-
-
-def controle_parity(ctx: Contexte, _precedents) -> list[Resultat]:
-    if not (ctx.donnees / MARQUEUR_PARITE).exists():
-        return []
-    verdict, jour = None, None
-    try:
-        for texte in (ctx.donnees / JOURNAL_PARITE).read_text(encoding="utf-8", errors="replace").splitlines():
-            morceaux = texte.split()
-            if len(morceaux) >= 2:
-                jour, verdict = morceaux[0], morceaux[1]
-    except OSError:
-        pass
-    if verdict == "écart":
-        return [Resultat("parity", "problem", "divergence")]
-    if jour != ctx.aujourdhui.isoformat() and ctx.heure >= ctx.heure_due("DOCTOR_WATCH_DUE", "08:00"):
-        return [Resultat("parity", "warning", "no_verdict")]
-    return [Resultat("parity", "ok", "ok")]
 
 
 # --- jira, branches, run-worktree (D3, D5.10, D5.11) ---------------------------------------------------------------------
@@ -423,6 +432,8 @@ def controle_jira(ctx: Contexte, _precedents) -> Resultat:
     """Lit `jira_token_expires` (et sa période d'avertissement) dans les réglages du flux, rien d'autre : ni Trousseau, ni jeton.
     La clé et sa période viennent du change jira-gdpr-alignment (R-58) ; tant qu'elle manque, le contrôle est ignoré."""
     import yaml
+    if not ctx.env.get("DOCTOR_FLUX") and racine_contenu(ctx) is None:
+        return Resultat("jira", "problem", "content_unknown")
     chemin = Path(ctx.env.get("DOCTOR_FLUX") or racine_contenu(ctx) / "Flux-Lab" / "flux.yaml")
     if not chemin.exists():
         return Resultat("jira", "skipped", "unknown")
@@ -457,8 +468,18 @@ def git_lire(dossier: Path, *arguments: str) -> str | None:
     return sortie.stdout if sortie.returncode == 0 else None
 
 
-def copie_principale(ctx: Contexte) -> Path:
-    return Path(ctx.env.get("PMZILLA_LAB_WORKSPACE") or ctx.maison / "PMZilla-Lab" / "workspace")
+def racine_contenu(ctx: Contexte) -> Path | None:
+    """Le dépôt de développement, qui porte le contenu (Flux-Lab) : le module partagé tools/lab_paths.py (PMZILLA_LAB_WORKSPACE, sinon
+    le dépôt Git de la racine du code). None quand il est introuvable : le doctor ne s'arrête jamais (R-77, D7), les contrôles qui
+    en ont besoin rendent un problème (clé `content_unknown`) sans afficher de chemin."""
+    try:
+        return lab_paths.content_root(ctx.env, RACINE)
+    except lab_paths.LabPathsError:
+        return None
+
+
+def copie_principale(ctx: Contexte) -> Path | None:
+    return racine_contenu(ctx)
 
 
 def worktrees(principale: Path) -> list[dict] | None:
@@ -482,6 +503,8 @@ def worktrees(principale: Path) -> list[dict] | None:
 
 def controle_branches(ctx: Contexte, _precedents) -> Resultat:
     principale = copie_principale(ctx)
+    if principale is None:
+        return Resultat("branches", "problem", "content_unknown")
     entrees = worktrees(principale)
     fusionnees_brut = git_lire(principale, "branch", "--merged", "main", "--format=%(refname:short)")
     if entrees is None or fusionnees_brut is None:
@@ -490,7 +513,7 @@ def controle_branches(ctx: Contexte, _precedents) -> Resultat:
     seuil = ctx.reglage("DOCTOR_STALE_DAYS", 14)
     fusionnes_wt, inactifs, elagables, noms = [], [], [], []
     avec_worktree = set()
-    execution = dossier_execution(ctx).resolve()
+    execution = (dossier_execution(ctx) or Path(os.sep)).resolve()
     for entree in entrees[1:]:                       # la première entrée est la copie principale
         if Path(entree["chemin"]).resolve() == execution:   # le dossier d'exécution n'est ni une branche ni jamais inactif (D8)
             continue
@@ -517,15 +540,14 @@ def controle_branches(ctx: Contexte, _precedents) -> Resultat:
                     {"merged_worktrees": len(fusionnes_wt), "stale_worktrees": len(inactifs), "merged_branches": len(locales), "prunable": len(elagables)}, noms)
 
 
-def dossier_execution(ctx: Contexte) -> Path:
-    """Le dossier d'exécution (design D3, D8) : DOCTOR_RUN_WORKTREE, sinon PMZILLA_LAB_RUN, sinon le dossier `run` du dossier du labo."""
-    return Path(ctx.env.get("DOCTOR_RUN_WORKTREE") or ctx.env.get("PMZILLA_LAB_RUN") or ctx.maison / "PMZilla-Lab" / "run").expanduser()
-
-
-def racine_contenu(ctx: Contexte) -> Path:
-    """Le dépôt de développement, qui porte le contenu (Flux-Lab) : PMZILLA_LAB_WORKSPACE quand il est posé (l'enveloppeur le pose),
-    sinon la racine du code. Lancé depuis le dossier d'exécution, RACINE est ce dossier, qui ne porte pas le contenu."""
-    return Path(ctx.env["PMZILLA_LAB_WORKSPACE"]).expanduser() if ctx.env.get("PMZILLA_LAB_WORKSPACE") else RACINE
+def dossier_execution(ctx: Contexte) -> Path | None:
+    """Le dossier d'exécution (design D3, D8) : DOCTOR_RUN_WORKTREE, sinon PMZILLA_LAB_RUN, sinon le dossier `run` du dossier du lab
+    (module partagé) ; None quand le dossier de contenu est introuvable."""
+    voulu = ctx.env.get("DOCTOR_RUN_WORKTREE") or ctx.env.get("PMZILLA_LAB_RUN")
+    if voulu:
+        return Path(voulu).expanduser()
+    contenu = racine_contenu(ctx)
+    return None if contenu is None else lab_paths.run_tree(contenu, ctx.env)
 
 
 def controle_run_worktree(ctx: Contexte, _precedents) -> Resultat:
@@ -533,6 +555,8 @@ def controle_run_worktree(ctx: Contexte, _precedents) -> Resultat:
     avertissement s'il est en retard sur main par avance rapide ; problème s'il manque, est sur une branche, hors de l'historique
     de main ou porte un changement local."""
     dossier = dossier_execution(ctx)
+    if dossier is None:
+        return Resultat("run-worktree", "problem", "content_unknown")
     if not dossier.is_dir() or git_lire(dossier, "rev-parse", "--git-dir") is None:
         return Resultat("run-worktree", "problem", "missing")
     if git_lire(dossier, "symbolic-ref", "--short", "-q", "HEAD") is not None:
@@ -551,9 +575,88 @@ def controle_run_worktree(ctx: Contexte, _precedents) -> Resultat:
     return Resultat("run-worktree", "warning", "behind") if en_retard else Resultat("run-worktree", "ok", "ok")
 
 
+# --- mothra-npm (change mothra-npm-ready, D3) ----------------------------------------------------------------------------
+def version_node() -> str | None:
+    """La sortie de `node --version` (commande prise dans le PATH, la couture des tests) ; None si Node manque ou échoue."""
+    try:
+        sortie = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (sortie.stdout.strip() or None) if sortie.returncode == 0 else None
+
+
+def meme_version(vue: str, fixee: str) -> bool:
+    """`v22.11.0` répond à `.node-version` 22.11.0 ou v22.11.0 ; comparaison exacte, jamais par préfixe (D3 : « différent de »)."""
+    return vue.strip().lstrip("v") == fixee.strip().lstrip("v")
+
+
+def lire_octets(chemin: Path) -> bytes | None:
+    try:
+        return chemin.read_bytes()
+    except OSError:
+        return None
+
+
+def paquets_du_verrou(brut: bytes | None) -> dict | None:
+    """Les entrées `packages` d'un verrou npm (lockfileVersion 2 ou 3), hors entrée racine "" ; None si illisible."""
+    try:
+        paquets = json.loads(brut)["packages"] if brut is not None else None
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(paquets, dict):
+        return None
+    return {cle: valeur for cle, valeur in paquets.items() if cle != "" and isinstance(valeur, dict)}
+
+
+def modules_a_jour(verrou: bytes, cache: bytes | None) -> bool:
+    """Le verrou caché que npm écrit dans `node_modules/.package-lock.json` n'est pas une copie du verrou : il omet l'entrée racine ""
+    et les paquets non installés (optionnels d'une autre plateforme). À jour quand chaque entrée du verrou caché existe dans le verrou
+    avec la même version et la même intégrité, et que chaque paquet non optionnel du verrou (`node_modules/…`) est dans le verrou caché."""
+    attendus, installes = paquets_du_verrou(verrou), paquets_du_verrou(cache)
+    if attendus is None or installes is None:
+        return False
+    for cle, installe in installes.items():
+        attendu = attendus.get(cle)
+        if attendu is None or any(installe.get(champ) != attendu.get(champ) for champ in ("version", "integrity")):
+            return False
+    return all(cle in installes for cle, attendu in attendus.items()
+               if cle.startswith("node_modules/") and not attendu.get("optional"))
+
+
+def controle_mothra_npm(ctx: Contexte, _precedents) -> Resultat:
+    """Lecture seule, sans réseau : le verrou de Mothra de l'espace de travail, le Node de `mothra/.node-version` et le verrou recopié
+    par npm dans `node_modules/.package-lock.json`. Avertissement, une ligne par constat ; jamais problème (D3)."""
+    contenu = racine_contenu(ctx)
+    if contenu is None:
+        return Resultat("mothra-npm", "skipped", "content_unknown")
+    mothra = contenu / "mothra"
+    verrou = lire_octets(mothra / "package-lock.json")
+    if verrou is None:
+        return Resultat("mothra-npm", "skipped", "no_lock")
+    constats = []
+    fixee = lire_octets(mothra / ".node-version")
+    fixee = fixee.decode("utf-8", errors="replace").strip() if fixee else ""
+    if not fixee:
+        constats.append(Resultat("mothra-npm", "warning", "node_unpinned"))
+    else:
+        vue = version_node()
+        if vue is None:
+            constats.append(Resultat("mothra-npm", "warning", "node_missing", valeurs={"pinned": fixee}))
+        elif not meme_version(vue, fixee):
+            constats.append(Resultat("mothra-npm", "warning", "node_version", valeurs={"version": vue, "pinned": fixee}))
+    if not (mothra / "node_modules").is_dir():
+        constats.append(Resultat("mothra-npm", "warning", "modules_missing"))
+    elif not modules_a_jour(verrou, lire_octets(mothra / "node_modules" / ".package-lock.json")):
+        constats.append(Resultat("mothra-npm", "warning", "modules_stale"))
+    if not constats:
+        return Resultat("mothra-npm", "ok", "ok")
+    premier = constats[0]
+    return Resultat("mothra-npm", "warning", premier.cle, {"findings": len(constats)}, valeurs=premier.valeurs, constats=constats)
+
+
 # --- les contrôles, dans l'ordre d'affichage ---------------------------------------------------------------------------
 CONTROLES: list = [controle_db, controle_ollama, controle_models, controle_launchd, controle_watch, controle_backup, controle_offsite,
-                   controle_parity, controle_disk, controle_jira, controle_branches, controle_run_worktree]
+                   controle_disk, controle_jira, controle_branches, controle_run_worktree, controle_mothra_npm]
 
 
 def lancer_controles(ctx: Contexte) -> list[Resultat]:

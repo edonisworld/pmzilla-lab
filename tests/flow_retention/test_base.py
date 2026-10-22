@@ -119,5 +119,82 @@ class HorlogeEtCascade(AvecBase):
         self.assertNotIn("PROJ", sortie + erreur)
 
 
+class ContenuDesStories(AvecBase):
+    """Magasin « contenu des stories » (schéma quality, migration de R-78) : horloge SQL et cascade, sur une vraie base jetable."""
+
+    def item(self, cle, jours_collecte=1, jours_resolu=None, jours_sorti=None, ouvert=True):
+        """Une story du schéma quality sous le rôle de lecture-écriture, avec ses lignes dépendantes. Les jours sont relatifs à AUJOURDHUI."""
+        midi = f"{AUJOURDHUI}T12:00:00+00"
+        self.conn.execute("RESET ROLE")
+        self.conn.execute("SET ROLE pmzilla_quality")
+        self.conn.execute(
+            "INSERT INTO quality.items (key, kind, status_category, created_at, updated_at, resolved_at, text_collected_at, out_of_collection_at) "
+            "VALUES (%s, 'story', %s, '2020-01-01', now(), "
+            "CASE WHEN %s::int IS NULL THEN NULL ELSE %s::timestamptz - make_interval(days => %s::int) END, "
+            "%s::timestamptz - make_interval(days => %s::int), "
+            "CASE WHEN %s::int IS NULL THEN NULL ELSE %s::timestamptz - make_interval(days => %s::int) END)",
+            (cle, "To Do" if ouvert else "Done", jours_resolu, midi, jours_resolu, midi, jours_collecte, jours_sorti, midi, jours_sorti))
+        self.conn.execute("INSERT INTO quality.item_teams (item_key, team, position) VALUES (%s, 'Alpha', 1)", (cle,))
+        self.conn.execute("INSERT INTO quality.contents (item_key, title, description, acceptance_criteria, content_hash) "
+                          "VALUES (%s, 'zztitre', 'zzdescription', '', 'h')", (cle,))
+        self.conn.execute("INSERT INTO quality.assessments (item_key, core_grid_id, core_grid_version, criterion_code, origin, link, "
+                          "verdict, sample) VALUES (%s, 'g', '1', 'c1', 'core', 'refinement', 'met', false)", (cle,))
+        self.conn.execute("INSERT INTO quality.coaching_feedback (item_key, core_grid_id, core_grid_version, criterion_code, verdict, feedback) "
+                          "VALUES (%s, 'g', '1', 'c1', 'met', 'zzretour')", (cle,))
+        self.conn.commit()
+
+    def cles_contenu(self):
+        self.conn.execute("RESET ROLE")
+        self.conn.execute("SET ROLE pmzilla_quality")
+        return sorted(r[0] for r in self.conn.execute("SELECT key FROM quality.items").fetchall())
+
+    def compte(self, table):
+        return self.conn.execute(f"SELECT count(*) FROM quality.{table}").fetchone()[0]
+
+    def test_horloge_du_texte_et_du_ticket(self):
+        self.item("PROJ-1", jours_collecte=400)                                     # ouvert, texte collecté il y a 13 mois : hors règle
+        self.item("PROJ-2", jours_collecte=3)                                       # ouvert, texte récent : dans la règle
+        self.item("PROJ-3", jours_collecte=3, jours_resolu=800, ouvert=False)       # ancien résolu, recollecté la semaine dernière : hors règle
+        self.item("PROJ-4", jours_collecte=3, jours_resolu=10, ouvert=False)        # résolu récemment, texte récent : dans la règle
+        self.item("PROJ-5", jours_collecte=3, jours_sorti=500)                      # sorti de la collecte depuis longtemps : hors règle
+        self.item("PROJ-6", jours_collecte=3, jours_sorti=5)                        # sorti récemment : dans la règle
+        code, sortie, erreur = self.lancer_base("check", "--language", "en")
+        self.assertEqual(code, 4, erreur)
+        self.assertIn("story content: 3 items out of rule", sortie)
+        self.assertTrue(sortie.rstrip().endswith("retention check: 3 items out of rule"), sortie)
+
+    def test_purge_supprime_en_cascade_et_garde_les_autres(self):
+        self.item("PROJ-1", jours_collecte=400)
+        self.item("PROJ-2", jours_collecte=3)
+        code, sortie, erreur = self.lancer_base("purge", "--apply", "--language", "en")
+        self.assertEqual(code, 0, erreur)
+        self.assertEqual(self.cles_contenu(), ["PROJ-2"])
+        for table in ("item_teams", "contents", "assessments", "coaching_feedback"):
+            self.assertEqual(self.compte(table), 1, table)           # seules les lignes de PROJ-2 restent
+        self.assertNotIn("zz", sortie + erreur)
+        self.assertEqual(self.lancer_base("check")[0], 0)
+
+    def test_essai_ne_supprime_rien(self):
+        self.item("PROJ-1", jours_collecte=400)
+        code, _, _ = self.lancer_base("purge", "--language", "en")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.cles_contenu(), ["PROJ-1"])
+        self.assertEqual(self.compte("contents"), 1)
+
+    def test_echec_annule_la_suppression_du_contenu(self):
+        self.item("PROJ-1", jours_collecte=400)
+        self.item("PROJ-2", jours_collecte=500)
+        self.conn.execute("RESET ROLE")
+        self.conn.execute("SET ROLE pmzilla_owner")
+        self.conn.execute("CREATE FUNCTION quality.zz_echec() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+                          "IF OLD.key = 'PROJ-2' THEN RAISE EXCEPTION 'zz'; END IF; RETURN OLD; END $$")
+        self.conn.execute("CREATE TRIGGER zz_echec BEFORE DELETE ON quality.items FOR EACH ROW EXECUTE FUNCTION quality.zz_echec()")
+        self.conn.commit()
+        code, sortie, erreur = self.lancer_base("purge", "--apply", "--language", "en")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.cles_contenu(), ["PROJ-1", "PROJ-2"])       # aucune ligne supprimée, même celle qui précédait l'échec
+        self.assertNotIn("PROJ", sortie + erreur)
+
+
 if __name__ == "__main__":
     unittest.main()

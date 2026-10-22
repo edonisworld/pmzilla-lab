@@ -16,11 +16,11 @@ The system SHALL, with no option, replay the evaluation set on the committed sta
 Source: tests/evals_auto/test_evals_auto.sh
 
 ### Requirement: Optional documentation update
-The system SHALL, with the documentation option, run the update-readme instruction in a non-interactive session carrying the run summary (without the instruction file's header), and then attempt a push.
+The system SHALL, with the documentation option, run the update-readme instruction in a non-interactive session carrying the run summary (without the instruction file's header). It SHALL NOT push: the README commit stays local and the author's branch finish pushes (no session pushes; decision of the author, 2026-10-21, point 4). The script SHALL contain no push command outside its comments.
 
 #### Scenario: Documentation option
-- WHEN started with the option
-- THEN the evaluation set runs, a session starts with the summary in the prompt and the instruction body, and a push is attempted
+- WHEN started with the option, on a branch that tracks a remote and is ahead of it
+- THEN the evaluation set runs, a session starts with the summary in the prompt and the instruction body, nothing is pushed (the remote is unchanged), and the output says the commit stays local
 
 Source: tests/evals_auto/test_evals_auto.sh
 

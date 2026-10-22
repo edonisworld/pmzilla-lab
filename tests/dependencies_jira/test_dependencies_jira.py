@@ -1,7 +1,7 @@
 """Tests de tools/dependencies_jira.py sur des exports inventés (aucun appel à Jira, aucune donnée réelle).
 
-Les mêmes tickets sont écrits en CSV manuel et en CSV de l'API (construit par export_jira_api.construire_csv) : la carte
-doit être identique. Les dates sont relatives à aujourd'hui (le script n'a pas d'option de date).
+Les tickets sont écrits en CSV manuel puis rendus au script par le chargeur de test (tests/flux_jira/chargeur_csv.py), comme la base les
+rendrait (database-only, D11). Les dates sont relatives à aujourd'hui (le script n'a pas d'option de date).
 Lancement : uv run --with pyyaml --with requests python -m unittest discover -s tests/dependencies_jira
 """
 from __future__ import annotations
@@ -17,9 +17,8 @@ import unittest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
-SCRIPT = TOOLS / "dependencies_jira.py"
+SCRIPT = TOOLS.parent / "tests" / "flux_jira" / "lancer_dependencies_jira.py"     # database-only D11 : chargeur de test des fixtures CSV
 sys.path.insert(0, str(TOOLS))
-import export_jira_api as ex          # noqa: E402
 
 AUJOURDHUI = dt.date.today()
 MOIS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -43,10 +42,6 @@ def date_manuel(d: dt.date | None) -> str:
     return "" if d is None else f"{d.day:02d}/{MOIS[d.month - 1]}/{d.year} 08:00"
 
 
-def date_api(d: dt.date | None):
-    return None if d is None else f"{d.isoformat()}T08:00:00.000+0000"
-
-
 def ecrire_manuel(chemin: Path, tickets: list[dict], liens_sans_type: bool = False) -> None:
     entete = ["Issue key", "Issue Type", "Status", "Status Category", "Created", "Resolved", "Resolution",
               "Status Category Changed", "Parent key", "Team"]
@@ -62,24 +57,6 @@ def ecrire_manuel(chemin: Path, tickets: list[dict], liens_sans_type: bool = Fal
             w.writerow(ligne)
 
 
-def ecrire_api(chemin: Path, tickets: list[dict]) -> None:
-    """Le CSV que export_jira_api.py écrirait pour ces tickets (sans table d'équipes : libellés renvoyés tels quels)."""
-    api = []
-    for x in tickets:
-        liens = [{"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "outwardIssue": {"key": c}}
-                 for c in x["sortants"]]
-        liens += [{"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"key": c}}
-                  for c in x["entrants"]]
-        api.append({"key": x["cle"], "fields": {
-            "issuetype": {"name": x["type"]}, "status": {"name": x["etat"], "statusCategory": {"name": x["cat"]}},
-            "created": date_api(jour(x["cree"])), "resolutiondate": date_api(jour(x["resolu"])),
-            "resolution": {"name": x["motif"]} if x["motif"] else None,
-            "statuscategorychangedate": date_api(jour(x["debut"])), "parent": {"key": x["parent"]} if x["parent"] else None,
-            "issuelinks": liens, CHAMP: [{"value": x["equipe"]}]}})
-    lignes, _ = ex.construire_csv(api, CHAMP, "Team")
-    ex.ecrire_csv(chemin, lignes)
-
-
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -92,13 +69,14 @@ class Base(unittest.TestCase):
 
     def lancer(self, *args: str, attendu: int = 0) -> str:
         env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.ws)}
-        r = subprocess.run(["uv", "run", "--with", "pyyaml", str(SCRIPT), *args], env=env, capture_output=True, text=True)
+        script = getattr(self, "script", SCRIPT)
+        r = subprocess.run(["uv", "run", "--with", "pyyaml", str(script), *args], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, attendu, r.stdout + r.stderr)
         return r.stdout + r.stderr
 
-    def csv(self, tickets: list[dict], nom: str = "manuel.csv", api: bool = False, **kw) -> str:
+    def csv(self, tickets: list[dict], nom: str = "manuel.csv", **kw) -> str:
         chemin = self.ws / nom
-        (ecrire_api(chemin, tickets) if api else ecrire_manuel(chemin, tickets, **kw))
+        ecrire_manuel(chemin, tickets, **kw)
         return str(chemin)
 
     def calcul(self, *exports: str, extra=(), nom="t") -> dict:
@@ -189,19 +167,17 @@ class AretesDuGraphe(Base):
 
 
 class ManuelEtApi(Base):
-    def test_meme_carte_depuis_le_csv_manuel_et_le_csv_de_l_api(self):
+    """Le CSV de l'API n'existe plus (database-only) : la carte vient de la base (ici, des fixtures CSV via le chargeur de test)."""
+
+    def test_liens_vers_un_ticket_absent_comptes_hors_export(self):
         tickets = Sens.TICKETS + [
             t("BBB-3", "Beta", sortants=["ZZZ-9"]),                                  # vers un ticket absent de l'export
             t("BBB-4", "Beta", entrants=["ZZZ-8"])]
-        manuel = self.calcul(self.csv(tickets), nom="m")
-        api = self.calcul(self.csv(tickets, nom="api.csv", api=True), nom="a")
-        for rapport in (manuel, api):
-            rapport.pop("export"); rapport.pop("nom")
-        self.assertEqual(manuel, api)
-        self.assertEqual(api["hors_export"], 2)
+        rapport = self.calcul(self.csv(tickets), nom="m")
+        self.assertEqual(rapport["hors_export"], 2)
 
-    def test_diagnostic_lit_les_colonnes_de_l_api(self):
-        sortie = self.lancer("diagnose", self.csv(Sens.TICKETS, nom="api.csv", api=True))
+    def test_diagnostic_dit_le_mode_oriente_sans_cle_ni_nom(self):
+        sortie = self.lancer("diagnose", self.csv(Sens.TICKETS))
         self.assertIn("Mode : orienté", sortie)
         self.assertIn("Blocks", sortie)
         self.assertIn("dépendance (sortant = bloque)", sortie)
@@ -228,17 +204,15 @@ class ManuelEtApi(Base):
         self.assertEqual(r["matrice_ouverte"], seul["matrice_ouverte"])
         self.assertEqual(r["dependances"], seul["dependances"])
 
-    def test_nombre_rond_de_tickets_signale_comme_tronque(self):
+    def test_nombre_rond_de_tickets_sans_indice_de_troncature(self):
+        """Décision Q9 : la base est lue en entier, un nombre rond de tickets ne donne plus d'avertissement ni de clé « tronques »."""
         beaucoup = [t(f"AAA-{i}", "Alpha") for i in range(1000)]
         sortie = self.lancer("diagnose", self.csv(beaucoup))
-        self.assertIn("Attention : 1000 tickets, un nombre rond", sortie)
+        self.assertNotIn("nombre rond", sortie)
         r = self.calcul(self.csv(beaucoup), nom="r")
-        self.assertEqual(len(r["tronques"]), 1)
-
-    def test_colonne_de_cle_absente_arrete_avec_un_message(self):
-        chemin = self.ws / "sans-cle.csv"
-        chemin.write_text("Status,Team\nOpen,Alpha\n", encoding="utf-8")
-        self.assertIn("Colonne absente de l'export", self.lancer("diagnose", str(chemin), attendu=1))
+        self.assertNotIn("tronques", r)
+        md = (self.ws / "Flux-Lab" / "rapports" / f"dependances-r-{AUJOURDHUI.isoformat()}.md").read_text(encoding="utf-8")
+        self.assertNotIn("tronqué", md)
 
 
 class Perimetre(Base):

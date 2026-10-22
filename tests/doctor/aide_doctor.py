@@ -5,6 +5,9 @@ Ollama par un faux serveur local ; la base par un socket local ; launchctl, git 
 PATH (journal des appels dans $STUB_LOG) ; `security`, `psql` et `docker` par des doublures qui échouent et qui ne doivent jamais
 être appelées. Aucun réseau, aucun Docker, aucun Trousseau, aucune vraie session launchd. Rien n'est écrit hors du dossier temporaire.
 """
+import atexit
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -16,16 +19,19 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 RACINE = Path(__file__).resolve().parents[2]
 TOOLS = RACINE / "tools"
 DOCTOR = TOOLS / "doctor.py"
 sys.path.insert(0, str(TOOLS))
 
+import doctor  # noqa: E402
+
 SENTINELLE = "SENTINELLE-CONTENU-DE-SAUVEGARDE-9f3a"
 AUJOURDHUI = "2026-10-14"
 HEURE = "10:00"
-SCHEMAS = ("knowledge", "cases", "flow")
+SCHEMAS = ("knowledge", "cases", "flow", "quality-sans-texte")   # les dumps de tools/db_backup.sh, dump partiel de quality compris
 MODELES = {"embedding": None, "watch triage": None}   # remplis par modeles_du_depot()
 
 
@@ -37,6 +43,26 @@ def modeles_du_depot() -> list[str]:
 
 def gabarits_launchd() -> list[str]:
     return sorted(p.stem for p in (TOOLS).glob("com.pmzilla.*.plist"))
+
+
+_MODELE = []
+
+
+def modele_du_depot() -> Path:
+    """Le dépôt principal du faux laboratoire et son dossier d'exécution (worktree détaché au sommet de main, D3), construits une
+    seule fois par processus dans un dossier temporaire, puis copiés par test."""
+    if not _MODELE:
+        racine = Path(tempfile.mkdtemp(prefix="doctor-modele."))
+        atexit.register(shutil.rmtree, racine, ignore_errors=True)
+        principal = racine / "PMZilla-Lab" / "workspace"
+        principal.mkdir(parents=True)
+        git(principal, "init", "-q", "-b", "main")
+        (principal / "a.txt").write_text("a", encoding="utf-8")
+        git(principal, "add", "a.txt")
+        git(principal, "commit", "-q", "-m", "initial", env={"GIT_COMMITTER_DATE": "2026-10-13T08:00:00", "GIT_AUTHOR_DATE": "2026-10-13T08:00:00"})
+        git(principal, "worktree", "add", "-q", "--detach", str(racine / "PMZilla-Lab" / "run"), "main")
+        _MODELE.append(racine)
+    return _MODELE[0]
 
 
 class FauxOllama:
@@ -65,7 +91,7 @@ class FauxOllama:
 
         self.serveur = ThreadingHTTPServer(("127.0.0.1", 0), Gestionnaire)
         self.port = self.serveur.server_address[1]
-        self.fil = threading.Thread(target=self.serveur.serve_forever, daemon=True)
+        self.fil = threading.Thread(target=lambda: self.serveur.serve_forever(poll_interval=0.01), daemon=True)
         self.fil.start()
         self.actif = True
 
@@ -88,6 +114,8 @@ def git(dossier, *args, env=None, check=True):
 class Labo(unittest.TestCase):
     """Classe de base : un laboratoire en bonne santé dans self.base, que chaque test dégrade d'un seul point."""
 
+    TACHES = "une"      # tâches launchd installées dans l'état sain : « une » (chaque contrôle lance une doublure par tâche) ou « toutes »
+
     def setUp(self):
         self.base = Path(tempfile.mkdtemp(prefix="doctor-test."))
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
@@ -98,7 +126,7 @@ class Labo(unittest.TestCase):
         self.bin = self.base / "bin"
         self.journal_appels = self.base / "appels.log"
         self.flux = self.base / "flux.yaml"
-        self.principal = self.base / "principal"
+        self.principal = self.maison / "PMZilla-Lab" / "workspace"   # le dossier du lab (parent) porte le dossier d'exécution par défaut
         for d in (self.donnees, self.journaux, self.agents, self.bin):
             d.mkdir(parents=True)
         self.journal_appels.write_text("", encoding="utf-8")
@@ -128,15 +156,10 @@ class Labo(unittest.TestCase):
             chemin.chmod(0o755)
 
     def _depot_principal(self):
-        self.principal.mkdir()
-        git(self.principal, "init", "-q", "-b", "main")
-        (self.principal / "a.txt").write_text("a", encoding="utf-8")
-        git(self.principal, "add", "a.txt")
-        git(self.principal, "commit", "-q", "-m", "initial", env={"GIT_COMMITTER_DATE": "2026-10-13T08:00:00", "GIT_AUTHOR_DATE": "2026-10-13T08:00:00"})
-        # Le dossier d'exécution (D3) : un worktree détaché au sommet de main, à l'emplacement par défaut du doctor.
+        """Copie du modèle (construit une fois par processus) à l'emplacement du lab, puis réparation des chemins absolus du worktree."""
         self.run = self.maison / "PMZilla-Lab" / "run"
-        self.run.parent.mkdir(parents=True, exist_ok=True)
-        git(self.principal, "worktree", "add", "-q", "--detach", str(self.run), "main")
+        shutil.copytree(modele_du_depot() / "PMZilla-Lab", self.maison / "PMZilla-Lab", symlinks=True)
+        git(self.principal, "worktree", "repair", str(self.run))
 
     def avancer_main(self, jour="2026-10-13"):
         """Un nouveau commit sur main, dans le dépôt principal : le dossier d'exécution est alors en retard."""
@@ -165,13 +188,31 @@ class Labo(unittest.TestCase):
         return dossier
 
     def _base_de_donnees(self):
+        # Le faux port accepte et referme chaque connexion : sans accept, la file d'attente (listen) se remplissait au fil des
+        # lancements d'un même test et une connexion finissait refusée (test de parité à 8 lancements, rouge par intermittence).
         self.socket_base = socket.socket()
         self.socket_base.bind(("127.0.0.1", 0))
-        self.socket_base.listen(5)
+        self.socket_base.listen(64)
         self.port_base = self.socket_base.getsockname()[1]
+        threading.Thread(target=self._accepter_base, args=(self.socket_base,), daemon=True).start()
         self.addCleanup(self.fermer_base)
 
+    @staticmethod
+    def _accepter_base(serveur):
+        while True:
+            try:
+                connexion, _ = serveur.accept()
+            except OSError:      # socket fermé par fermer_base : fin du fil
+                return
+            connexion.close()
+
     def fermer_base(self):
+        # shutdown() avant close() : sous Linux, close() d'un socket en écoute pendant un accept() bloqué ne libère pas le port,
+        # que le doctor voyait encore ouvert (premier passage de la CI locale, 2026-10-20).
+        try:
+            self.socket_base.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             self.socket_base.close()
         except OSError:
@@ -184,7 +225,8 @@ class Labo(unittest.TestCase):
         self.ecrire_sauvegarde(AUJOURDHUI, SCHEMAS)
         self.ecrire_hors_mac(derniere_reussite="2026-10-13")
         self.ecrire_flux("2027-06-01")
-        for etiquette in gabarits_launchd():
+        gabarits = gabarits_launchd()
+        for etiquette in (gabarits if self.TACHES == "toutes" else gabarits[:1]):
             self.installer_tache(etiquette)
 
     def installer_tache(self, etiquette, charge=True):
@@ -255,12 +297,6 @@ class Labo(unittest.TestCase):
             lignes.append(f"jira_token_expires: {expiration}")
         self.flux.write_text("\n".join(lignes) + "\n" + extra, encoding="utf-8")
 
-    def ouvrir_parite(self, verdict=None, jour=AUJOURDHUI):
-        (self.donnees / "parite-sqlite").write_text("2026-10-10\n", encoding="utf-8")
-        journal = self.donnees / "parite-sqlite.log"
-        if verdict:
-            journal.write_text(f"{jour} {verdict} livres 10 passages 100 figures 3\n", encoding="utf-8")
-
     # --- lancement ----------------------------------------------------------------------------------------------------
     def environnement(self, **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("DOCTOR_", "PMZILLA_LAB_"))}
@@ -274,9 +310,26 @@ class Labo(unittest.TestCase):
         env.update({k: str(v) for k, v in extra.items()})
         return env
 
-    def lancer(self, *args, env=None):
-        return subprocess.run([sys.executable, str(DOCTOR), *args], capture_output=True, text=True, timeout=60,
-                              env=self.environnement(**(env or {})), cwd=str(self.base))
+    def lancer(self, *args, env=None, reel=False):
+        """Lance le doctor. Par défaut dans le processus (point d'entrée `main`, environnement remplacé, sorties captées, dossier
+        courant = la base temporaire) ; `reel=True` : un vrai processus, pour ce qui vise le lancement lui-même."""
+        environnement = self.environnement(**(env or {}))
+        if reel:
+            return subprocess.run([sys.executable, str(DOCTOR), *args], capture_output=True, text=True, timeout=60,
+                                  env=environnement, cwd=str(self.base))
+        sortie, erreur = io.StringIO(), io.StringIO()
+        courant = os.getcwd()
+        os.chdir(self.base)
+        try:
+            with mock.patch.dict(os.environ, environnement, clear=True), \
+                    contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreur):
+                try:
+                    code = doctor.main(list(args))
+                except SystemExit as sortie_demandee:
+                    code = sortie_demandee.code
+        finally:
+            os.chdir(courant)
+        return subprocess.CompletedProcess([str(DOCTOR), *args], code, sortie.getvalue(), erreur.getvalue())
 
     def resultat_json(self, *args, env=None):
         p = self.lancer("--json", *args, env=env)

@@ -1,0 +1,46 @@
+# Exemple INVENTÉ de surcouche de l'organisation pour la grille de qualité des stories.
+# Produit générique, rôles seulement : aucune donnée d'une vraie organisation. La vraie surcouche vit hors du dépôt
+# (sous-dossier regles/ du dossier de contexte) ; sa forme est fixée par tools/story_quality_overlay.schema.json.
+identifier: exemple-surcouche
+version: 1
+product_context_summary: >-
+  Application web générique de prise de rendez-vous pour un réseau de centres de soins fictifs. Rôles : un patient,
+  un praticien, un responsable d'accueil. Désignations génériques : le portail, le planning, la file d'attente.
+structure:
+  story:
+    sections:
+      - Contexte
+      - Besoin du rôle concerné
+      - Critères d'acceptation
+    definition_of_ready:
+      - Le rôle concerné est nommé
+      - Les critères d'acceptation sont testables
+    vocabulary:
+      - Étape du Discovery Workflow
+  epic:
+    sections:
+      - Problème
+      - Résultat attendu
+      - Mesure
+    definition_of_ready:
+      - Le problème est formulé du point de vue d'un rôle
+    vocabulary:
+      - Étape du Discovery Workflow
+criteria:
+  story:
+    - code: exemple-role-nomme
+      label_fr: Rôle concerné nommé
+      label_en: Named role
+      definition: La story désigne le rôle qui en bénéficie (un rôle, jamais une personne).
+      engine_question: La story nomme-t-elle un rôle bénéficiaire identifiable ?
+      not_applicable_condition: Story purement technique sans bénéficiaire direct.
+      link: ticket_template
+  epic:
+    - code: exemple-lien-objectif
+      label_fr: Lien avec un objectif ou un problème
+      label_en: Link to an objective or a problem
+      definition: L'epic rattache son contenu à un objectif ou à un problème du produit.
+      engine_question: L'epic nomme-t-elle l'objectif ou le problème auquel elle répond ?
+      link: discovery_workflow_step
+# Pour désactiver un critère du socle, ajouter la clé « disabled » : une liste d'éléments « code » (un code du socle)
+# et « reason » (la raison, jamais affichée ni envoyée). Un code inconnu du socle est refusé.

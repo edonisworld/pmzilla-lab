@@ -3,27 +3,29 @@
 # dependencies = ["psycopg[binary]"]
 # ///
 """
-PMZilla Lab : lecture du schéma flow de la base par les scripts de flux (lot 6, docs/pmzilla/application.md, 5.3).
+PMZilla Lab : lecture du schéma flow de la base par les outils de rapport (lot 6, docs/pmzilla/application.md, 5.3 ; change
+database-only : la base est la seule source des outils de rapport).
 
-Module de bibliothèque, sans ligne de commande. flux_jira.py et dependencies_jira.py l'importent seulement avec
-`--source db` (import tardif : la voie CSV ne charge ni psycopg ni ce module). Les fonctions rendent exactement les
-structures des lecteurs de CSV, pour que les rapports soient identiques à ceux de la voie CSV avec les mêmes données :
+Module de bibliothèque, sans ligne de commande. flux_jira.py, dependencies_jira.py, epic_statuses.py et segment_sample.py
+l'importent à la lecture (import tardif : psycopg n'est chargé que pour la base). Les fonctions rendent :
 
-    lire_tickets_flux(settings)  ->  (tickets, found, illisibles, doublons), comme flux_jira.read_exports
-    lire_dependances(settings)   ->  le dictionnaire de dependencies_jira.read_exports
-    lire_historique(settings)    ->  {CLÉ_MAJUSCULES: [[date ISO, départ, arrivée], ...]}, comme flux_jira.charger_historique
+    lire_tickets_flux(settings)  ->  (tickets, found, illisibles, doublons) : les tickets du rapport de flux
+    lire_dependances(settings)   ->  le dictionnaire de la carte des dépendances (tickets, liens, colonnes, types de liens)
+    lire_historique(settings)    ->  {CLÉ_MAJUSCULES: [[date ISO, départ, arrivée], ...]}, une entrée par ticket « avec historique »
     lire_donnees_cycles(settings, etiquettes_revue)  ->  une liste d'éléments (type, projet, résolution, étiquettes et versions avec
                                  leurs périodes, transitions des tickets à étiquette Epic Review) pour `flux_jira.py cycles`
+    lire_epics(settings, motifs_exclus)  ->  un élément par épic (types d'épic des réglages), sans clé, pour `flux_jira.py epics`
+                                 (epic-flow-report, conception D13) : instants avec le fuseau d'export, classe de la résolution,
+                                 équipes dans l'ordre d'attribution, transitions, périodes des étiquettes déclarées par rôle
 
 Connexion : db.connect() puis SET ROLE pmzilla_flow_ro (lecture seule sur les tables de flow, aucun autre rôle). Une erreur
 de connexion ou de rôle est levée en ErreurBase (message sans mot de passe).
 
-Dates : le CSV de l'export API est écrit dans le fuseau du réglage export_timezone (clé interne export_fuseau, Europe/Paris
-par défaut). La lecture convertit « timestamptz -> même fuseau -> date naïve ». resolu_a est la date de résolution à la minute,
-comme history_common.parse_moment.
+Dates : les dates sont lues dans le fuseau du réglage export_timezone (clé interne export_fuseau, Europe/Paris par défaut). La
+lecture convertit « timestamptz -> même fuseau -> date naïve ». resolu_a est la date de résolution à la minute.
 
-Les éléments liés aux fichiers CSV reçoivent des valeurs neutres : `found` donne le premier nom de chaque colonne des réglages
-(aucun en-tête de fichier), `illisibles` et `doublons` valent 0, `fichiers` vaut ["base"] et `tronques` est vide.
+Les éléments hérités des fichiers reçoivent des valeurs neutres : `found` donne le premier nom de chaque colonne des réglages,
+`illisibles` et `doublons` valent 0, `fichiers` vaut ["base"].
 Les tickets sont rendus par projet puis par numéro de clé (ordre stable, celui d'un export trié par clé).
 Les tickets marqués hors export (out_of_export_at non nul) ne sont rendus par aucun lecteur.
 Les tickets sans transition figurent dans l'historique avec une liste vide (historique collecté, ticket jamais déplacé).
@@ -31,12 +33,11 @@ Les tickets sans transition figurent dans l'historique avec une liste vide (hist
 from __future__ import annotations
 
 import datetime as dt
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 import history_common as commun
 
 ROLE_LECTURE = "pmzilla_flow_ro"
-FUSEAU_PAR_DEFAUT = "Europe/Paris"
 SANS_EQUIPE = "(sans équipe)"
 NOM_SOURCE = "base"
 SENS_BASE = {"inward": "entrant", "outward": "sortant"}
@@ -49,12 +50,12 @@ def _erreur():
 
 
 def fuseau_export(settings: dict) -> ZoneInfo:
-    """Fuseau des dates du CSV (réglage export_timezone), comme export_jira_api.fuseau_export."""
-    nom = str(settings.get("export_fuseau") or FUSEAU_PAR_DEFAUT).strip()
+    """Fuseau des dates du CSV : la règle partagée de history_common (idée #169, D9) ; un fuseau inconnu garde l'erreur de base
+    qui nomme le réglage et le fuseau."""
     try:
-        return ZoneInfo(nom)
-    except (ZoneInfoNotFoundError, ValueError):
-        raise _erreur()(f"export_timezone « {nom} » n'est pas un fuseau horaire connu (exemple : {FUSEAU_PAR_DEFAUT}).") from None
+        return commun.fuseau_export(settings)
+    except commun.ErreurFuseau as erreur:
+        raise _erreur()(f"export_timezone « {erreur.nom} » n'est pas un fuseau horaire connu (exemple : {commun.FUSEAU_PAR_DEFAUT}).") from None
 
 
 def ouvrir():
@@ -83,8 +84,9 @@ def _lire(settings: dict, requete: str, parametres: dict | None = None):
 
 
 def noms_colonnes(settings: dict) -> dict[str, str]:
-    """Premier nom de chaque colonne des réglages : ce que `found` rend à la place des en-têtes d'un fichier."""
-    return {champ: noms[0] for champ, noms in settings["colonnes"].items() if noms}
+    """Premier nom de chaque colonne des réglages : ce que `found` rend à la place des en-têtes d'un fichier. Des réglages sans
+    colonnes (ceux de history_jira.py, qui n'ajoute pas les colonnes par défaut de flux_jira.py) donnent un dictionnaire vide (R-103)."""
+    return {champ: noms[0] for champ, noms in (settings.get("colonnes") or {}).items() if noms}
 
 
 REQUETE_TICKETS = """
@@ -167,7 +169,6 @@ def lire_dependances(settings: dict) -> dict:
         "liens_types": [(f"{SENS_ENTETE[sens]} issue link ({typ})", typ, sens) for typ, sens in sorted(typees)],
         "liens_simples": ["Linked Issues"] if simples else [],
         "fichiers": [NOM_SOURCE],
-        "tronques": [],
     }
 
 
@@ -229,3 +230,77 @@ def lire_donnees_cycles(settings: dict, etiquettes_revue: list[str]) -> list[dic
             if cle in elements:
                 elements[cle][champ].append((a, b, c))
     return list(elements.values())
+
+
+# --- lecteur des épics (epic-flow-report, conception D13, tâche 5.1) ---------------------------------------------------------------
+# Chaque requête passe par flow.issues, écarte les tickets marqués hors export et ne garde que les types d'épic des réglages. La clé ne
+# sert qu'à relier les lignes dans ce module et ne sort jamais ; le texte d'une étiquette ne sert qu'à lui trouver son rôle.
+
+REQUETE_EPICS = """
+SELECT i.key, i.project, i.type, i.status, i.created_at, i.resolved_at, i.resolution, i.has_history, t1.name
+FROM flow.issues i LEFT JOIN flow.teams t1 ON t1.id = i.team_id
+WHERE i.out_of_export_at IS NULL AND lower(i.type) = ANY(%(types)s)
+ORDER BY i.project, length(i.key), i.key
+"""
+REQUETE_EQUIPES_EPICS = (
+    "SELECT it.issue_key, t.name FROM flow.issue_teams it JOIN flow.teams t ON t.id = it.team_id "
+    "JOIN flow.issues i ON i.key = it.issue_key WHERE i.out_of_export_at IS NULL AND lower(i.type) = ANY(%(types)s) "
+    "ORDER BY it.issue_key, it.position"
+)
+REQUETE_TRANSITIONS_EPICS = (
+    "SELECT tr.issue_key, tr.transitioned_at, tr.from_status, tr.to_status FROM flow.transitions tr "
+    "JOIN flow.issues i ON i.key = tr.issue_key WHERE i.out_of_export_at IS NULL AND lower(i.type) = ANY(%(types)s) "
+    "ORDER BY tr.issue_key, tr.transitioned_at, tr.id"
+)
+REQUETE_PERIODES_EPICS = (
+    "SELECT p.issue_key, p.label, p.added_at, p.removed_at FROM flow.issue_label_periods p "
+    "JOIN flow.issues i ON i.key = p.issue_key WHERE i.out_of_export_at IS NULL AND lower(i.type) = ANY(%(types)s) "
+    "AND p.label = ANY(%(etiquettes)s) ORDER BY p.issue_key, p.added_at, p.label"
+)
+
+
+def roles_des_etiquettes(settings: dict) -> dict[str, dict]:
+    """{texte de l'étiquette: {"role", "cycle", "sens"}} pour les étiquettes déclarées de tous les rôles. `cycle` : clé de cycle d'une
+    étiquette de cycle (ou None), `sens` : sens d'une étiquette de confirmation (ou None)."""
+    import flux_config as cfg
+    roles: dict[str, dict] = {}
+    for role, contenu in (cfg.declared_labels(settings) or {}).items():
+        for etiquette in contenu["labels"]:
+            roles[etiquette] = {"role": role, "cycle": (contenu.get("cycle_keys") or {}).get(etiquette),
+                                "sens": (contenu.get("meanings") or {}).get(etiquette)}
+    return roles
+
+
+def lire_epics(settings: dict, motifs_exclus) -> list[dict]:
+    """Un élément par épic : {"type", "projet", "etat", "cree", "resolu" (instants avec le fuseau d'export), "classe" ("done" ou
+    "not_done" d'après `motifs_exclus`, None sans résolution ; jamais le texte de la résolution), "equipes" (ordre d'attribution), "transitions"
+    [(instant, départ, arrivée)], "a_historique", "periodes" [{"role", "cycle", "sens", "ajout", "retrait"}]}. Aucune clé, aucun texte
+    d'étiquette. `motifs_exclus` : les résolutions « non faites » en minuscules."""
+    import flux_config as cfg
+    fuseau = fuseau_export(settings)
+    parametres = {"types": [t.strip().casefold() for t in cfg.epic_types(settings)]}
+    exclus = {m.casefold() for m in motifs_exclus}
+    epics: dict[str, dict] = {}
+    for cle, projet, typ, etat, cree, resolu, motif, historique, premiere in _lire(settings, REQUETE_EPICS, parametres):
+        epics[cle] = {"type": (typ or "").strip() or "?", "projet": projet or (cle.rsplit("-", 1)[0].upper() if "-" in cle else ""),
+                      "etat": (etat or "").strip(), "cree": cree.astimezone(fuseau) if cree else None,
+                      "resolu": resolu.astimezone(fuseau) if resolu else None,
+                      "classe": None if not resolu else ("not_done" if (motif or "").strip().casefold() in exclus else "done"),
+                      "equipes": [], "transitions": [], "a_historique": bool(historique), "periodes": [], "_premiere": premiere}
+    for cle, nom in _lire(settings, REQUETE_EQUIPES_EPICS, parametres):
+        if cle in epics:
+            epics[cle]["equipes"].append(nom)
+    for cle, instant, depart, arrivee in _lire(settings, REQUETE_TRANSITIONS_EPICS, parametres):
+        if cle in epics:
+            epics[cle]["transitions"].append((instant.astimezone(fuseau), depart, arrivee))
+    roles = roles_des_etiquettes(settings)
+    if roles:
+        for cle, etiquette, ajout, retrait in _lire(settings, REQUETE_PERIODES_EPICS, {**parametres, "etiquettes": list(roles)}):
+            if cle in epics and etiquette in roles:
+                epics[cle]["periodes"].append({**roles[etiquette], "ajout": ajout.astimezone(fuseau),
+                                               "retrait": retrait.astimezone(fuseau) if retrait else None})
+    for epic in epics.values():       # première équipe de l'attribution quand le ticket n'a pas de ligne dans la table des équipes
+        premiere = epic.pop("_premiere")
+        if not epic["equipes"] and premiere:
+            epic["equipes"] = [premiere]
+    return list(epics.values())

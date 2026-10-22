@@ -45,6 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import book_usage_transcripts as transcripts
+import lab_paths
 import watch_paths
 
 import yaml
@@ -83,7 +84,7 @@ def vocabulary() -> dict:
 # ---------------------------------------------------------------------------
 
 def workspace() -> Path:
-    return Path(os.environ.get("PMZILLA_LAB_WORKSPACE") or "~/PMZilla-Lab/workspace").expanduser()
+    return lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 
 
 def data_dir() -> Path:
@@ -221,7 +222,8 @@ def turn_records(turn) -> list[dict]:
     records = [{"turn": turn_key(turn.session, turn.index), "day": turn.day, "bucket": bucket_of(text),
                 "books": count_books(turn.main_calls, text), "outside_library": outside_count(text), "version": RECORD_VERSION}]
     if turn.critic_active and (turn.side_calls or any(t.strip() for t in turn.side_texts)):
-        final = next((t for t in reversed(turn.side_texts) if t.strip()), "")
+        final = (turn.critic_results[-1] if turn.critic_results
+                 else next((t for t in reversed(turn.side_texts) if t.strip()), ""))
         records.append({"turn": turn_key(turn.session, turn.index, ":critic"), "day": turn.day, "bucket": CRITIC,
                         "books": count_books(turn.side_calls, final), "outside_library": outside_count(final), "version": RECORD_VERSION})
     return records

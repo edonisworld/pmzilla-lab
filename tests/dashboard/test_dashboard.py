@@ -85,7 +85,7 @@ def donnees_completes(root: Path) -> dict:
     write(ws / "Flux-Lab" / "rapports" / "evolution-equipe-x-2026-10-10.md",
           "# Évolution\n\n## Ce qui a bougé\n\n- Débit : -30 %\n- WIP : +20 %\n\n## Débit\n\ndétail\n")
     write(ws / "tools" / "mapping_lab.py",
-          "MAPPING = {\n    # À re-télécharger d'une autre source :\n    #   Livre Absent Un (Auteur) F ; Livre Absent Deux (Autre) D ; The Alpha et The Beta (Duo) F.\n    #   Kanban (Anderson), le livre complet : DO (le fichier actuel est un résumé).\n\n    'x': 'F',\n}\n")
+          "MAPPING = {\n    # À re-télécharger d'une autre source :\n    #   Livre Fictif A (Auteur Fictif) F ; Livre Fictif B (Autre Fictif) D ; The Fictive C et The Fictive D (Duo Fictif) F.\n    #   Livre Fictif E (Écrivain Fictif), le livre complet : DO (le fichier actuel est un résumé).\n\n    'x': 'F',\n}\n")
     write(ws / "_bmad-output" / "pmzilla" / "2026-10-10-diagnostic.md",
           "# Diagnostic\n\n## Ce que Critic conteste\n\n1. Première objection.\n2. Seconde objection.\n")
     write(ws / "Watch-Lab" / "watch" / "article.md", "SENTINELLE_ARTICLE_TEXTE")
@@ -184,9 +184,9 @@ class TableauDeBord(unittest.TestCase):
             self.assertIn("3 jours consécutifs", page)
             self.assertIn("Livre Sans Auteur", page)               # livre sans auteur listé
             self.assertNotIn("Livre Avec Auteur</li>", page)
-            self.assertIn("<li>Livre Absent Un (Auteur)</li>", page)   # livres à re-télécharger, un par ligne
-            self.assertIn("<li>The Beta (Duo)</li>", page)
-            self.assertIn("<li>Kanban (Anderson)</li>", page)
+            self.assertIn("<li>Livre Fictif A (Auteur Fictif)</li>", page)   # livres à re-télécharger, un par ligne
+            self.assertIn("<li>The Fictive D (Duo Fictif)</li>", page)
+            self.assertIn("<li>Livre Fictif E (Écrivain Fictif)</li>", page)
             self.assertIn("à re-télécharger (5)", page)            # total
             self.assertNotIn("Auteur) F", page)                    # pas de code de domaine
             self.assertNotIn("le livre complet", page)             # pas de phrase d'explication
@@ -278,6 +278,7 @@ class TableauDeBord(unittest.TestCase):
     def test_sans_aucune_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "absent-ws").mkdir()    # un dossier de contenu vide : un dossier absent arrête l'outil (code 78, R-77)
             env = {"PMZILLA_LAB_WORKSPACE": str(root / "absent-ws"), "PMZILLA_LAB_DATA": str(root / "absent-data"),
                    "PMZILLA_LAB_LOGS": str(root / "absent-logs")}
             result, page = generer(root, env)
@@ -309,7 +310,7 @@ class TableauDeBord(unittest.TestCase):
             self.assertIn("source illisible", page)
             bibliotheque = page[page.index('<section id="bibliotheque">'):page.index('<section id="qualite">')]
             self.assertEqual(bibliotheque.count("source illisible (ConnectionError)"), 2)   # livres et articles sans auteur
-            self.assertIn("<li>Livre Absent Un (Auteur)</li>", bibliotheque)                # les livres à re-télécharger restent
+            self.assertIn("<li>Livre Fictif A (Auteur Fictif)</li>", bibliotheque)                # les livres à re-télécharger restent
             self.assertNotIn("message secret", page)                                         # le type de l'erreur, jamais le message
 
 

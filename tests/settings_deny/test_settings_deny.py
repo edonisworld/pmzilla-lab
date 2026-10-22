@@ -29,9 +29,6 @@ SCRIPTS_EXPORT = ("export_jira_api.py",)
 # table-equipes, teams-table et compare : sous-commandes supprimées du script, règles deny gardées (compare ajoutée, elle couvre aussi comparer).
 SOUS_COMMANDES_EXPORT = [("diagnostic", ()), ("diagnose", ()), ("champs", ()), ("fields", ()),
                          ("table-equipes", ()), ("teams-table", ()), ("compare", ()), ("comparer", ()), ("export", ())]
-# Sous-commandes sans Jira, à ne pas interdire (la règle ne doit pas être plus large que nécessaire).
-LOCALES = [("history_jira.py", "check --dormants export.csv"), ("historique_jira.py", "controle --dormants export.csv")]
-
 LANCEURS = ("uv run", "uv run python", "uv run python3", "uv run --with pyyaml --with requests", "uv run -q",
             "python", "python3", "python3 -I")
 CHEMINS = ("tools/{s}", "./tools/{s}", "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}",
@@ -88,16 +85,16 @@ class CommandesJira(Base):
     def test_regles_d_avant_le_lot_3_toujours_presentes(self):
         self.assertEqual([r for r in REGLES_ANCIENNES if r not in self.deny], [])
 
-    def test_commandes_sans_jira_non_interdites(self):
-        for script, reste in LOCALES:
-            for lanceur in ("uv run", "python3"):
-                commande = f"{lanceur} tools/{script} {reste}"
-                self.assertFalse(self.interdite(commande), commande)
+    # Le cas « sous-commande locale non interdite » (history_jira.py check sans clé, sur des fichiers) est retiré avec la voie CSV (change
+    # database-only, D12) : `check` lit la base, donc il est interdit avec ou sans clé (tests/settings_deny/test_settings_deny_database_only.py).
 
     def test_toute_sous_commande_des_scripts_est_classee(self):
         """Une sous-commande ajoutée à un script Jira doit être rangée ici (interdite ou locale), pas oubliée."""
         connues = ({n for n, _ in SOUS_COMMANDES_HISTORIQUE} | {n for n, _ in SOUS_COMMANDES_EXPORT}
-                   | {"comparer", "compare"})      # compare : sous-commande retirée, cachée dans export_jira_api.py
+                   | {"comparer", "compare"}      # compare : sous-commande retirée, cachée dans export_jira_api.py
+                   | {"check-teams", "migrate-teams"}      # sans Jira, interdites à la session par test_settings_deny_equipes.py
+                   | {"review-teams"}      # sans Jira, interdite à la session par test_settings_deny_revue_equipes.py (names-and-team-review)
+                   | {"extract-teams"})      # sans Jira, interdite à la session par test_settings_deny_team_names.py (team-names-readable, D5)
         for script in SCRIPTS_HISTORIQUE + SCRIPTS_EXPORT:
             chemin = TOOLS / script
             if not chemin.exists():
@@ -156,6 +153,15 @@ class JiraEnBase(Base):
             commande = f"{lanceur} {chemin.format(s=script)} --dry-run"
             self.assertTrue(self.interdite(commande), commande)
 
+    def test_reconstruction_de_la_couche_brute_interdite_avec_chaque_lanceur_et_chemin(self):
+        """Change jira-data-architecture (D5, tâche 10.1) : `flow_import.py --rebuild`, `--apply` et `--seed` sont des options de l'outil
+        d'import, déjà couvert : aucune règle nouvelle n'est attendue, ces cas le prouvent pour chaque lanceur et chaque chemin."""
+        options = ("--rebuild", "--rebuild --apply", "--rebuild --seed", "--rebuild --seed --apply", "--rebuild --language en",
+                   "--language en --rebuild --apply")
+        for lanceur, chemin, option in itertools.product(LANCEURS, CHEMINS, options):
+            commande = f"{lanceur} {chemin.format(s='flow_import.py')} {option}"
+            self.assertTrue(self.interdite(commande), commande)
+
     def test_test_de_restauration_interdit_avec_chaque_lanceur_et_chemin(self):
         for lanceur, chemin in itertools.product(("bash", "sh", "zsh", "uv run", ""), ("tools/{s}", "./tools/{s}", "~/PMZilla-Lab/workspace/tools/{s}",
                                                                                      "$HOME/PMZilla-Lab/workspace/tools/{s}",
@@ -169,13 +175,15 @@ class JiraEnBase(Base):
 
     def test_calcul_depuis_la_base_interdit(self):
         for calcul, option, lanceur in itertools.product(self.CALCULS, self.SOURCES_BASE, ("uv run", "python3", "uv run --with numpy")):
-            for commande in (f"{lanceur} tools/{calcul} {option}", f"{lanceur} tools/{calcul} --name x {option} --weeks 26",
-                             f"{lanceur} ~/PMZilla-Lab/workspace/tools/flux_jira.py {option} compute"):
+            for commande in (f"{lanceur} tools/{calcul} {option}", f"{lanceur} tools/{calcul} --name x {option} --weeks 26"):
                 self.assertTrue(self.interdite(commande), commande)
+        # La forme « option avant la sous-commande » (`flux_jira.py --source db compute`) n'était refusée que par les règles à joker
+        # initial sur --source, retirées par database-only (D12). Ce n'est pas un lancement : le parseur principal n'a aucune option avant
+        # la sous-commande et sort en erreur d'usage avant toute lecture (prouvé par tests/flux_jira/test_lecteur_base.py,
+        # test_option_avant_la_sous_commande_est_une_erreur_d_usage).
 
-    def test_calcul_depuis_les_csv_non_interdit(self):
-        for calcul in self.CALCULS + ("flux_jira.py compute exports.csv --source csv",):
-            self.assertFalse(self.interdite(f"uv run tools/{calcul}"), calcul)
+    # Le cas « calcul depuis des CSV non interdit » est retiré avec la voie CSV (change database-only, D12) : `statuses` et `compute` lisent la
+    # base, la session ne les lance plus (tests/settings_deny/test_settings_deny_database_only.py, étape utilisateur 13.2).
 
     def test_psql_docker_exec_et_sauvegardes(self):
         for commande in ("psql -h 127.0.0.1 pmzilla", "cd x && psql pmzilla", "docker exec pmzilla-lab-db-1 psql -U postgres",

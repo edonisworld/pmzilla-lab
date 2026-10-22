@@ -5,6 +5,7 @@
 #     bash tools/offsite_backup.sh copy [--include-protected] copie la dernière sauvegarde ordinaire de la base et du sanctum, avec manifeste
 #     bash tools/offsite_backup.sh restore-test [--force] [--detail]     test mensuel : sommes de contrôle, restauration de la base dans un conteneur jetable
 #     bash tools/offsite_backup.sh status                     affiche l'état (dernières copies, âge) sans rien monter ni écrire
+#     bash tools/offsite_backup.sh postpone --reason "<cause>"   déclare le report de la copie du jour (journal de la copie, une ligne datée)
 #     bash tools/offsite_backup.sh --help
 #
 # Le disque est un volume APFS chiffré, retrouvé par son identifiant de volume (jamais par son nom ni par un chemin). macOS le
@@ -22,8 +23,22 @@
 # et cases restent. Le dump flux de la copie complète (manifeste vérifié) la plus récente n'est jamais retiré. Les copies de sanctum
 # ne sont jamais touchées.
 # La sauvegarde de sanctum protégée de la rotation locale n'est copiée que sur --include-protected, une fois, et n'est jamais tournée.
+# Le rapport de restore-test reporte les tables MANQUE (noms et comptes), les lignes d'échec et, quand la copie est antérieure à une
+# migration, la ligne « sauvegarde antérieure à la dernière migration appliquée » (numéros de migrations seulement).
 # Il n'affiche que des noms de copies (dates), des nombres de fichiers, des tailles et des statuts : jamais un nom de fichier d'une
 # copie, ni une valeur, ni le contenu du sanctum, ni le nom ou l'identifiant du volume (le nom n'est montré que par setup).
+#
+# Journal de la copie (change morning-guard, D8 à D10) : chaque ligne de la sous-commande copy commence par « AAAA-MM-JJ HH:MM:SS », et la
+# première dit « copie hors du Mac : lancement planifié » ou « lancement manuel ». Un lancement planifié (sa sortie est déjà le journal,
+# reconnu par l'identité du fichier) n'écrit rien de plus ; un lancement manuel écrit les mêmes lignes à l'écran et les ajoute au journal
+# (OFFSITE_COPY_LOG, défaut ~/Library/Logs/pmzilla-offsite-copy.log, la sortie du modèle launchd de la copie), sans doublon. Journal
+# impossible à écrire : la ligne « journal de la copie impossible à écrire », code de la copie inchangé.
+# postpone --reason "<cause>" : déclaration du report de la copie du jour, par l'auteur seul. La cause tient sur une ligne de 1 à 200
+# caractères et nomme une cause, jamais une personne. Copie du jour déjà prouvée : rien n'est écrit (code 0). Sinon une ligne
+# « AAAA-MM-JJ HH:MM:SS copie reportée déclarée : db-<jour> : <cause> » est ajoutée au journal (code 0) ; journal impossible à écrire :
+# code 1 ; cause absente, vide, sur plusieurs lignes ou trop longue : code 2, rien d'écrit. Ni disque, ni configuration, ni repère, ni
+# notification ; ni copie, ni sauvegarde, ni fichier d'état touchés ; aucune option de date : la déclaration vaut pour le jour même.
+# Le garde-fou des fins de branche (tools/morning_state.sh) l'accepte comme partie « copie » du jour, jamais pour la veille ni la sauvegarde.
 #
 # Compte lu par le contrôle de conservation (tools/flow_retention.py) : chaque copie écrit dans l'état la ligne unique
 #     flux copies_flux_anciennes=<N> age_jours=<A> date=<AAAA-MM-JJ>
@@ -39,12 +54,13 @@
 # Variables (pour les tests et le réglage) : OFFSITE_DONNEES (défaut ~/.pmzilla-lab), OFFSITE_SAUVEGARDES (défaut <données>/sauvegardes),
 # OFFSITE_DISKUTIL (utilitaire de disque, défaut diskutil), OFFSITE_MOUNT_CMD (défaut mount), OFFSITE_DATE (défaut : date du jour),
 # OFFSITE_GARDER_RECENTES (7), OFFSITE_GARDER_MOIS (12), OFFSITE_AGE_MAX_JOURS (7), OFFSITE_FLOW_AGE_DAYS (35), OFFSITE_RAPPORTS_GARDER (12), OFFSITE_RESTORE_SCRIPT
-# (défaut tools/db_restore_test.sh), OFFSITE_PROTEGEE (défaut bmad-memory-2026-10-07), OFFSITE_LIBRE_KO (place libre simulée, en Ko).
+# (défaut tools/db_restore_test.sh), OFFSITE_PROTEGEE (défaut bmad-memory-2026-10-07), OFFSITE_LIBRE_KO (place libre simulée, en Ko),
+# OFFSITE_COPY_LOG (journal de la copie, voir plus haut), OFFSITE_NOW (« AAAA-MM-JJ HH:MM:SS » : l'horodatage des lignes datées et l'horloge de postpone).
 # HYPOTHÈSE (à confirmer sur le macOS de l'auteur, tâche 1.3) : noms des clés de `diskutil info -plist`, réglables ici :
 # OFFSITE_CLE_UUID (VolumeUUID), OFFSITE_CLE_MONTAGE (MountPoint), OFFSITE_CLE_NOM (VolumeName), OFFSITE_CLES_CHIFFRE (« FileVault
 # Encryption » : la première clé vraie vaut chiffré), OFFSITE_CLE_VERROUILLE (Locked), OFFSITE_CLE_INTERNE (Internal), OFFSITE_CLE_RESEAU
 # (NetworkVolume), OFFSITE_CLE_FS (FilesystemType, types réseau : smbfs nfs afpfs webdav cifs autofs).
-# Lancé par son lien ~/PMZilla-Lab/offsite_backup.sh : le script résout le lien pour trouver son dossier de code. Il exporte
+# Lancé par son lien <dossier du lab>/offsite_backup.sh : le script résout le lien pour trouver son dossier de code. Il exporte
 # PMZILLA_LAB_WORKSPACE (dossier de contenu, défaut le dépôt de développement).
 # Repères de passage (D14) : copy crée horsmac-copie.encours, restore-test crée horsmac-restauration.encours (mkdir, pid, début) dans
 # PMZILLA_LAB_DATA (défaut : le dossier de données ci-dessus), après les contrôles d'argument ; retirés à la sortie par le seul processus
@@ -53,7 +69,7 @@
 set -uo pipefail
 umask 077
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
-# Le script se lance par son lien du dossier du labo (~/PMZilla-Lab/<script>) : on résout le lien pour trouver le dossier de code
+# Le script se lance par son lien du dossier du labo (<dossier du lab>/<script>) : on résout le lien pour trouver le dossier de code
 # (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
 SOI="$0"
 while [ -L "$SOI" ]; do
@@ -61,10 +77,10 @@ while [ -L "$SOI" ]; do
   case "$CIBLE_LIEN" in /*) SOI="$CIBLE_LIEN" ;; *) SOI="$(dirname "$SOI")/$CIBLE_LIEN" ;; esac
 done
 RACINE="$(cd "$(dirname "$SOI")/.." && pwd)"
-# Dossier de contenu : le dépôt de développement (défaut), jamais déduit de l'emplacement du code.
-if [ -z "${PMZILLA_LAB_WORKSPACE:-}" ]; then
-  if [ -d "$HOME/PMZilla-Lab/workspace" ]; then PMZILLA_LAB_WORKSPACE="$HOME/PMZilla-Lab/workspace"; else PMZILLA_LAB_WORKSPACE="$RACINE"; fi
-fi
+# Dossier de contenu : le module partagé tools/lab_paths.sh (variable, sinon dépôt Git du code) ; sinon code 78, avant tout pas.
+. "$RACINE/tools/lab_paths.sh"
+lab_paths_init || exit $?
+PMZILLA_LAB_WORKSPACE="$LAB_CONTENT_ROOT"
 export PMZILLA_LAB_WORKSPACE
 
 LAB="${OFFSITE_DONNEES:-$HOME/.pmzilla-lab}"
@@ -88,6 +104,20 @@ CLE_VERROUILLE="${OFFSITE_CLE_VERROUILLE:-Locked}"
 CLE_INTERNE="${OFFSITE_CLE_INTERNE:-Internal}"
 CLE_RESEAU="${OFFSITE_CLE_RESEAU:-NetworkVolume}"
 CLE_FS="${OFFSITE_CLE_FS:-FilesystemType}"
+# Journal de la copie (morning-guard D9) : par défaut la sortie du modèle launchd de la copie (un test statique compare les deux). Exporté
+# pour que le module de l'état du matin lise le même fichier.
+JOURNAL_COPIE="${OFFSITE_COPY_LOG:-$HOME/Library/Logs/pmzilla-offsite-copy.log}"
+export OFFSITE_COPY_LOG="$JOURNAL_COPIE"
+
+# --- Lignes datées du journal de la copie (morning-guard D8) : l'instant vient de OFFSITE_NOW (tests), sinon de l'horloge du système.
+horodatage() {
+  if [[ "${OFFSITE_NOW:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then printf '%s' "$OFFSITE_NOW"
+  else date '+%Y-%m-%d %H:%M:%S'; fi
+}
+horodater() {   # filtre : ajoute l'horodatage en tête de chaque ligne lue
+  local ligne
+  while IFS= read -r ligne || [ -n "$ligne" ]; do printf '%s %s\n' "$(horodatage)" "$ligne"; done
+}
 
 # --- Repère de passage (change run-worktree, D14) : dossier créé par mkdir dans le dossier de données du labo, avec le pid et le début.
 # Le repère ne protège pas d'un double passage : il dit seulement à la mise à jour du dossier d'exécution qu'un passage est en cours.
@@ -438,7 +468,28 @@ absence_notifier() {   # notifie l'âge de la dernière copie réussie, au plus 
     echo "$DATE" > "$NOTIF_ABSENCE" && chmod 600 "$NOTIF_ABSENCE"
   fi
 }
+copie_horodatee() {   # lance copy dans un second processus dont chaque ligne (sortie et erreurs) est datée ; ne revient pas
+  local lancement="manuel" code eau=(cat) impossible=0
+  # Identité du fichier : le fstat de la sortie standard contre le stat du journal (perl est livré avec macOS ; /dev/stdout ne convient
+  # pas, son inode n'est pas celui du fichier). Sans perl ou sans journal, le lancement compte comme manuel.
+  if [ -e "$JOURNAL_COPIE" ] && perl -e '@a = stat(STDOUT); @b = stat($ARGV[0]); exit(@a && @b && $a[0] == $b[0] && $a[1] == $b[1] ? 0 : 1)' "$JOURNAL_COPIE" 2>/dev/null; then
+    lancement="planifié"    # la sortie est déjà le journal : le planificateur porte les lignes datées, rien n'est ajouté ici
+  elif { : >> "$JOURNAL_COPIE"; } 2>/dev/null; then
+    eau=(tee -a "$JOURNAL_COPIE")
+  else
+    impossible=1
+  fi
+  {
+    [ "$impossible" -eq 0 ] || echo "journal de la copie impossible à écrire" | horodater
+    OFFSITE_INTERNE_HORODATE=1 OFFSITE_LANCEMENT="$lancement" bash "$SOI" copy "$@" 2>&1 | horodater
+    exit "${PIPESTATUS[0]}"
+  } | "${eau[@]}"
+  code=${PIPESTATUS[0]}
+  trap - EXIT; rm -rf "$TMP"   # le second processus a déjà fait sa sortie (état, notification, repère) : pas de seconde fois
+  exit "$code"
+}
 sous_commande_copy() {
+  [ -z "${OFFSITE_LANCEMENT:-}" ] || echo "copie hors du Mac : lancement $OFFSITE_LANCEMENT"
   INCLURE_PROTEGEE=0
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -536,8 +587,13 @@ sous_commande_restore_test() {
   if [ "$detail" -eq 1 ]; then bash "$RESTORE" --backup "$dossier_db" --detail > "$TMP/restauration.txt" 2>&1; code=$?
   else bash "$RESTORE" --backup "$dossier_db" > "$TMP/restauration.txt" 2>&1; code=$?; fi
   R "restauration de la base (db_restore_test.sh, code $code) :"
-  grep -E '^  [A-Za-z0-9_]+\.[A-Za-z0-9_]+ +[0-9]+ / [0-9]+ +[^ ]' "$TMP/restauration.txt" > "$TMP/comptes.txt"
-  grep -E '^  (RESTAURATION OK|ÉCHEC [a-z_]+ :)' "$TMP/restauration.txt" | cut -c1-120 >> "$TMP/comptes.txt"
+  # Comptes par table, y compris les lignes MANQUE (« - » à la place du compte restauré), puis les lignes d'échec (noms et nombres seulement).
+  grep -E '^  [A-Za-z0-9_]+\.[A-Za-z0-9_]+ +(-|[0-9]+) / [0-9]+ +[^ ]' "$TMP/restauration.txt" > "$TMP/comptes.txt"
+  grep -E '^  (RESTAURATION OK|ÉCHEC( [a-z_]+)? :)' "$TMP/restauration.txt" | cut -c1-200 >> "$TMP/comptes.txt"
+  # Migrations présentes dans les fichiers et la vraie base mais absentes de la copie testée (« présente dans : FV ») : la sauvegarde est
+  # antérieure à la dernière migration appliquée. Numéros seulement.
+  manquantes="$(sed -n 's/^    \([0-9][0-9]*\)|[^ |]* (présente dans : FV)$/\1/p' "$TMP/restauration.txt" | LC_ALL=C sort -n | paste -sd, - | sed 's/,/, /g')"
+  [ -z "$manquantes" ] || echo "  sauvegarde antérieure à la dernière migration appliquée : migrations absentes de la copie : $manquantes" >> "$TMP/comptes.txt"
   cat "$TMP/comptes.txt"
   sed 's/^/  /' "$TMP/comptes.txt" >> "$LIGNES_RAPPORT"
   # --detail : les erreurs de pg_restore (qui peuvent citer des valeurs) vont à l'écran seulement, jamais dans le rapport ni dans l'état.
@@ -578,6 +634,34 @@ sous_commande_status() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------------------
+# postpone (morning-guard D10) : l'auteur déclare le report de la copie du jour
+# ---------------------------------------------------------------------------------------------------------------------------
+sous_commande_postpone() {
+  local raison="" lu=0 longueur instant secondes
+  unset OFFSITE_NOTIFIER   # aucune notification, quoi qu'il arrive
+  if [ $# -eq 2 ] && [ "$1" = "--reason" ]; then raison="$2"; lu=1; fi
+  if [ "$lu" -eq 1 ]; then
+    longueur=$(printf '%s' "$raison" | LC_ALL=en_US.UTF-8 wc -m 2>/dev/null | tr -d ' ')
+    [[ "$longueur" =~ ^[0-9]+$ ]] || longueur=${#raison}
+    if [ "$longueur" -lt 1 ] || [ "$longueur" -gt 200 ] || [[ "$raison" == *[[:cntrl:]]* ]] || [[ ! "$raison" =~ [^[:space:]] ]]; then lu=0; fi   # une cause blanche vaut une cause vide
+  fi
+  [ "$lu" -eq 1 ] || echec 2 "raison du report requise (une ligne, au plus 200 caractères)"
+  # La copie du jour est-elle déjà prouvée ? Lue par le module partagé, à l'horloge de OFFSITE_NOW si elle est posée.
+  . "$RACINE/tools/morning_state.sh"
+  instant="$(horodatage)"
+  secondes=$(date -j -f '%Y-%m-%d %H:%M:%S' "$instant" +%s 2>/dev/null || date -d "$instant" +%s 2>/dev/null) || secondes=""
+  if [ "$(PMZILLA_RUN_NOW="${secondes:-$(date +%s)}" morning_copy_state)" = "prouvee" ]; then
+    echo "copie hors du Mac du jour déjà prouvée : rien n'est déclaré"
+    exit 0
+  fi
+  if ! { printf '%s copie reportée déclarée : db-%s : %s\n' "$instant" "$DATE" "$raison" >> "$JOURNAL_COPIE"; } 2>/dev/null; then
+    echec 1 "journal de la copie impossible à écrire"
+  fi
+  echo "copie hors du Mac du jour reportée : déclaration écrite"
+  exit 0
+}
+
+# ---------------------------------------------------------------------------------------------------------------------------
 # Principal
 # ---------------------------------------------------------------------------------------------------------------------------
 SOUS="${1:-}"
@@ -585,8 +669,9 @@ SOUS="${1:-}"
 case "$SOUS" in
   --help|-h|help) sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
   setup) sous_commande_setup "$@"; exit 0 ;;
-  copy) sous_commande_copy "$@" ;;
+  copy) [ -n "${OFFSITE_INTERNE_HORODATE:-}" ] || copie_horodatee "$@"; sous_commande_copy "$@" ;;
   restore-test) sous_commande_restore_test "$@" ;;
   status) sous_commande_status "$@" ;;
-  *) echec 2 "Usage : bash tools/offsite_backup.sh setup <point de montage> | copy [--include-protected] | restore-test [--force] [--detail] | status | --help" ;;
+  postpone) sous_commande_postpone "$@" ;;
+  *) echec 2 "Usage : bash tools/offsite_backup.sh setup <point de montage> | copy [--include-protected] | restore-test [--force] [--detail] | status | postpone --reason \"<cause>\" | --help" ;;
 esac

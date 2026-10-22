@@ -9,7 +9,7 @@ Source of truth: `tests/watch_sh/test_watch_sh.py`, `tools/watch.sh`, `tools/com
 ## Requirements
 
 ### Requirement: Run the steps in a fixed order
-The system SHALL run, when the local model service responds: collection, scoring, apply, shares, ranked reading list, library indexing of both content folders directly into the database, the BM25 probe, then the dashboard. On full success it SHALL print a timestamp header, end with "Veille terminée sans erreur", exit 0 and raise no notification but the morning summary of a scheduled run. Scripts SHALL be called through their linked path. It SHALL NOT run the former import or verification of the PostgreSQL copy, the former indexer of a frozen copy, or any parity comparison with a former path, whether or not a former parity marker file is present in the data folder.
+The system SHALL run, when the local model service responds: collection, scoring, apply, shares, ranked reading list, library indexing of both content folders directly into the database, together with the context notes through the indexer's context option when the context folder has a notes folder (requirement "Index the context notes in the daily run"), the BM25 probe, then the dashboard. On full success it SHALL print a timestamp header, end with "Veille terminée sans erreur", exit 0 and raise no notification but the morning summary of a scheduled run. Scripts SHALL be called through their linked path. It SHALL NOT run the former import or verification of the PostgreSQL copy, the former indexer of a frozen copy, or any parity comparison with a former path, whether or not a former parity marker file is present in the data folder.
 
 #### Scenario: Nominal path
 - **WHEN** every step succeeds and the run is manual
@@ -23,7 +23,11 @@ The system SHALL run, when the local model service responds: collection, scoring
 - **WHEN** every step of a scheduled run succeeds
 - **THEN** the only notification is the morning summary, sent after the dashboard, and exit code is 0
 
-Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre, test_journal_horodate_et_les_deux_dossiers_indexes); the scheduled path is untested until implemented.
+#### Scenario: Context notes indexed
+- **WHEN** every step succeeds and the fixture context folder has a notes folder
+- **THEN** the indexing call holds both content folders and the context option naming the context folder, and no other argument names the originals folder
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre, test_journal_horodate_et_les_deux_dossiers_indexes); the scheduled path is untested until implemented; the context option is untested until implemented.
 
 ### Requirement: Degrade gracefully without the model service
 The system SHALL, when the model service does not respond, collect, write the plain reading list, skip scoring and indexing, say they are postponed, generate the dashboard, and exit 0 without recording an index timestamp.
@@ -162,7 +166,7 @@ The system SHALL run the indexer's BM25 probe after a successful indexation. A p
 - **THEN** the probe is not run
 
 ### Requirement: Check the database before collecting and skip the day when it does not answer
-The system SHALL, after the uv cache check and before collection, run the database check of the collection tool with a configurable bounded wait (default applied for a missing or invalid value); in scheduled mode, the network check of the requirement "Check the network on a host of the collection" SHALL come between the uv cache check and the database check. When the check succeeds the run SHALL continue as before. When it fails, the system SHALL write the log line of design D5 of the archived change db-lot5-watch-triage for an unreachable database or for absent tables, SHALL skip collection, the pre-sort chain, both reading lists and the library indexing in that attempt, SHALL still generate the dashboard, SHALL name the step "base de données" among the failed steps with the summary line of the failed-steps rule, and SHALL exit 1. When the check reports an unreachable database, in any mode, the system SHALL then log the "postponed" key phrase of design D3, record the day as postponed and raise the notification only if it is the first postponement of the day, so that a later scheduled launch of the same day retries it (requirement "Postpone a day the database or the network did not let run"); it SHALL NOT treat the day as done. When the check reports absent tables, the system SHALL record the day as failed and raise the single notification. It SHALL NOT start the database, SHALL NOT write any article file, reading list or state outside the database other than the run record and the lock of design D2 and D4, and SHALL NOT run any step on a former state file. Untested until implemented for the postponement.
+The system SHALL, after the uv cache check and before collection, run the database check of the collection tool with a configurable bounded wait (default applied for a missing or invalid value); in scheduled mode, the network check of the requirement "Check the network on a host of the collection" SHALL come between the uv cache check and the database check. When the check succeeds the run SHALL continue as before. When it fails, the system SHALL write the log line of design D5 of the archived change db-lot5-watch-triage for an unreachable database or for absent tables, SHALL skip collection, the pre-sort chain, both reading lists and the library indexing in that attempt, SHALL still generate the dashboard, SHALL name the step "base de données" among the failed steps with the summary line of the failed-steps rule, and SHALL exit 1. When the check reports an unreachable database, in any mode, the system SHALL then log the "postponed" key phrase of design D3, record the day as postponed and raise the notification only if it is the first postponement of the day, so that a later scheduled launch of the same day retries it (requirement "Postpone a day the database or the network did not let run"); it SHALL NOT treat the day as done. When the check reports absent tables, the system SHALL record the day as failed and raise the single notification. It SHALL NOT start the database, SHALL NOT write any article file, reading list or state outside the database other than the run record and the lock of design D2 and D4, and SHALL NOT run any step on a former state file.
 
 Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
 
@@ -215,7 +219,7 @@ The system SHALL run the daily watch without naming, opening, creating or testin
 - **THEN** the age is unknown and notified, and no SQLite file is consulted to estimate it
 
 ### Requirement: Run the weekly component check just before the dashboard, without blocking
-The system SHALL, at every run, immediately before the dashboard and after the steps that depend on the database check, call the component check with its due option (design.md D4), whatever the outcome of the database check and whether the model service answers; the database check SHALL remain the first step after the uv cache check. On exit code 1 it SHALL raise one notification with the fixed text of design.md D4; on any code other than 0 and 1 it SHALL log "Veille des composants impossible" with the code and raise one notification. The component step SHALL NOT be added to the failed steps, SHALL NOT change the exit code, including when the network is unreachable, the check fails or the notification itself fails, and SHALL NOT prevent the dashboard. Untested until implemented.
+The system SHALL, at every run, immediately before the dashboard and after the steps that depend on the database check, call the component check with its due option (design.md D4), whatever the outcome of the database check and whether the model service answers; the database check SHALL remain the first step after the uv cache check. On exit code 1 it SHALL raise one notification with the fixed text of design.md D4; on any code other than 0 and 1 it SHALL log "Veille des composants impossible" with the code and raise one notification. The component step SHALL NOT be added to the failed steps, SHALL NOT change the exit code, including when the network is unreachable, the check fails or the notification itself fails, and SHALL NOT prevent the dashboard.
 
 Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
 
@@ -236,7 +240,7 @@ Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
 - **THEN** the component check is still called before the dashboard, and the summary names only "base de données"
 
 ### Requirement: The daily run never cleans the uv cache nor installs a component
-The system SHALL NOT run `uv cache clean` or `uv cache prune` in the run script, and SHALL NOT install, upgrade or download any component from it (no `brew install`, `brew upgrade`, `brew update`, `ollama pull`, `npm install`, `docker pull` or `uv sync`); the existing uv cache check stays the only uv cache step and keeps its never-blocking rule. Untested until implemented.
+The system SHALL NOT run `uv cache clean` or `uv cache prune` in the run script, and SHALL NOT install, upgrade or download any component from it (no `brew install`, `brew upgrade`, `brew update`, `ollama pull`, `npm install`, `docker pull` or `uv sync`); the existing uv cache check stays the only uv cache step and keeps its never-blocking rule.
 
 Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.2)
 
@@ -249,7 +253,7 @@ Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.2)
 - **THEN** no recorded call is a cache-cleaning or installing command
 
 ### Requirement: Record the run of the day
-The system SHALL keep, in the lab data folder, one record of the watch run of the day: date, trigger (calendar, catch-up or manual), start time, end time, outcome (done, failed, postponed or interrupted) and the count of retries of an interrupted run. It SHALL write it atomically, owner-only, before the first step and after the last. A missing, unreadable or other-day record SHALL mean that no run took place today; the system SHALL NOT read the watch log to decide. Untested until implemented.
+The system SHALL keep, in the lab data folder, one record of the watch run of the day: date, trigger (calendar, catch-up or manual), start time, end time, outcome (done, failed, postponed or interrupted) and the count of retries of an interrupted run. It SHALL write it atomically, owner-only, before the first step and after the last. A missing, unreadable or other-day record SHALL mean that no run took place today; the system SHALL NOT read the watch log to decide.
 
 #### Scenario: Record after a run
 - **WHEN** a scheduled run ends with exit code 0
@@ -264,7 +268,7 @@ The system SHALL keep, in the lab data folder, one record of the watch run of th
 - **THEN** a scheduled launch after the due time runs the day's steps
 
 ### Requirement: Date the run of the day in the Europe/Paris time zone
-The system SHALL compute the date of the run of the day, the record's times and the comparisons with the due time and the latest start time in the Europe/Paris time zone, comparing wall times, and SHALL NOT use the system time zone for these decisions. A new day SHALL start at midnight in Europe/Paris. The lock's age SHALL be measured in elapsed seconds. The current instant SHALL be injectable for tests (design D5). Untested until implemented.
+The system SHALL compute the date of the run of the day, the record's times and the comparisons with the due time and the latest start time in the Europe/Paris time zone, comparing wall times, and SHALL NOT use the system time zone for these decisions. A new day SHALL start at midnight in Europe/Paris. The lock's age SHALL be measured in elapsed seconds. The current instant SHALL be injectable for tests (design D5).
 
 #### Scenario: Process in another time zone
 - **WHEN** the system time zone is not Europe/Paris and a scheduled launch comes at an instant after the due time in Europe/Paris but before it in the system time zone, with no run of today
@@ -283,7 +287,7 @@ The system SHALL compute the date of the run of the day, the record's times and 
 - **THEN** the launches in the repeated hour exit 0 without writing anything, and the launch after the due time runs the day's steps once, recording that day's date
 
 ### Requirement: Run at most once a day when scheduled
-The system SHALL, in scheduled mode, start the day's run only between the configurable due time and the configurable latest start time, and only when no run of today has ended other than postponed. Otherwise it SHALL exit 0 without writing to the log, the record or the lock. A failed run SHALL count as done. It SHALL NOT run the day's steps twice in one day in scheduled mode, apart from the single retry of an interrupted run. Untested until implemented.
+The system SHALL, in scheduled mode, start the day's run only between the configurable due time and the configurable latest start time, and only when no run of today has ended other than postponed. Otherwise it SHALL exit 0 without writing to the log, the record or the lock. A failed run SHALL count as done. It SHALL NOT run the day's steps twice in one day in scheduled mode, apart from the single retry of an interrupted run.
 
 #### Scenario: Mac powered off at the scheduled time
 - **WHEN** the Mac starts between the due time and the latest start time and no run took place today
@@ -302,7 +306,7 @@ The system SHALL, in scheduled mode, start the day's run only between the config
 - **THEN** a scheduled launch exits 0 and writes nothing
 
 ### Requirement: Retry an interrupted run once a day
-The system SHALL treat a record of today that says started, while no live process holds the lock, as an interrupted run. In scheduled mode it SHALL run the day's steps again once, log the "interrupted run retried" key phrase of design D3 and count the retry in the record. A run interrupted again the same day SHALL be recorded as interrupted and SHALL NOT be retried. Untested until implemented.
+The system SHALL treat a record of today that says started, while no live process holds the lock, as an interrupted run. In scheduled mode it SHALL run the day's steps again once, log the "interrupted run retried" key phrase of design D3 and count the retry in the record. A run interrupted again the same day SHALL be recorded as interrupted and SHALL NOT be retried.
 
 #### Scenario: First interruption
 - **WHEN** today's record says started with no retry and no live process holds the lock
@@ -313,7 +317,7 @@ The system SHALL treat a record of today that says started, while no live proces
 - **THEN** the next scheduled launch records the outcome interrupted, calls no tool, writes nothing to the log and exits 0
 
 ### Requirement: Postpone a day the database or the network did not let run
-The system SHALL record the day as postponed when the database check reports an unreachable database, in any mode, or when, in scheduled mode, no host of the collection answers within a configurable wait; it SHALL skip the day's steps and let the next scheduled launch of the day retry until the latest start time. It SHALL raise at most one postponement notification per day. Any other database check error SHALL count as failed. Untested until implemented.
+The system SHALL record the day as postponed when the database check reports an unreachable database, in any mode, or when, in scheduled mode, no host of the collection answers within a configurable wait; it SHALL skip the day's steps and let the next scheduled launch of the day retry until the latest start time. It SHALL raise at most one postponement notification per day. Any other database check error SHALL count as failed.
 
 #### Scenario: Database down, then up
 - **WHEN** the first launch of the day finds the database down and the next scheduled launch finds it up
@@ -336,7 +340,7 @@ The system SHALL record the day as postponed when the database check reports an 
 - **THEN** the log keeps the unreachable-database line, the record says failed and a later scheduled launch of the day does not run
 
 ### Requirement: Check the network on a host of the collection
-The system SHALL provide a network check of the watch that tries the hosts of the active sources, one short-timeout connection each, until one answers or a configurable wait is over, and exits 0 or 6 with the key phrases of design D3. It SHALL fetch no feed, write nothing and name no host in its output. It SHALL NOT be run by a manual launch of the watch. Untested until implemented.
+The system SHALL provide a network check of the watch that tries the hosts of the active sources, one short-timeout connection each, until one answers or a configurable wait is over, and exits 0 or 6 with the key phrases of design D3. It SHALL fetch no feed, write nothing and name no host in its output. It SHALL NOT be run by a manual launch of the watch.
 
 #### Scenario: One host answers
 - **WHEN** the first active source's host does not answer and the second does
@@ -347,7 +351,7 @@ The system SHALL provide a network check of the watch that tries the hosts of th
 - **THEN** the check prints the "network down" key phrase, names no host and exits 6
 
 ### Requirement: Never run two watch runs at the same time
-The system SHALL take an exclusive lock in the lab data folder before starting the day's run, read the record again once it holds it, and release the lock at exit whatever the exit code. It SHALL NOT remove a lock it does not hold. A lock whose owner is gone, or older than a configurable age, SHALL be logged as stale and taken over. A scheduled launch that finds the lock held SHALL exit 0 silently. Untested until implemented.
+The system SHALL take an exclusive lock in the lab data folder before starting the day's run, read the record again once it holds it, and release the lock at exit whatever the exit code. It SHALL NOT remove a lock it does not hold. A lock whose owner is gone, or older than a configurable age, SHALL be logged as stale and taken over. A scheduled launch that finds the lock held SHALL exit 0 silently.
 
 #### Scenario: Two triggers at wake
 - **WHEN** the calendar job and the catch-up job start together
@@ -362,7 +366,7 @@ The system SHALL take an exclusive lock in the lab data folder before starting t
 - **THEN** the lock no longer exists
 
 ### Requirement: Refuse to run when the record cannot be written
-The system SHALL check, before the lock and any step, that the run record can be written. When it cannot, it SHALL start no run, in any mode, and exit 4 with the "record not writable" key phrase of design D8. A scheduled launch SHALL notify at most once per day, remembered outside the data folder, and stay silent afterwards that day. It SHALL NOT relaunch the day's steps at each scheduled launch. Untested until implemented.
+The system SHALL check, before the lock and any step, that the run record can be written. When it cannot, it SHALL start no run, in any mode, and exit 4 with the "record not writable" key phrase of design D8. A scheduled launch SHALL notify at most once per day, remembered outside the data folder, and stay silent afterwards that day. It SHALL NOT relaunch the day's steps at each scheduled launch.
 
 #### Scenario: Data folder read-only
 - **WHEN** two scheduled launches of the same day find the data folder not writable
@@ -373,7 +377,7 @@ The system SHALL check, before the lock and any step, that the run record can be
 - **THEN** it prints the key phrase, calls no tool, raises no notification and exits 4
 
 ### Requirement: A manual run forces the day's run but respects the lock
-The system SHALL, when launched without a scheduled-mode option, run the day's steps whatever the record says and whatever the time, and record the manual trigger. It SHALL refuse with exit code 3 and the "run in progress" key phrase of design D4 when another run holds the lock. It SHALL NOT wait for the lock nor run the network check. An unknown option SHALL be refused with exit code 2, and no tool SHALL be called. Untested until implemented.
+The system SHALL, when launched without a scheduled-mode option, run the day's steps whatever the record says and whatever the time, and record the manual trigger. It SHALL refuse with exit code 3 and the "run in progress" key phrase of design D4 when another run holds the lock. It SHALL NOT wait for the lock nor run the network check. An unknown option SHALL be refused with exit code 2, and no tool SHALL be called.
 
 #### Scenario: Manual run after today's run
 - **WHEN** today's record says done and the script is launched without option
@@ -388,7 +392,7 @@ The system SHALL, when launched without a scheduled-mode option, run the day's s
 - **THEN** it exits 2, calls no tool and writes neither the record nor the lock
 
 ### Requirement: Show a catch-up run in the log
-The system SHALL, on a run started by the catch-up job, keep the usual timestamp header unchanged and print the "catch-up run" key phrase of design D8 on the next line. A scheduled launch that does not run SHALL print nothing. It SHALL NOT raise a notification for the catch-up itself. Untested until implemented.
+The system SHALL, on a run started by the catch-up job, keep the usual timestamp header unchanged and print the "catch-up run" key phrase of design D8 on the next line. A scheduled launch that does not run SHALL print nothing. It SHALL NOT raise a notification for the catch-up itself.
 
 #### Scenario: Catch-up run
 - **WHEN** the catch-up job runs the day's steps
@@ -399,7 +403,7 @@ The system SHALL, on a run started by the catch-up job, keep the usual timestamp
 - **THEN** the log holds no catch-up line
 
 ### Requirement: Scheduler templates of the calendar and catch-up jobs
-The system SHALL provide a catch-up template that launches the watch job's lab-folder link with the catch-up option, at load and at a periodic interval fixed in the template, logging both outputs to the watch log, with no calendar schedule, no keep-alive, no real path and no former watch name. The watch template SHALL pass the scheduled-mode option. The due time SHALL equal the watch template's calendar time. Untested until implemented.
+The system SHALL provide a catch-up template that launches the watch job's lab-folder link with the catch-up option, at load and at a periodic interval fixed in the template, logging both outputs to the watch log, with no calendar schedule, no keep-alive, no real path and no former watch name. The watch template SHALL pass the scheduled-mode option. The due time SHALL equal the watch template's calendar time.
 
 #### Scenario: Catch-up template
 - **WHEN** the catch-up template is rendered
@@ -410,7 +414,7 @@ The system SHALL provide a catch-up template that launches the watch job's lab-f
 - **THEN** their hour and minute are equal
 
 ### Requirement: End a scheduled run with the morning summary
-The system SHALL, at the end of a scheduled run whose outcome is done or failed, after the dashboard and the final write of the run record, call the summary script through its linked path with the notify option, the scheduler variable and the labels of the failed steps (design D1). It SHALL NOT call it after a postponed day, an interrupted run not retried, a launch with nothing to do, a refused launch or a manual run. Untested until implemented.
+The system SHALL, at the end of a scheduled run whose outcome is done or failed, after the dashboard and the final write of the run record, call the summary script through its linked path with the notify option, the scheduler variable and the labels of the failed steps (design D1). It SHALL NOT call it after a postponed day, an interrupted run not retried, a launch with nothing to do, a refused launch or a manual run.
 
 #### Scenario: Calendar run done
 - **WHEN** a calendar run ends without failed step
@@ -429,7 +433,7 @@ The system SHALL, at the end of a scheduled run whose outcome is done or failed,
 - **THEN** the summary script is not called
 
 ### Requirement: One notification for a failed scheduled run
-The system SHALL, on a scheduled run with failed steps, let the morning summary be the single notification naming them (design D9). When the summary exits non-zero or cannot be run, it SHALL send its own failure notification as before. The summary SHALL NOT change the run's exit code nor its end line. A manual run SHALL keep its failure notification. Untested until implemented.
+The system SHALL, on a scheduled run with failed steps, let the morning summary be the single notification naming them (design D9). When the summary exits non-zero or cannot be run, it SHALL send its own failure notification as before. The summary SHALL NOT change the run's exit code nor its end line. A manual run SHALL keep its failure notification.
 
 #### Scenario: Scheduled run with two failed steps
 - **WHEN** collection and indexing fail during a scheduled run and the summary exits 0
@@ -452,7 +456,7 @@ The system SHALL, on a scheduled run with failed steps, let the morning summary 
 - **THEN** the failure notification is raised as before and the summary is not called
 
 ### Requirement: Run the code of the code root on the content of the content root
-The system SHALL take its code root from where its link resolves and its content root from the workspace variable, by default the development checkout, and SHALL export the content root to the tools it runs. It SHALL run the tools, the component check included, from the code root, and collect, index and build the dashboard on the content root. A run SHALL print both roots with the key phrases of design D2. It SHALL NOT write content into the code root. Untested until implemented.
+The system SHALL take its code root from where its link resolves and its content root from the workspace variable, by default the development checkout, and SHALL export the content root to the tools it runs. It SHALL run the tools, the component check included, from the code root, and collect, index and build the dashboard on the content root. A run SHALL print both roots with the key phrases of design D2. It SHALL NOT write content into the code root.
 
 #### Scenario: Run from the run tree
 - **WHEN** the run script is launched through a link that resolves into a run-tree fixture, with a separate content root
@@ -467,7 +471,7 @@ The system SHALL take its code root from where its link resolves and its content
 - **THEN** the line after the timestamp header is the catch-up line, and the two roots lines follow it
 
 ### Requirement: Refuse to run when the content root is the run tree
-The system SHALL, in a run that takes place, once the run record says started and before any step, stop when the content root is the run tree: log the key phrase of design D2, notify once, record the run as failed, release the lock and exit 1. A scheduled launch with nothing to do SHALL stay silent. It SHALL NOT run the uv cache check, collect, index or build the dashboard then. A content root equal to the code root in the development checkout SHALL be accepted. Untested until implemented.
+The system SHALL, in a run that takes place, once the run record says started and before any step, stop when the content root is the run tree: log the key phrase of design D2, notify once, record the run as failed, release the lock and exit 1. A scheduled launch with nothing to do SHALL stay silent. It SHALL NOT run the uv cache check, collect, index or build the dashboard then. A content root equal to the code root in the development checkout SHALL be accepted.
 
 #### Scenario: Content root set to the run tree
 - **WHEN** a due scheduled launch finds that the workspace variable names the run tree
@@ -482,7 +486,7 @@ The system SHALL, in a run that takes place, once the run record says started an
 - **THEN** the run proceeds as usual
 
 ### Requirement: The watch lock is the only mark of a watch run in progress
-The system SHALL let the watch lock of design D4 of the watch catch-up change, taken by every watch run, scheduled or manual, serve as the watch's scheduled-run marker for the run-tree update. The run script SHALL NOT write, in the lab data folder or elsewhere, any other marker of a run in progress, and SHALL NOT read or remove the markers of the backup and off-site jobs. Untested until implemented.
+The system SHALL let the watch lock of design D4 of the watch catch-up change, taken by every watch run, scheduled or manual, serve as the watch's scheduled-run marker for the run-tree update. The run script SHALL NOT write, in the lab data folder or elsewhere, any other marker of a run in progress, and SHALL NOT read or remove the markers of the backup and off-site jobs.
 
 #### Scenario: Data folder during a run
 - **WHEN** the collection step of a run runs
@@ -491,3 +495,14 @@ The system SHALL let the watch lock of design D4 of the watch catch-up change, t
 #### Scenario: Script text
 - **WHEN** the run script is read
 - **THEN** it names no marker folder of the backup or off-site jobs and no other run marker than the lock
+
+### Requirement: Index the context notes in the daily run
+The system SHALL pass the context option to the indexing step only when the context folder has a notes folder. When it has none, the step SHALL run without the option, the log SHALL hold "dossier de contexte absent : notes de contexte inchangées", and the outcome SHALL be unchanged. A note refused by the indexer SHALL count as a failed indexation. The run script SHALL NOT name the originals folder.
+
+#### Scenario: Context folder absent
+- **WHEN** every step succeeds and the context folder does not exist
+- **THEN** the indexing call has no context option, the log holds the absent-folder line, and the run ends with "Veille terminée sans erreur" and exit code 0
+
+#### Scenario: Script text
+- **WHEN** the run script is read
+- **THEN** it does not name the originals folder

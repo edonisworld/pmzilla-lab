@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "story-quality-overlay",
+  "title": "Organisation overlay of the story quality grid",
+  "description": "Schema of the single organisation overlay (design D17 of change story-quality-audit). Closed key set: an identifier, an integer version, the expected structure of an epic and of a User Story, an optional product context summary of bounded length, added criteria, and disabled core criteria each with a reason. No key exists for scrubbing, masking, the team review gate, the cap, the confirmation, retention, the deny rules or the verdict codes. The overlay can only add criteria or disable core ones; it cannot reword, relink or relabel a core criterion (an added criterion may not reuse a core code, which the reader checks against the core grid). An added criterion holds the same fields as a core criterion except the source line, which is always the organisation-rule mark.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identifier", "version"],
+  "properties": {
+    "identifier": {
+      "description": "Name of the overlay, checked like its text and never printed by a report or a command.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,60}$"
+    },
+    "version": {
+      "description": "Integer version, raised by hand at every change of content.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "product_context_summary": {
+      "description": "Optional summary of the product: scope, roles, generic designations. Sent to the analysis engine with every item; printed by no subcommand.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "structure": {
+      "description": "Expected structure per kind: sections, Definition of Ready items, vocabulary of the Discovery Workflow.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "story": {"$ref": "#/$defs/structure"},
+        "epic": {"$ref": "#/$defs/structure"}
+      }
+    },
+    "criteria": {
+      "description": "Criteria added to the core grid, per kind. Each carries the organisation-rule mark in place of a source line.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "story": {"type": "array", "maxItems": 30, "items": {"$ref": "#/$defs/criterion"}},
+        "epic": {"type": "array", "maxItems": 30, "items": {"$ref": "#/$defs/criterion"}}
+      }
+    },
+    "disabled": {
+      "description": "Core criteria the organisation turns off, each with a reason. The reason is never printed or sent.",
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "reason"],
+        "properties": {
+          "code": {"$ref": "#/$defs/code"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 400}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "description": "Stable criterion code.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,40}$"
+    },
+    "text_list": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
+    "structure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sections": {"$ref": "#/$defs/text_list"},
+        "definition_of_ready": {"$ref": "#/$defs/text_list"},
+        "vocabulary": {"$ref": "#/$defs/text_list"}
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "label_fr", "label_en", "definition", "engine_question", "link"],
+      "properties": {
+        "code": {"$ref": "#/$defs/code"},
+        "label_fr": {"type": "string", "minLength": 1, "maxLength": 120},
+        "label_en": {"type": "string", "minLength": 1, "maxLength": 120},
+        "definition": {"type": "string", "minLength": 1, "maxLength": 600},
+        "engine_question": {"type": "string", "minLength": 1, "maxLength": 600},
+        "not_applicable_condition": {"type": "string", "minLength": 1, "maxLength": 400},
+        "link": {
+          "description": "Link in the chain (design D18): where the defect is fixed.",
+          "enum": ["ticket_template", "discovery_workflow_step", "definition_of_ready", "refinement"]
+        }
+      }
+    }
+  }
+}

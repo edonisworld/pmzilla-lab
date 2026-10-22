@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_export_jira_api as base           # noqa: E402
 
+from aide_couche_brute import MagasinMemoire     # noqa: E402
 from export_jira_api_messages import CATALOGS    # noqa: E402
 from messages import check_catalogs              # noqa: E402
 
@@ -43,9 +44,11 @@ class Parcours(base.Base):
     def parcours(self, *extra: str) -> str:
         blocs: list[str] = []
         self.faux.__init__()                                       # état neuf : un parcours peut être rejoué dans le même test
+        self.magasin = MagasinMemoire()                            # couche brute neuve : les comptes de la base repartent de zéro
         shutil.rmtree(self.ws / "Flux-Lab" / "exports", ignore_errors=True)
         (self.ws / "Flux-Lab" / "equipes-assets.yaml").unlink(missing_ok=True)
         (self.ws / "Flux-Lab" / "organisation.yaml").unlink(missing_ok=True)
+        (self.ws / "Flux-Lab" / "equipes-jira.yaml").unlink(missing_ok=True)
         self.ecrire_reglages()
 
         def lancer(nom: str, *argv: str) -> tuple[int, str]:
@@ -55,34 +58,35 @@ class Parcours(base.Base):
             return code, sortie
 
         sortie_csv = lambda nom: str(self.ws / nom)
-        lancer("export", "export", "--output", sortie_csv("api.csv"))
+        lancer("export", "export")
         self.ecrire_reglages("jql_export: project = ABC\n")
-        lancer("export without a team field", "export", "--output", sortie_csv("b.csv"))
+        lancer("export without a team field", "export")
         tickets = copy.deepcopy(base.TICKETS)
         tickets["ABC-1"][VERIF] = {"value": "Yes"}
         tickets["ABC-2"][VERIF] = True
         self.faux.tickets = tickets
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\nexport_verification_field: {VERIF}\n")
-        lancer("export with the verification column", "export", "--output", sortie_csv("c.csv"))
+        lancer("export with the retired verification setting", "export")
         self.ecrire_reglages(f"export_team_field: {CHAMP}\njql_exports:\n  a: project = AAA\n  b: project = BBB\n")
         lancer("export, named queries", "export")
-        lancer("export, one named query", "export", "--query", "a", "--output", sortie_csv("d.csv"))
+        lancer("export, one named query", "export", "--query", "a")
+        lancer("export, full option", "export", "--full")
         lancer("export, unknown query", "export", "--query", "c")
-        lancer("export, --output with several queries", "export", "--output", sortie_csv("e.csv"))
+        lancer("export, --output retired", "export", "--output", sortie_csv("e.csv"))
         self.ecrire_reglages(f"export_team_field: {CHAMP}\njql_export: project = ABC\n")
         lancer("export, --query without jql_exports", "export", "--query", "a")
         for nom, extra_reglages in (("missing query", ""), ("invalid query name", "jql_exports:\n  'a b': project = AAA\n"),
                                     ("empty query", "jql_exports:\n  a: ''\n"), ("query list", "jql_exports: [x]\n"),
                                     ("invalid team field", "jql_export: p\nexport_team_field: 'a b'\n"),
-                                    ("invalid verification field", "jql_export: p\nexport_verification_field: 'a b'\n"),
+                                    ("invalid points field", "jql_export: p\nexport_points_field: 'a b'\n"),
                                     ("unknown time zone", "jql_export: p\nexport_timezone: Nulle/Part\n")):
             self.ecrire_reglages(extra_reglages)
-            lancer(f"settings, {nom}", "export", "--output", sortie_csv("y.csv"))
+            lancer(f"settings, {nom}", "export")
         self.ecrire_reglages(jeton="classic")
-        lancer("export, classic token", "export", "--output", sortie_csv("y.csv"))
+        lancer("export, classic token", "export")
         lancer("fields, classic token", "fields", "--search", "a")
         self.ecrire_reglages(cloud=None)
-        lancer("export, cloud id missing", "export", "--output", sortie_csv("y.csv"))
+        lancer("export, cloud id missing", "export")
         self.ecrire_reglages()
         attendu, self.faux.attendu = self.faux.attendu, "Basic autre"
         lancer("export, access denied", "export")
@@ -105,16 +109,17 @@ class Parcours(base.Base):
         for t in self.faux.tickets.values():
             t[CHAMP] = [{"workspaceId": "ws-secret", "id": "w:123", "objectId": "123"}]
         lancer("diagnose, Assets objects", "diagnose")
-        lancer("export, Assets objects without a table", "export", "--output", sortie_csv("z.csv"))
+        lancer("export, Assets objects without a source", "export")
         table = self.ws / "Flux-Lab" / "equipes-assets.yaml"
-        table.write_text("equipes: {'123': 'Equipe Z'}\n", encoding="utf-8")
+        catalogue = self.ws / "Flux-Lab" / "equipes-jira.yaml"
+        catalogue.write_text("teams:\n  - name: Equipe Z\n    jira_team_ids: ['123']\n", encoding="utf-8")
         for t in self.faux.tickets.values():
             t[CHAMP] = [{"objectId": "123"}, {"objectId": "999"}]
-        lancer("diagnose, with a table", "diagnose")
-        lancer("export, unknown teams", "export", "--output", sortie_csv("u.csv"))
-        table.write_text("equipes: [pas, un", encoding="utf-8")
-        lancer("export, unreadable table", "export", "--output", sortie_csv("v.csv"))
-        table.unlink()
+        lancer("diagnose, with a catalogue", "diagnose")
+        lancer("export, unknown teams", "export")
+        catalogue.write_text("teams:\n  - name: Equipe Z\n    jira_team_ids: ['123']\n    obsolete: true\n", encoding="utf-8")
+        lancer("export, obsolete team", "export")
+        catalogue.unlink()
         self.faux.tickets = copy.deepcopy(base.TICKETS)
         self.faux.tickets["ABC-9"][CHAMP] = [{"value": "Equipe B"}]
 
@@ -130,19 +135,25 @@ class Parcours(base.Base):
             ticket = base.champs("Story", "Open", "To Do", "2026-09-01T16:45:00.000+0200")
             ticket[CHAMP] = objets
             self.faux.tickets[cle] = ticket
-        table.write_text("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n", encoding="utf-8")
-        lancer("export, with the table", "export", "--output", sortie_csv("w.csv"))
+        catalogue.write_text("teams:\n  - name: Equipe A\n    jira_team_ids: ['1']\n  - name: Equipe B\n    jira_team_ids: ['2']\n"
+                             "  - name: Equipe C\n    jira_team_ids: ['3']\n", encoding="utf-8")
+        lancer("export, with the catalogue", "export")
         referentiel = self.ws / "Flux-Lab" / "organisation.yaml"
         referentiel.write_text(REFERENTIEL, encoding="utf-8")
-        lancer("diagnose, with the referential", "diagnose")
-        lancer("export, referential and former table both present", "export", "--output", sortie_csv("x.csv"))
+        lancer("diagnose, with the referential and the catalogue", "diagnose")
+        table.write_text("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n", encoding="utf-8")
+        lancer("export, referential, catalogue and former table present", "export")
         table.unlink()
-        lancer("export, with the referential", "export", "--output", sortie_csv("r.csv"))
-        lancer("export, strict teams", "export", "--strict-teams", "--output", sortie_csv("s.csv"))
+        catalogue.write_text("teams:\n  - name: Equipe Z\n    jira_team_ids: ['1', '9']\n", encoding="utf-8")
+        lancer("export, referential and catalogue share an identifier", "export")
+        lancer("export, strict teams", "export", "--strict-teams")
+        catalogue.write_text("teams:\n  - name: Equipe A\n    jira_team_ids: ['1', '9']\n", encoding="utf-8")
+        lancer("export, catalogue team named like a referential team", "export")
+        catalogue.unlink()
         referentiel.unlink()
         table.write_text("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n", encoding="utf-8")
-        lancer("diagnose, with the former table", "diagnose")
-        lancer("export, former table fallback", "export", "--output", sortie_csv("f.csv"))
+        lancer("diagnose, with the former table only", "diagnose")
+        lancer("export, former table only", "export")
         table.unlink()
 
         self.faux.tickets = copy.deepcopy(base.TICKETS)
@@ -150,9 +161,9 @@ class Parcours(base.Base):
         self.faux.tickets["ABC-1"]["fixVersions"] = [{"name": "v1"}]
         self.faux.tickets["ABC-2"]["labels"] = ["cy-renamed"]
         self.ecrire_reglages("jql_export: project = ABC\n" + DECLAREES)
-        lancer("export, declared labels and fix versions", "export", "--output", sortie_csv("l.csv"))
+        lancer("export, declared labels (not requested any more)", "export")
         self.ecrire_reglages("jql_export: project = ABC\nretention:\n  period_days: 30\n")
-        lancer("export, rows past the retention rule", "export", "--output", sortie_csv("k.csv"))
+        lancer("export, rows past the retention rule", "export")
         self.ecrire_reglages()
         lancer("teams-table, retired", "teams-table", "m1.csv", "m2.csv")
         lancer("compare, retired", "compare", "m.csv", "a.csv", "--tolerance", "3.5")
@@ -178,8 +189,8 @@ class Langue(Parcours):
     def test_sans_option_la_sortie_est_francaise(self):
         defaut = self.parcours()
         self.assertIn("Tickets : 4 ; pages : 1", defaut)
-        self.assertIn("Fichier écrit", defaut)
-        self.assertNotIn("File written", defaut)
+        self.assertIn("couche brute :", defaut)
+        self.assertNotIn("raw layer:", defaut)
 
     def test_language_fr_explicite_donne_la_sortie_par_defaut(self):
         self.assertEqual(self.parcours("--language", "fr"), self.parcours())
@@ -197,15 +208,14 @@ class Langue(Parcours):
         self.assertIn("field(s) out of", self.lancer("fields", "--search", "team", "--language", "en")[1])
         self.assertIn("champ(s) sur", self.lancer("fields", "--search", "team")[1])
 
-    def test_l_equipe_inconnue_ecrite_dans_le_csv_ne_depend_pas_de_la_langue(self):
-        (self.ws / "Flux-Lab" / "equipes-assets.yaml").write_text("equipes: {'123': 'Equipe Z'}\n", encoding="utf-8")
+    def test_l_equipe_inconnue_enregistree_ne_depend_pas_de_la_langue(self):
+        (self.ws / "Flux-Lab" / "equipes-jira.yaml").write_text("teams:\n  - name: Equipe Z\n    jira_team_ids: ['123']\n", encoding="utf-8")
         for t in self.faux.tickets.values():
             t[CHAMP] = [{"objectId": "999"}]
-        chemin = self.ws / "inconnues.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin), "--language", "en")
+        code, sortie = self.lancer("export", "--language", "en")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Unknown teams:", sortie)
-        self.assertIn("(équipe inconnue)", chemin.read_text(encoding="utf-8-sig"))
+        self.assertIn("team identifiers in neither the referential nor the catalogue", sortie)
+        self.assertIn("(équipe inconnue)", repr(self.magasin.instantanes))
 
 
 if __name__ == "__main__":

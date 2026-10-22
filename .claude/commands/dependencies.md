@@ -9,27 +9,27 @@ Reading of the dependency map "$ARGUMENTS" (empty: the most recent report). The 
 
 ## 1. Find the report
 
-In `Flux-Lab/rapports/`, take the `dependances-*.md` file indicated by "$ARGUMENTS" (a path, or the scope name: `dependances-<nom>-AAAA-MM-JJ.md`, or `dependances-<nom>-projets-AAAA-MM-JJ.md` for a report aggregated by project), otherwise the most recent one. Read its `.json` only if you need an exact figure. Never read `Flux-Lab/exports/`: the Jira exports stay out of your reach, and the report contains no ticket key.
+In `Flux-Lab/rapports/`, take the `dependances-*.md` file indicated by "$ARGUMENTS" (a path, or the scope name: `dependances-<nom>-AAAA-MM-JJ.md`, or `dependances-<nom>-projets-AAAA-MM-JJ.md` for a report aggregated by project), otherwise the most recent one. Read its `.json` only if you need an exact figure. The data stay in the database, out of your reach, and the report contains no ticket key.
 
 If there is no report, stop and give the commands to run in the Terminal, from `~/PMZilla-Lab/workspace`:
 
 ```
-uv run tools/dependencies_jira.py diagnose Flux-Lab/exports/<export>.csv [<autres lots>.csv] [--scope ABC,DEF]
-uv run tools/dependencies_jira.py compute Flux-Lab/exports/<export>.csv [<autres lots>.csv] --name <perimetre> [--by project] [--scope ABC,DEF] [--weeks 26]
+uv run tools/dependencies_jira.py diagnose [--scope ABC,DEF] [--exclude ABC,DEF]
+uv run tools/dependencies_jira.py compute --name <perimetre> [--by project] [--scope ABC,DEF] [--exclude ABC,DEF] [--weeks 26]
 ```
 
-The exports are manual exports or the `api-…csv` files from `export_jira_api.py` (same format; see the monthly procedure in `docs/pmzilla/installation.md`). The scope comes from `--scope` or, failing that, from `scope_projects` (old name: `projets_perimetre`) in `flux.yaml`; the other projects in the exports only serve to locate the team on the other side of a link.
+Both read the database, with no file to give; the data are brought up to date by the monthly run (`uv run tools/flow_monthly.py`; see the monthly procedure in `docs/pmzilla/installation.md`). The scope comes from `--scope` or, failing that, from `scope_projects` (old name: `projets_perimetre`) in `flux.yaml`; the other projects read only serve to locate the team on the other side of a link. The projects left out of the map come from `--exclude` (`none` or `aucun` for no exclusion) or, failing that, from `dependency_excluded_projects` in `flux.yaml`, or failing that from `excluded_projects`, shared with the flow report; the command never edits `flux.yaml`.
 
 ## 2. Open with a verdict
 
 After the posture tag, your response starts with a verdict sentence: what the map allows you to conclude, and what it does not. To write it, first read the report's warnings:
 
 - the share of links that point outside the export, and the dependencies of "unknown state" (the awaited item is absent from the export, perhaps already finished: never counted as open);
-- links without a type (in which case the report counts links, not blockages), excluded projects, decomposition links removed from the map (setting `portfolio_types`, old name `types_portefeuille`), tickets without a team;
-- exports flagged "probably truncated" (a round number of tickets in a file: tickets are missing, do not read the map);
+- the exclusion source line ("Projets exclus de la carte : n (source : …)", in English "Projects excluded from the map: n (source: …)"): when the source is the setting shared with the flow report (`excluded_projects`), say so in the verdict and name the map's own setting `dependency_excluded_projects`, or the `--exclude` option of the next run, as the way to change the list; the user edits the settings file, never this command. Two maps with different sources or counts are not comparable until the lists are known;
+- links without a type (in which case the report counts links, not blockages), the excluded projects counted apart, decomposition links removed from the map (setting `portfolio_types`, old name `types_portefeuille`), tickets without a team;
 - the size of the lead time samples (types without enough items on both sides, fragile P85).
 
-Nothing structural is decided on a map where most links are of unknown state: say so, and say what to redo first (widen or merge the exports).
+Nothing structural is decided on a map where most links are of unknown state: say so, and say what to redo first (widen the export queries of the settings file, then run the monthly export again).
 
 ## 3. Have the Scaling posture read the map
 
@@ -43,7 +43,7 @@ Activate the Scaling posture (skill `pmzilla-scaling-bmad`), action TO (diagnose
 6. **Old Epics: alive or abandoned?** When the report has this section, read the breakdown by team (alive, inactive children, no delivery child). An Epic "without children" or "with inactive children" is to be checked before being counted as a wait (the `--keys` query gives the children to look at in Jira, in the Terminal only). An Epic blocked by another Epic is portfolio sequencing, not a wait on work.
 7. **The ages to check.** If the report warns "Âges à vérifier avant toute lecture" ("Ages to check before reading anything" in an English report; column "Même date d'entrée", "Same entry date" in English: at least 3 items of a row entered in progress on the same day), say so before reading the ages: it is the probable sign of a bulk status change (planning, migration), which overestimates the wait.
 8. **The lead time gap, for the same type.** Present it as a correlation, never as the cost of dependencies (items with a dependency are often bigger or more uncertain, and the delay starts at creation, backlog included). Read it only for the types that have enough items; if none does, say so.
-9. **For each signal, two competing explanations**, one of which is a possible measurement cause (links not filled in, projects filtered out by the query, empty or badly filled team, truncated export), and what would settle it: what to check, with which role.
+9. **For each signal, two competing explanations**, one of which is a possible measurement cause (links not filled in, projects filtered out by the query, empty or badly filled team), and what would settle it: what to check, with which role.
 10. **The questions to ask the teams**, open-ended, in roles.
 11. **The possible actions, from the lightest to the most structuring** (clean up old tickets, review the use of links, clarify an interaction mode, and only then redraw boundaries). An organizational decision remains a hypothesis as long as the effect on flow has not been observed; the most structuring one is proposed only if the map allows it (see the verdict).
 12. **Draw on the library** (`search_library`, domains `organisation` and `flow`, in French and in English) to shed light on the mechanisms, citing author, title and section after reading the passage; a transposition outside the author's subject is announced as such. Also look for a limit of the recommended approach (rule of `CLAUDE.md`).

@@ -21,6 +21,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hybrid_search  # noqa: E402
 import pmzilla_lab_library as library  # noqa: E402  (embed, KINDS, constantes)
+import private_collections  # noqa: E402  (organisation-context, D3 : les collections cherchées seulement quand on les nomme)
+
+# Champs d'une note de contexte rendus avec chaque passage (D5) : la date de la note, sa nature, sa date de revue (+ « source », déjà dans
+# les métadonnées) et la marque « stale » calculée à l'appel. Jamais d'auteur ni d'URL.
+CONTEXT_FIELDS = ("note_date", "nature", "source", "review_date", "stale")
+PARIS = "Europe/Paris"
 
 PG_KINDS = library.STORE_KINDS          # « texte » est stocké « text » ; une seule définition, celle de l'indexeur
 STORE_NAMES = library.KIND_NAMES        # et retour : « text » est rendu « texte »
@@ -99,20 +105,40 @@ class PostgresLibrary:
         if collections:
             wanted = sorted(set(collections))
         pg_kinds = None if set(kinds) == set(library.KINDS) else [PG_KINDS[k] for k in kinds]
+        # D5 : sans collection nommée, les collections privées restent hors de la recherche
+        excluded = None if wanted else sorted(private_collections.PRIVATE_COLLECTIONS)
         vector = self._embedding(query)
         for attempt in (1, 2):
             try:
                 found = hybrid_search.hybrid_search(
                     self.connection(), self.spec, query=query, vector=vector, limit=limit, collections=wanted,
                     since=since, kinds=pg_kinds, today=self.today, scan=self.scan, fulltext=self.fulltext,
-                    rank_norm=self.rank_norm, component=component, ef_search=self.ef_search)
+                    rank_norm=self.rank_norm, component=component, ef_search=self.ef_search, exclude_collections=excluded)
                 break
             except Exception as error:
                 if attempt == 2 or type(error).__name__ != "OperationalError":      # connexion perdue : une seule reprise
                     raise
                 self._conn = None
         described = self._describe_many([chunk_id for chunk_id, _ in found])
-        return [self._shape(described[chunk_id], score=round(score, 4)) for chunk_id, score in found]
+        return [self._mark_stale(self._shape(described[chunk_id], score=round(score, 4))) for chunk_id, score in found]
+
+    def _paris_today(self) -> dt.date:
+        """La date du jour à Paris, calculée à l'appel ; `today` (injectable) la remplace dans les tests."""
+        if self.today is not None:
+            return self.today
+        from zoneinfo import ZoneInfo
+        return dt.datetime.now(ZoneInfo(PARIS)).date()
+
+    def _mark_stale(self, shaped: dict) -> dict:
+        """Une note de contexte (elle porte une date de revue) reçoit `stale` : vrai quand la revue est antérieure à aujourd'hui (Paris),
+        ou quand la date est illisible. Les autres passages ne changent pas."""
+        review = shaped.get("review_date")
+        if review:
+            try:
+                shaped["stale"] = dt.date.fromisoformat(str(review)[:10]) < self._paris_today()
+            except ValueError:
+                shaped["stale"] = True
+        return shaped
 
     def read(self, passage_id: int, before: int, after: int) -> dict:
         rows = self._query("SELECT book_id, position FROM knowledge.chunks WHERE id = %s", (passage_id,))
@@ -123,13 +149,14 @@ class PostgresLibrary:
             "SELECT id FROM knowledge.chunks WHERE book_id = %s AND position BETWEEN %s AND %s ORDER BY position, id",
             (book_id, position - before, position + after))]
         described = self._describe_many(ids)
-        passages = [self._shape(described[i]) for i in ids]
+        passages = [self._mark_stale(self._shape(described[i])) for i in ids]
+        context = "review_date" in passages[0]          # une note de contexte : ses champs d'en-tête, sans auteur ni URL
         return {
             "book": passages[0]["book"],
-            **{k: passages[0][k] for k in library.META_FIELDS if k in passages[0]},
+            **{k: passages[0][k] for k in library.META_FIELDS + (CONTEXT_FIELDS if context else ()) if k in passages[0]},
             "file": passages[0]["file"],
-            "passages": [{k: p[k] for k in ("passage_id", "kind", "section", "position", "ref", "text") if k in p}
-                         for p in passages],
+            "passages": [{k: p[k] for k in ("passage_id", "kind", "section", "position", "ref", "text")
+                          + (CONTEXT_FIELDS if context else ()) if k in p} for p in passages],
         }
 
     def collections(self) -> dict[str, int]:

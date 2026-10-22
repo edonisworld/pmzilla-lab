@@ -14,7 +14,7 @@ import messages  # noqa: E402
 SOURCE = Path(__file__).resolve().parents[2] / "tools" / "flow_import.py"
 VALEURS = {"read": 1, "inserted": 2, "updated": 3, "unchanged": 4, "unreadable": 5, "teams": 6, "links_added": 7,
            "links_removed": 8, "label_periods": 12, "version_periods": 13, "refused": 14, "skipped": 15, "back": 16, "percent": "20", "added": 9, "orphans": 10, "marked": 11, "file": "a.csv", "column": "Col", "path": "p/c.json",
-           "name": "ValueError"}
+           "name": "ValueError", "n": 17, "d": 18, "k": 19, "field": "status"}
 
 
 class CataloguesImport(unittest.TestCase):
@@ -50,8 +50,13 @@ class CataloguesImport(unittest.TestCase):
         en, fr = messages.Messages(fim.CATALOGS, "en"), messages.Messages(fim.CATALOGS, "fr")
         self.assertEqual(en("out_of_export", marked=1, back=0), "Tickets out of the export: 1 marked, 0 back")
         self.assertEqual(fr("out_of_export", marked=1, back=0), "Tickets sortis de l'export : 1 marqués, 0 revenus")
+        self.assertEqual(en("gone_sighted", n=2), "tickets marked gone, sighted again by the export: 2")
+        self.assertEqual(fr("gone_sighted", n=2), "tickets marqués disparus, revus par l'export : 2")
         self.assertEqual(en("incomplete_set"), "incomplete export set: --mark-absent refused")
         self.assertEqual(fr("incomplete_set"), "jeu d'exports incomplet : --mark-absent refusé")
+        self.assertEqual(en("partial_run"), "last export run limited to one query (--query): run a complete export first, without --query")
+        self.assertEqual(fr("partial_run"), "dernier passage d'export limité à une requête (--query) : lancez d'abord un passage "
+                                            "complet de l'export, sans --query")
         self.assertEqual(en("past_retention", skipped=1), "tickets past retention, skipped: 1")
         self.assertEqual(fr("past_retention", skipped=1), "tickets au-delà de la conservation, ignorés : 1")
 
@@ -70,10 +75,24 @@ class CataloguesImport(unittest.TestCase):
             self.assertEqual(messages.fields(fim.CATALOGS[langue]["empty_export"]), set())
             self.assertEqual(messages.fields(fim.CATALOGS[langue]["absent_share_exceeded"]), {"percent"})
 
-    def test_erreurs_d_export_disent_que_rien_n_est_ecrit(self):
-        for langue, phrase in (("fr", "Rien n'a été écrit"), ("en", "Nothing was written")):
-            for cle in ("column_missing", "updated_unreadable"):
-                self.assertIn(phrase, fim.CATALOGS[langue][cle], f"{langue}/{cle}")
+    def test_phrases_de_la_conception_d6_pour_les_fichiers_et_l_historique_retires(self):
+        """Design D6 (database-only) : l'import refuse un fichier d'export et --history (code 2), sans nommer de fichier."""
+        en, fr = messages.Messages(fim.CATALOGS, "en"), messages.Messages(fim.CATALOGS, "fr")
+        self.assertEqual(en("export_files_retired"), "export files are no longer read: the import derives from the raw layer")
+        self.assertEqual(fr("export_files_retired"), "les fichiers d'export ne sont plus lus : l'import part de la couche brute")
+        self.assertEqual(en("history_retired"), "--history is retired: the history collection writes the transitions")
+        self.assertEqual(fr("history_retired"), "--history est retirée : la collecte de l'historique écrit les transitions")
+        self.assertEqual(en("no_new_run"), "raw layer: no new run to apply")
+        self.assertEqual(fr("no_new_run"), "couche brute : aucun nouveau passage à appliquer")
+        for langue in ("fr", "en"):
+            for cle in ("export_files_retired", "history_retired", "no_new_run"):
+                self.assertEqual(messages.fields(fim.CATALOGS[langue][cle]), set(), f"{langue}/{cle}")
+
+    def test_plus_de_message_de_fichier_ni_de_cache(self):
+        for langue, catalogue in fim.CATALOGS.items():
+            for cle in ("column_missing", "updated_unreadable", "file_unreadable", "file_empty", "cache_missing",
+                        "cache_unreadable", "transitions_summary", "periods_summary", "labels_refused", "timezone_unknown"):
+                self.assertNotIn(cle, catalogue, f"{langue}/{cle}")
 
     def test_aucun_champ_de_donnee_de_ticket(self):
         autorises = set(VALEURS)

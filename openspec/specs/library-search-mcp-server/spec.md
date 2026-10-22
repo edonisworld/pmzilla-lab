@@ -210,6 +210,39 @@ The system SHALL return from the PostgreSQL library, for the invented demo libra
 - **WHEN** the collections and books are listed and a passage is read with its neighbours on the demo library
 - **THEN** the answers equal the values frozen in the test, positions included, and undated books are kept by the date filter of a search
 
+### Requirement: Search leaves the private collections out unless named
+The system SHALL leave every private collection out of a search made without collections, and SHALL return the notes of the context collection when the search names it (design D5). The listings of collections and books SHALL show the context collection with its counts. The system SHALL NOT return a note to a search that does not name its collection.
+
+#### Scenario: Default search
+- **WHEN** a search without collections matches words that a fixture note and a fixture book both hold
+- **THEN** the book is returned and the note is not
+
+#### Scenario: Named search
+- **WHEN** the same search names the context collection
+- **THEN** the note is returned
+
+#### Scenario: Listing
+- **WHEN** the collections are listed
+- **THEN** the context collection appears with its number of notes
+
+### Requirement: A context hit carries its header and its stale mark
+The system SHALL return, with each context hit and each context passage read, the note's date, nature, source and review date, and a stale mark that is true when the review date is before the current date in the Europe/Paris time zone, the date being injectable for tests. It SHALL NOT add an author or a URL to a note, and SHALL NOT drop a note through the date filter.
+
+#### Scenario: Stale note
+- **WHEN** a note whose review date has passed is found, with an injected current date
+- **THEN** the hit carries its header fields and the stale mark true, and no author field
+
+#### Scenario: Date filter
+- **WHEN** a search names the context collection and a date filter later than the note dates
+- **THEN** the notes are still returned
+
+### Requirement: The search description names the context collection generically
+The system SHALL describe, in the search tool's description, the context collection as the user's organisation context notes, searched only when named, whose hits carry the fields to cite. The collection name SHALL come from the code constant. The description SHALL NOT hold a personal identifier, a team name or a note title.
+
+#### Scenario: Description read from the server source
+- **WHEN** the description of the search tool is read
+- **THEN** it names the context collection by the constant, says it is searched only when named, and holds none of the scanner's identifiers
+
 ## Open questions
 
 1. The `ConfigurationMcp` requirement exercises `tools/posture_evals.py`, which is outside this domain; ownership of that requirement should be confirmed with the posture-evals specs.

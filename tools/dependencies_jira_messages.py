@@ -8,9 +8,9 @@ from __future__ import annotations
 
 FR = {
     # ---- console : diagnose
-    "merged_exports": "Exports fusionnés : {n}",
-    "source_unknown": "--source : valeur inconnue « {value} » (valeurs acceptées : {allowed}).",
-    "source_db_no_files": "--source db lit la base : aucun fichier CSV ne doit être donné (retirer les fichiers, ou utiliser --source csv).",
+    "refused_session": "Refusé dans une session Claude Code",
+    "source_retired": "--source est retirée : la base est la seule source",
+    "export_files_retired": "les fichiers d'export ne sont plus lus : la base est la seule source",
     "db_unreachable": "Base de données : lecture impossible. {detail}",
     "source_name": "base",
     "tickets_read": "Tickets lus : {n}",
@@ -29,6 +29,12 @@ FR = {
     "flag_ignored": "ignoré",
     "decomposition_links": "Liens de décomposition ({type} vers un autre niveau) : {n}, comptés à part",
     "scope_line": "Périmètre : {projects} ({n} tickets ; les autres servent à situer l'autre côté des liens)",
+    "exclusion_line": "Projets exclus de la carte : {n} (source : {source})",
+    "exclusion_none": "aucun",
+    "exclusion_src_option": "option --exclude",
+    "exclusion_src_map": "réglage dependency_excluded_projects",
+    "exclusion_src_shared": "réglage excluded_projects, commun avec le rapport de flux",
+    "exit_empty_exclusion": "--exclude : aucune clé de projet ; donner des clés séparées par des virgules, ou « aucun »",
     "excluded_project_links": "Liens avec le projet exclu {project} : {n} ({side}), comptés à part",
     "mode_line": "Mode : {mode} · dépendances distinctes : {n} · vers un ticket absent de l'export : {outside}",
     "mode_oriented": "orienté",
@@ -45,15 +51,8 @@ FR = {
                        "sinon l'équipe de l'autre côté reste inconnue.",
     "unknown_states": "États non terminés ni « en cours » ni « à faire » ({n} tickets) : {states}",
     "hint_status_category": "  Ajoutez la colonne « Status Category » à la vue Jira : elle classe les états de tous les workflows.",
-    "round_number": "Attention : {n} tickets, un nombre rond. L'export a probablement atteint la limite de Jira "
-                    "et des tickets manquent : réduisez la requête.",
     "tickets_without_team": "Tickets sans équipe : {n}",
     # ---- console : compute et erreurs
-    "exit_missing_column": "Colonne absente de l'export : {missing}. Sans la clé, impossible de relier un ticket à ceux "
-                           "qu'il cite dans ses liens. Ce script lit les CSV de export_jira_api.py (uv run tools/export_jira_api.py export), dont les en-têtes sont en anglais ; "
-                           "un export manuel de Jira n'est plus lu. Autre nom de colonne : à ajouter dans {config} (columns: key).",
-    "missing_key_column": "clé du ticket (Issue key)",
-    "missing_status_column": "état (Status)",
     "exit_no_links": "Aucune colonne de liens dans l'export : lancez d'abord la commande diagnose.",
     "report_line": "Rapport : {path}",
     "old_epics_jira": "\nEpics anciens non vivants ({n}). Requête Jira pour voir tous leurs enfants, "
@@ -78,9 +77,6 @@ FR = {
     "note_untyped": "> Les liens n'ont pas de type : impossible de distinguer un blocage d'une simple relation, "
                     "ni de dire qui attend qui. Les chiffres comptent des liens, pas des blocages. Pour des blocages, "
                     "il faut des colonnes de liens typées (« Inward/Outward issue link (Blocks) »).",
-    "note_truncated": "> **Export probablement tronqué** : {files} tickets, un nombre rond qui "
-                      "correspond à une limite d'export de Jira. Des tickets manquent (les plus anciens si la requête trie "
-                      "par date décroissante) : ne pas lire cette carte, découper la requête en lots plus petits.",
     "note_decomposition": "> Liens de décomposition ({type} relié à un ticket d'un autre niveau) : {n}, hors de la carte "
                           "(réglage portfolio_types). Les liens entre deux tickets de ce niveau restent dans la carte.",
     "note_excluded": "> Liens avec le projet exclu {project} : {n} ({side}), hors de la carte (réglage excluded_projects).",
@@ -214,9 +210,9 @@ FR = {
 
 EN = {
     # ---- console : diagnose
-    "merged_exports": "Merged exports: {n}",
-    "source_unknown": "--source: unknown value \"{value}\" (accepted values: {allowed}).",
-    "source_db_no_files": "--source db reads the database: no CSV file may be given (remove the files, or use --source csv).",
+    "refused_session": "Refused inside a Claude Code session",
+    "source_retired": "--source is retired: the database is the only source",
+    "export_files_retired": "export files are no longer read: the database is the only source",
     "db_unreachable": "Database: cannot read. {detail}",
     "source_name": "database",
     "tickets_read": "Tickets read: {n}",
@@ -236,6 +232,12 @@ EN = {
     "flag_ignored": "ignored",
     "decomposition_links": "Decomposition links ({type} to another level): {n}, counted separately",
     "scope_line": "Scope: {projects} ({n} tickets; the others are used to locate the other side of the links)",
+    "exclusion_line": "Projects excluded from the map: {n} (source: {source})",
+    "exclusion_none": "none",
+    "exclusion_src_option": "option --exclude",
+    "exclusion_src_map": "setting dependency_excluded_projects",
+    "exclusion_src_shared": "setting excluded_projects, shared with the flow report",
+    "exit_empty_exclusion": '--exclude: no project key; give comma-separated keys, or "none"',
     "excluded_project_links": "Links with excluded project {project}: {n} ({side}), counted separately",
     "mode_line": "Mode: {mode} · distinct dependencies: {n} · to a ticket missing from the export: {outside}",
     "mode_oriented": "oriented",
@@ -252,15 +254,8 @@ EN = {
                        "otherwise the team on the other side stays unknown.",
     "unknown_states": "States that are neither finished, \"in progress\" nor \"to do\" ({n} tickets): {states}",
     "hint_status_category": "  Add the \"Status Category\" column to the Jira view: it classifies the states of all workflows.",
-    "round_number": "Warning: {n} tickets, a round number. The export has probably hit the Jira limit "
-                    "and tickets are missing: narrow the query.",
     "tickets_without_team": "Tickets without a team: {n}",
     # ---- console : compute and errors
-    "exit_missing_column": "Column missing from the export: {missing}. Without the key, a ticket cannot be linked to the ones "
-                           "it cites in its links. This script reads the CSV files of export_jira_api.py (uv run tools/export_jira_api.py export), whose headers are in English; "
-                           "a manual Jira export is no longer read. Another column name: add it to {config} (columns: key).",
-    "missing_key_column": "ticket key (Issue key)",
-    "missing_status_column": "status (Status)",
     "exit_no_links": "No link columns in the export: run the diagnose command first.",
     "report_line": "Report: {path}",
     "old_epics_jira": "\nOld Epics that are not alive ({n}). Jira query to see all their children, "
@@ -285,9 +280,6 @@ EN = {
     "note_untyped": "> The links have no type: it is impossible to tell a blockage from a simple relation, "
                     "or who waits for whom. The figures count links, not blockages. For blockages, "
                     "typed link columns are needed (\"Inward/Outward issue link (Blocks)\").",
-    "note_truncated": "> **Export probably truncated**: {files} tickets, a round number that "
-                      "matches a Jira export limit. Tickets are missing (the oldest ones if the query sorts "
-                      "by descending date): do not read this map, split the query into smaller batches.",
     "note_decomposition": "> Decomposition links ({type} linked to a ticket of another level): {n}, left out of the map "
                           "(setting portfolio_types). Links between two tickets of this level stay in the map.",
     "note_excluded": "> Links with excluded project {project}: {n} ({side}), left out of the map (setting excluded_projects).",

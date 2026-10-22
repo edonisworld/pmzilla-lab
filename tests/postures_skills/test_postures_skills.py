@@ -6,6 +6,7 @@ Les quatre skills de posture traduits en anglais (lot 6 de la version anglaise) 
 Lecture seule du dépôt (skills, vocabulaire) ; les scripts tournent dans des dossiers temporaires. Aucun accès à Flux-Lab/
 ni au sanctum réel.
 """
+import os
 import re
 import shlex
 import shutil
@@ -18,6 +19,15 @@ from pathlib import Path
 import yaml
 
 RACINE = Path(__file__).resolve().parents[2]
+
+
+def env_de_reveil(uv: str) -> dict:
+    """Environnement réduit de la commande de réveil : PATH et HOME minimaux, hors ligne, et les variables UV_* de l'appelant,
+    car dans le conteneur de la CI locale le cache et le Python d'uv sont hors du dossier personnel (UV_CACHE_DIR et
+    UV_PYTHON_INSTALL_DIR de ci/Dockerfile ; sans elles, pyyaml « absent du cache », tâche 6.5 de local-ci-container)."""
+    env = {k: v for k, v in os.environ.items() if k.startswith("UV_")}
+    env.update({"PATH": "/usr/bin:/bin:" + str(Path(uv).parent), "HOME": str(Path.home()), "UV_OFFLINE": "1"})
+    return env
 SKILLS = RACINE / ".claude" / "skills"
 POSTURES = ["delivery", "discovery", "scaling", "facilitation"]
 ANCIENS_NOMS = {  # fiches de capacité renommées au lot 6 (ancien nom -> nouveau nom)
@@ -203,6 +213,155 @@ class Formules(unittest.TestCase):
                         self.assertIn(formule, bloc)
 
 
+class ModeManuelQualiteStories(unittest.TestCase):
+    """Mode manuel de l'audit d'une story ou d'une epic collée (story-quality-audit, design D12, D13, D17, D18 ; tâche 2.5 ;
+    spec story-quality-manual) : un ordre permanent identique dans les CREED de Delivery, Discovery et Facilitation, et une
+    capacité qui renvoie à sa fiche. Scaling n'a pas de mode manuel."""
+
+    MODE_MANUEL = ["delivery", "discovery", "facilitation"]
+    TITRE = "**Pasted story or epic (manual mode).**"
+    FICHES = {"delivery": ("SQ", "audit-pasted-story.md"), "discovery": ("SQ", "audit-pasted-story.md"),
+              "facilitation": ("SC", "prepare-story-coaching.md")}
+    # un point de la tâche 2.5 = au moins une expression attendue dans l'ordre permanent
+    POINTS = {
+        "routage": ["Delivery takes a story", "Discovery takes an epic's problem, outcome or hypothesis", "[Bascule vers Discovery]",
+                    "Facilitation only prepares the coaching conversation with the PO",
+                    # essai du 2026-10-20 : la partie Delivery d'une epic ne dépend pas du problème ni du résultat
+                    "the Delivery part (readiness, splitting) makes no verdict, splitting lead or short answer depend on the "
+                    "problem or the outcome", "after the switch to Discovery"],
+        "grille et verdicts": ["uv run tools/story_quality.py grid --show", "one verdict per criterion",
+                               "`met`, `not_met`, `not_applicable` or `undetermined`", "its reason",
+                               "its source line copied as `grid --show` prints it", "transposition formula included",
+                               "no criterion without its line"],
+        "socle seul": ["the core grid applies alone"],
+        "avis D14": ["Texte collé : analysé ici, écrit dans aucun fichier suivi.",
+                     "Pasted text: analysed here, written to no tracked file.", "once"],
+        "noms": ["une personne", "a person", "never repeat the name"],
+        "Critic": ["Critic applies"],
+        "rien par défaut": ["Nothing is written by default", "explicit request to keep",
+                            "the criterion verdicts, the learning points and a summary of Critic's objections",
+                            "the objection alone", "without quoting or rewording the pasted text",
+                            "the request at the top reworded",
+                            # décision de l'auteur du 2026-10-20 : le livrable gardé va dans le dossier ignoré par Git
+                            "`_bmad-output/pmzilla/internes/` (ignored by Git)"],
+        "réécriture D12": ["Rewrite suggestions for the PO", "stay in the answer even when Critic nuances them"],
+        "jamais écrit": ["a tracked file", "the sanctum", "the coaching journal", "a case", "an experiment", "GitHub",
+                         "its ticket key"],
+        "surcouche": ["the organisation overlay", "la surcouche de l'organisation", "règle de l'organisation",
+                      "read, write or edit its file",
+                      # décision de l'auteur du 2026-10-20 (soir) : la posture lance grid puis grid --show et montre le résultat
+                      "run first `uv run tools/story_quality.py grid` for its versions and counts (`grid` without option)",
+                      "then `uv run tools/story_quality.py grid --show` for its effective criteria",
+                      "show the versions, the counts and the effective criteria they print",
+                      "never read its file instead", "never propose to open it in an editor",
+                      "never by the organisation's or the product's name"],
+        "classement": ["Refuse to rank teams or POs", "evaluate a person", "a reading per team",
+                       "no common table and no rate computed for two teams", "read one team, and offer the other separately"],
+        "résultats agrégés": ["quality_by_team", "quality_coverage_by_team", "quality_by_product", "qualite-stories-*"],
+        "causes probables": ["Probable causes in the chain", "Causes probables dans la chaîne", "ticket template",
+                             "Definition of Ready", "Refinement", "Discovery Workflow step", "hypothesis formula",
+                             "never a person's fault", "never two teams side by side"],
+        "chaîne du produit": ["Product chain", "Chaîne du produit", "a lead for the product's teams", "no team named",
+                              "never to rank"],
+    }
+
+    def ordre(self, posture: str) -> str:
+        texte = (skill(posture) / "assets" / "CREED-template.md").read_text(encoding="utf-8")
+        self.assertIn(self.TITRE, texte, posture)
+        debut = texte.index(self.TITRE)
+        fin = texte.index("\n\n**", debut + len(self.TITRE))
+        return texte[debut:fin]
+
+    def test_l_ordre_permanent_est_dans_standing_orders_des_trois_postures(self):
+        for posture in self.MODE_MANUEL:
+            texte = (skill(posture) / "assets" / "CREED-template.md").read_text(encoding="utf-8")
+            with self.subTest(posture=posture):
+                position = texte.index(self.TITRE)
+                self.assertLess(texte.index("## Standing Orders"), position)
+                self.assertLess(position, texte.index("## Philosophy"))
+
+    def test_l_ordre_permanent_est_identique_dans_les_trois_creed(self):
+        ordres = {p: self.ordre(p) for p in self.MODE_MANUEL}
+        for posture in self.MODE_MANUEL[1:]:
+            self.assertEqual(ordres[posture], ordres["delivery"], posture)
+
+    def test_chaque_point_de_la_tache_2_5_est_dans_l_ordre(self):
+        texte = self.ordre("delivery")
+        for point, expressions in self.POINTS.items():
+            for expression in expressions:
+                with self.subTest(point=point, expression=expression):
+                    self.assertIn(expression, texte)
+
+    def test_scaling_n_a_pas_de_mode_manuel(self):
+        texte = (skill("scaling") / "assets" / "CREED-template.md").read_text(encoding="utf-8")
+        self.assertNotIn(self.TITRE, texte)
+
+    def test_la_capacite_renvoie_a_sa_fiche_qui_renvoie_a_l_ordre(self):
+        for posture, (code, fiche) in self.FICHES.items():
+            capacites = (skill(posture) / "assets" / "CAPABILITIES-template.md").read_text(encoding="utf-8")
+            with self.subTest(posture=posture):
+                self.assertRegex(capacites, rf"(?m)^\| {code} \|.*references/{re.escape(fiche)}")
+                texte = (skill(posture) / "references" / fiche).read_text(encoding="utf-8")
+                self.assertIn(f"code: {code}", texte)
+                self.assertIn("Pasted story or epic (manual mode)", texte)
+                self.assertIn("grid --show", texte)
+                # décision de l'auteur du 2026-10-20 : contenu du fichier gardé
+                self.assertIn("a summary of Critic's objections only (the objection alone", texte)
+                self.assertIn("without quoting or rewording", texte)
+                # décision de l'auteur du 2026-10-20 (soir) : demande d'affichage de la surcouche
+                self.assertIn("Asked to show the organisation overlay, run `grid` (its versions and counts), then `grid --show` "
+                              "(its effective criteria), and show what they print; never read its file directly, and never "
+                              "propose to open it in an editor.", texte)
+                if code == "SQ":
+                    self.assertIn("transposition formula included, no criterion without its line", texte)
+
+    def test_le_refus_de_classer_est_dans_les_limites_des_trois_postures(self):
+        refus = "- Ranking teams or POs from story quality results, or using them to evaluate a person."
+        for posture in self.MODE_MANUEL:
+            texte = (skill(posture) / "assets" / "CREED-template.md").read_text(encoding="utf-8")
+            with self.subTest(posture=posture):
+                self.assertIn(refus, texte.split("## Boundaries")[1].split("\n## ")[0])
+
+    def test_les_deux_interdits_sont_nommes_dans_l_ordre_les_fiches_et_les_postures(self):
+        # décision de l'auteur du 2026-10-21 (revue 4.2 de story-quality-audit) : lancer collect, review, analyse ou coach,
+        # et faire coller un retour de coaching, sont nommés partout où la règle du mode manuel est écrite
+        interdits = ("Never run `story_quality.py collect`, `review`, `analyse` or `coach`, and never ask the user to paste "
+                     "coaching feedback into an answer or a deliverable: coaching results enter no report, dashboard or "
+                     "deliverable.")
+        for posture, (_, fiche) in self.FICHES.items():
+            sources = {"ordre": self.ordre(posture), "fiche": (skill(posture) / "references" / fiche).read_text(encoding="utf-8"),
+                       "posture": (RACINE / "docs" / "pmzilla" / "postures" / f"{posture}.md").read_text(encoding="utf-8")}
+            for nom, texte in sources.items():
+                with self.subTest(posture=posture, source=nom):
+                    self.assertIn(interdits, texte)
+        self.assertIn("- *Never run, never ask.* " + interdits, self.ordre("delivery"))
+
+    def test_ce_que_grid_n_affiche_pas_ne_renvoie_jamais_au_fichier(self):
+        # décision de l'auteur du 2026-10-21 : qualite-surcouche rouge sur trois passages, la séance renvoyait au fichier pour
+        # la raison d'une désactivation, que grid --show n'affiche pas
+        consigne = ("This holds also for what the two commands do not print, such as the reason a criterion is disabled: say "
+                    "that it is not shown here, and never send the user to the file, to an editor or to another workspace to "
+                    "find it.")
+        for posture, (_, fiche) in self.FICHES.items():
+            for nom, texte in (("ordre", self.ordre(posture)),
+                               ("fiche", (skill(posture) / "references" / fiche).read_text(encoding="utf-8"))):
+                with self.subTest(posture=posture, source=nom):
+                    self.assertIn(consigne, texte)
+        ordre = self.ordre("delivery")
+        self.assertLess(ordre.index("the overlay is shown only through these two commands. " + consigne),
+                        ordre.index("With no overlay"))
+
+    def test_aucun_nom_de_produit_ni_d_organisation_dans_les_fiches(self):
+        for posture, (_, fiche) in self.FICHES.items():
+            texte = self.ordre(posture) + (skill(posture) / "references" / fiche).read_text(encoding="utf-8")
+            with self.subTest(posture=posture):
+                self.assertNotRegex(texte, r"(?i)surcouche-qualite-stories\.yaml|regles/")
+                # le nom de l'organisation n'est jamais écrit dans un fichier suivi, ni dans ce test : il est reconnu par son empreinte
+                import hashlib
+                mots = {hashlib.sha256(m.encode()).hexdigest() for m in re.findall(r"[a-z]+", texte.lower())}
+                self.assertNotIn("88c79d781f3b62b2f5de4443729cdd5fbb47da904bde6e520ac0f4314c592dcb", mots)
+
+
 class TitresDeRegistres(unittest.TestCase):
     """Les postures reprennent les titres et statuts déjà présents dans MEMORY.md ; les nouveaux sont en anglais (lot 6)."""
 
@@ -336,13 +495,24 @@ class Reveil(unittest.TestCase):
         ecrite = re.search(r"`(uv run [^`]*wake\.py[^`]*)`", ligne).group(1)
         return shlex.split(ecrite.replace("{skill-name}", f"pmzilla-{posture}-bmad").replace("{project-root}", str(self.racine)))
 
+    def test_l_environnement_de_reveil_garde_le_cache_et_le_python_d_uv_de_l_appelant(self):
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"UV_CACHE_DIR": "/opt/uv/cache", "UV_PYTHON_INSTALL_DIR": "/opt/uv/python",
+                                          "UV_OFFLINE": "0", "AUTRE_VARIABLE": "x"}):
+            env = env_de_reveil("/usr/local/bin/uv")
+        self.assertEqual(env["UV_CACHE_DIR"], "/opt/uv/cache")
+        self.assertEqual(env["UV_PYTHON_INSTALL_DIR"], "/opt/uv/python")
+        self.assertEqual(env["UV_OFFLINE"], "1")
+        self.assertNotIn("AUTRE_VARIABLE", env)
+        self.assertEqual(env["PATH"], "/usr/bin:/bin:/usr/local/bin")
+
     def test_la_commande_de_reveil_de_skill_md_fonctionne_depuis_la_racine_du_projet(self):
         """Lot 6, correctif : `uv run scripts/wake.py` (chemin relatif au skill) échouait quand la séance l'appelait depuis la racine
         (« Failed to spawn »). La commande écrite dans SKILL.md est lancée telle quelle, depuis la racine, contre un sanctum temporaire."""
         uv = shutil.which("uv")
         if not uv:
             self.skipTest("uv absent")
-        env = {"PATH": "/usr/bin:/bin:" + str(Path(uv).parent), "HOME": str(Path.home()), "UV_OFFLINE": "1"}
+        env = env_de_reveil(uv)
         for posture in POSTURES:
             commande = self.commande_de_reveil(posture)
             with self.subTest(posture=posture):

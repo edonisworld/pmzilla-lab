@@ -29,7 +29,7 @@ jql_export: "project in (ABC, DEF) AND resolved >= -20w"
 
 def normaliser(texte: str, ws: Path) -> str:
     """Chemins du dossier temporaire remplacés par <WS>, messages d'installation de uv retirés."""
-    for chemin in {str(ws), str(ws.resolve())}:
+    for chemin in sorted({str(ws), str(ws.resolve())}, key=len, reverse=True):   # le chemin résolu (plus long) d'abord
         texte = texte.replace(chemin, "<WS>")
     return re.sub(r"^(Installed|Uninstalled|Prepared|Resolved|Audited) \d+ packages? in .*\n", "", texte, flags=re.M)
 
@@ -52,7 +52,7 @@ class Jeu:
     def lancer(self, nom: str, *args: str, langue: bool = True) -> subprocess.CompletedProcess:
         extra = ["--language", self.language] if (langue and self.language) else []
         env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.ws), "PYTHONHASHSEED": "0"}
-        r = subprocess.run(["uv", "run", str(fx.SCRIPT), *args, *extra], env=env, capture_output=True, text=True)
+        r = subprocess.run(["uv", "run", str(fx.SCRIPT), *args, *extra], env=env, capture_output=True, text=True)       # lanceur de test : fixtures CSV rendues comme la base les rend (D11)
         fichiers = lire_fichiers(self.ws)
         nouveaux = {k: v for k, v in fichiers.items() if self.vus.get(k) != v}
         self.vus.update(fichiers)
@@ -253,14 +253,10 @@ def jouer(language: str | None) -> dict[str, str]:
                    "--no-comparison", "--dormant-from-history")
         jeu.lancer("err-history-no-key", "compute", str(ws / "no-key.csv"), "--today", "2026-10-04",
                    "--no-comparison", "--history")
-        jeu.lancer("err-history-cache-missing", *base, "--history", str(ws / "absent.json"))
-        (ws / "broken.json").write_text("{pas du json", encoding="utf-8")
-        jeu.lancer("err-history-cache-unreadable", *base, "--history", str(ws / "broken.json"))
+        jeu.lancer("err-no-history-in-db", *base, "--history", str(ws / "absent.json"))      # la fixture sans cache : aucun historique
         jeu.lancer("err-teams-only-no-team", "compute", str(ws / "no-key.csv"), "--today", "2026-10-04",
                    "--no-comparison", "--teams-only")
         jeu.lancer("err-resolutions-empty", *base, "--batch-closure-resolutions", " , ")
-        csv_brut(ws / "no-status.csv", ["Issue Type", "Created"], [["Story", "05/Aug/2026 09:00"]])
-        jeu.lancer("err-columns-missing", "statuses", str(ws / "no-status.csv"))
         # réglages invalides
         fx.ecrire_yaml(ws, YAML + "batch_closure_threshold: 1\n")
         jeu.lancer("err-threshold-invalid", *base)

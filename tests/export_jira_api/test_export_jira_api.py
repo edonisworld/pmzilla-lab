@@ -2,18 +2,17 @@
 
     uv run --with pyyaml --with requests python -m unittest discover -s tests/export_jira_api -v
 
-Aucun appel au vrai Jira. Les tests vérifient aussi que flux_jira.py et dependencies_jira.py lisent le CSV de l'API
-sans modification, et que les sous-commandes retirées (teams-table, compare) renvoient vers la voie à suivre.
+Aucun appel au vrai Jira. L'export n'écrit aucun fichier (database-only) : les tests lisent les passages et les instantanés du
+faux magasin de la couche brute (aide_couche_brute.py). Ils vérifient aussi que les sous-commandes retirées (teams-table, compare)
+renvoient vers la voie à suivre.
 """
 import base64
 import contextlib
 import copy
-import csv
 import datetime as dt
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import threading
@@ -26,6 +25,7 @@ TOOLS = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))
 import export_jira_api as ex          # noqa: E402
 import history_jira as hj          # noqa: E402
+from aide_couche_brute import MagasinMemoire          # noqa: E402
 
 JETON = "test-token-000"
 EMAIL = "utilisateur@example.org"
@@ -35,10 +35,11 @@ CHAMP = "customfield_10001"
 AUJOURDHUI = "2026-10-04"
 
 
-def champs(type_, etat, categorie, cree, resolu=None, motif=None, debut=None, parent=None, equipes=(), liens=()):
+def champs(type_, etat, categorie, cree, resolu=None, motif=None, debut=None, parent=None, equipes=(), liens=(), maj=None):
     return {"issuetype": {"name": type_}, "status": {"name": etat, "statusCategory": {"name": categorie}},
             "created": cree, "resolutiondate": resolu, "resolution": {"name": motif} if motif else None,
             "statuscategorychangedate": debut or resolu or cree, "parent": {"key": parent} if parent else None,
+            "updated": maj or resolu or cree,           # Jira renvoie toujours la date de mise à jour (sans elle, pas d'instantané)
             "issuelinks": [dict(l) for l in liens], "summary": "Titre secret",
             CHAMP: [{"value": e} for e in equipes]}
 
@@ -159,7 +160,9 @@ class Base(unittest.TestCase):
         self.ws = Path(self.tmp.name)
         flux = self.ws / "Flux-Lab"
         flux.mkdir()
-        for p in (mock.patch.object(hj, "WORKSPACE", self.ws), mock.patch.object(hj, "FLUX_DIR", flux),
+        self.magasin = MagasinMemoire()         # couche brute en mémoire : l'export ne se connecte à aucune base dans ces tests
+        for p in (mock.patch.object(ex, "ouvrir_magasin", lambda: self.magasin),
+                  mock.patch.object(hj, "WORKSPACE", self.ws), mock.patch.object(hj, "FLUX_DIR", flux),
                   mock.patch.object(hj, "CONFIG_FILE", flux / "flux.yaml"),
                   mock.patch.object(hj, "lire_jeton", lambda: JETON),
                   mock.patch.object(hj, "API_ATLASSIAN", self.url), mock.patch.object(hj, "PAUSE", 0),
@@ -190,32 +193,30 @@ class Base(unittest.TestCase):
                     code = 1
         return code, sortie.getvalue()
 
-    def exporter(self, nom="api.csv") -> Path:
-        chemin = self.ws / nom
-        code, sortie = self.lancer("export", "--output", str(chemin))
+    def exporter(self, *options: str) -> dict[str, dict]:
+        """Lance l'export (il n'écrit aucun fichier) et rend, par clé, le dernier instantané écrit dans la couche brute."""
+        code, sortie = self.lancer("export", *options)
         self.assertEqual(code, 0, sortie)
-        return chemin
+        return {i["issue_key"]: i for i in self.magasin.instantanes}
 
-    def lignes(self, chemin: Path) -> list[list[str]]:
-        with chemin.open(encoding="utf-8-sig", newline="") as f:
-            return list(csv.reader(f))
+    def equipes(self, instantane: dict) -> list[str]:
+        return [e["name"] for e in instantane["teams"]]
 
 
 class AnciensNoms(Base):
     """Anciens noms d'options et de réglages refusés avec le nom actuel, anciens noms de sous-commandes refusés."""
 
     def test_anciennes_options_refusees_avec_le_nom_actuel(self):
-        for args, ancien, nouveau in ((("fields", "--cherche", "team"), "--cherche", "--search"),
-                                      (("export", "--sortie", str(self.ws / "x.csv")), "--sortie", "--output")):
+        # l'ancienne option --sortie (devenue --output) n'est plus testée ici : --output est retirée (database-only, D1)
+        for args, ancien, nouveau in ((("fields", "--cherche", "team"), "--cherche", "--search"),):
             code, sortie = self.lancer(*args)
             self.assertEqual(code, 2, sortie)
             self.assertIn(f"« {ancien} » n'existe plus ; utiliser « {nouveau} »", sortie)
-        self.assertFalse((self.ws / "x.csv").exists())
         self.assertEqual(self.faux.requetes, [])
 
     def test_anciens_noms_de_reglages_refuses_avec_le_nom_actuel(self):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_champ_equipe: {CHAMP}\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
+        code, sortie = self.lancer("export")
         self.assertNotEqual(code, 0)
         self.assertIn("« export_champ_equipe » n'existe plus ; utiliser « export_team_field »", str(code) + sortie)
         self.assertEqual(self.faux.requetes, [])
@@ -231,7 +232,7 @@ class JetonAScopes(Base):
     """Le client de l'export est celui de history_jira.py : passerelle seule, cloudId des réglages, « classic » refusé."""
 
     def commandes(self):
-        return (("export", "--output", str(self.ws / "x.csv")), ("fields", "--search", "team"), ("diagnose",))
+        return (("export",), ("fields", "--search", "team"), ("diagnose",))
 
     def test_les_appels_passent_par_la_passerelle(self):
         for argv in self.commandes():
@@ -259,7 +260,6 @@ class JetonAScopes(Base):
                 self.assertNotIn("Traceback", sortie)
         jeton.assert_not_called()
         self.assertEqual((self.faux.requetes, self.faux.appels_get, self.faux.hors_passerelle), ([], [], []))
-        self.assertFalse((self.ws / "x.csv").exists())
 
     def test_cloud_id_absent_ou_inexploitable(self):
         jeton = mock.Mock(return_value=JETON)
@@ -283,77 +283,75 @@ class JetonAScopes(Base):
             return original(client, methode, chemin, **kwargs)
 
         with mock.patch.object(hj.Client, "requete", espion):
-            self.exporter("passerelle.csv")
+            self.exporter()
         self.assertGreater(len(vus), 0)
         self.assertNotIn("/_edge/tenant_info", vus)
 
 
 class Export(Base):
-    def test_csv_au_format_de_l_export_jira(self):
-        lignes = self.lignes(self.exporter())
-        entete = lignes[0]
-        self.assertEqual(entete[:9], ["Issue key", "Issue Type", "Status", "Status Category", "Created", "Resolved",
-                                      "Resolution", "Status Category Changed", "Parent key"])
-        self.assertEqual(entete.count("Team"), 2)                                    # deux équipes au plus sur un ticket
-        self.assertEqual(entete.count("Outward issue link (Blocks)"), 2)             # colonnes répétées
-        self.assertEqual(entete.count("Inward issue link (Blocks)"), 1)
-        self.assertEqual(entete.count("Inward issue link (Relates)"), 1)
-        self.assertEqual(entete.count("Outward issue link (Relates)"), 1)
-        par_cle = {l[0]: dict(zip(range(len(l)), l)) for l in lignes[1:]}
-        assert set(par_cle) == {"ABC-1", "ABC-2", "ABC-3", "ABC-9"}
-        t1 = lignes[1]
-        self.assertEqual(t1[:9], ["ABC-1", "Story", "Closed", "Done", "01/Jun/2026 08:00", "10/Jul/2026 10:30", "Done",
-                                  "10/Jul/2026 10:30", "ABC-9"])
-        i = entete.index("Team")
-        self.assertEqual(t1[i:i + 2], ["Equipe A", "Equipe B"])
-        j = entete.index("Outward issue link (Blocks)")
-        self.assertEqual(t1[j:j + 2], ["ABC-2", "ABC-3"])
-        self.assertEqual(lignes[3][i:i + 2], ["", ""])                               # ABC-3 : aucune équipe
-        self.assertEqual(lignes[4][4], "12/Jan/2026 07:05")                          # heure du décalage d'origine
+    def test_instantanes_des_attributs_autorises(self):
+        instantanes = self.exporter()
+        self.assertEqual(set(instantanes), {"ABC-1", "ABC-2", "ABC-3", "ABC-9"})
+        t1 = instantanes["ABC-1"]
+        self.assertEqual((t1["project"], t1["type"], t1["status"], t1["status_category"], t1["resolution"], t1["parent_key"]),
+                         ("ABC", "Story", "Closed", "Done", "Done", "ABC-9"))
+        self.assertEqual([t1[c].isoformat() for c in ("created_at", "resolved_at", "status_category_changed_at")],
+                         ["2026-06-01T08:00:00+02:00", "2026-07-10T10:30:00+02:00", "2026-07-10T10:30:00+02:00"])
+        self.assertEqual(self.equipes(t1), ["Equipe A", "Equipe B"])                  # dans l'ordre de l'API
+        self.assertEqual({(l["target"], l["type"], l["direction"]) for l in t1["links"]},
+                         {("ABC-2", "Blocks", "outward"), ("ABC-3", "Blocks", "outward"), ("ABC-3", "Relates", "inward")})
+        self.assertEqual(instantanes["ABC-3"]["teams"], [])                           # aucune équipe
+        self.assertEqual(instantanes["ABC-9"]["created_at"].isoformat(), "2026-01-12T07:05:00+01:00")   # heure d'hiver de Paris
+
+    def test_un_passage_une_visite_par_ticket_et_aucun_fichier(self):
+        self.exporter()
+        self.assertEqual(len(self.magasin.passages), 1)
+        self.assertEqual(self.magasin.cles_vues(), {"ABC-1", "ABC-2", "ABC-3", "ABC-9"})
+        self.assertFalse((self.ws / "Flux-Lab" / "exports").exists())
+        self.assertEqual([p.name for p in self.ws.rglob("*") if p.is_file()], ["flux.yaml"])        # rien d'autre n'est écrit
 
     def test_pagination_complete(self):
         self.faux.taille_page = 1
-        lignes = self.lignes(self.exporter())
-        self.assertEqual(len(lignes) - 1, 4)
+        instantanes = self.exporter()
+        self.assertEqual(len(instantanes), 4)
         self.assertEqual(len(self.faux.requetes), 4)
         self.assertEqual(self.faux.requetes[1]["nextPageToken"], "1")
 
     def test_jeton_de_page_qui_se_repete_ne_boucle_pas(self):
         self.faux.taille_page = 2
         self.faux.jeton_repete = True
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
         self.assertEqual(len(self.faux.requetes), 2)
 
     def test_aucun_titre_demande_a_jira_et_rien_de_sensible_en_sortie(self):
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
         demandes = {f for r in self.faux.requetes for f in r["fields"]}
         self.assertNotIn("summary", demandes)
-        for interdit in ("assignee", "reporter", "creator", "description"):
+        for interdit in ("assignee", "reporter", "creator", "description", "labels", "fixVersions"):
             self.assertNotIn(interdit, demandes)
-        for texte in (sortie, chemin.read_text(encoding="utf-8-sig")):
-            self.assertNotIn("Titre secret", texte)
-            self.assertNotIn(JETON, texte)
-        for texte in (sortie,):
-            self.assertNotIn("ABC-", texte)
-            self.assertNotIn("Equipe", texte)
-            self.assertNotIn(self.url, texte)
-            self.assertNotIn("project = ABC", texte)
-        self.assertEqual(oct(chemin.stat().st_mode & 0o777), "0o600")
+        for instantane in self.magasin.instantanes:
+            self.assertNotIn("Titre secret", repr(instantane))
+            self.assertNotIn(JETON, repr(instantane))
+        self.assertNotIn("Titre secret", sortie)
+        self.assertNotIn(JETON, sortie)
+        self.assertNotIn("ABC-", sortie)
+        self.assertNotIn("Equipe", sortie)
+        self.assertNotIn(self.url, sortie)
+        self.assertNotIn("project = ABC", sortie)
         self.assertIn("Tickets : 4 ; pages : 1", sortie)
 
-    def test_sans_champ_d_equipe_pas_de_colonne_d_equipe(self):
+    def test_sans_champ_d_equipe_aucune_equipe(self):
         self.ecrire_reglages("jql_export: project = ABC\n")
-        lignes = self.lignes(self.exporter())
-        self.assertNotIn("Team", lignes[0])
+        instantanes = self.exporter()
+        self.assertTrue(all(i["teams"] == [] for i in instantanes.values()))
         self.assertNotIn(CHAMP, {f for r in self.faux.requetes for f in r["fields"]})
 
-    def test_entete_d_equipe_reglable(self):
+    def test_ancien_reglage_de_l_entete_d_equipe_accepte_sans_effet(self):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n"
                              "export_team_header: '[G] Team/s (label)'\n")
-        self.assertIn("[G] Team/s (label)", self.lignes(self.exporter())[0])
+        self.assertEqual(self.equipes(self.exporter()["ABC-1"]), ["Equipe A", "Equipe B"])
 
     def test_requete_absente(self):
         self.ecrire_reglages("")
@@ -418,8 +416,15 @@ def objet(n: int) -> dict:
     return {"workspaceId": "ws-secret", "id": f"ws-secret:{n}", "objectId": str(n)}
 
 
+def catalogue_de(paires: dict) -> str:
+    """Texte d'un catalogue (equipes-jira.yaml) : une entrée par identifiant -> libellé (données inventées)."""
+    return "teams:\n" + "".join(f"  - name: {libelle}\n    jira_team_ids: ['{identifiant}']\n"
+                                for identifiant, libelle in paires.items())
+
+
 class TableEquipes(Base):
-    """Champ d'équipe renvoyé en objets Assets : la table identifiant -> libellé (equipes-assets.yaml) s'écrit à la main."""
+    """Champ d'équipe renvoyé en objets Assets : le catalogue identifiant -> libellé (equipes-jira.yaml, change team-mapping)
+    traduit les identifiants ; l'ancienne table n'est plus lue."""
 
     EQUIPES = {            # clé -> (objets Assets de l'API, libellés attendus dans le CSV)
         "ABC-1": ([objet(1)], ["Equipe A"]),
@@ -437,76 +442,75 @@ class TableEquipes(Base):
             t[CHAMP] = objets
             self.faux.tickets[cle] = t
 
-    def ecrire_table(self, contenu: str = "equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\n") -> Path:
-        chemin = self.ws / "Flux-Lab" / "equipes-assets.yaml"
-        chemin.write_text(contenu, encoding="utf-8")
+    def ecrire_table(self, paires: dict | None = None) -> Path:
+        """Écrit le catalogue (nom conservé pour les tests ci-dessous : il tient la place de l'ancienne table)."""
+        chemin = self.ws / "Flux-Lab" / "equipes-jira.yaml"
+        chemin.write_text(catalogue_de(paires or {"1": "Equipe A", "2": "Equipe B", "3": "Equipe C"}), encoding="utf-8")
         return chemin
 
-    def test_export_traduit_par_la_table_une_colonne_par_equipe(self):
+    def test_export_traduit_par_le_catalogue_les_equipes_de_chaque_ticket(self):
         self.ecrire_table()
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        lignes = self.lignes(chemin)
-        entete = lignes[0]
-        self.assertEqual(entete.count("Team"), 2)
-        i = entete.index("Team")
-        equipes = {l[0]: l[i:i + 2] for l in lignes[1:]}
+        instantanes = {i["issue_key"]: i for i in self.magasin.instantanes}
         for cle, (_, attendu) in self.EQUIPES.items():
-            self.assertEqual(equipes[cle], attendu + [""] * (2 - len(attendu)), cle)
-        self.assertIn("Équipes inconnues : 3 identifiant(s) distinct(s) absent(s) de la table, 2 ticket(s) concerné(s)", sortie)
+            self.assertEqual(self.equipes(instantanes[cle]), attendu, cle)
+        self.assertEqual([e["jira_team_id"] for e in instantanes["ABC-4"]["teams"]], ["3", "1"])        # identifiant gardé, ordre de l'API
+        self.assertIn("identifiants d'équipe ni dans le référentiel ni dans le catalogue : 3, sur 2 tickets", sortie)
+        self.assertIn("équipes hors organisation : 3 identifiants, 4 tickets", sortie)
         for interdit in ("Equipe", "ABC-", "ws-secret"):
             self.assertNotIn(interdit, sortie)
 
     def test_export_liste_les_identifiants_inconnus_sans_libelle_ni_cle(self):
         self.ecrire_table()
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Complétez equipes-assets.yaml (equipes: identifiant -> libellé) avec ces identifiants : 4 ; 5 ; 6.", sortie)
+        self.assertIn("identifiants à ajouter : 4 ; 5 ; 6", sortie)
         for interdit in ("Equipe", "ABC-", "ws-secret", "workspace", "teams-table", self.url, JETON):
             self.assertNotIn(interdit, sortie)
 
     def test_export_liste_les_identifiants_inconnus_en_anglais(self):
         self.ecrire_table()
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"), "--language", "en")
+        code, sortie = self.lancer("export", "--language", "en")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Complete equipes-assets.yaml (equipes: identifier -> label) with these identifiers: 4; 5; 6.", sortie)
+        self.assertIn("identifiers to add: 4; 5; 6", sortie)
+        self.assertIn("team identifiers in neither the referential nor the catalogue: 3, on 2 tickets", sortie)
 
-    def test_table_complete_aucun_identifiant_a_lister(self):
-        self.ecrire_table("equipes: {'1': A, '2': B, '3': C, '4': D, '5': E, '6': F}\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+    def test_catalogue_complet_aucun_identifiant_a_lister(self):
+        self.ecrire_table({str(i): chr(64 + i) for i in range(1, 7)})
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        self.assertNotIn("Complétez", sortie)
-        self.assertNotIn("inconnues", sortie)
+        self.assertNotIn("à ajouter", sortie)
+        self.assertNotIn("ni dans le référentiel", sortie)
 
-    def test_strict_teams_identifiant_inconnu_ecrit_le_fichier_puis_sort_avec_3(self):
+    def test_strict_teams_identifiant_inconnu_sort_avec_3_sans_rien_enregistrer(self):
         self.ecrire_table()
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--strict-teams", "--output", str(chemin))
+        code, sortie = self.lancer("export", "--strict-teams")
         self.assertEqual(code, 3, sortie)
-        self.assertTrue(chemin.exists())
-        self.assertIn("Fichier écrit", sortie)
+        self.assertEqual((self.magasin.passages, self.magasin.visites, self.magasin.instantanes), ([], [], []))      # database-only, D1
         self.assertTrue(sortie.rstrip().endswith("identifiants d'équipe inconnus : export incomplet"), sortie)
-        for interdit in ("Equipe", "ABC-", "ws-secret"):
-            self.assertNotIn(interdit, sortie.splitlines()[-1])
+        for interdit in ("Equipe", "ABC-", "ws-secret", "Fichier écrit"):
+            self.assertNotIn(interdit, sortie)
 
     def test_strict_teams_en_anglais(self):
         self.ecrire_table()
-        code, sortie = self.lancer("export", "--strict-teams", "--output", str(self.ws / "api.csv"), "--language", "en")
+        code, sortie = self.lancer("export", "--strict-teams", "--language", "en")
         self.assertEqual(code, 3, sortie)
         self.assertTrue(sortie.rstrip().endswith("unknown team identifiers: export incomplete"), sortie)
 
-    def test_strict_teams_table_complete_sort_avec_0(self):
-        self.ecrire_table("equipes: {'1': A, '2': B, '3': C, '4': D, '5': E, '6': F}\n")
-        code, sortie = self.lancer("export", "--strict-teams", "--output", str(self.ws / "api.csv"))
+    def test_strict_teams_catalogue_complet_sort_avec_0(self):
+        self.ecrire_table({str(i): chr(64 + i) for i in range(1, 7)})
+        code, sortie = self.lancer("export", "--strict-teams")
         self.assertEqual(code, 0, sortie)
         self.assertNotIn("export incomplet", sortie)
+        self.assertEqual(len(self.magasin.passages), 1)
 
-    def test_sans_strict_teams_le_code_reste_0(self):
+    def test_sans_strict_teams_le_code_reste_0_et_le_passage_est_ecrit(self):
         self.ecrire_table()
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
         self.assertNotIn("export incomplet", sortie)
+        self.assertEqual(len(self.magasin.passages), 1)
 
     def test_strict_teams_requetes_nommees_une_seule_phrase_a_la_fin(self):
         self.ecrire_table()
@@ -514,41 +518,43 @@ class TableEquipes(Base):
         code, sortie = self.lancer("export", "--strict-teams")
         self.assertEqual(code, 3, sortie)
         self.assertEqual(sortie.count("export incomplet"), 1)
-        self.assertEqual(sortie.count("Fichier écrit"), 2)
+        self.assertEqual(self.magasin.passages, [])
 
-    def test_cles_conflits_et_appuis_ignorees_a_la_lecture(self):
-        self.ecrire_table("equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\nconflits: {'4': [D, E]}\nappuis: {'1': 1}\n")
+    def test_cles_conflits_et_appuis_de_l_ancienne_table_ignorees_a_la_lecture(self):
+        """`charger_table` ne sert plus qu'à check-teams et migrate-teams : ni l'export ni diagnose ne la lisent."""
+        (self.ws / "Flux-Lab" / "equipes-assets.yaml").write_text(
+            "equipes: {'1': Equipe A, '2': Equipe B, '3': Equipe C}\nconflits: {'4': [D, E]}\nappuis: {'1': 1}\n", encoding="utf-8")
         self.assertEqual(ex.charger_table(), {"1": "Equipe A", "2": "Equipe B", "3": "Equipe C"})
-        self.assertEqual(self.lancer("export", "--output", str(self.ws / "api.csv"))[0], 0)
 
-    def test_diagnostic_accepte_les_identifiants_quand_la_table_existe(self):
+    def test_diagnostic_accepte_les_identifiants_quand_le_catalogue_existe(self):
         code, sortie = self.lancer("diagnose")
-        self.assertEqual(code, 1, sortie)                                       # sans table
+        self.assertEqual(code, 1, sortie)                                       # sans source
         self.ecrire_table()
         code, sortie = self.lancer("diagnose")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Libellés exploitables : par la table equipes-assets.yaml (3 identifiant(s))", sortie)
+        self.assertIn("sources d'équipes : référentiel 0 identifiants, catalogue 3 identifiants", sortie)
         self.assertNotIn("Equipe", sortie)
 
-    def test_sans_table_l_export_s_arrete_et_dit_de_la_creer_a_la_main(self):
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin))
+    def test_sans_source_l_export_s_arrete_et_donne_la_structure_des_deux_fichiers(self):
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 1)
-        self.assertFalse(chemin.exists())
-        self.assertIn("Renseigner le référentiel d'organisation Flux-Lab/organisation.yaml", sortie)
+        self.assertEqual(self.magasin.passages, [])
+        self.assertIn("aucune source d'équipes : compléter jira_team_ids du référentiel et du catalogue", sortie)
+        self.assertIn("organisation.yaml", sortie)
+        self.assertIn("equipes-jira.yaml", sortie)
         self.assertIn("jira_team_ids", sortie)
         self.assertIn("`diagnose`", sortie)
         self.assertNotIn("teams-table", sortie)
         self.assertNotIn("table-equipes", sortie)
-        code, sortie = self.lancer("export", "--output", str(chemin), "--language", "en")
-        self.assertIn("Fill the organisation referential Flux-Lab/organisation.yaml", sortie)
+        code, sortie = self.lancer("export", "--language", "en")
+        self.assertIn("no team source: fill jira_team_ids in the referential and the catalogue", sortie)
 
-    def test_table_illisible_arrete_l_export(self):
-        self.ecrire_table("equipes: [pas, un, dictionnaire")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
-        self.assertEqual(code, 1)
-        self.assertIn("illisible", sortie)
-        self.assertNotIn("teams-table", sortie)
+    def test_l_ancienne_table_illisible_n_arrete_rien_elle_n_est_pas_lue(self):
+        (self.ws / "Flux-Lab" / "equipes-assets.yaml").write_text("equipes: [pas, un, dictionnaire", encoding="utf-8")
+        self.ecrire_table()
+        code, sortie = self.lancer("export")
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("illisible", sortie)
 
     def test_regles_deny_de_la_table_et_de_la_commande(self):
         reglages = json.loads((TOOLS.parent / ".claude" / "settings.json").read_text(encoding="utf-8"))
@@ -576,9 +582,9 @@ class SousCommandesRetirees(Base):
             code, sortie = self.lancer(*argv)
             self.assertEqual(code, 2, sortie)
             self.assertIn("la sous-commande teams-table est retirée", sortie)
-            self.assertIn("equipes-assets.yaml", sortie)
+            self.assertIn("equipes-jira.yaml", sortie)
             self.assertIn("à la main", sortie)
-            self.assertIn("liste les identifiants inconnus", sortie)
+            self.assertIn("liste les identifiants à ajouter", sortie)
             self.assertNotIn("Traceback", sortie)
         self.assertEqual(self.faux.requetes, [])
         self.assertFalse((self.ws / "Flux-Lab" / "equipes-assets.yaml").exists())
@@ -598,7 +604,8 @@ class SousCommandesRetirees(Base):
     def test_aide_ne_liste_pas_les_sous_commandes_retirees(self):
         code, sortie = self.lancer("--help")
         self.assertEqual(code, 0)
-        self.assertIn("{diagnose,fields,export}", sortie)
+        # review-teams : change names-and-team-review ; extract-teams : change team-names-readable (tâche 3.2)
+        self.assertIn("{diagnose,fields,export,check-teams,migrate-teams,review-teams,extract-teams}", sortie)
         self.assertNotRegex(sortie, r"(?m)^\s{2,}(compare|teams-table)\b")
 
 
@@ -611,12 +618,11 @@ class ChampEquipeIllisible(Base):
             t[CHAMP] = [{"workspaceId": "ws-secret", "id": "w:123", "objectId": "123"}]
 
     def test_export_s_arrete_sans_rien_ecrire(self):
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 1)
-        self.assertFalse(chemin.exists())
+        self.assertEqual((self.magasin.passages, self.magasin.visites, self.magasin.instantanes), ([], [], []))
         self.assertIn("ne renvoie pas le libellé", sortie)
-        self.assertIn("Renseigner le référentiel d'organisation Flux-Lab/organisation.yaml", sortie)
+        self.assertIn("aucune source d'équipes : compléter jira_team_ids du référentiel et du catalogue", sortie)
         self.assertIn("objet {id, objectId, workspaceId}", sortie)              # forme, jamais les valeurs
         for valeur in ("ws-secret", "w:123", '"123"', "ABC-"):
             self.assertNotIn(valeur, sortie)
@@ -652,117 +658,61 @@ class Diagnostic(Base):
         self.assertIn("absent des réponses", sortie)
 
 
-MANUEL_ENTETE = ("Issue key,Summary,Issue Type,Status,Status Category,Created,Resolved,Resolution,"
-                 "Status Category Changed,Parent key,Team,Team,Outward issue link (Blocks),Outward issue link (Blocks),"
-                 "Inward issue link (Blocks),Inward issue link (Relates),Outward issue link (Relates)\n")
-MANUEL_LIGNES = (
-    "ABC-1,Titre secret,Story,Closed,Done,01/Jun/2026 08:00,10/Jul/2026 10:30,Done,10/Jul/2026 10:30,ABC-9,"
-    "Equipe A,Equipe B,ABC-2,ABC-3,,ABC-3,\n"
-    "ABC-2,Titre secret,Task,Implementation - Ongoing,In Progress,03/Aug/2026 09:15,,,03/Aug/2026 09:15,,Equipe A,,,,"
-    "ABC-1,,\n"
-    "ABC-3,Titre secret,Story,Open,To Do,01/Sep/2026 16:45,,,01/Sep/2026 16:45,,,,,,ABC-1,,ABC-1\n"
-    "ABC-9,Titre secret,Epic,In Progress,In Progress,12/Jan/2026 07:05,,,12/Jan/2026 07:05,,Equipe B,,,,,,\n")
-
-
-class LecturePar(Base):
-    """flux_jira.py et dependencies_jira.py lisent le CSV de l'API sans modification, comme un export manuel."""
-
-    def manuel(self) -> Path:
-        chemin = self.ws / "manuel.csv"
-        chemin.write_text(MANUEL_ENTETE + MANUEL_LIGNES, encoding="utf-8")
-        return chemin
-
-    def lancer_script(self, script: str, *args: str):
-        env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.ws)}
-        return subprocess.run(["uv", "run", str(TOOLS / script), *args], env=env, capture_output=True, text=True)
-
-    def test_flux_jira_donne_le_meme_rapport_sur_les_deux_csv(self):
-        api = self.exporter()
-        rapports = {}
-        for nom, chemin in (("manuel", self.manuel()), ("api", api)):
-            r = self.lancer_script("flux_jira.py", "compute", str(chemin), "--name", nom, "--today", AUJOURDHUI,
-                                   "--no-comparison")
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            js = json.loads((self.ws / "Flux-Lab" / "rapports" / f"flux-{nom}-{AUJOURDHUI}.json").read_text(encoding="utf-8"))
-            for cle in ("nom", "colonnes"):
-                js.pop(cle, None)
-            rapports[nom] = js
-        self.assertEqual(rapports["manuel"], rapports["api"])
-        self.assertEqual(rapports["api"]["termines"], 1)
-        self.assertEqual(rapports["api"]["wip"], 2)           # ABC-2 (In Progress) et l'Epic ABC-9
-
-    def test_flux_jira_lit_les_equipes_repetees_de_l_api(self):
-        api = self.exporter()
-        r = self.lancer_script("flux_jira.py", "compute", str(api), "--name", "eq", "--today", AUJOURDHUI,
-                               "--no-comparison")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        js = json.loads((self.ws / "Flux-Lab" / "rapports" / f"flux-eq-{AUJOURDHUI}.json").read_text(encoding="utf-8"))
-        self.assertEqual(js["tickets_plusieurs_equipes"]["total"], 1)
-
-    def test_dependencies_jira_reconnait_les_liens_de_l_api(self):
-        api = self.exporter()
-        r = self.lancer_script("dependencies_jira.py", "diagnose", str(api))
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("Blocks", r.stdout)
-        self.assertNotIn("ABC-", r.stdout)
-        r = self.lancer_script("dependencies_jira.py", "compute", str(api), "--name", "api")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-
-
 class FuseauExport(Base):
     def test_dates_a_l_heure_de_paris_par_defaut(self):
-        self.assertEqual(ex.date_csv("2026-07-01T06:30:00.000+0000", ex.fuseau_export({})), "01/Jul/2026 08:30")   # été
-        self.assertEqual(ex.date_csv("2026-01-15T23:30:00.000+0000", ex.fuseau_export({})), "16/Jan/2026 00:30")   # hiver
-        self.assertEqual(ex.date_csv("2026-07-01T09:00:00.000-0500", ex.fuseau_export({})), "01/Jul/2026 16:00")
+        paris = ex.fuseau_export({})
+        self.assertEqual(ex.instant_api("2026-07-01T06:30:00.000+0000", paris).isoformat(), "2026-07-01T08:30:00+02:00")    # été
+        self.assertEqual(ex.instant_api("2026-01-15T23:30:00.000+0000", paris).isoformat(), "2026-01-16T00:30:00+01:00")    # hiver
+        self.assertEqual(ex.instant_api("2026-07-01T09:00:00.000-0500", paris).isoformat(), "2026-07-01T16:00:00+02:00")
 
     def test_fuseau_reglable_et_invalide(self):
-        self.assertEqual(ex.date_csv("2026-07-01T06:30:00.000+0000", ex.fuseau_export({"export_fuseau": "UTC"})),
-                         "01/Jul/2026 06:30")
+        self.assertEqual(ex.instant_api("2026-07-01T06:30:00.000+0000", ex.fuseau_export({"export_fuseau": "UTC"})).isoformat(),
+                         "2026-07-01T06:30:00+00:00")
         with self.assertRaises(ex.Arret):
             ex.fuseau_export({"export_fuseau": "Mars/Olympus"})
 
-    def test_export_ecrit_les_dates_a_l_heure_de_paris(self):
+    def test_instant_a_la_minute_et_dates_illisibles(self):
+        paris = ex.fuseau_export({})
+        self.assertEqual(ex.instant_api("2026-03-01T00:05:30.123+0000", paris).isoformat(), "2026-03-01T01:05:00+01:00")
+        self.assertIsNone(ex.instant_api(None, paris))
+        self.assertIsNone(ex.instant_api("pas une date", paris))
+
+    def test_export_enregistre_les_dates_a_l_heure_de_paris(self):
         self.faux.tickets = {"ABC-1": champs("Story", "Open", "To Do", "2026-07-01T06:30:00.000+0000")}
-        ligne = self.lignes(self.exporter())[1]
-        self.assertEqual(ligne[4], "01/Jul/2026 08:30")
+        self.assertEqual(self.exporter()["ABC-1"]["created_at"].isoformat(), "2026-07-01T08:30:00+02:00")
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\nexport_timezone: UTC\n")
-        self.assertEqual(self.lignes(self.exporter("utc.csv"))[1][4], "01/Jul/2026 06:30")
+        self.magasin = MagasinMemoire()          # un magasin neuf : le même instant ne s'écrit pas deux fois dans le même magasin
+        self.assertEqual(self.exporter()["ABC-1"]["created_at"].isoformat(), "2026-07-01T06:30:00+00:00")
 
     def test_fuseau_invalide_arrete_l_export_avant_jira(self):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\nexport_timezone: Mars/X\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 1)
         self.assertIn("export_timezone", sortie)
-        self.assertFalse((self.ws / "x.csv").exists())
+        self.assertEqual((self.faux.requetes, self.magasin.passages), ([], []))
 
 
 class RequetesNommees(Base):
     def reglages(self, extra=""):
         self.ecrire_reglages(f"export_team_field: {CHAMP}\n{extra}")
 
-    def exports(self):
-        return sorted(p.name for p in (self.ws / "Flux-Lab" / "exports").glob("*.csv")) \
-            if (self.ws / "Flux-Lab" / "exports").exists() else []
-
-    def test_sans_requete_execute_toutes_les_requetes_un_fichier_chacune(self):
+    def test_sans_requete_execute_toutes_les_requetes_dans_un_seul_passage(self):
         self.reglages("jql_exports:\n  a: project = AAA\n  b: project = BBB\n")
         code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        jour = ex.dt.date.today().isoformat()
-        self.assertEqual(self.exports(), [f"api-a-{jour}.csv", f"api-b-{jour}.csv"])
         self.assertEqual([r["jql"] for r in self.faux.requetes], ["project = AAA", "project = BBB"])
         self.assertIn("[a] Tickets : 4", sortie)
-        self.assertIn("[b] Fichier écrit", sortie)
-        un, deux = (self.lignes(self.ws / "Flux-Lab" / "exports" / f"api-{n}-{jour}.csv") for n in "ab")
-        self.assertEqual(un, deux)                       # même format, même fuseau, mêmes équipes
+        self.assertIn("[b] Tickets : 4", sortie)
+        self.assertEqual(self.magasin.passages, [{"genre": "export", "nb_requetes": 2, "toutes": True}])     # un passage, aucun nom
+        self.assertEqual(self.magasin.cles_vues(), {"ABC-1", "ABC-2", "ABC-3", "ABC-9"})                   # même fuseau, mêmes équipes
+        self.assertEqual(len(self.magasin.instantanes), 4)
 
-    def test_requete_nommee_seule(self):
+    def test_requete_nommee_seule_ne_compte_pas_comme_jeu_complet(self):
         self.reglages("jql_exports:\n  a: project = AAA\n  b: project = BBB\n")
         code, sortie = self.lancer("export", "--query", "b")
         self.assertEqual(code, 0, sortie)
         self.assertEqual([r["jql"] for r in self.faux.requetes], ["project = BBB"])
-        self.assertEqual(len(self.exports()), 1)
-        self.assertIn("-b-", self.exports()[0])
+        self.assertEqual(self.magasin.passages, [{"genre": "export", "nb_requetes": 1, "toutes": False}])
 
     def test_nom_inconnu_arrete_avec_la_liste_sans_appeler_jira(self):
         self.reglages("jql_exports:\n  a: project = AAA\n  b: project = BBB\n")
@@ -770,7 +720,7 @@ class RequetesNommees(Base):
         self.assertEqual(code, 1)
         self.assertIn("Disponibles : a, b", sortie)
         self.assertEqual(self.faux.requetes, [])
-        self.assertEqual(self.exports(), [])
+        self.assertEqual(self.magasin.passages, [])
 
     def test_requete_sans_jql_exports(self):
         code, sortie = self.lancer("export", "--query", "a")
@@ -781,21 +731,25 @@ class RequetesNommees(Base):
     def test_jql_export_seul_comme_avant(self):
         code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        self.assertEqual(self.exports(), [f"api-{ex.dt.date.today().isoformat()}.csv"])
+        self.assertEqual(self.magasin.passages, [{"genre": "export", "nb_requetes": 1, "toutes": True}])
 
     def test_jql_exports_prime_sur_jql_export(self):
         self.reglages("jql_export: project = ZZZ\njql_exports:\n  a: project = AAA\n")
         self.lancer("export")
         self.assertEqual([r["jql"] for r in self.faux.requetes], ["project = AAA"])
 
-    def test_sortie_refusee_avec_plusieurs_requetes_acceptee_avec_une(self):
+    def test_option_sortie_retiree_avec_une_ou_plusieurs_requetes(self):
+        """--output est retirée (database-only, D1) : code 2 et la phrase de design D6, avant tout appel à Jira et toute connexion."""
         self.reglages("jql_exports:\n  a: project = AAA\n  b: project = BBB\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
-        self.assertEqual(code, 1)
-        self.assertEqual(self.faux.requetes, [])
-        code, _ = self.lancer("export", "--query", "a", "--output", str(self.ws / "x.csv"))
-        self.assertEqual(code, 0)
-        self.assertTrue((self.ws / "x.csv").exists())
+        for argv in (("export", "--output", str(self.ws / "x.csv")), ("export", "--query", "a", "--output", str(self.ws / "x.csv"))):
+            code, sortie = self.lancer(*argv)
+            self.assertEqual(code, 2, sortie)
+            self.assertIn("--output est retirée : l'export écrit dans la base", sortie)
+        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"), "--language", "en")
+        self.assertEqual(code, 2, sortie)
+        self.assertIn("--output is retired: the export writes into the database", sortie)
+        self.assertEqual((self.faux.requetes, self.magasin.passages), ([], []))
+        self.assertFalse((self.ws / "x.csv").exists())
 
     def test_noms_et_requetes_invalides(self):
         for extra in ("jql_exports:\n  'a b': project = AAA\n", "jql_exports:\n  a: ''\n", "jql_exports: [x]\n"):
@@ -811,93 +765,59 @@ class RequetesNommees(Base):
 
 
 class ChampVerification(Base):
-    """Réglage export_champ_verification : une colonne « Verification Required », sans autre usage."""
+    """Réglages export_verification_field et export_verification_header : aucun lecteur ne lit la colonne (database-only, Q7 (b)). Le
+    champ n'est plus demandé à Jira, rien n'en est enregistré, et les anciens réglages restent acceptés."""
     VERIF = "customfield_10009"
 
     def setUp(self):
         super().setUp()
         tickets = copy.deepcopy(TICKETS)
-        tickets["ABC-1"][self.VERIF] = {"value": "Yes"}                  # liste de choix
-        tickets["ABC-2"][self.VERIF] = True                              # case à cocher
-        tickets["ABC-3"][self.VERIF] = None                              # non renseigné
-        tickets["ABC-9"][self.VERIF] = [{"value": "Oui"}, {"value": "Non"}]
+        tickets["ABC-1"][self.VERIF] = {"value": "Yes"}
+        tickets["ABC-2"][self.VERIF] = True
         self.faux.tickets = tickets
-
-    def reglages(self, extra=""):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n"
-                             f"export_verification_field: {self.VERIF}\n{extra}")
+                             f"export_verification_field: {self.VERIF}\nexport_verification_header: Vérification requise\n")
 
-    def test_sans_reglage_aucune_colonne_et_le_champ_n_est_pas_demande(self):
-        entete = self.lignes(self.exporter())[0]
-        self.assertNotIn("Verification Required", entete)
-        self.assertNotIn(self.VERIF, self.faux.requetes[0]["fields"])
+    def test_le_champ_n_est_pas_demande_et_rien_n_en_est_enregistre(self):
+        instantanes = self.exporter()
+        self.assertNotIn(self.VERIF, {f for r in self.faux.requetes for f in r["fields"]})
+        self.assertNotIn("Yes", repr(list(instantanes.values())))
 
-    def test_colonne_ecrite_apres_les_equipes_avec_le_champ_demande(self):
-        self.reglages()
-        lignes = self.lignes(self.exporter())
-        entete = lignes[0]
-        self.assertEqual(entete.count("Verification Required"), 1)
-        self.assertIn(self.VERIF, self.faux.requetes[0]["fields"])
-        i = entete.index("Verification Required")
-        self.assertEqual(entete[i - 2:i], ["Team", "Team"])               # juste après les colonnes d'équipe
-        valeurs = {l[0]: l[i] for l in lignes[1:]}
-        self.assertEqual(valeurs, {"ABC-1": "Yes", "ABC-2": "true", "ABC-3": "", "ABC-9": "Oui; Non"})
-
-    def test_en_tete_reglable(self):
-        self.reglages("export_verification_header: Vérification requise\n")
-        entete = self.lignes(self.exporter())[0]
-        self.assertIn("Vérification requise", entete)
-        self.assertNotIn("Verification Required", entete)
-
-    def test_sortie_sans_valeur_ni_cle_avec_le_nombre_de_tickets_renseignes(self):
-        self.reglages()
-        chemin = self.ws / "api.csv"
-        code, sortie = self.lancer("export", "--output", str(chemin))
+    def test_identifiant_invalide_n_arrete_plus_rien(self):
+        self.ecrire_reglages("jql_export: project = ABC\nexport_verification_field: pas un identifiant\n")
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("3 ticket(s) renseigné(s) sur 4", sortie)
-        for interdit in ("Yes", "Oui", "ABC-", "Titre secret"):
-            self.assertNotIn(interdit, sortie)
-
-    def test_valeur_de_forme_inconnue_ecrite_vide(self):
-        self.faux.tickets["ABC-3"][self.VERIF] = {"inconnu": 1}
-        self.reglages()
-        lignes = self.lignes(self.exporter())
-        i = lignes[0].index("Verification Required")
-        self.assertEqual({l[0]: l[i] for l in lignes[1:]}["ABC-3"], "")
-
-    def test_identifiant_invalide_arrete_avant_jira(self):
-        self.reglages()
-        self.ecrire_reglages(f"jql_export: project = ABC\nexport_verification_field: pas un identifiant\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
-        self.assertNotEqual(code, 0)
-        self.assertIn("export_verification_field doit être un identifiant", sortie)
-        self.assertEqual(self.faux.requetes, [])
+        self.assertNotIn("Vérification", sortie)
 
 
 class ColonneUpdated(Base):
-    """Updated est toujours écrite, juste après « Parent key », dans le fuseau de l'export."""
+    """La date de mise à jour est toujours demandée et enregistrée dans chaque instantané, dans le fuseau de l'export."""
 
     def setUp(self):
         super().setUp()
         self.faux.tickets["ABC-1"]["updated"] = "2026-07-11T23:30:00.000+0000"
         self.faux.tickets["ABC-2"]["updated"] = "2026-08-04T10:00:00.000+0200"
 
-    def test_place_apres_parent_key_et_demandee_a_jira(self):
-        lignes = self.lignes(self.exporter())
-        entete = lignes[0]
-        self.assertEqual(entete[8:11], ["Parent key", "Updated", "Team"])
+    def test_demandee_a_jira_et_enregistree_comme_instant(self):
+        instantanes = self.exporter()
         self.assertIn("updated", self.faux.requetes[0]["fields"])
-        valeurs = {l[0]: l[9] for l in lignes[1:]}
-        self.assertEqual(valeurs, {"ABC-1": "12/Jul/2026 01:30", "ABC-2": "04/Aug/2026 10:00", "ABC-3": "", "ABC-9": ""})
+        self.assertEqual({cle: i["updated_at"].isoformat() for cle, i in instantanes.items()},
+                         {"ABC-1": "2026-07-12T01:30:00+02:00", "ABC-2": "2026-08-04T10:00:00+02:00",
+                          "ABC-3": "2026-09-01T16:45:00+02:00", "ABC-9": "2026-01-12T07:05:00+01:00"})
 
     def test_fuseau_du_reglage(self):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\nexport_timezone: UTC\n")
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[9] for l in lignes[1:]}["ABC-1"], "11/Jul/2026 23:30")
+        self.assertEqual(self.exporter()["ABC-1"]["updated_at"].isoformat(), "2026-07-11T23:30:00+00:00")
+
+    def test_ticket_sans_date_de_mise_a_jour_n_a_pas_d_instantane(self):
+        del self.faux.tickets["ABC-3"]["updated"]
+        instantanes = self.exporter()
+        self.assertNotIn("ABC-3", instantanes)
+        self.assertIn("ABC-3", self.magasin.cles_vues())          # lu, donc vu
 
 
 class ChampPoints(Base):
-    """Réglage export_points_field : une colonne « Story Points » après Updated, avant les équipes."""
+    """Réglage export_points_field : les story points de chaque instantané."""
     PTS = "customfield_10003"
 
     def setUp(self):
@@ -913,57 +833,55 @@ class ChampPoints(Base):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n"
                              f"export_points_field: {self.PTS}\n")
 
-    def test_sans_reglage_aucune_colonne_et_le_champ_n_est_pas_demande(self):
-        entete = self.lignes(self.exporter())[0]
-        self.assertNotIn("Story Points", entete)
+    def points(self, instantanes: dict) -> dict:
+        return {cle: (None if i["story_points"] is None else str(i["story_points"])) for cle, i in instantanes.items()}
+
+    def test_sans_reglage_aucun_point_et_le_champ_n_est_pas_demande(self):
+        self.assertEqual(set(self.points(self.exporter()).values()), {None})
         self.assertNotIn(self.PTS, self.faux.requetes[0]["fields"])
 
-    def test_colonne_apres_updated_avant_les_equipes(self):
+    def test_points_enregistres_et_champ_demande(self):
         self.reglages()
-        lignes = self.lignes(self.exporter())
-        entete = lignes[0]
-        self.assertEqual(entete[9:12], ["Updated", "Story Points", "Team"])
+        points = self.points(self.exporter())
         self.assertIn(self.PTS, self.faux.requetes[0]["fields"])
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}, {"ABC-1": "5", "ABC-2": "2.5", "ABC-3": "", "ABC-9": ""})
+        self.assertEqual(points, {"ABC-1": "5", "ABC-2": "2.5", "ABC-3": None, "ABC-9": None})
 
-    def test_champ_absent_de_la_reponse_donne_une_cellule_vide(self):
+    def test_champ_absent_de_la_reponse_donne_des_points_nuls(self):
         del self.faux.tickets["ABC-3"][self.PTS]
         self.reglages()
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}["ABC-3"], "")
+        self.assertIsNone(self.points(self.exporter())["ABC-3"])
 
     def test_booleen_non_numerique(self):
         self.faux.tickets["ABC-3"][self.PTS] = True
         self.reglages()
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}["ABC-3"], "")
+        self.assertIsNone(self.points(self.exporter())["ABC-3"])
 
     def test_sortie_sans_valeur_ni_cle(self):
         self.reglages()
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("« Story Points » : 2 ticket(s) renseigné(s) sur 4", sortie)
+        self.assertIn("Story points : 2 ticket(s) renseigné(s) sur 4", sortie)
         self.assertIn("1 valeur(s) non numérique(s)", sortie)
         for interdit in ("2.5", "beaucoup", "ABC-", "Titre secret"):
             self.assertNotIn(interdit, sortie)
 
     def test_sortie_en_anglais(self):
         self.reglages()
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"), "--language", "en")
+        code, sortie = self.lancer("export", "--language", "en")
         self.assertEqual(code, 0, sortie)
         self.assertIn("2 ticket(s) filled out of 4", sortie)
         self.assertIn("1 non-numeric value(s)", sortie)
 
     def test_identifiant_invalide_arrete_avant_jira(self):
         self.ecrire_reglages("jql_export: project = ABC\nexport_points_field: pas un identifiant\n")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
+        code, sortie = self.lancer("export")
         self.assertNotEqual(code, 0)
         self.assertIn("export_points_field doit être un identifiant", sortie)
         self.assertEqual(self.faux.requetes, [])
 
 
 class ListeDeChampsPoints(Base):
-    """export_points_field : un identifiant ou une liste ; la colonne prend la première valeur non vide, dans l'ordre de la liste."""
+    """export_points_field : un identifiant ou une liste ; la valeur prend le premier champ non vide, dans l'ordre de la liste."""
     A, B = "customfield_10003", "customfield_10004"
 
     def setUp(self):
@@ -979,50 +897,51 @@ class ListeDeChampsPoints(Base):
     def reglages(self, liste: str):
         self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\nexport_points_field: {liste}\n")
 
+    def points(self, instantanes: dict) -> dict:
+        return {cle: (None if i["story_points"] is None else str(i["story_points"])) for cle, i in instantanes.items()}
+
     def test_premiere_valeur_non_vide_dans_l_ordre_de_la_liste(self):
         self.reglages(f"[{self.A}, {self.B}]")
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}, {"ABC-1": "5", "ABC-2": "8", "ABC-3": "3", "ABC-9": "13"})
+        self.assertEqual(self.points(self.exporter()), {"ABC-1": "5", "ABC-2": "8", "ABC-3": "3", "ABC-9": "13"})
         self.assertIn(self.A, self.faux.requetes[0]["fields"])
         self.assertIn(self.B, self.faux.requetes[0]["fields"])
 
     def test_l_ordre_de_la_liste_decide(self):
         self.faux.tickets["ABC-3"].update({self.A: 3, self.B: 4})
         self.reglages(f"[{self.B}, {self.A}]")
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}["ABC-3"], "4")
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}["ABC-1"], "5")
+        points = self.points(self.exporter())
+        self.assertEqual(points["ABC-3"], "4")
+        self.assertEqual(points["ABC-1"], "5")
 
     def test_un_seul_identifiant_comme_avant(self):
         self.reglages(self.A)
-        lignes = self.lignes(self.exporter())
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}, {"ABC-1": "5", "ABC-2": "", "ABC-3": "3", "ABC-9": "13"})
+        self.assertEqual(self.points(self.exporter()), {"ABC-1": "5", "ABC-2": None, "ABC-3": "3", "ABC-9": "13"})
         self.assertNotIn(self.B, self.faux.requetes[0]["fields"])
 
     def test_liste_d_un_element_et_doublon(self):
         self.reglages(f"[{self.A}, {self.A}]")
-        lignes = self.lignes(self.exporter())
+        points = self.points(self.exporter())
         self.assertEqual(self.faux.requetes[0]["fields"].count(self.A), 1)
-        self.assertEqual({l[0]: l[10] for l in lignes[1:]}["ABC-1"], "5")
+        self.assertEqual(points["ABC-1"], "5")
 
     def test_sortie_par_identifiant_sans_valeur_ni_cle(self):
         self.faux.tickets["ABC-3"].update({self.A: 3, self.B: 4})          # désaccord sur ABC-3 ; ABC-9 : B est non numérique
         self.reglages(f"[{self.A}, {self.B}]")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "api.csv"))
+        code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
         self.assertIn(f"Champ {self.A} : renseigné pour 3 ticket(s) sur 4 ; 1 ticket(s) où un autre champ de points est renseigné "
                       f"avec une valeur différente", sortie)
         self.assertIn(f"Champ {self.B} : renseigné pour 2 ticket(s) sur 4 ; 1 ticket(s) où un autre champ", sortie)
-        self.assertIn("« Story Points » : 4 ticket(s) renseigné(s) sur 4", sortie)
+        self.assertIn("Story points : 4 ticket(s) renseigné(s) sur 4", sortie)
         self.assertIn("1 valeur(s) non numérique(s)", sortie)
         for interdit in ("beaucoup", "ABC-", "Titre secret", ": 13", " 13 "):
             self.assertNotIn(interdit, sortie)
-        en = self.lancer("export", "--output", str(self.ws / "api.csv"), "--language", "en")[1]
+        en = self.lancer("export", "--language", "en")[1]
         self.assertIn(f"Field {self.A}: filled for 3 ticket(s) out of 4; 1 ticket(s) where another points field", en)
 
     def test_identifiant_invalide_dans_la_liste_arrete_avant_jira(self):
         self.reglages(f"[{self.A}, pas un identifiant]")
-        code, sortie = self.lancer("export", "--output", str(self.ws / "x.csv"))
+        code, sortie = self.lancer("export")
         self.assertNotEqual(code, 0)
         self.assertIn("export_points_field doit être un identifiant", sortie)
         self.assertEqual(self.faux.requetes, [])
@@ -1034,12 +953,129 @@ class ListeDeChampsPoints(Base):
         self.assertEqual(ex.reglage_points({"export_points_field": []}), [])
 
 
-class FormatDate(unittest.TestCase):
-    def test_date_csv(self):
-        self.assertEqual(ex.date_csv("2017-11-09T08:49:00.000+0100"), "09/Nov/2017 08:49")
-        self.assertEqual(ex.date_csv("2026-03-01T00:05:30.123+0000"), "01/Mar/2026 00:05")
-        self.assertEqual(ex.date_csv(None), "")
-        self.assertEqual(ex.date_csv("pas une date"), "")
+class NouveauxComportements(Base):
+    """Exigences du change database-only : lecture complète à chaque passage, --full, aucune recherche sur la date de mise à jour,
+    passage unique et rien d'enregistré en cas d'erreur (spec jira-flow-export)."""
+
+    def test_second_passage_relit_tout_sans_condition_sur_la_date_de_mise_a_jour(self):
+        self.exporter()
+        self.faux.tickets["ABC-2"]["updated"] = "2026-10-01T10:00:00.000+0200"          # un ticket modifié entre les deux passages
+        self.exporter()
+        self.assertEqual(len(self.faux.requetes), 2)
+        for requete in self.faux.requetes:
+            self.assertEqual(requete["jql"], "project = ABC")                          # ni « updated », ni instant d'un passage antérieur
+            self.assertNotIn("updated", requete["jql"].lower())
+        self.assertEqual(len(self.magasin.passages), 2)
+        self.assertEqual(self.magasin.cles_vues(2), {"ABC-1", "ABC-2", "ABC-3", "ABC-9"})            # tout est vu à chaque passage
+        self.assertEqual(len(self.magasin.instantanes_de("ABC-2")), 2)                              # le ticket modifié a un nouvel instantané
+        self.assertEqual(len(self.magasin.instantanes_de("ABC-1")), 1)
+
+    def test_option_full_accepte_et_sans_effet(self):
+        code_a, sortie_a = self.lancer("export", "--full")
+        code_b, sortie_b = self.lancer("export")
+        self.assertEqual((code_a, code_b), (0, 0), sortie_a + sortie_b)
+        sans_comptes = lambda sortie: [l for l in sortie.splitlines() if not l.startswith("couche brute")]       # les comptes de la base changent
+        self.assertEqual(sans_comptes(sortie_a), sans_comptes(sortie_b))
+        self.assertEqual(self.faux.requetes[0], self.faux.requetes[1])
+        self.assertNotIn("incrémental", sortie_a)
+        self.assertNotIn("incremental", sortie_a)
+
+    def test_passage_en_echec_n_enregistre_rien_et_le_suivant_relit_tout(self):
+        self.magasin.echec_ecriture = RuntimeError("base en panne")
+        code, sortie = self.lancer("export")
+        self.assertEqual(code, 1, sortie)
+        self.assertEqual((self.magasin.passages, self.magasin.visites, self.magasin.instantanes), ([], [], []))
+        self.assertIn("Erreur inattendue (RuntimeError)", sortie)
+        self.assertNotIn("base en panne", sortie)
+        self.magasin.echec_ecriture = None
+        self.exporter()
+        self.assertEqual(self.magasin.cles_vues(1), {"ABC-1", "ABC-2", "ABC-3", "ABC-9"})
+
+    def test_erreur_de_jira_apres_la_premiere_page_n_enregistre_rien(self):
+        self.faux.taille_page = 1
+        vrai = hj.Client.json
+        appels = []
+
+        def json_en_echec(client, methode, chemin, **kwargs):
+            appels.append(chemin)
+            if len(appels) == 2:
+                raise hj.ErreurHTTP(500)
+            return vrai(client, methode, chemin, **kwargs)
+
+        with mock.patch.object(hj.Client, "json", json_en_echec):
+            code, sortie = self.lancer("export")
+        self.assertEqual(code, 1, sortie)
+        self.assertEqual(sortie.strip().splitlines()[-1], "HTTP 500")              # seul le code est affiché
+        self.assertEqual((self.magasin.passages, self.magasin.visites, self.magasin.instantanes), ([], [], []))
+
+    def test_base_injoignable_arrete_avant_tout_appel_a_jira(self):
+        def refuse():
+            raise ex.Arret(ex.t("raw_db_unreachable"))
+
+        with mock.patch.object(ex, "ouvrir_magasin", refuse):
+            code, sortie = self.lancer("export")
+        self.assertEqual(code, 1, sortie)
+        self.assertEqual(self.faux.requetes, [])
+        self.assertIn("base injoignable", sortie)
+
+    def test_aucun_fichier_de_donnees_dans_le_dossier_des_flux(self):
+        self.exporter()
+        self.assertEqual(sorted(p.name for p in (self.ws / "Flux-Lab").iterdir()), ["flux.yaml"])
+
+    def test_champs_demandes_sans_etiquette_ni_version(self):
+        self.ecrire_reglages(f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n"
+                             "declared_labels:\n  ready: {prefix: x, labels: [x-ready]}\n")
+        self.exporter()
+        demandes = {f for r in self.faux.requetes for f in r["fields"]}
+        self.assertTrue({"labels", "fixVersions"}.isdisjoint(demandes))
+
+
+class TypeDesEquipes(Base):
+    """Complément « Complement: team type column » : le type de chaque équipe rencontrée s'écrit dans la transaction de la couche brute."""
+
+    def setUp(self):
+        super().setUp()
+        self.faux.tickets = {}
+        for cle, ids in (("ABC-1", [1]), ("ABC-2", [2]), ("ABC-3", [3]), ("ABC-4", [9])):
+            ticket = champs("Story", "Open", "To Do", "2026-09-01T16:45:00.000+0200")
+            ticket[CHAMP] = [objet(i) for i in ids]
+            self.faux.tickets[cle] = ticket
+        flux = self.ws / "Flux-Lab"
+        (flux / "equipes-jira.yaml").write_text(
+            "teams:\n  - name: Alpha\n    jira_team_ids: ['1']\n    type: Development Team\n"
+            "  - name: Beta\n    jira_team_ids: ['2']\n    type: Verification Team\n"
+            "  - name: Gamma\n    jira_team_ids: ['3']\n", encoding="utf-8")
+        (flux / "organisation.yaml").write_text(
+            "source_date: 2026-10-01\nsites: [Site 1]\ndepartments:\n  - name: Departement 1\n    site: Site 1\n    headcount: 10\n"
+            "    teams: [Beta, Delta]\nteams:\n  - name: Beta\n    headcount: 5\n    jira_team_ids: ['2']\n"
+            "  - name: Delta\n    headcount: 5\n    jira_team_ids: ['3']\n    type: Product Management Team\n",
+            encoding="utf-8")
+
+    def test_types_du_catalogue_et_du_referentiel_et_type_nul_pour_un_identifiant_inconnu(self):
+        code, sortie = self.lancer("export")
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(self.magasin.types, {"Alpha": "Development Team", "Beta": "Verification Team",
+                                              "Delta": "Product Management Team", "(équipe inconnue)": None})
+        self.assertEqual(self.magasin.sans_type, 1)
+        self.assertIn("équipes sans type : 1", sortie)
+        for interdit in ("Alpha", "Beta", "Delta", "Gamma", "Development Team"):
+            self.assertNotIn(interdit, sortie)
+
+    def test_mise_a_jour_seulement_d_un_type_qui_change(self):
+        self.lancer("export")
+        premieres = list(self.magasin.ecritures_de_type)
+        (self.ws / "Flux-Lab" / "equipes-jira.yaml").write_text(
+            "teams:\n  - name: Alpha\n    jira_team_ids: ['1']\n    type: Other Team\n"
+            "  - name: Beta\n    jira_team_ids: ['2']\n    type: Verification Team\n"
+            "  - name: Gamma\n    jira_team_ids: ['3']\n", encoding="utf-8")
+        self.lancer("export")
+        self.assertEqual(self.magasin.ecritures_de_type[len(premieres):], ["Alpha"])
+        self.assertEqual(self.magasin.types["Alpha"], "Other Team")
+
+    def test_sortie_en_anglais(self):
+        code, sortie = self.lancer("export", "--language", "en")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("teams without a type: 1", sortie)
 
 
 if __name__ == "__main__":

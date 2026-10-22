@@ -31,11 +31,15 @@ The system SHALL keep the work queue in the issues of the private repository, ne
 Source: tests/roadmap/test_roadmap_github.py (TestCheck); tests/roadmap_model/test_roadmap_model.py (TestMarkers, TestTitles, TestBlock); the name rule rests on the write tool's guard (spec workflow-github-issues)
 
 ### Requirement: /next proposes ready jobs for the time given
-The system SHALL provide a `/next <duration>` slash command that runs the queue reader's next command with the duration, presents the result in the user's language (enumerated values translated), and asks the user which job to start. It SHALL NOT edit the queue, start a job, reorder the queue, invent an estimate or a model, or run anything other than the queue reader.
+The system SHALL provide a `/next <duration> [mothra|pmzilla]` slash command that runs the queue reader's next command with the duration, and with the reader's product filter when the user names a product, presents the result in the user's language (enumerated values translated), and asks the user which job to start. It SHALL NOT edit the queue, start a job, reorder the queue, invent an estimate or a model, or run anything other than the queue reader.
 
 #### Scenario: Two hours
 - **WHEN** the user types `/next 2h`
 - **THEN** the command lists, in queue order, the proposed jobs with their durations and the total, the jobs too long and the unestimated ones apart, and ends by asking which job to start
+
+#### Scenario: One product
+- **WHEN** the user types `/next 2h mothra`
+- **THEN** the command runs the reader's next command with the duration and the Mothra filter, and lists only the features of that product
 
 #### Scenario: Pre-approval
 - **WHEN** the header of the command file is read
@@ -505,6 +509,77 @@ The system SHALL treat a `gh` that cannot be launched, or that is not authentica
 - **THEN** the command answers from the snapshot after the cache line
 
 Source: tests/roadmap/test_roadmap_github.py (TestHorsLigne: test_gh_absent, test_non_authentifie_est_traite_comme_injoignable, without a snapshot only); the fallback to an existing snapshot is read in tools/roadmap.py and untested
+
+### Requirement: A job carries no product label or one known label
+The system SHALL make the check accept, on a feature and on a sub-issue, zero or one label `product:<value>` of the closed list of products (today `mothra`); no label means PMZilla. It SHALL exit 1, naming the identifier (or sub-issue key) and the labels field, for an unknown value (`produit inconnu <value>`) and for two product labels (`au plus un label product:`). It SHALL NOT require a product label.
+
+#### Scenario: Zero or one product label
+- **WHEN** the queue holds a feature without a `product:` label and a feature with `product:mothra`
+- **THEN** the check exits 0
+
+#### Scenario: Unknown product
+- **WHEN** a feature carries the label `product:autre`
+- **THEN** the check exits 1 with `R-1 : labels : produit inconnu autre`
+
+#### Scenario: Two product labels
+- **WHEN** a feature carries `product:mothra` and another `product:` label
+- **THEN** the check exits 1 with `R-1 : labels : au plus un label product:`
+
+#### Scenario: Sub-issue
+- **WHEN** a sub-issue carries `product:mothra`, then `product:autre`
+- **THEN** the check exits 0 the first time, and exits 1 naming `produit inconnu autre` the second time
+
+Source: tests/roadmap/test_roadmap_product.py (TestCheck)
+
+### Requirement: The product filter narrows next, status, board and batch
+The system SHALL let the reader's next, status, board and batch commands take `--product`: `mothra` keeps the features labelled `product:mothra`, `pmzilla` keeps those without a `product:` label, and no option keeps the whole queue. Any other value SHALL exit 2. The filter SHALL NOT hide an invalid queue (problems of the check still give exit 1) and SHALL NOT write to GitHub.
+
+#### Scenario: No option
+- **WHEN** next runs on a queue with a proposable PMZilla feature and a proposable Mothra feature
+- **THEN** both are proposed
+
+#### Scenario: Mothra only
+- **WHEN** next runs with `--product mothra` on that queue
+- **THEN** only the Mothra feature is proposed
+
+#### Scenario: PMZilla only
+- **WHEN** next runs with `--product pmzilla` on that queue
+- **THEN** only the feature without a `product:` label is proposed
+
+#### Scenario: Status counts
+- **WHEN** status runs with `--product mothra` on a queue with one `Ready` PMZilla feature and two Mothra features, one of them `In progress`
+- **THEN** the counts are `ready 0` and `in-progress 1`, and only the Mothra feature is listed
+
+#### Scenario: Board
+- **WHEN** board runs with `--product mothra`
+- **THEN** the page holds the Mothra feature and not the PMZilla one
+
+#### Scenario: Batch
+- **WHEN** batch runs on a milestone with a PMZilla and a Mothra feature, with `--product mothra`, with `--product pmzilla` and without the option
+- **THEN** the first run retains the Mothra feature only, the second the PMZilla one only, and the third both
+
+#### Scenario: Unknown product
+- **WHEN** next runs with `--product autre`
+- **THEN** the reader exits 2
+
+Source: tests/roadmap/test_roadmap_product.py (TestNextFiltre, TestStatusFiltre, TestBatchFiltre)
+
+### Requirement: Blockers are computed over the whole queue
+The system SHALL compute blockers over the whole queue whatever the product filter: a feature stays blocked by an open feature of the other product, and a closed blocker of the other product does not block. In the batch, a feature `In progress` of another product SHALL still count for the known files that set a feature aside. The filter SHALL NOT make a blocked feature proposable.
+
+#### Scenario: Open blocker of the other product
+- **WHEN** a Mothra feature is blocked by an open PMZilla feature and next runs with `--product mothra`
+- **THEN** the Mothra feature is not proposed, and the same holds the other way round with `--product pmzilla`
+
+#### Scenario: Closed blocker of the other product
+- **WHEN** a Mothra feature is blocked by a closed PMZilla feature and next runs with `--product mothra`
+- **THEN** the Mothra feature is proposed
+
+#### Scenario: Blocked feature in status
+- **WHEN** status runs with `--product mothra` and a Mothra feature is blocked by a PMZilla feature
+- **THEN** the Mothra feature is listed as blocked, waiting for the PMZilla feature, which is not listed itself
+
+Source: tests/roadmap/test_roadmap_product.py (TestNextFiltre: test_blocage_croise_conserve, test_bloqueur_ferme_d_un_autre_produit_ne_bloque_pas; TestStatusFiltre: test_blocage_croise_conserve); the files of a job in progress of another product are read in tools/roadmap.py (untested)
 
 ## Open questions
 

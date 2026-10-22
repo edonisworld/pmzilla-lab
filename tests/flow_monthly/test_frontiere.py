@@ -159,10 +159,10 @@ class Confidentialite(Decor):
             self.assertEqual(r.code, 1, (outil, r.sortie))
             self.sans_marque(self.toute_la_sortie_et_le_resume(r), f"échec de {outil}")
 
-    def test_ecart_de_parite(self):
-        self.codes(flow_compare__data=1)
+    def test_echec_de_l_historique(self):
+        self.codes(history_jira=3)
         r = self.lancer("--language", "en")
-        self.sans_marque(self.toute_la_sortie_et_le_resume(r), "écart de parité")
+        self.sans_marque(self.toute_la_sortie_et_le_resume(r), "échec de l'historique")
 
     def test_refus_prerequis_et_mois_deja_fait(self):
         self.ecrire_reglages(REGLAGES.replace("dependencies: both", "dependencies: partout"))
@@ -199,7 +199,7 @@ class Langue(Decor):
 
     def test_phrases_cles_francaises_d_un_run_complet(self):
         r = self.lancer()
-        for phrase in ("Étape 1/12 : export", "Étape 4/12 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 12 étapes sur 12, 0 sautées"):
+        for phrase in ("Étape 1/9 : export", "Étape 4/9 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 9 étapes sur 9, 0 sautées"):
             self.assertIn(phrase, r.sortie)
         self.assertNotIn("Step ", r.sortie)
         self.assertNotIn("Monthly run", r.sortie)
@@ -210,8 +210,7 @@ class Langue(Decor):
         self.assertIn("Arrêt à l'étape import : code de sortie 1", r.sortie)
         self.assertEqual(r.sortie.strip().splitlines()[-1], "Pour reprendre : uv run tools/flow_monthly.py --from import")
         self.assertNotIn("Stopped", r.sortie)
-        self.codes_de({"flow_compare:data": 1})
-        self.assertIn("Écart entre la base et le CSV à l'étape compare-data", self.lancer().sortie)
+        self.assertNotIn("Écart entre la base et le CSV", r.sortie)             # la phrase de l'écart de parité n'existe plus
 
     def test_prerequis_en_francais(self):
         self.ecrire_reglages("jira_site: x\n")
@@ -240,24 +239,21 @@ class Langue(Decor):
         self.assertEqual(self.appels(), [])
 
 
-class NomsDesFichiersDesOutils(Decor):
-    """Les noms d'export et de rapport que l'orchestrateur construit sont ceux des outils (risque du design)."""
+class AucunCheminDeFichier(Decor):
+    """Décision D8 : l'orchestrateur ne construit plus aucun nom d'export ni de rapport ; les outils passent par la base."""
 
-    def test_nom_d_export_epingle_sur_la_constante_de_l_outil(self):
-        import export_jira_api as ex
-        self.assertEqual(fm.chemin_export("a-b", "2026-10-11"), "Flux-Lab/exports/" + ex.nom_fichier_export("a-b", "2026-10-11"))
-        self.assertEqual(fm.chemin_export(None, "2026-10-11"), "Flux-Lab/exports/" + ex.nom_fichier_export(None, "2026-10-11"))
+    def test_aucune_fonction_de_chemin(self):
+        for nom in ("chemin_export", "chemin_rapport", "CODE_ENTREE_MANQUANTE"):
+            self.assertFalse(hasattr(fm, nom), nom)
 
-    def test_nom_de_rapport_de_flux_epingle_sur_le_texte_de_l_outil(self):
-        source = (TOOLS / "flux_jira.py").read_text(encoding="utf-8")
-        self.assertIn("""stem = f"flux-{r['nom']}-{r['date']}" if r["nom"] else f"flux-{r['date']}\"""", source)
-        self.assertEqual(fm.chemin_rapport("abc", "2026-10-11"), "Flux-Lab/rapports/flux-abc-2026-10-11.md")
+    def test_aucune_etape_de_comparaison(self):
+        self.assertEqual(fm.ETAPES, ("export", "import", "history", "flow", "dependencies", "dashboard", "retention"))
 
 
 class AideEnProcessusReel(unittest.TestCase):
     def test_help_sort_avec_0_meme_dans_une_session_claude_code(self):
         env = {**os.environ, "CLAUDECODE": "1"}
-        r = subprocess.run([sys.executable, str(TOOLS / "flow_monthly.py"), "--help"], capture_output=True, text=True, env=env, timeout=60)
+        r = subprocess.run([sys.executable, "-B", str(TOOLS / "flow_monthly.py"), "--help"], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("usage", r.stdout.lower())
         for option in ("--dry-run", "--from", "--date", "--force", "--verbose", "--language", "--open"):
@@ -265,7 +261,7 @@ class AideEnProcessusReel(unittest.TestCase):
 
     def test_lancement_reel_dans_une_session_claude_code_est_refuse(self):
         env = {**os.environ, "CLAUDECODE": "1"}
-        r = subprocess.run([sys.executable, str(TOOLS / "flow_monthly.py")], capture_output=True, text=True, env=env, timeout=60)
+        r = subprocess.run([sys.executable, "-B", str(TOOLS / "flow_monthly.py")], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
         self.assertIn("Lancement refusé dans une session Claude Code", r.stdout)
 

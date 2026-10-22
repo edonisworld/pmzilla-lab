@@ -19,7 +19,7 @@ class ModelePlist(unittest.TestCase):
         self.texte = PLIST.read_text(encoding="utf-8")
 
     def rendu(self, home="/home/essai"):
-        sortie = subprocess.run(["sed", f"s|__HOME__|{home}|g", str(PLIST)], capture_output=True, text=True, check=True).stdout
+        sortie = subprocess.run(["sed", "-e", f"s|__HOME__|{home}|g", "-e", f"s|__LAB__|{home}/PMZilla-Lab|g", str(PLIST)], capture_output=True, text=True, check=True).stdout
         return plistlib.loads(sortie.encode())
 
     def test_xml_bien_forme(self):
@@ -33,15 +33,15 @@ class ModelePlist(unittest.TestCase):
     def test_chaque_jour_a_7h45_apres_la_collecte_de_7h10(self):
         planning = self.rendu()["StartCalendarInterval"]
         self.assertEqual(planning, {"Hour": 7, "Minute": 45})   # pas de Weekday : tous les jours
-        veille = plistlib.loads(WATCH.read_text(encoding="utf-8").replace("__HOME__", "/h").encode())["StartCalendarInterval"]
+        veille = plistlib.loads(WATCH.read_text(encoding="utf-8").replace("__HOME__", "/h").replace("__LAB__", "/h/PMZilla-Lab").encode())["StartCalendarInterval"]
         self.assertGreater((planning["Hour"], planning["Minute"]), (veille["Hour"], veille["Minute"]))
 
     def test_chemins_avec_home_et_aucun_chemin_reel(self):
-        self.assertIn("<string>__HOME__/PMZilla-Lab/db_backup.sh</string>", self.texte)
+        self.assertIn("<string>__LAB__/db_backup.sh</string>", self.texte)
         self.assertEqual(self.texte.count("<string>__HOME__/Library/Logs/pmzilla-db-backup.log</string>"), 2)
         self.assertNotIn("/Users/", self.texte)
         reste = re.findall(r"<string>(/[^<]*)</string>", self.texte)
-        self.assertEqual([c for c in reste if not c.startswith(("/bin/", "__HOME__"))], [])
+        self.assertEqual([c for c in reste if not c.startswith(("/bin/", "__HOME__", "__LAB__"))], [])
 
     def test_rendu_sans_residu_et_chemins_attendus(self):
         donnees = self.rendu("/home/essai")

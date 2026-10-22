@@ -15,6 +15,9 @@
 # macOS
 .DS_Store
 
+# Réglages personnels de VS Code : jamais dans Git (seules les extensions recommandées, .vscode/extensions.json, sont suivies)
+.vscode/settings.json
+
 # Métriques de flux : exports Jira et rapports tirés de données d'entreprise, jamais sur GitHub
 /Flux-Lab/*
 !/Flux-Lab/.gitkeep
@@ -39,6 +42,9 @@ __pycache__/
 
 # Messages rédigés : noms d'équipes possibles, jamais dans Git
 /_bmad-output/pmzilla/messages/
+
+# Livrables qui contiennent des données internes de l'organisation (chiffres de VSM, verbatims de clients) : jamais dans Git, même privé
+/_bmad-output/pmzilla/internes/
 
 # Rapports du jeu d'essai des postures : sorties générées, peuvent contenir des extraits de livres
 /_bmad-output/essais/
@@ -67,3 +73,5 @@ __pycache__/
 
 # Réglage local de session (écrit par tools/worktree.sh)
 .claude/settings.local.json
+
+/.claude/worktrees/

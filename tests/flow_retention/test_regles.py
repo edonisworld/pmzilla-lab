@@ -47,7 +47,7 @@ class Session(Espace):
     def test_lancement_reel_en_sous_processus(self):
         environ = {k: v for k, v in self.environ.items()}
         environ["CLAUDECODE"] = "1"
-        resultat = subprocess.run([sys.executable, str(TOOLS / "flow_retention.py"), "check", "--language", "en"], env=environ,
+        resultat = subprocess.run([sys.executable, "-B", str(TOOLS / "flow_retention.py"), "check", "--language", "en"], env=environ,
                                   capture_output=True, text=True, timeout=60)
         self.assertEqual(resultat.returncode, 3, resultat.stderr)
         self.assertIn("Refused inside a Claude Code session", resultat.stdout)
@@ -101,8 +101,11 @@ class Langues(Espace):
         self.assertEqual((en["purge_done"], fr_["purge_done"]), ("purge done", "purge faite"))
         self.assertEqual(en["backup_missing"], "pre-purge backup missing: run the labelled backup first")
         self.assertEqual(fr_["backup_missing"], "sauvegarde avant purge absente : lancer d'abord la sauvegarde étiquetée")
-        self.assertEqual(en["forbidden"], "files with a forbidden column: {n}")
-        self.assertEqual(fr_["forbidden"], "fichiers avec une colonne interdite : {n}")
+        self.assertEqual(en["store_csv_route"], "files left from the CSV route: {n}")
+        self.assertEqual(fr_["store_csv_route"], "fichiers laissés par la voie CSV : {n}")
+        for retire in ("forbidden", "store_cache", "store_csv"):                 # magasins retirés avec la voie CSV (database-only, D10)
+            self.assertNotIn(retire, en)
+            self.assertNotIn(retire, fr_)
 
 
 class DureeAuDelaDUnAn(Espace):

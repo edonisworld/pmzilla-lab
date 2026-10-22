@@ -1,0 +1,34 @@
+# Suites propres au Mac (local-ci-container, D3) : une ligne « <suite>:<python|shell> # <raison> » par suite.
+# bash tests/run_all.sh --portable lance toutes les autres (conteneur de la CI locale) ; bash tests/run_all.sh --mac lance celles-ci.
+# Règle : toute suite shell du lanceur est propre au Mac par défaut ; une suite Python l'est si elle appelle une commande propre à macOS
+# sans faux (inventaire, tâche 2.1), ou si elle est rouge sous Linux au premier passage du conteneur (tâche 6.5, à porter, #403).
+# Une suite mal classée coûte du temps, jamais de couverture : chaque suite passe une fois, dans le conteneur ou sur le Mac.
+# Un test de tests/run_all vérifie que chaque entrée nomme une suite existante du genre dit, une fois, avec sa raison.
+
+# Suites shell du lanceur (propres au Mac par défaut)
+hooks:shell # outils BSD et bash 3.2 du Mac
+post-commit:shell # outils BSD et bash 3.2 du Mac
+commit-msg:shell # outils BSD et bash 3.2 du Mac
+pre-commit-green:shell # outils BSD et bash 3.2 du Mac
+pre-push:shell # outils BSD et bash 3.2 du Mac
+lock-hooks:shell # outils BSD et bash 3.2 du Mac
+evals_auto:shell # outils BSD et bash 3.2 du Mac
+installation:shell # outils BSD et bash 3.2 du Mac
+install_hooks:shell # outils BSD et bash 3.2 du Mac
+db_scripts:shell # outils BSD et bash 3.2 du Mac ; stat -f %Lp et shasum sans repli
+dbtest:shell # outils BSD et bash 3.2 du Mac
+offsite_backup:shell # outils BSD et bash 3.2 du Mac ; vrai plutil
+finish_branch:shell # outils BSD et bash 3.2 du Mac ; shasum -a 256 sans repli
+worktree:shell # outils BSD et bash 3.2 du Mac
+finish_worktree:shell # outils BSD et bash 3.2 du Mac ; lsof supposé absent de /usr/bin:/bin, ps -o et pgrep -f
+run_worktree:shell # outils BSD et bash 3.2 du Mac ; date -j -f et date -r sans repli
+morning_state:shell # outils BSD et bash 3.2 du Mac
+ci_local:shell # outils BSD et bash 3.2 du Mac ; teste le script qui lance le conteneur, jamais lancé dans le conteneur
+branch_sync:shell # outils BSD et bash 3.2 du Mac ; ps -o command= et /bin/bash 3.2
+
+# Suites Python qui appellent une commande propre à macOS sans faux (inventaire, tâche 2.1)
+watch_sh:python # date -r et stat -f BSD de tools/watch.sh, lancé pour de bon par la suite
+
+# Suites Python rouges sous Linux au premier passage du conteneur (tâche 6.5, décision de l'auteur du 2026-10-20)
+posture_evals:python # compare à origin/main, absent du dépôt jetable du conteneur
+settings_deny:python # rouge sous Linux au premier passage (à porter, #403) ; DansLeFichierLocal lit .claude/settings.local.json de l'espace principal du Mac, ignoré par Git, absent du conteneur

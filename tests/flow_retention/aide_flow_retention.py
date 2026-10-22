@@ -37,40 +37,79 @@ def jours_avant(n: int) -> dt.date:
 class FausseBase:
     """Connexion factice : `comptes` = (nombre, date de l'horloge la plus ancienne) rendu par la requête de comptage."""
 
-    def __init__(self, compte: int = 0, plus_ancien: dt.date | None = None, echec_suppression: Exception | None = None):
+    def __init__(self, compte: int = 0, plus_ancien: dt.date | None = None, echec_suppression: Exception | None = None,
+                 brute: int = 0, brute_plus_ancienne: dt.date | None = None, visites: int = 0,
+                 contenu: int = 0, contenu_plus_ancien: dt.date | None = None, echec_suppression_contenu: Exception | None = None):
+        """`brute` : nombre d'instantanés de la couche brute hors règle rendu par la requête qui les compte (jira-data-architecture) ;
+        `visites` : nombre de visites hors règle, rendu par la requête qui compte les visites.
+        `contenu*` : le magasin « contenu des stories » (schéma quality, R-78) ; une requête qui cite `quality.` lit ces valeurs."""
         self.compte, self.plus_ancien, self.echec_suppression = compte, plus_ancien, echec_suppression
+        self.brute, self.brute_plus_ancienne, self.visites = brute, brute_plus_ancienne, visites
+        self._comptage_brute = self._comptage_visites = False
+        self.contenu, self.contenu_plus_ancien, self.echec_suppression_contenu = contenu, contenu_plus_ancien, echec_suppression_contenu
         self.requetes: list[tuple[str, tuple]] = []
+        self.evenements: list[str] = []          # « DELETE flow », « DELETE quality », « commit », « rollback », « SET ROLE … », dans l'ordre
         self.commits = self.rollbacks = 0
         self.fermee = False
         self.supprime = False
         self.rowcount = 0
+        self._derniere = ""
 
     def cursor(self):
         return self
 
     def execute(self, sql, params=()):
-        self.requetes.append((" ".join(sql.split()), tuple(params)))
-        if sql.lstrip().upper().startswith("DELETE"):
-            if self.echec_suppression is not None:
-                raise self.echec_suppression
+        propre = " ".join(sql.split())
+        self.requetes.append((propre, tuple(params)))
+        self._derniere = propre
+        comptage = propre.upper().startswith("SELECT COUNT(*)")
+        self._comptage_visites = comptage and "FROM flow.raw_run_sightings s" in propre
+        self._comptage_brute = comptage and "FROM flow.raw_issue_snapshots s" in propre
+        if propre.upper().startswith(("SET ROLE", "RESET ROLE")):
+            self.evenements.append(propre)
+        if propre.upper().startswith("DELETE"):
+            du_contenu = "quality." in propre
+            self.evenements.append("DELETE quality" if du_contenu else "DELETE flow")   # la couche brute compte côté flow
+            echec = self.echec_suppression_contenu if du_contenu else self.echec_suppression
+            if echec is not None:
+                raise echec
             self.supprime = True
-            self.rowcount = self.compte
+            self.rowcount = self.contenu if du_contenu else self.compte
         return self
 
     def fetchone(self):
+        if self._comptage_visites:
+            return (self.visites, None)
+        if self._comptage_brute:
+            return (self.brute, self.brute_plus_ancienne)
+        if "quality." in self._derniere:
+            return (self.contenu, self.contenu_plus_ancien)
         return (self.compte, self.plus_ancien)
 
     def commit(self):
         self.commits += 1
+        self.evenements.append("commit")
 
     def rollback(self):
         self.rollbacks += 1
+        self.evenements.append("rollback")
 
     def close(self):
         self.fermee = True
 
     def suppressions(self):
-        return [r for r in self.requetes if r[0].upper().startswith("DELETE")]
+        """Les suppressions de tickets (flow.issues) ; celles de la couche brute sont dans `suppressions_brutes`, celles du contenu
+        des stories dans `suppressions_contenu`."""
+        return [r for r in self.requetes if r[0].upper().startswith("DELETE FROM FLOW.ISSUES")]
+
+    def suppressions_brutes(self):
+        return [r for r in self.requetes if r[0].upper().startswith("DELETE FROM FLOW.RAW_")]
+
+    def suppressions_contenu(self):
+        return [r for r in self.requetes if r[0].upper().startswith("DELETE") and "quality." in r[0]]
+
+    def comptes_contenu(self):
+        return [r for r in self.requetes if r[0].upper().startswith("SELECT") and "quality." in r[0]]
 
 
 class Espace(unittest.TestCase):
@@ -89,6 +128,7 @@ class Espace(unittest.TestCase):
         self.reglages = self.racine / "flux.yaml"
         for dossier in (self.exports, self.tableaux, self.rapports, self.historique.parent, self.sauvegardes, self.statut.parent):
             dossier.mkdir()
+        (self.racine / "absent").mkdir(exist_ok=True)   # le module partagé refuse un dossier de contenu absent (code 78)
         self.environ = {
             "FLOW_RETENTION_SETTINGS": str(self.reglages), "FLOW_RETENTION_EXPORTS": str(self.exports),
             "FLOW_RETENTION_TABLEAUX": str(self.tableaux), "FLOW_RETENTION_RAPPORTS": str(self.rapports),

@@ -77,7 +77,7 @@ Commandes :
         images, outils et boutiques sont ignorés. Les liens viennent de la collecte (watch_lab.py links pour
         les articles déjà collectés).
 
-Réglages : ~/PMZilla-Lab/workspace/watch/tri.yaml (veille/ tant que le dossier n'est pas migré ; créé au premier lancement).
+Réglages : <dossier de contenu>/watch/tri.yaml (veille/ tant que le dossier n'est pas migré ; créé au premier lancement).
 
 État : la base PostgreSQL de l'installation (schéma knowledge, tables triage_*), jamais un fichier local. Toutes les commandes ouvrent
 la base avant tout appel au modèle, toute lecture de vos posts et tout fichier déplacé ou écrit : base muette, sortie 4 ; tables
@@ -108,12 +108,18 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pmzilla_lab_library as library  # noqa: E402  (embed, OLLAMA_URL, DATA_DIR)
+import lab_paths  # noqa: E402
 import watch_paths  # noqa: E402
 import watch_config  # noqa: E402  (noms des clés de tri.yaml)
 import flux_config  # noqa: E402
 import watch_lab as veille  # noqa: E402  (dossiers, lecture de l'export Claude)
 import watch_store  # noqa: E402  (état en base)
 from yaml_strict import charger  # noqa: E402
+
+
+def commande_lien(action: str, nom: str) -> str:
+    """Commande à copier : le script se lance par son lien du dossier du lab, donné par le module partagé."""
+    return f"uv run {lab_paths.lab_folder(veille.WORKSPACE)}/watch_triage.py {action} {nom}"
 
 CONFIG_FILE = veille.SOURCES_FILE.parent / "tri.yaml"   # suivi : dans le dossier de code
 DEFAULT_CONFIG_FILE = CONFIG_FILE
@@ -1091,21 +1097,21 @@ def cmd_thresholds(args: argparse.Namespace) -> None:
         print(f"\n{len(disagreements)} article(s) que vous voulez garder sont écartés par une règle fixe. "
               "Repêchez-les avant de passer en mode filtre :")
         for name, title, rule in disagreements:
-            print(f"  {title[:60]} ({rule})\n    uv run ~/PMZilla-Lab/watch_triage.py restore {name}")
+            print(f"  {title[:60]} ({rule})\n    {commande_lien('restore', name)}")
     lost_by_pair = [(name, title) for sub, rel, keep, name, title in sample
                     if keep and (sub is None or sub < threshold or rel < relevance)]
     if lost_by_pair:
         print(f"\n{len(lost_by_pair)} article(s) que vous voulez garder sont écartés par ce couple de seuils. "
               "Repêchez-les :")
         for name, title in lost_by_pair:
-            print(f"  {title[:60]}\n    uv run ~/PMZilla-Lab/watch_triage.py restore {name}")
+            print(f"  {title[:60]}\n    {commande_lien('restore', name)}")
     still_in = [(name, title) for sub, rel, keep, name, title in sample
                 if not keep and sub is not None and sub >= threshold and rel >= relevance]
     if still_in:
         print(f"\n{len(still_in)} article(s) que vous voulez écarter restent gardés avec ces seuils. "
               "Écartez-les à la main :")
         for name, title in still_in:
-            print(f"  {title[:60]}\n    uv run ~/PMZilla-Lab/watch_triage.py exclude {name}")
+            print(f"  {title[:60]}\n    {commande_lien('exclude', name)}")
     if args.save:
         set_config("substance_threshold", threshold)
         set_config("relevance_threshold", relevance)

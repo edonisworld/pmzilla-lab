@@ -1,25 +1,21 @@
 """
-PMZilla Lab : lecture commune du cache de l'historique des états et des segments.
+PMZilla Lab : règles communes de l'historique des états et des segments.
 
-Utilisé par history_jira.py (collect, check) et flux_jira.py (compute --history) : une seule fonction lit
-le cache, une seule table range les états dans les segments, pour que les deux ne puissent pas diverger.
-Aucune dépendance hors bibliothèque standard.
+Utilisé par history_jira.py, history_store.py et flux_jira.py (compute --history) : une seule table range les états dans les segments,
+une seule règle donne le fuseau d'export, pour que les outils ne puissent pas diverger. Aucune dépendance hors bibliothèque standard.
+Le cache de fichier de l'historique n'existe plus (change database-only, D5) : l'historique vit dans la base.
 
-Format du cache (Flux-Lab/historique/transitions.json) :
-    {"<clé>": {"termine": bool, "transitions": [[date, état de départ, état d'arrivée], ...],
-               "resolu": date de résolution | null, "vu_le": dernier jour vu dans un export | null,
-               "versions": [[date, "add"|"remove", version], ...], "etiquettes": [[date, "add"|"remove", étiquette], ...]}}
-Les quatre dernières clés sont facultatives (conservation d'un an, R-58 : horloge du design D1 ; périodes d'étiquettes déclarées
-et de versions) : un ancien cache sans elles se lit comme un cache sans date, sans version et sans étiquette.
-La date est un texte ISO 8601 avec décalage (2026-03-01T09:00:00.000+0200). L'API groupée de Jira peut la donner
-sous une autre forme (millisecondes depuis 1970, en nombre ou en texte) : normaliser_date la ramène au format ISO
-(en UTC dans ce cas) aussi bien à la collecte qu'à la lecture d'un ancien cache.
+Les dates des transitions sont des textes ISO 8601 avec décalage (2026-03-01T09:00:00.000+0200). L'API groupée de Jira peut les
+donner sous une autre forme (millisecondes depuis 1970, en nombre ou en texte) : normaliser_date les ramène au format ISO (en UTC
+dans ce cas) à la collecte.
 """
 from __future__ import annotations
 
 import datetime as dt
-import json
-from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+FUSEAU_PAR_DEFAUT = "Europe/Paris"
+REGLAGE_FUSEAU = "export_timezone"          # nom public du réglage (clé interne : export_fuseau)
 
 SEGMENTS_PAR_DEFAUT = {
     "definition": ["Definition", "Definition - Ongoing", "Definition - On Hold", "Ready for Review (Definition)",
@@ -39,8 +35,24 @@ SEGMENTS_HORS_CALCUL_PAR_DEFAUT = {
 }
 
 
-class CacheIllisible(Exception):
-    """Le fichier du cache n'est pas lisible (le message est sûr à afficher)."""
+class ErreurFuseau(ValueError):
+    """Fuseau d'export inconnu (idée #169, D9). Neutre : elle ne porte que le nom public du réglage (`reglage`) et le nom de
+    fuseau lu dans les réglages (`nom`) ; chaque outil la traduit dans son message et son code de sortie."""
+
+    def __init__(self, nom: str):
+        super().__init__(REGLAGE_FUSEAU)
+        self.reglage, self.nom = REGLAGE_FUSEAU, nom
+
+
+def fuseau_export(settings: dict) -> ZoneInfo:
+    """Fuseau des dates de l'export (réglage export_timezone, clé interne export_fuseau ; Europe/Paris par défaut), l'été et
+    l'hiver compris. Règle unique de l'export, du lecteur de l'import, des lecteurs de la base et du rapport de flux. N'affiche
+    rien ; un fuseau inconnu lève ErreurFuseau."""
+    nom = str(settings.get("export_fuseau") or FUSEAU_PAR_DEFAUT).strip()
+    try:
+        return ZoneInfo(nom)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ErreurFuseau(nom) from None
 
 
 def normaliser_date(valeur) -> str | None:
@@ -108,24 +120,48 @@ def trier_evenements(evenements: list) -> list[list]:
     return sorted(propres, key=lambda e: instant(e[0]))
 
 
-def lire_cache(chemin: Path) -> dict[str, dict]:
-    """Cache lu et normalisé : dates ISO, transitions et événements triés ; les clés facultatives (resolu, vu_le, versions,
-    etiquettes) sont toujours rendues (None ou liste vide quand elles manquent). Lève CacheIllisible si le fichier est absent
-    ou invalide."""
+def instant_de_transition(valeur, zone) -> dt.datetime | None:
+    """Instant d'une date de transition ou d'événement (texte ISO) ; une date sans décalage est lue dans `zone`. Illisible : None."""
     try:
-        donnees = json.loads(Path(chemin).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise CacheIllisible("cache de l'historique illisible.") from None
-    if not isinstance(donnees, dict):
-        raise CacheIllisible("cache de l'historique illisible.")
-    sortie = {}
-    for cle, entree in donnees.items():
-        if isinstance(entree, dict):
-            sortie[cle] = {"termine": bool(entree.get("termine")), "transitions": trier(entree.get("transitions")),
-                           "resolu": normaliser_date(entree.get("resolu")), "vu_le": normaliser_date(entree.get("vu_le")),
-                           "versions": trier_evenements(entree.get("versions")),
-                           "etiquettes": trier_evenements(entree.get("etiquettes"))}
-    return sortie
+        moment = dt.datetime.fromisoformat(str(valeur))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=zone)
+
+
+def construire_periodes(evenements: list, presentes: list[str] | None, cree: dt.datetime, zone,
+                        admises: set[str] | None = None) -> list[tuple[str, dt.datetime, dt.datetime | None]]:
+    """Périodes (valeur, posée le, retirée le ou None) d'un ticket, pour les étiquettes déclarées ou pour les versions.
+    `evenements` : [date ISO, "add"|"remove", valeur] de la collecte, déjà triés ; `presentes` : valeurs courantes lues dans Jira
+    (None : non suivies) ; `cree` : création du ticket ; `admises` : valeurs autorisées (les étiquettes déclarées ; None pour les
+    versions). Règles :
+      - un « add » ouvre une période (un second « add » sans retrait entre les deux est ignoré), un « remove » la ferme ;
+      - un « remove » sans période ouverte ferme une période ouverte à la création du ticket (la valeur était posée avant le début) ;
+      - une valeur présente dans Jira, sans aucun événement, ouvre une période à la création ;
+      - la date de retrait n'est jamais antérieure à celle de pose ; un événement à date illisible est écarté ;
+      - une valeur hors de `admises` n'apparaît jamais.
+    Pure : aucun accès à la base."""
+    ouvertes: dict[str, dt.datetime] = {}
+    periodes: list[tuple[str, dt.datetime, dt.datetime | None]] = []
+    vues: set[str] = set()
+    for evenement in evenements or []:
+        date, sens, valeur = evenement
+        moment = instant_de_transition(date, zone)
+        if moment is None or (admises is not None and valeur not in admises):
+            continue
+        vues.add(valeur)
+        if sens == "add":
+            ouvertes.setdefault(valeur, moment)
+        elif valeur in ouvertes:
+            debut = ouvertes.pop(valeur)
+            periodes.append((valeur, debut, max(moment, debut)))
+        else:
+            periodes.append((valeur, cree, max(moment, cree)))
+    for valeur in presentes or []:
+        if valeur not in vues and (admises is None or valeur in admises):
+            ouvertes[valeur] = cree
+    periodes.extend((valeur, debut, None) for valeur, debut in ouvertes.items())
+    return sorted(periodes, key=lambda p: (p[1], p[0]))
 
 
 def table_segments(settings: dict) -> tuple[dict[str, str], list[str]]:
@@ -175,27 +211,9 @@ def dormants_selon_historique(tickets, cache: dict[str, list], aujourdhui: dt.da
     return dormants, sans_historique
 
 
-# Format des dates des CSV de export_jira_api.py (09/Nov/2017 08:49) : fixe, un seul endroit pour tous les lecteurs.
-FORMAT_DATE = "%d/%b/%Y %H:%M"
-
-
 def ensembles_exclus(settings: dict, avec_projets: bool = True) -> tuple[set[str], set[str]]:
     """(types de niveau portefeuille en minuscules, projets exclus en majuscules) de flux.yaml ; « types_exclus » est
     l'ancien nom de `types_portefeuille`. Sans `avec_projets`, aucun projet (export sans colonne de clé)."""
     types = {t.strip().casefold() for t in (settings.get("types_portefeuille") or settings.get("types_exclus") or [])}
     projets = {p.strip().upper() for p in (settings.get("projets_exclus") or [])} if avec_projets else set()
     return types, projets
-
-
-def parse_moment(valeur: str) -> dt.datetime | None:
-    """Date et heure (à la minute) d'une cellule d'un CSV de l'API, None si elle est vide ou illisible."""
-    try:
-        return dt.datetime.strptime((valeur or "").strip(), FORMAT_DATE)
-    except ValueError:
-        return None
-
-
-def parse_jour(valeur: str) -> dt.date | None:
-    """Jour d'une cellule d'un CSV de l'API, None si elle est vide ou illisible."""
-    moment = parse_moment(valeur)
-    return moment.date() if moment else None

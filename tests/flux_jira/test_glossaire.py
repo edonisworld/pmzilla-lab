@@ -32,7 +32,7 @@ class Glossaire(unittest.TestCase):
             self.assertNotEqual(g.GLOSSAIRE["fr"][cle], g.GLOSSAIRE["en"][cle], cle)
 
     def test_les_ordres_de_lecture_designent_des_cles_existantes(self):
-        ids = g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES
+        ids = g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES + g.ORDRE_PARTAGES
         self.assertEqual(len(ids), len(set(ids)))
         for langue in g.GLOSSAIRE:
             self.assertFalse(set(ids) - set(g.GLOSSAIRE[langue]), langue)
@@ -41,9 +41,9 @@ class Glossaire(unittest.TestCase):
         for langue in ("fr", "en"):
             simple = g.lignes_rapport(langue)
             self.assertEqual(simple, [f"- {g.GLOSSAIRE[langue][i]}" for i in g.ORDRE_RAPPORT])
-            complet = g.lignes_rapport(langue, segments=True, fermetures=True)
+            complet = g.lignes_rapport(langue, segments=True, fermetures=True, partages=True)
             self.assertEqual(complet, [f"- {g.GLOSSAIRE[langue][i]}" for i in
-                                       g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES])
+                                       g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES + g.ORDRE_PARTAGES])
         self.assertNotEqual(g.lignes_rapport("fr"), g.lignes_rapport("en"))
 
 

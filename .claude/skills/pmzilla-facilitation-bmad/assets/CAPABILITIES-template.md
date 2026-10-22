@@ -1,6 +1,6 @@
 # Capabilities
 
-Four actions; each produces a structuring deliverable that the `pmzilla-critic` subagent examines before it is handed back.
+Five actions; each produces a structuring deliverable that the `pmzilla-critic` subagent examines before it is handed back.
 
 ## Built-in
 
@@ -10,6 +10,7 @@ Four actions; each produces a structuring deliverable that the `pmzilla-critic` 
 | RE | Prepare a retrospective | Objective of the session, team context, five-phase run-through, plan B if speech does not circulate | `references/prepare-retrospective.md` |
 | PO | Work on a coaching stance | Expected stance (coach, SM, PO), tricky situations, opening phrases | `references/coaching-stance.md` |
 | QU | Prepare a line of questioning | Ordered open questions, follow-ups, traps to avoid | `references/prepare-questioning.md` |
+| SC | Prepare a story coaching conversation with a PO | Intention of the conversation, the learning points of an audit already given by Delivery or Discovery, open questions, stance to hold; no verdict of its own | `references/prepare-story-coaching.md` |
 
 If the user asks to keep the deliverable, save it as Markdown in `<project-root>/_bmad-output/pmzilla/` under `AAAA-MM-JJ-sujet.md` (the file naming of CLAUDE.md: date, then subject), with the posture, the request and the library sources used at the top. The wake script prints `Project root:` and `Sanctum:`, which give `<project-root>` and `<sanctum>`.
 

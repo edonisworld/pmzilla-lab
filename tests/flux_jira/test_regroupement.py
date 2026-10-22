@@ -15,6 +15,7 @@ from pathlib import Path
 
 ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI))
+import chargeur_csv as chargeur  # noqa: E402
 from aide_espace import AvecEspace, faux_store, fj  # noqa: E402
 import test_flux_jira as fx  # noqa: E402
 
@@ -78,6 +79,48 @@ class ParDefaut(Base):
         code, _, erreur = self.compute("--by", "department")
         self.assertEqual(code, 2)
         self.assertIn("--by", erreur)
+
+
+CATALOGUE = """teams:
+  - name: Libelle-Quimbo
+    jira_team_ids: ['50', '51']
+  - name: Libelle-Partage
+    jira_team_ids: ['1', '52']
+"""
+
+
+class AvecLeCatalogue(Base):
+    """Change team-mapping, tâche 3.3 : le catalogue ne change ni les groupes ni le libellé « hors référentiel ». Le catalogue n'est
+    lu que par l'export, qui écrit un libellé du catalogue pour un identifiant que le référentiel ne liste pas : pour ce rapport,
+    c'est une équipe inconnue du référentiel."""
+
+    def setUp(self):
+        super().setUp()
+        self.lignes = fx.construire(random.Random(11), "PROJ", fx.WORKFLOW_1, 120, EQUIPES + ["Libelle-Quimbo"], ["Story", "Bug"])
+        fx.ecrire_csv(self.csv, self.lignes)
+        self.ecrire("organisation.yaml", REFERENTIEL.replace("  - name: Equipe A1\n    headcount: 5\n",
+                                                             "  - name: Equipe A1\n    headcount: 5\n    jira_team_ids: ['1']\n"))
+        self.ecrire("equipes-jira.yaml", CATALOGUE)
+
+    def test_identifiant_du_catalogue_qu_aucune_equipe_du_referentiel_ne_liste_regroupe_hors_referentiel(self):
+        code, _, _ = self.compute("--by", "mission-team")
+        self.assertIsNone(code)
+        r = self.json_du_rapport("flux-s-mission-team-2026-10-04")
+        z = sum(1 for t in self.lignes if t["equipe"] in ("Equipe Z", "Libelle-Quimbo"))
+        self.assertEqual(r["regroupement"]["hors_referentiel"], {"equipes": 2, "tickets": z})
+        self.assertEqual(sorted(r["par_equipe"]), ["MT Alpha", "MT Beta", "hors référentiel"])
+        self.assertIn("regroupés sous « hors référentiel »", self.lire_rapport("flux-s-mission-team-2026-10-04.md"))
+        self.assertNotIn("Libelle-Quimbo", self.lire_rapport("flux-s-mission-team-2026-10-04.md"))
+
+    def test_identifiant_present_dans_les_deux_fichiers_reste_dans_son_equipe_du_referentiel(self):
+        code, _, _ = self.compute("--by", "mission-team")
+        self.assertIsNone(code)
+        r = self.json_du_rapport("flux-s-mission-team-2026-10-04")
+        a = sum(1 for t in self.lignes if t["equipe"] in ("Equipe A1", "Equipe A2"))
+        self.assertEqual(r["regroupement"]["structure"][0], {"group": "MT Alpha", "teams": 2, "headcount": 11})
+        self.assertGreater(a, 0)
+        self.assertEqual(r["regroupement"]["hors_referentiel"]["equipes"], 2)           # ni Equipe A1 ni son libellé du catalogue
+        self.assertNotIn("Libelle-Partage", json.dumps(r, ensure_ascii=False))
 
 
 class ParMissionTeam(Base):
@@ -233,18 +276,18 @@ class Comparaison(Base):
 
 
 class DeuxSources(Base):
-    """Le même regroupement sur la voie base : un faux flow_store rend les tickets lus dans le CSV."""
+    """Le même regroupement avec un faux flow_store explicite : il rend les tickets lus dans le CSV de fixture."""
 
     def store(self):
         reglages = fj.config()
-        tickets, found, illisibles, doublons = fj.read_exports([str(self.csv)], reglages)
+        tickets, found, illisibles, doublons = chargeur.lire_tickets_flux(reglages, [str(self.csv)])
         return faux_store(lire_tickets_flux=lambda settings: (tickets, {k: (v or None) for k, v in found.items()}, 0, 0))
 
-    def test_meme_rapport_par_groupe_sur_les_deux_sources(self):
+    def test_meme_rapport_par_groupe_avec_un_store_explicite(self):
         for par in ("mission-team", "site"):
             self.compute("--by", par)
             csv = self.json_du_rapport(f"flux-s-{par}-2026-10-04")
-            code, console, _ = self.compute("--by", par, "--source", "db", nom="s", source_csv=False, store=self.store())
+            code, console, _ = self.compute("--by", par, nom="s", source_csv=False, store=self.store())
             self.assertIsNone(code, console)
             base = self.json_du_rapport(f"flux-s-{par}-2026-10-04")
             for cle in ("termines", "wip", "arrivees", "par_equipe", "arrivees_sorties_par_equipe", "regroupement"):

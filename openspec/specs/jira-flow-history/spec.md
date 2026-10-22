@@ -66,29 +66,33 @@ Source: tests/history_jira/test_history_jira.py (AnciensNoms)
 - **THEN** no warning is printed
 
 ### Requirement: History collection keeps only date and states
-The system SHALL provide a `collect` subcommand that reads one or more export CSV files, merges the tickets by key, and for each ticket stores in the cache only a finished flag, the resolution date, the last date the ticket was seen in an export, the list of status transitions as (date, starting status, arrival status), the add and remove events of fix versions and, when declared labels are configured, of declared labels, as (date, added or removed, value). Changes to other fields and to undeclared labels SHALL be discarded and the author SHALL never be stored. Tickets resolved longer ago than the retention period SHALL be skipped and counted with the key phrase of design D19. The console SHALL report the mode, the tickets processed, the transition count and the error count, without ticket keys, team names, token, titles, labels, version names, site address or author.
+The system SHALL provide a `collect` subcommand that reads the tickets to query from the database and, for each ticket, keeps only the list of status transitions as (date, starting status, arrival status), the add and remove events of fix versions and, when declared labels are configured, of declared labels, as (date, added or removed, value), and the current fix versions and declared labels. Changes to other fields and to undeclared labels SHALL be discarded and the author SHALL never be stored. Tickets resolved longer ago than the retention period SHALL be skipped and counted with the key phrase of design D19 of the GDPR alignment. The console SHALL report the mode, the tickets processed, the transition count and the error count, without ticket keys, team names, token, titles, labels, version names, site address or author.
 
-Source: tests/history_jira/test_history_jira.py (Collecte); tests/history_jira/test_collecte_etendue.py
+Source: tests/history_jira/test_history_jira.py (Collecte); tests/history_jira/test_collecte_etendue.py (in-memory store of tests/history_jira/aide_historique.py)
 
 #### Scenario: Grouped mode
 - **WHEN** the grouped history API is available, no label is declared and no fix version changed
-- **THEN** each cache entry holds the finished flag, the two dates and its three-element transitions, the assignee change is dropped, and the console says the mode is grouped
+- **THEN** each queried ticket gets its three-element transitions, the assignee change is dropped, and the console says the mode is grouped
 
 #### Scenario: Declared label events
 - **WHEN** the changelog adds a declared label, adds an undeclared one and changes the fix version
-- **THEN** the entry holds the declared-label add and the fix-version remove and add with their instants, and nothing about the undeclared label
+- **THEN** the stored periods hold the declared label and the fix versions with their instants, and nothing about the undeclared label
 
 #### Scenario: Nothing sensitive written
 - **WHEN** a collection ends
-- **THEN** neither the console nor any file written contains the token, the author, the author's address, a title, the assignee field name, the account address or an undeclared label
+- **THEN** neither the console nor the database contains the token, the author, the author's address, a title, the assignee field name, the account address or an undeclared label
 
 #### Scenario: Export without key column
-- **WHEN** the export has no key column
-- **THEN** the exit code is 1 and the message mentions the key column
+- **WHEN** `collect` is given an export file, with or without a key column
+- **THEN** the exit code is 2, the output holds "export files are no longer read: the database is the only source", and Jira is not called
 
 #### Scenario: Ticket past the rule
-- **WHEN** an export row was resolved before the retention period
+- **WHEN** a stored ticket was resolved before the retention period
 - **THEN** its history is not requested and the console prints "tickets past retention, skipped: 1"
+
+#### Scenario: Update date kept
+- **WHEN** a stored ticket is queried
+- **THEN** the collection writes no update date of its own: the updated instant used to select it next time is the one the export recorded and the import derived
 
 ### Requirement: Pagination and fallback
 The system SHALL follow pagination of the key search, of the grouped history (including a ticket split between two pages) and of the per-ticket history. It SHALL fall back to a per-ticket mode when the grouped API is unavailable, and in that mode SHALL read until the last page, or until an empty page when the API gives no last-page indicator.
@@ -104,27 +108,55 @@ Source: tests/history_jira/test_history_jira.py (test_pagination_groupee, test_r
 - **THEN** the ticket's transitions are completed from the next page
 
 ### Requirement: Incremental cache
-The system SHALL re-query only tickets absent from the cache or not marked finished, SHALL report how many were already cached and finished and how many will be queried, SHALL make no Jira call when everything is cached and finished, SHALL re-query once a ticket that has become finished, and SHALL ignore the cache with `--refresh` (reporting it).
+The system SHALL query only the stored tickets without history, those not resolved, those updated since the last successful collection minus one day, and those whose not-found counter is above 0, leaving out the tickets marked gone (requirement "Ticket not found in Jira marked gone after consecutive collections"). The last successful collection SHALL be the latest history run whose error count is 0, whatever its not-found count (design D15). The system SHALL report how many are skipped and how many will be queried, and, when the stored tickets hold updated instants, how many resolved tickets are queried again because they were updated; SHALL make no Jira call when none qualifies; and SHALL query every stored ticket with `--refresh`, gone tickets included, reporting it. A ticket without an updated instant SHALL NOT be queried again for that reason. A history run with transient errors SHALL NOT move the instant used to select the updated tickets.
 
-Source: tests/history_jira/test_history_jira.py (test_incremental_ne_reinterroge_que_les_non_termines_ou_absents, test_tout_en_cache_et_termine_aucun_appel, test_ticket_devenu_termine_est_reinterroge_une_fois, test_rafraichir_ignore_le_cache)
+Source: tests/history_jira/test_history_jira.py (Collecte: test_rafraichir_interroge_tout); tests/history_jira/test_reinterrogation_maj.py; amendment task 14.4 (run with errors not taken as the last successful collection)
 
 #### Scenario: Second collection
-- **WHEN** a ticket is new and another is unfinished and the rest are finished and cached
+- **WHEN** one stored ticket is new, another is open, and the rest are resolved, already collected and not updated since
 - **THEN** one search batch queries only those two tickets
 
-### Requirement: Team filter and scope exclusions
-The system SHALL, with `--team`, keep a ticket as soon as any of its team columns (including values separated by semicolons) matches case-insensitively, and report only the count of tickets outside the team, never the name. An unknown team SHALL stop with exit 1 and no Jira call, without echoing the name. Portfolio-level issue types and excluded projects from the settings SHALL NOT be queried, and their count SHALL be reported.
+#### Scenario: Nothing to query
+- **WHEN** every stored ticket is resolved, collected and not updated since the last collection
+- **THEN** no Jira call is made
 
-Source: tests/history_jira/test_history_jira.py (test_equipe_filtre_et_ne_montre_pas_le_nom, test_equipe_retient_un_ticket_des_qu_une_de_ses_equipes_correspond, test_equipe_inconnue, test_portefeuille_et_projets_exclus_ne_sont_pas_interroges)
+#### Scenario: Finished ticket unchanged
+- **WHEN** a resolved, collected ticket has an updated instant earlier than the last successful collection minus one day
+- **THEN** no call is made for it and the report counts it as already collected
+
+#### Scenario: Finished ticket updated
+- **WHEN** a resolved, collected ticket has an updated instant later than the last successful collection minus one day, and Jira holds a new transition
+- **THEN** it is queried again, the new transition is stored, and the report counts it among the resolved tickets queried again
+
+#### Scenario: Older entry
+- **WHEN** a resolved, collected ticket has no updated instant
+- **THEN** it is not queried again for that reason
+
+#### Scenario: Run with transient errors
+- **WHEN** a collection ends with one persistent 429, and a resolved ticket was updated between the last run without error and that collection
+- **THEN** the next collection still selects the updated tickets from the instant of the last run without error, and queries that resolved ticket again
+
+### Requirement: Team filter and scope exclusions
+The system SHALL, with `--team`, keep a ticket as soon as any of its team columns (including values separated by semicolons) matches case-insensitively, and report only the count of tickets outside the team, never the name. An unknown team SHALL stop with exit 1 and no Jira call, without echoing the name. Portfolio-level issue types and excluded projects from the settings SHALL NOT be queried, and their count SHALL be reported, with one exception (design D12 of the epic flow report change): the tickets of the configured epic types SHALL be queried even when they are portfolio-level types, and their count SHALL be printed on its own line with the key phrase "epics queried: {n}" (French "épics interrogés : {n}"). Tickets of an excluded project SHALL NOT be queried, epics included, and the other portfolio-level types SHALL stay unqueried. The epic line SHALL NOT name a key, a team or a type value.
+
+Source: tests/history_jira/test_history_jira.py (test_equipe_filtre_et_ne_montre_pas_le_nom, test_equipe_retient_un_ticket_des_qu_une_de_ses_equipes_correspond, test_equipe_inconnue, test_portefeuille_et_projets_exclus_ne_sont_pas_interroges); epic exception untested until implemented.
 
 #### Scenario: Multi-team ticket
 - **WHEN** the requested team appears in a second team column
 - **THEN** the ticket is kept
 
-### Requirement: Rate limiting and errors
-The system SHALL honor the retry delay supplied by Jira on HTTP 429 and retry; without such a delay it SHALL wait with doubling delays and give up after several attempts with the final status code. Persistent throttling SHALL count errors per status code in the report, exit 0, and write no cache. An access error (401) SHALL stop the run with exit 1 and a message giving only the code. A ticket not found SHALL count as one error and be left out of the cache so it is retried.
+#### Scenario: Epics among the portfolio types
+- **WHEN** the settings list epics and initiatives as portfolio types, epics as the epic type, and the export holds three epics and two initiatives of included projects
+- **THEN** the three epics are queried, the two initiatives are not, and the console prints "epics queried: 3" with no key
 
-Source: tests/history_jira/test_history_jira.py (test_429_*, test_attente_croissante_sans_retry_after, test_erreur_d_acces_arrete_et_garde_le_cache, test_ticket_introuvable_compte_une_erreur)
+#### Scenario: Epic of an excluded project
+- **WHEN** an epic belongs to an excluded project
+- **THEN** it is not queried and is counted with the other excluded tickets
+
+### Requirement: Rate limiting and errors
+The system SHALL honor the retry delay supplied by Jira on HTTP 429 and retry; without such a delay it SHALL wait with doubling delays and give up after several attempts with the final status code. Persistent throttling and the other transient errors SHALL count errors per status code in the report, exit 0, and record a history run holding that error count (design D15). An access error (401, 403) SHALL stop the run with exit 1 and a message giving only the code, and SHALL write nothing to the database, no run and no counter included. A ticket not found SHALL NOT count among the errors: it gets no transition written, adds one to its not-found counter, and is counted in the not-found count of the run (requirement "Ticket not found in Jira marked gone after consecutive collections").
+
+Source: tests/history_jira/test_history_jira.py (test_429_*, test_attente_croissante_sans_retry_after, test_erreur_d_acces_arrete_et_n_ecrit_rien; the former test_ticket_introuvable_compte_une_erreur_et_n_ecrit_pas_de_passage rewritten by amendment task 14.4)
 
 #### Scenario: Transient throttling
 - **WHEN** the first two calls answer 429 with a one-second delay
@@ -132,76 +164,66 @@ Source: tests/history_jira/test_history_jira.py (test_429_*, test_attente_croiss
 
 #### Scenario: Persistent throttling
 - **WHEN** every call answers 429
-- **THEN** the report shows the errors with their code, exit code is 0 and no cache file exists
+- **THEN** the report shows the errors with their code, exit code is 0, a history run is recorded with that error count, and no file is written
 
-### Requirement: Cache stored privately
-The system SHALL store the cache outside version control, in a folder readable only by its owner, with the file readable and writable only by its owner.
-
-Source: tests/history_jira/test_history_jira.py (test_cache_hors_git_permissions_restreintes)
-
-#### Scenario: Permissions
-- **WHEN** a collection writes the cache
-- **THEN** the folder is owner-only and the file is owner read/write only
+#### Scenario: Ticket not found
+- **WHEN** Jira answers not found for one of two tickets and the other is answered normally
+- **THEN** the report shows no error with code 404 but "tickets not found in Jira: 1", the second ticket's history is stored, and the history run holds an error count of 0 and a not-found count of 1
 
 ### Requirement: Date normalisation and chronological order
-The system SHALL store and read transition dates as ISO 8601 text with offset; a millisecond or second epoch value (number or digit text) SHALL be converted to a UTC date; an unreadable value SHALL be kept as text; empty becomes none. Transitions SHALL be sorted by instant, not by text, regardless of the API order or offsets; an unreadable date SHALL NOT crash and SHALL sort after readable ones. An older cache with numeric dates SHALL give the same results as a cache with ISO dates.
+The system SHALL read transition dates from Jira as instants with offset; a millisecond or second epoch value (number or digit text) SHALL be converted to a UTC instant; an unreadable value SHALL NOT be stored as a transition; empty becomes none. Transitions SHALL be sorted by instant, not by text, regardless of the API order or offsets.
 
-Source: tests/history_jira/test_history_jira.py (NormaliserDate, Tri, FormatsDeDateReduits, FluxSurCacheReel)
+Source: tests/history_jira/test_history_jira.py (NormaliserDate, Tri, DatesDeLaCollecte)
 
 #### Scenario: Mixed offsets
 - **WHEN** a history has an entry at 09:00 with a positive two-hour offset and another at 08:00 UTC
 - **THEN** the first one is ordered before the second
 
 #### Scenario: Old numeric cache
-- **WHEN** the cache holds millisecond numbers
-- **THEN** the flow report computed from it gives the same lead-time and segment results, and the key inspection prints readable UTC dates
-
-### Requirement: Single CSV date format
-The system SHALL read CSV dates only in the format of the API export (day, abbreviated month, year, hour, minute) and refuse other formats (ISO, numeric day-month-year, two-digit year, AM/PM) as unreadable.
-
-Source: tests/history_jira/test_history_jira.py (FormatsDeDateReduits)
-
-#### Scenario: Other format
-- **WHEN** a date such as an ISO date is parsed
-- **THEN** it is rejected as none
+- **WHEN** Jira returns a transition date as epoch milliseconds
+- **THEN** it is stored as the matching UTC instant, and the key inspection prints a readable date
 
 ### Requirement: Dormant tickets from history
-The system SHALL compute dormant tickets from the history as tickets not finished, created at least a threshold number of days ago, with no status change for at least that many days (last transition date, or creation date if none). A ticket absent from the cache SHALL NOT be dormant and SHALL be counted separately.
+The system SHALL compute dormant tickets from the history as tickets not finished, created at least a threshold number of days ago, with no status change for at least that many days (last transition date, or creation date if none). A ticket without history (not yet collected) SHALL NOT be dormant and SHALL be counted separately.
 
 Source: tests/history_jira/test_history_jira.py (test_dormants_selon_l_historique_sans_format_de_csv)
 
 #### Scenario: Unknown history
-- **WHEN** one old ticket has a long-ago transition, one recent ticket has none, and one old ticket is absent from the cache
+- **WHEN** one old ticket has a long-ago transition, one recent ticket has none, and one old ticket has no history
 - **THEN** only the first is dormant and one ticket is counted as without history
 
 ### Requirement: Cache check
-The system SHALL provide a `check` subcommand that reads an export and the cache, makes no network call, and reports aggregated counts only: tickets absent from the cache, consistency between the last arrival status and the export status (consistent, inconsistent, not comparable when there are no transitions), distribution of transitions per ticket in fixed buckets, delivered tickets without any transition, unreadable transition dates with their count, starting state of the first known transition, and number of delivered tickets passing through each segment (including "no segment"). The report SHALL contain no key, no team, no title. Segments SHALL come from the settings when set, otherwise from defaults, and the default table SHALL also place known workflow start and end states outside the computed segments. The flow report SHALL use the same segment table as the check.
+The system SHALL provide a `check` subcommand that reads the database under the read-only role, makes no network call, and reports aggregated counts only: tickets without history, consistency between the last arrival status and the stored status (consistent, inconsistent, not comparable when there are no transitions), distribution of transitions per ticket in fixed buckets, delivered tickets without any transition, starting state of the first known transition, and number of delivered tickets passing through each segment (including "no segment"). The report SHALL contain no key, no team, no title. Segments SHALL come from the settings when set, otherwise from defaults, and the default table SHALL also place known workflow start and end states outside the computed segments. The flow report SHALL use the same segment table as the check. An export file SHALL be refused with exit code 2 and the phrase of design D6; no stored history SHALL stop with exit code 1 and the phrase of design D6.
 
-Source: tests/history_jira/test_history_jira.py (Controle, FluxSurCacheReel)
+Source: tests/history_jira/test_history_jira.py (Controle: test_controle_sans_aucun_historique_stocke, test_fichier_d_export_refuse_avec_la_phrase_de_la_conception, test_flux_jira_et_controle_partagent_la_table_des_segments)
 
 #### Scenario: Aggregated counts
-- **WHEN** the check runs on five delivered tickets plus one uncached open ticket
-- **THEN** it prints the uncached count, the consistent/inconsistent/not-comparable counts and the transition distribution buckets, with no keys and no team name
+- **WHEN** the check runs on five delivered tickets plus one open ticket without history
+- **THEN** it prints the count without history, the consistent/inconsistent/not-comparable counts and the transition distribution buckets, with no keys and no team name
 
 #### Scenario: Unreadable dates
-- **WHEN** transition dates in the cache cannot be read
-- **THEN** the check reports their number, and the flow report counts them and warns instead of silently using zero
+- **WHEN** the check reads the stored transitions
+- **THEN** their instants are read as stored, no unreadable-date count is printed, and the flow report reads the same instants
 
 #### Scenario: Segments from settings
 - **WHEN** the settings define a custom segment
 - **THEN** the check reports delivered tickets per that segment
 
-### Requirement: Inspect one ticket
-The system SHALL provide `check --key <key>` that prints the ordered list of status transitions of one ticket with readable dates and the status in the export, without author, case-insensitively on the key; an unknown key SHALL exit 1 saying it is absent from the cache. `check` without export and without key SHALL exit 1.
+#### Scenario: No history
+- **WHEN** no transition is stored
+- **THEN** the output holds "no history in the database: run the history collection first" and the exit code is 1
 
-Source: tests/history_jira/test_history_jira.py (test_cle_affiche_la_suite_des_etats_sans_auteur, test_controle_sans_export_ni_cle)
+### Requirement: Inspect one ticket
+The system SHALL provide `check --key <key>` that prints, from the database under the read-only role, the ordered list of status transitions of one ticket with readable dates and its stored status, without author, case-insensitively on the key; an unknown key SHALL exit 1 saying it is absent from the database. The command is run by the user alone.
+
+Source: tests/history_jira/test_history_jira.py (test_cle_affiche_la_suite_des_etats_sans_auteur, through the fake reader of tests/history_jira/aide_historique.py)
 
 #### Scenario: Known ticket
-- **WHEN** the key of a cached ticket is given in lower case
+- **WHEN** the key of a stored ticket is given in lower case
 - **THEN** the number of transitions and each "from -> to" line are printed, with no author and no ISO "T" separator
 
 ### Requirement: Check input validation
-The system SHALL refuse the removed dormant-file option of `check` with exit 1 and a message pointing to the history-based dormant option of the flow report, SHALL refuse an export with non-English headers pointing to the API export, and SHALL stop with exit 1 when the export has no state column.
+The system SHALL refuse the removed dormant-file option of `check` with exit 1 and a message pointing to the history-based dormant option of the flow report.
 
 Source: tests/history_jira/test_history_jira.py (Controle)
 
@@ -219,13 +241,17 @@ Source: tests/history_jira/test_language.py
 - **THEN** the output equals the English reference and contains no French
 
 ### Requirement: Strict option for collection errors
-The system SHALL accept on the collect subcommand an opt-in strict option. With it, when the error count of the run is above zero, the system SHALL print its usual report, leave the cache exactly as it would without the option, then print the key phrase of design D5 and exit with code 3. The key phrase SHALL NOT name a key, a team or a value. An access error SHALL keep its current exit code 1. Without the option, the exit code and the output SHALL stay unchanged.
+The system SHALL accept on the collect subcommand an opt-in strict option. With it, when the error count of the run is above zero, the system SHALL print its usual report, write to the database exactly what it would write without the option, then print the key phrase of design D5 and exit with code 3. Not-found answers SHALL NOT count among these errors (design D15): they alone SHALL NOT give exit code 3. The key phrase SHALL NOT name a key, a team or a value. An access error SHALL keep its current exit code 1. Without the option, the exit code and the output SHALL stay unchanged.
 
-Source: tests/history_jira
+Source: tests/history_jira/test_history_jira.py (test_strict_*); amendment task 14.4 (not-found answers with the option)
 
 #### Scenario: Persistent throttling with the option
 - **WHEN** every call answers 429 and the collection runs with the strict option
-- **THEN** the report shows the errors with their code, no cache file exists, the output ends with "collection errors: history incomplete" in English, and the exit code is 3
+- **THEN** the report shows the errors with their code, a history run is recorded with that error count, the output ends with "collection errors: history incomplete" in English, and the exit code is 3
+
+#### Scenario: Not-found answers only, with the option
+- **WHEN** the only failing ticket gets a not-found answer and the collection runs with the strict option
+- **THEN** the key phrase is not printed and the exit code is 0
 
 #### Scenario: No error with the option
 - **WHEN** the collection succeeds without any error
@@ -269,6 +295,56 @@ Source: tests/history_jira/test_jeton_scopes.py (SondeEtExpiration)
 #### Scenario: Not set
 - **WHEN** the setting is absent
 - **THEN** the output holds "token expiry date not set"
+
+### Requirement: History written in one transaction, no cache file
+The system SHALL connect as the import role before any Jira call (design D2) and write in one transaction: new transitions (never duplicated), has-history flags, periods (design D5), not-found counters and gone instants, and one history run with its error and not-found counts, errors or not (design D15). It SHALL roll back on an access or database error, refuse an export file (exit 2), and print the summary of design D6. It SHALL NOT use a cache file or skip the run because of errors.
+
+#### Scenario: Collection written
+- **WHEN** a collection runs against a fake Jira server on a disposable database holding three tickets
+- **THEN** their transitions, flags and periods are stored, a history run with an error count of 0 and a not-found count of 0 is recorded, and no file appears in the history folder
+
+#### Scenario: Collection with errors
+- **WHEN** a collection of three tickets gets one persistent 429 and one not-found answer
+- **THEN** the third ticket's history is stored, and a history run is recorded with an error count of 1 and a not-found count of 1
+
+#### Scenario: Export file given
+- **WHEN** `collect` is given an export file
+- **THEN** the output holds "export files are no longer read: the database is the only source", the exit code is 2, and Jira is not called
+
+#### Scenario: Empty database
+- **WHEN** the database holds no ticket
+- **THEN** the output holds "no ticket in the database: run the export and the import first" and the exit code is 1
+
+### Requirement: Ticket not found in Jira marked gone after consecutive collections
+The system SHALL tell a not-found answer (HTTP 404) from a transient error and count per ticket the consecutive not-found collections (design D15): plus one on a 404, reset with the gone instant cleared on a normal answer, unchanged on a transient error. At `history_not_found_limit` (default 3), the ticket SHALL be marked gone and not queried, except with `--refresh` or after the import cleared the mark. It SHALL NOT mark a ticket gone before the limit, delete it, or print its key.
+
+#### Scenario: Not found below the limit
+- **WHEN** the limit is 3 and a stored ticket gets a not-found answer at two consecutive collections
+- **THEN** its counter is 2, it has no gone instant, it is queried again at the next collection, and each output holds "tickets not found in Jira: 1"
+
+#### Scenario: Limit reached
+- **WHEN** the limit is 3 and the same ticket gets a not-found answer at a third consecutive collection
+- **THEN** it gets the collection instant as gone instant, the output holds "tickets not found in Jira, now marked gone: 1", and the next collection makes no call for it and prints "tickets marked gone, not queried: 1"
+
+#### Scenario: Transient error between two not-found answers
+- **WHEN** a ticket gets a not-found answer, then a persistent 429 at the next collection, then a not-found answer
+- **THEN** its counter is 2 after the third collection: the transient error neither added to it nor reset it
+
+#### Scenario: Ticket found again
+- **WHEN** a ticket with a counter of 2 is answered normally
+- **THEN** its counter is 0 and its transitions are stored
+
+#### Scenario: Refresh queries gone tickets
+- **WHEN** `--refresh` is given and a gone ticket is answered normally
+- **THEN** its gone instant is cleared, its counter is 0, and the output holds "tickets marked gone found again: 1"
+
+#### Scenario: Gone ticket cleared by the import
+- **WHEN** a gone ticket lost its mark because the export sighted it again and the import ran
+- **THEN** the next collection queries it, and a not-found answer sets its counter to 1
+
+#### Scenario: Limit from the settings
+- **WHEN** the settings set the limit to 1 and a ticket gets one not-found answer
+- **THEN** it is marked gone at that collection
 
 ## Open questions
 

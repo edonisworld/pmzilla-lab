@@ -230,6 +230,8 @@ class WorktreeDExecution(Labo):
 
 
 class ContenuDuDepotDeDeveloppement(Labo):
+    TACHES = "toutes"
+
     def test_flux_cherche_dans_la_copie_principale(self):
         """Lancé depuis le dossier d'exécution, le doctor trouve Flux-Lab/flux.yaml du dépôt de développement (PMZILLA_LAB_WORKSPACE)."""
         (self.principal / "Flux-Lab").mkdir()
@@ -243,3 +245,30 @@ class ContenuDuDepotDeDeveloppement(Labo):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContenuIntrouvable(Labo):
+    """R-77, D7 : sans dossier de contenu (variable absente, racine du code hors Git), le doctor ne s'arrête pas : les contrôles qui
+    en ont besoin rendent un problème (clé content_unknown), sans afficher de chemin."""
+
+    def test_les_controles_du_contenu_sont_des_problemes(self):
+        import datetime as dt
+        from unittest import mock
+        import doctor
+        hors_git = self.base / "copie"
+        hors_git.mkdir()
+        env = {k: v for k, v in self.environnement().items() if k not in ("PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN", "DOCTOR_FLUX")}
+        ctx = doctor.Contexte(dt.date(2026, 10, 14), dt.time(9, 0), self.donnees, self.journaux, self.maison, env)
+        with mock.patch.object(doctor, "RACINE", hors_git):
+            self.assertIsNone(doctor.racine_contenu(ctx))
+            self.assertIsNone(doctor.dossier_execution(ctx))
+            for controle in (doctor.controle_jira, doctor.controle_branches, doctor.controle_run_worktree):
+                with self.subTest(controle.__name__):
+                    r = controle(ctx, [])
+                    self.assertEqual((r.niveau, r.cle), ("problem", "content_unknown"))
+
+    def test_la_phrase_existe_dans_les_deux_langues_sans_chemin(self):
+        import doctor_messages
+        for langue, catalogue in doctor_messages.CATALOGS.items():
+            self.assertIn("raison_content_unknown", catalogue, langue)
+            self.assertNotIn("/", catalogue["raison_content_unknown"].replace("PMZILLA_LAB_WORKSPACE", ""), langue)

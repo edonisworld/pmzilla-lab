@@ -29,6 +29,9 @@ class Recherche(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.racine, check=True)
         (self.racine / ".pmzilla").mkdir()
         (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\n", encoding="utf-8")
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})   # racine sans Git : variable (R-77)
+        variable.start()
+        self.addCleanup(variable.stop)
         self.ecrire("propre.md", "rien à signaler\n")
         self.ecrire("nom.md", f"ligne 1\nmon dossier est /Users/{ID}/travail\n")
         self.ecrire("casse.md", f"{ID.upper()} en majuscules\n")
@@ -100,9 +103,38 @@ class Recherche(unittest.TestCase):
         self.assertNotIn("nom.md", trouves)
 
     def test_identifiants_viennent_du_compte_et_du_fichier_local(self):
-        trouves = ip.identifiants(self.racine)
+        with mock.patch.object(ip.getpass, "getuser", return_value="Auteur-Fictif"), \
+                mock.patch.object(ip.Path, "home", return_value=Path("/Users/dossier-fictif")):
+            trouves = ip.identifiants(self.racine)
         self.assertIn(ID, trouves)
-        self.assertIn(ip.getpass.getuser().lower(), trouves)
+        self.assertIn("auteur-fictif", trouves)
+        self.assertIn("dossier-fictif", trouves)
+
+    def test_un_compte_generique_de_conteneur_n_est_pas_un_identifiant(self):
+        """local-ci-container, tâche 6.5 : dans le conteneur de la CI, le compte est « node » (image officielle de Node) ;
+        ce mot banal n'est pas un identifiant de l'auteur et signalait presque tout le dépôt. Le chemin de la racine reste cherché."""
+        for compte in ip.COMPTES_GENERIQUES:
+            with self.subTest(compte=compte), mock.patch.object(ip.getpass, "getuser", return_value=compte), \
+                    mock.patch.object(ip.Path, "home", return_value=Path(f"/home/{compte}")):
+                trouves = ip.identifiants(self.racine)
+                self.assertNotIn(compte, trouves)
+                self.assertIn(ID, trouves)
+                self.assertIn(str(self.racine).lower(), trouves)
+        self.assertIn("node", ip.COMPTES_GENERIQUES)
+
+    def test_les_comptes_generiques_sont_une_liste_fermee_de_noms_exacts(self):
+        """Décision de l'auteur (2026-10-20) : l'exclusion est une liste fermée de noms exacts, jamais un motif ; un vrai nom
+        de compte, même proche d'un compte générique, reste détecté."""
+        self.assertEqual(ip.COMPTES_GENERIQUES, ("node", "root", "runner"))
+        for compte in ("camille-fictif", "nodeauteur", "root-fictif", "runner42", "jnode", "node.fictif"):
+            with self.subTest(compte=compte), mock.patch.object(ip.getpass, "getuser", return_value=compte), \
+                    mock.patch.object(ip.Path, "home", return_value=Path("/home/node")):
+                self.assertIn(compte, ip.identifiants(self.racine))
+
+    def test_un_compte_generique_ecrit_dans_le_fichier_local_reste_cherche(self):
+        (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\nnode\n", encoding="utf-8")
+        with mock.patch.object(ip.getpass, "getuser", return_value="node"):
+            self.assertIn("node", ip.identifiants(self.racine))
 
 
 class AuteurDesCas(unittest.TestCase):
@@ -116,6 +148,9 @@ class AuteurDesCas(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.racine, check=True)
         (self.racine / ".pmzilla").mkdir()
         (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\n", encoding="utf-8")
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})   # racine sans Git : variable (R-77)
+        variable.start()
+        self.addCleanup(variable.stop)
         self.addCleanup(self.temp.cleanup)
 
     def cases(self, contenu: bytes | str):
@@ -206,6 +241,9 @@ class Sanctums(unittest.TestCase):
         self.racine = Path(self.temp.name).resolve()
         (self.racine / ".pmzilla").mkdir()
         (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\n", encoding="utf-8")
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})   # racine sans Git : variable (R-77)
+        variable.start()
+        self.addCleanup(variable.stop)
         self.skill = self.racine / ".claude" / "skills" / "pmzilla-delivery-bmad"
         (self.skill / "scripts").mkdir(parents=True)
 
@@ -247,6 +285,9 @@ class FichierDonne(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.racine, check=True)
         (self.racine / ".pmzilla").mkdir()
         (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\n", encoding="utf-8")
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})   # racine sans Git : variable (R-77)
+        variable.start()
+        self.addCleanup(variable.stop)
         self.addCleanup(self.temp.cleanup)
 
     def lancer(self, nom, texte=None, *options):
@@ -290,7 +331,14 @@ class Arbre(unittest.TestCase):
         self.arbre = base / "arbre"
         (self.racine / ".pmzilla").mkdir(parents=True)
         (self.racine / ".pmzilla" / "identifiants.txt").write_text(ID + "\n", encoding="utf-8")
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})   # racine sans Git : variable (R-77)
+        variable.start()
+        self.addCleanup(variable.stop)
         self.arbre.mkdir()
+        # racine sans Git : le dossier de contenu du module partagé est donné par la variable, comme pour le vrai dépôt (R-77)
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})
+        variable.start()
+        self.addCleanup(variable.stop)
 
     def ecrire(self, nom, texte):
         chemin = self.arbre / nom

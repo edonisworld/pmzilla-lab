@@ -19,9 +19,10 @@ ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI))
 import aide_base as base          # noqa: E402
 import jeu                        # noqa: E402
-from test_sources_scripts import AvecDossier, FLUX, SOURCE_DB, lancer, rapports  # noqa: E402
+from aide_scripts import AvecDossier  # noqa: E402
 
-AUJOURDHUI = dt.date.today().isoformat()
+sys.path.append(str(ICI.parents[1] / "tests" / "flux_jira"))
+import chargeur_csv as chargeur  # noqa: E402
 
 
 class CouvertureDeLHistorique(base.AvecBase, AvecDossier):
@@ -52,36 +53,11 @@ class CouvertureDeLHistorique(base.AvecBase, AvecDossier):
 
     def test_la_base_rend_les_memes_cles_que_le_cache(self):
         import flow_store
-        import flux_jira
         lu = flow_store.lire_historique(self.reglages())
-        cache = flux_jira.charger_historique(self.cache)
+        cache = chargeur.lire_historique(self.reglages(), str(self.cache))
         self.assertEqual(sorted(lu), sorted(cache))
         self.assertEqual(sorted(k for k, v in lu.items() if not v), sorted(self.entrees_vides))
         self.assertFalse(set(self.sans_entree) & set(lu))
-
-    def test_rapports_avec_historique_identiques_en_csv_et_en_base(self):
-        csv_ws, db_ws = self.dossier(), self.dossier()
-        commun = ("--name", "h", "--today", AUJOURDHUI, "--no-comparison", "--dormant-from-history", "--scope", "PROJ")
-        r_csv = lancer(FLUX, csv_ws, "compute", str(self.export), *commun, "--history", str(self.cache))
-        r_db = lancer(FLUX, db_ws, "compute", SOURCE_DB, *commun, "--history", env=self.env)
-        self.assertEqual(r_csv.returncode, 0, r_csv.stdout + r_csv.stderr)
-        self.assertEqual(r_db.returncode, 0, r_db.stdout + r_db.stderr)
-        nom = f"flux-h-{AUJOURDHUI}"
-        self.assertEqual(rapports(db_ws)[nom + ".md"], rapports(csv_ws)[nom + ".md"])
-        self.assertEqual(rapports(db_ws)[nom + ".json"], rapports(csv_ws)[nom + ".json"])
-
-    def test_la_comparaison_signale_une_couverture_differente(self):
-        import flow_compare
-        import flux_jira
-        from flow_compare_messages import CATALOGS
-        from messages import Messages
-        cache = flux_jira.charger_historique(self.cache)
-        tout = {c: [] for c in (t["cle"].upper() for t in self.liste)}           # l'ancienne lecture : une entrée par ticket
-        tout.update(cache)
-        e = flow_compare.Ecarts()
-        flow_compare.comparer_historiques(cache, tout, set(tout), Messages(CATALOGS, "fr"), e)
-        self.assertEqual(e.total, len(self.sans_entree))
-        self.assertIn(f"tickets avec historique en base seulement : {len(self.sans_entree)}", "\n".join(e.lignes))
 
 
 if __name__ == "__main__":

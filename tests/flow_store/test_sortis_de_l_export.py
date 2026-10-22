@@ -3,7 +3,7 @@
     bash tools/dbtest.sh flow_store          (instance jetable : installation.md, 14.5 ; sautés sans elle)
 
 Deux familles. Sans base (classe RequetesSansBase, toujours exécutée) : chaque requête émise par un lecteur écarte les tickets marqués,
-vérifié sur le texte SQL par une fausse connexion. Avec base : les structures lues sont égales à celles des lecteurs de CSV pour le jeu
+vérifié sur le texte SQL par une fausse connexion. Avec base : les structures lues sont égales à celles du chargeur de test des fixtures CSV pour le jeu
 amputé des tickets marqués, un lien vers un ticket marqué se lit comme un lien vers un ticket hors export. Données inventées (PROJ-n).
 """
 from __future__ import annotations
@@ -19,6 +19,8 @@ sys.path.insert(0, str(ICI))
 import aide_base as base          # noqa: E402
 import jeu                        # noqa: E402
 
+sys.path.append(str(ICI.parents[1] / "tests" / "flux_jira"))
+import chargeur_csv as chargeur   # noqa: E402
 import dependencies_jira as dj    # noqa: E402
 import flow_store                 # noqa: E402
 import flux_jira as fj            # noqa: E402
@@ -108,7 +110,7 @@ class LecteursSansLesMarques(base.AvecBase):
         self.inserer(self.liste, jeu.liens(), [])
         self.marquer(*ouverts)
         reglages = {**fj.DEFAULT_CONFIG}
-        attendu = fj.read_exports([self.csv_sans(set(ouverts), jeu.liens())], reglages)
+        attendu = chargeur.lire_tickets_flux(reglages, [self.csv_sans(set(ouverts), jeu.liens())])
         lu = flow_store.lire_tickets_flux(reglages)
         self.assertEqual(trier(lu[0]), trier(attendu[0]))
         self.assertEqual(lu[1:], attendu[1:])
@@ -130,7 +132,7 @@ class LecteursSansLesMarques(base.AvecBase):
         marques = {"PROJ-10", "PROJ-30"}
         self.marquer(*marques)
         reglages = {**dj.DEFAULTS}
-        attendu = dj.read_exports([self.csv_sans(marques, [l for l in liens if l[0] not in marques])], reglages)
+        attendu = chargeur.lire_dependances(reglages, [self.csv_sans(marques, [l for l in liens if l[0] not in marques])])
         lu = flow_store.lire_dependances(reglages)
         self.assertEqual(lu["tickets"], attendu["tickets"])
         self.assertEqual(lu["liens"], attendu["liens"])

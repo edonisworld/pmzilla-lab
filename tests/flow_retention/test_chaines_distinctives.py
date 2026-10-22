@@ -87,8 +87,8 @@ class ChainesDistinctives(Espace):
             self.assertEqual(code, 1)
             self.verifier(sortie, erreur)
         self.historique.write_text(f"{CLE} pas du json", encoding="utf-8")
-        code, sortie, erreur, _ = self.lancer("check")
-        self.assertEqual(code, 1)
+        code, sortie, erreur, _ = self.lancer("check")             # l'ancien cache n'est plus lu : il est compté comme fichier laissé
+        self.assertEqual(code, 4)
         self.verifier(sortie, erreur)
 
     def test_reglage_invalide_ne_repete_pas_les_valeurs(self):

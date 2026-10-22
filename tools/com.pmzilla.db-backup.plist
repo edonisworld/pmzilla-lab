@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Modèle : __HOME__ est remplacé par le dossier personnel à l'installation (voir docs/pmzilla/installation.md, section 14). -->
+<!-- Modèle : __HOME__ est remplacé par le dossier personnel et __LAB__ par le dossier du lab (le parent du dépôt de développement) à l'installation (voir docs/pmzilla/installation.md, section 14). -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>__HOME__/PMZilla-Lab/db_backup.sh</string>
+    <string>__LAB__/db_backup.sh</string>
   </array>
   <!-- Chaque jour à 7 h 45, après la collecte de la veille (7 h 10). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->
   <key>StartCalendarInterval</key>

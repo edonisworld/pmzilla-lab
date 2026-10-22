@@ -1,17 +1,52 @@
 #!/bin/sh
 # Garde-fou : refuse un commit dont le message contient un identifiant personnel de l'auteur (nom d'utilisateur, chemin
-# /Users/<nom>, chemin du workspace, .pmzilla/identifiants.txt). Les lignes de commentaire (#) ne comptent pas.
+# du dossier personnel, chemin du workspace, .pmzilla/identifiants.txt). Toutes les lignes comptent, lignes « # » comprises (elles peuvent
+# rester dans le commit : git commit -m "# …", --cleanup=verbatim ou whitespace), jusqu'à la ligne de ciseaux de git
+# (« # ------------------------ >8 ------------------------ ») : ce qui la suit (le diff de git commit -v) n'est jamais commité et ne compte pas.
 # N'affiche jamais l'identifiant ni le texte du message. Installation : ln -sf ../../tools/hooks/commit-msg .git/hooks/commit-msg
+#
+# Second garde-fou (fix/sorties-et-masquage, décision de l'auteur du 2026-10-21, point 3) : refuse aussi un message qui contient un nom
+# des deux listes que lit le crochet pre-commit (liste des noms sensibles et noms distinctifs de l'extrait des équipes), avec les mêmes
+# règles de correspondance (tools/sensitive_names.py, par tools/commit_names_scan.py --message, même coupe à la ligne de ciseaux) :
+# « commit-msg : nom sensible dans le message, ligne <n> », jamais le nom. Seules les lignes de l'outil (« commit_names_scan : … ») sont
+# montrées, jamais une trace. Fermé par défaut : liste absente ou illisible, outil absent ou en erreur, le commit est refusé ; liste vide,
+# avertissement sans blocage, comme pre-commit. L'outil est cherché à côté de ce crochet, liens suivis (tools/ de l'espace de travail
+# pour les liens du dossier Git commun, worktrees compris).
 set -u
 racine=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
 scanner="$racine/tools/identifiants_personnels.py"
+chemin_hook=$0
+while [ -L "$chemin_hook" ]; do
+  cible=$(readlink "$chemin_hook")
+  case "$cible" in /*) chemin_hook=$cible ;; *) chemin_hook=$(dirname "$chemin_hook")/$cible ;; esac
+done
+outils=$(cd "$(dirname "$chemin_hook")/.." 2>/dev/null && pwd)
 copie=$(mktemp) || exit 1
 trap 'rm -f "$copie"' EXIT
-grep -v '^#' "$1" > "$copie"
-python3 "$scanner" --racine "$racine" --fichier "$copie" > /dev/null 2>&1
+sed '/^[^[:space:]]\{0,2\} \{0,1\}-\{24\} >8 -\{24\}[[:space:]]*$/,$d' "$1" > "$copie"   # coupe à la ligne de ciseaux (incluse)
+refuse=0
+python3 "$scanner" --racine "$racine" --fichier "$copie" > /dev/null 2>&1 </dev/null
 code=$?
 case $code in
-  0) exit 0 ;;
-  1) echo "commit-msg : le message contient un identifiant personnel (chemin, nom d'utilisateur) ; commit refusé. Reformule le message sans l'identifiant." >&2; exit 1 ;;
-  *) echo "commit-msg : le message n'a pas pu être vérifié (scanner en erreur, code $code) ; commit refusé." >&2; exit 1 ;;
+  0) ;;
+  1) echo "commit-msg : le message contient un identifiant personnel (chemin, nom d'utilisateur) ; commit refusé. Reformule le message sans l'identifiant." >&2; refuse=1 ;;
+  *) echo "commit-msg : le message n'a pas pu être vérifié (scanner en erreur, code $code) ; commit refusé." >&2; refuse=1 ;;
 esac
+if [ -n "$outils" ] && [ -f "$outils/commit_names_scan.py" ]; then
+  sortie=$(python3 "$outils/commit_names_scan.py" --message "$1" 2>&1 </dev/null); code=$?
+else
+  sortie=""; code=4   # outil introuvable : refus (fermé par défaut)
+fi
+lignes_outil() {   # seules les lignes de l'outil, jamais une trace ; « nom » devient « nom sensible »
+  printf '%s\n' "$sortie" | sed -n 's/^commit_names_scan : /commit-msg : /p' | sed 's/^commit-msg : nom dans/commit-msg : nom sensible dans/' >&2
+}
+case $code in
+  0) [ -n "$sortie" ] && lignes_outil ;;
+  1) lignes_outil
+     echo "commit-msg : commit refusé : remplace ce nom par une désignation générique (voir CLAUDE.md, Confidentialité)." >&2; refuse=1 ;;
+  2) lignes_outil
+     echo "commit-msg : garde-fou des noms impossible ; commit refusé." >&2; refuse=1 ;;
+  *) lignes_outil
+     echo "commit-msg : les noms du message n'ont pas pu être vérifiés (outil absent ou en erreur, code $code) ; commit refusé." >&2; refuse=1 ;;
+esac
+exit "$refuse"

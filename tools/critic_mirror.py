@@ -35,12 +35,13 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config
+import lab_paths
 from critic_mirror_messages import CATALOGS
 from messages import Messages, add_language_option
 
 OPTIONS_RENOMMEES = {**flux_config.OPTIONS_COMMUNES, "--depuis": "--since", "--jusqu": "--until"}
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 OUTPUT_DIR = WORKSPACE / "_bmad-output" / "pmzilla"
 IGNORED = ("miroir",)
 

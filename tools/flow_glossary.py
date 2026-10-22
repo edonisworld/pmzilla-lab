@@ -13,6 +13,7 @@ from __future__ import annotations
 ORDRE_RAPPORT = ["p50", "p85", "pourquoi_percentiles", "lead_time_age", "wip", "arrivees", "little", "monte_carlo"]
 ORDRE_SEGMENT = ["segment", "engagement", "efficacite", "couverture"]
 ORDRE_FERMETURES = ["fermetures_groupees"]      # seulement si le rapport a la section « Fermetures groupées »
+ORDRE_PARTAGES = ["tickets_partages"]           # seulement si le rapport a la section « Tickets partagés par équipe »
 
 GLOSSAIRE: dict[str, dict[str, str]] = {
     "fr": {
@@ -52,6 +53,10 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
                                "tombe dans la même minute (N : batch_closure_threshold de flux.yaml). C'est le signe "
                                "probable d'un changement de statut en masse (nettoyage, migration) plutôt que de "
                                "livraisons au fil de l'eau. Un compte seulement : ces tickets restent dans le débit.",
+        "tickets_partages": "**Tickets partagés** : un ticket porté par plusieurs équipes compte une seule fois, pour sa "
+                            "première équipe. Pour chaque équipe, la première colonne compte les tickets qui lui sont "
+                            "attribués tout en étant partagés, la seconde ceux qu'elle porte sans qu'ils lui soient "
+                            "attribués. Une cellule de moins de 5 tickets s'écrit « masqué ».",
         "couverture": "**Couverture** : la part des tickets du rapport dont l'historique est connu. Sous 90 %, les "
                       "chiffres du temps par segment ne décrivent qu'une partie des tickets.",
         # entrées du tableau de bord seulement
@@ -108,6 +113,9 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
                                "falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely "
                                "points to a bulk status change (clean-up, migration) rather than deliveries as they "
                                "happen. A count only: these tickets stay in the throughput.",
+        "tickets_partages": "**Shared tickets**: a ticket carried by several teams counts once, for its first team. For "
+                            "each team, the first column counts the tickets attributed to it while shared, the second "
+                            "those it carries without their being attributed to it. A cell under 5 tickets is written \"masked\".",
         "couverture": "**Coverage**: the share of the tickets in the report whose history is known. Below 90%, the "
                       "figures for time in segment only describe part of the tickets.",
         "debit": "**Throughput**: the number of items finished (delivered) per week. Closures without delivery "
@@ -132,8 +140,9 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
 }
 
 
-def lignes_rapport(langue: str = "fr", segments: bool = False, fermetures: bool = False) -> list[str]:
-    """Puces Markdown des définitions du rapport, dans l'ordre fixe (avec celles du temps par segment et des fermetures
-    groupées si demandé)."""
-    ids = ORDRE_RAPPORT + (ORDRE_SEGMENT if segments else []) + (ORDRE_FERMETURES if fermetures else [])
+def lignes_rapport(langue: str = "fr", segments: bool = False, fermetures: bool = False, partages: bool = False) -> list[str]:
+    """Puces Markdown des définitions du rapport, dans l'ordre fixe (avec celles du temps par segment, des fermetures
+    groupées et des tickets partagés si demandé)."""
+    ids = (ORDRE_RAPPORT + (ORDRE_SEGMENT if segments else []) + (ORDRE_FERMETURES if fermetures else [])
+           + (ORDRE_PARTAGES if partages else []))
     return [f"- {GLOSSAIRE[langue][i]}" for i in ids]

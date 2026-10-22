@@ -18,10 +18,15 @@ from test_db import db          # noqa: E402
 
 INTERDITES = {"summary", "title", "description", "assignee", "reporter", "creator", "author", "labels", "comment", "name_of_person",
               "po", "product_owner", "person"}          # R-58 (D3, D20) : ni PO ni donnée personnelle
-TABLES = {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods"}
+TABLES_BRUTES = {"raw_runs", "raw_run_sightings", "raw_issue_snapshots"}      # couche brute datée (change jira-data-architecture)
+TABLES = {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods"} | TABLES_BRUTES
 TABLE_ETIQUETTES = "issue_label_periods"                  # périodes d'étiquettes déclarées (migration 0008)
 TABLE_VERSIONS = "issue_version_periods"                  # périodes de fixVersion (migration 0008)
-VUES = {"v_team_status", "v_team_weekly_resolved", "v_team_open_age", "v_team_dependencies"}
+VUES = {"v_team_status", "v_team_weekly_resolved", "v_team_open_age", "v_team_dependencies"}      # les quatre vues agrégées du rôle des vues
+VUES_NOMS = {"v_teams", "v_team_jira_ids"}               # les deux vues des noms d'équipe, rôle des vues (migration 0014, change team-names-readable) ; à part de VUES
+                                                         # car v_teams lit le type d'équipe et v_team_jira_ids la couche brute, ce que d'autres tests refusent aux quatre
+VUE_EQUIPES_VUES = "v_team_tickets_seen"                  # revue du catalogue de check-teams : rôle en lecture seule seulement (migration 0013, D13)
+VUES_DU_SCHEMA = VUES | VUES_NOMS | {VUE_EQUIPES_VUES}
 
 
 class SchemaFlow(unittest.TestCase):
@@ -70,10 +75,10 @@ class SchemaFlow(unittest.TestCase):
         c = self.conn()
         noms = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                         "WHERE n.nspname = 'flow' AND c.relkind = 'r'")}
-        self.assertEqual(TABLES, noms)                    # les sept tables, pas une de plus
+        self.assertEqual(TABLES, noms)                    # les sept tables et les trois de la couche brute, pas une de plus
         vues = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                         "WHERE n.nspname = 'flow' AND c.relkind = 'v'")}
-        self.assertEqual(vues, VUES)
+        self.assertEqual(vues, VUES_DU_SCHEMA)            # les quatre vues agrégées plus celle des équipes vues
         colonnes = {r[0].lower() for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'flow'")}
         self.assertEqual(colonnes & INTERDITES, set())
         issues = {r[0] for r in c.execute("SELECT column_name FROM information_schema.columns "
@@ -140,7 +145,7 @@ class SchemaFlow(unittest.TestCase):
 
     def test_les_vues_ne_montrent_aucune_cle(self):
         c = self.conn()
-        for vue in VUES:
+        for vue in VUES_DU_SCHEMA:
             colonnes = {r[0] for r in c.execute("SELECT column_name FROM information_schema.columns "
                                                 "WHERE table_schema = 'flow' AND table_name = %s", (vue,))}
             self.assertFalse({c_ for c_ in colonnes if "key" in c_}, f"{vue} : {colonnes}")
@@ -188,10 +193,11 @@ class SchemaFlow(unittest.TestCase):
     def test_le_role_des_vues_ne_lit_que_les_vues(self):
         c = self.conn()
         self.jeu(c)
-        for vue in VUES:
+        for vue in VUES | VUES_NOMS:
             self.assertTrue(self.essaie(c, "pmzilla_flow_views", f"SELECT * FROM flow.{vue}"), vue)
         for table in TABLES:
             self.assertFalse(self.essaie(c, "pmzilla_flow_views", f"SELECT * FROM flow.{table}"), table)
+        self.assertFalse(self.essaie(c, "pmzilla_flow_views", f"SELECT * FROM flow.{VUE_EQUIPES_VUES}"))      # réservée au rôle en lecture seule
         self.assertFalse(self.essaie(c, "pmzilla_flow_views", "INSERT INTO flow.teams (name) VALUES ('X')"))
         self.assertFalse(self.essaie(c, "pmzilla_flow_views", "SELECT * FROM cases.experiments"))
         self.assertFalse(self.essaie(c, "pmzilla_flow_views", "SELECT * FROM knowledge.books"))
@@ -253,7 +259,8 @@ class SansBase(unittest.TestCase):
 
     def test_role_password_n_accepte_que_les_roles_de_lecture_limitee(self):
         self.assertEqual(db.ROLES_AVEC_MOT_DE_PASSE,
-                         ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases"))
+                         ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases", "pmzilla_flow",
+                          "pmzilla_quality_views"))
         self.assertEqual(db.service_du_role("pmzilla_cases_ro"), "pmzilla-lab-db-pmzilla_cases_ro")
         self.assertEqual(db.variable_du_role("pmzilla_cases_ro"), "PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO")
         self.assertEqual(db.service_du_role("pmzilla_cases"), "pmzilla-lab-db-pmzilla_cases")

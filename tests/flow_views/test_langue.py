@@ -48,6 +48,20 @@ class Langue(unittest.TestCase):
         for vue in fv.VUES:
             self.assertIn(vue, en)
 
+    def test_descriptions_des_deux_vues_des_noms_d_equipe_dans_chaque_langue(self):
+        """Change team-names-readable, conception D10."""
+        _, fr, _ = lancer("list")
+        _, en, _ = lancer("--language", "en", "list")
+        self.assertIn("équipes connues de la base, avec leur type et leurs tickets dans l'export", fr)
+        self.assertIn("identifiants d'équipe Jira vus sur les tickets, par nom d'équipe", fr)
+        self.assertIn("teams known to the database, with their type and their tickets in the export", en)
+        self.assertIn("Jira team identifiers seen on tickets, by team name", en)
+        self.assertNotIn("équipes connues de la base", en)
+        self.assertNotIn("teams known to the database", fr)
+        for vue in ("v_teams", "v_team_jira_ids"):
+            self.assertIn(vue, fr)
+            self.assertIn(vue, en)
+
     def test_erreur_de_base_dans_chaque_langue(self):
         with mock.patch.object(db, "connect", side_effect=db.ErreurBase("injoignable")):
             self.assertIn("Erreur : injoignable", lancer("show", "v_team_status")[2])
@@ -62,7 +76,15 @@ class Langue(unittest.TestCase):
         en, fr = Messages(CATALOGS, "en"), Messages(CATALOGS, "fr")
         self.assertEqual(fv.rendre(["team", "tickets"], [], 5, fr), "(aucune ligne)")
         self.assertEqual(fv.rendre(["team", "tickets"], [], 5, en), "(no rows)")
-        self.assertIn("<5", fv.rendre(["team", "tickets"], [("Alpha", 2)], 5, en))     # le marqueur de masquage ne change pas
+        self.assertRegex(fv.rendre(["team", "tickets"], [("Alpha", 2)], 5, en), r"Alpha\s+masked$")    # idée #417 : le mot de la langue
+        self.assertRegex(fv.rendre(["team", "tickets"], [("Alpha", 2)], 5, fr), r"Alpha\s+masqué$")
+
+    def test_seuil_releve_rappele_dans_chaque_langue(self):
+        with mock.patch.object(db, "connect", side_effect=db.ErreurBase("x")):
+            self.assertIn("Seuil de masquage : 12 tickets (une cellule sous ce seuil s'écrit « masqué »).",
+                          lancer("show", "v_team_status", "--min-cell", "12")[2])
+            self.assertIn("Masking threshold: 12 tickets (a cell under this threshold is written \"masked\").",
+                          lancer("--language", "en", "show", "v_team_status", "--min-cell", "12")[2])
 
 
 if __name__ == "__main__":

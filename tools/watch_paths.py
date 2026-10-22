@@ -21,6 +21,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths  # noqa: E402
+
 
 NEW = {"config": "watch", "lab": "Watch-Lab", "excluded": "Watch-Excluded", "collection": "watch", "to_read": "_to-read.md"}
 OLD = {"config": "veille", "lab": "Veille-Lab", "excluded": "Veille-Ecartes", "collection": "veille", "to_read": "_a-lire.md"}
@@ -52,9 +55,9 @@ class ReglagesSuivis(SystemExit):
 
 def refuse_depuis_le_dossier_d_execution(code_root: Path, fichier: Path) -> None:
     """sources.yaml et tri.yaml sont suivis par Git : les écrire dans le dossier d'exécution le salirait et bloquerait sa mise à jour.
-    Refus (code de sortie 1) quand `code_root` est le dossier d'exécution (PMZILLA_LAB_RUN, par défaut ~/PMZilla-Lab/run) ou en dépend,
+    Refus (code de sortie 1) quand `code_root` est le dossier d'exécution (PMZILLA_LAB_RUN, par défaut le dossier run du dossier du lab) ou en dépend,
     chemins résolus ; rien n'est écrit."""
-    run = Path(os.environ.get("PMZILLA_LAB_RUN") or "~/PMZilla-Lab/run").expanduser().resolve()
+    run = lab_paths.resolve_or_exit()["run_tree"].resolve()   # module partagé : PMZILLA_LAB_RUN, sinon le dossier run du lab
     code = Path(code_root).resolve()
     if code == run or run in code.parents:
         raise ReglagesSuivis(f"PMZilla Lab, enregistrement refusé ({Path(fichier).name}) : réglages suivis par Git : "

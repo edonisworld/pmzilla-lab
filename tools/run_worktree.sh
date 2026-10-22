@@ -10,21 +10,32 @@
 # Codes : 0 créé, déjà présent, mis à jour, à jour (status : propre au sommet de main) ; 1 commande git en échec ; 2 usage ;
 #         3 dépôt de développement ou main local introuvable ; 4 dossier d'exécution absent (update, status) ou dossier occupé (create) ;
 #         5 modifications locales dans le dossier d'exécution ; 6 dossier sur une branche ou hors de l'historique de main ;
-#         7 mise à jour reportée (verrou de la veille ou repère de passage tenu, ou heure dans une fenêtre) ;
+#         7 mise à jour reportée (verrou de la veille ou repère de passage tenu, ou passages du matin pas terminés) ;
 #         8 status seulement : en retard sur main ; 9 dépendances du nouveau code non préparées (create, update).
 # Le code 9 arrive après le mouvement : la tête reste au sommet de main, la commande update relancée refait la préparation.
 #
 # Le script ne fait que lire le verrou veille.verrou et les repères sauvegarde.encours, horsmac-copie.encours et
 # horsmac-restauration.encours du dossier de données : il n'en crée, n'en prend et n'en retire aucun (décisions D12 à D14).
+# État du matin (change safe-branch-finish, D1 à D4) : du début du matin jusqu'à la fin de la période du matin, la mise à jour est
+# reportée tant que les passages du matin du jour ne sont pas terminés : le repère du passage du jour de la veille porte la date du jour
+# (Paris) et un état final (termine, echoue, interrompu), et le dossier des sauvegardes porte le dossier daté du jour (db-AAAA-MM-JJ,
+# date du système, jamais une sauvegarde étiquetée). Un dossier des sauvegardes absent : la partie sauvegarde ne compte pas. Quand
+# l'état ne peut pas être lu, la mise à jour est reportée jusqu'à l'heure de repli, puis elle continue avec une ligne d'information.
+# Le repère de la veille n'est jamais écrit, le dossier des sauvegardes n'est jamais listé ni ouvert, aucun chemin n'est affiché.
+# Ces deux lectures passent par le module partagé tools/morning_state.sh (change morning-guard) ; la règle de ce script (états finaux,
+# sauvegarde du jour sans compter les dumps, ni copie hors du Mac) n'est pas celle du garde-fou des fins de branche.
 # Interdit au script : toute remise à zéro, tout nettoyage, toute mise de côté, toute récupération distante, tout changement de branche,
 # tout retrait ou toute recréation du dossier, tout contournement ; il n'écrit aucun fichier suivi ni aucun fichier de verrou.
 #
 # Variables (nommées par la suite de tests) :
-#   PMZILLA_LAB_RUN              emplacement du dossier d'exécution (défaut : ~/PMZilla-Lab/run)
-#   PMZILLA_LAB_DATA             dossier de données du labo (défaut : ~/.pmzilla-lab)
+#   PMZILLA_LAB_RUN              emplacement du dossier d'exécution (défaut : le dossier run du dossier du lab, par tools/lab_paths.sh)
+#   PMZILLA_LAB_DATA             dossier de données du labo (défaut : celui de tools/lab_paths.sh)
 #   PMZILLA_RUN_NOW              horloge en secondes (défaut : l'heure réelle)
-#   PMZILLA_RUN_MORNING_WINDOW   « HH:MM-HH:MM », bornes comprises (défaut 06:45-08:30)
-#   PMZILLA_RUN_BACKUP_WINDOW    « HH:MM-HH:MM », autour de la sauvegarde planifiée de 7 h 45 (défaut 07:35-08:15)
+#   PMZILLA_RUN_MORNING_START    « HH:MM », début du matin, heure du système (défaut 06:45)
+#   PMZILLA_RUN_MORNING_END      « HH:MM », fin de la période du matin (défaut 22:00, l'heure limite de watch.sh)
+#   PMZILLA_RUN_FALLBACK_TIME    « HH:MM », heure de repli quand l'état du matin est illisible (défaut 09:30)
+#   (une valeur invalide revient au défaut ; les anciennes variables de fenêtres n'ont plus d'effet)
+#   DB_BACKUP_SAUVEGARDES        dossier des sauvegardes (même règle que db_backup.sh, par tools/lab_paths.sh)
 #   PMZILLA_WATCH_LOCK_MAX_AGE   âge maximal du verrou de la veille, en secondes (même constante que watch.sh)
 #   PMZILLA_RUN_MARKER_MAX_AGE   âge maximal des repères, en secondes (même constante que db_backup.sh et offsite_backup.sh)
 set -u
@@ -33,12 +44,17 @@ NOM="run_worktree"
 LANGUE="fr"
 CMD=""
 RELANCE="bash tools/run_worktree.sh update"
-RUN="${PMZILLA_LAB_RUN:-$HOME/PMZilla-Lab/run}"
-DATA="${PMZILLA_LAB_DATA:-$HOME/.pmzilla-lab}"
+RUN="${PMZILLA_LAB_RUN:-}"   # vide : le module partagé tools/lab_paths.sh le donne (dossier run du dossier du lab), plus bas
+DATA="${PMZILLA_LAB_DATA:-}"   # vide : le module partagé le donne, plus bas
 AGE_MAX_VERROU="${PMZILLA_WATCH_LOCK_MAX_AGE:-21600}"
 AGE_MAX_REPERE="${PMZILLA_RUN_MARKER_MAX_AGE:-21600}"
-FENETRE_MATIN="${PMZILLA_RUN_MORNING_WINDOW:-06:45-08:30}"
-FENETRE_SAUVEGARDE="${PMZILLA_RUN_BACKUP_WINDOW:-07:35-08:15}"
+# Heures du matin (HH:MM, heure du système) : une valeur invalide revient au défaut. La fin du matin égale l'heure limite de watch.sh.
+heure_ou() { if [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then echo "$1"; else echo "$2"; fi; }
+DEBUT_MATIN=$(heure_ou "${PMZILLA_RUN_MORNING_START:-}" "06:45")
+FIN_MATIN=$(heure_ou "${PMZILLA_RUN_MORNING_END:-}" "22:00")
+HEURE_REPLI=$(heure_ou "${PMZILLA_RUN_FALLBACK_TIME:-}" "09:30")
+# États qui terminent le jour pour la veille (mêmes noms que watch.sh)
+ETATS_FINAUX="termine echoue interrompu"
 MAINTENANT="${PMZILLA_RUN_NOW:-$(date +%s)}"
 # Scripts lancés par uv run depuis les points d'entrée planifiés, en plus de la liste des liens de install_links.sh.
 SUPPLEMENTS=(composants.py dashboard.py doctor.py db.py)
@@ -62,7 +78,11 @@ msg() {
       local) echo "run_worktree: local changes in the run tree" ;;
       histoire) echo "run_worktree: the run tree is not on an ancestor of main" ;;
       tenu) echo "run_worktree: update postponed, scheduled run in progress ($a)" ;;
-      fenetre) echo "run_worktree: update postponed, scheduled runs window" ;;
+      matin) echo "run_worktree: update postponed, morning runs not finished ($a)" ;;
+      illisible) echo "run_worktree: update postponed, morning runs state unreadable, before $a" ;;
+      repli) echo "run_worktree: morning runs state unreadable, fallback time passed" ;;
+      attente) echo "run_worktree: waiting for the record of the day's watch run, state: $a" ;;
+      reprise) echo "Once the watch is unblocked: $RELANCE" ;;
       perime) echo "run_worktree: stale run marker, ignored ($a)" ;;
       serveur) echo "library server: the old code stays loaded until the next session" ;;
       relance) echo "To run it later: $RELANCE" ;;
@@ -84,7 +104,11 @@ msg() {
       local) echo "run_worktree : modifications locales dans le dossier d'exécution" ;;
       histoire) echo "run_worktree : le dossier d'exécution n'est pas sur un ancêtre de main" ;;
       tenu) echo "run_worktree : mise à jour reportée, passage planifié en cours ($a)" ;;
-      fenetre) echo "run_worktree : mise à jour reportée, fenêtre des passages planifiés" ;;
+      matin) echo "run_worktree : mise à jour reportée, passages du matin pas terminés ($a)" ;;
+      illisible) echo "run_worktree : mise à jour reportée, état des passages du matin illisible, avant $a" ;;
+      repli) echo "run_worktree : état des passages du matin illisible, heure de repli passée" ;;
+      attente) echo "run_worktree : en attente du repère du passage du jour de la veille, état : $a" ;;
+      reprise) echo "Une fois la veille débloquée : $RELANCE" ;;
       perime) echo "run_worktree : repère de passage périmé, ignoré ($a)" ;;
       serveur) echo "serveur de la bibliothèque : l'ancien code reste chargé jusqu'à la prochaine session" ;;
       relance) echo "Pour le relancer plus tard : $RELANCE" ;;
@@ -111,7 +135,7 @@ run_worktree: the run tree, a Git worktree detached at the tip of local main.
 
 Codes: 0 done or up to date; 1 git command failed; 2 usage; 3 development checkout or main not found;
 4 run tree missing (update, status) or folder occupied (create); 5 local changes; 6 on a branch or off the history of main;
-7 update postponed (watch lock or run marker held, or clock inside a window; rerun later); 8 status only: behind main;
+7 update postponed (watch lock or run marker held, or morning runs not finished; rerun later); 8 status only: behind main;
 9 dependencies not prepared (rerun update).
 TXT
   else
@@ -124,7 +148,7 @@ run_worktree : le dossier d'exécution, un worktree Git détaché au sommet de m
 
 Codes : 0 fait ou à jour ; 1 commande git en échec ; 2 usage ; 3 dépôt de développement ou main introuvable ;
 4 dossier d'exécution absent (update, status) ou dossier occupé (create) ; 5 modifications locales ; 6 sur une branche ou hors de l'historique de main ;
-7 mise à jour reportée (verrou de la veille ou repère tenu, ou heure dans une fenêtre ; à relancer plus tard) ; 8 status seulement : en retard sur main ;
+7 mise à jour reportée (verrou de la veille ou repère tenu, ou passages du matin pas terminés ; à relancer plus tard) ; 8 status seulement : en retard sur main ;
 9 dépendances non préparées (relancer update).
 TXT
   fi
@@ -153,6 +177,20 @@ DEV=$(cd "$(dirname "$chemin_script")/.." 2>/dev/null && git rev-parse --show-to
 [ -n "$DEV" ] && DEV=$(cd "$DEV" && pwd -P)
 [ -n "$DEV" ] || refus 3 introuvable
 git -C "$DEV" rev-parse --verify -q refs/heads/main >/dev/null 2>&1 || refus 3 introuvable
+# Dossiers par défaut : le module partagé (R-77, safe-branch-finish D9), jamais un chemin sous le dossier personnel. Échec de résolution :
+# code 78 quand le dossier d'exécution en dépend ; sinon l'état du matin le traite comme illisible (le dossier des sauvegardes n'est pas trouvé).
+. "$(dirname "$chemin_script")/lab_paths.sh"
+if lab_paths_init 2>/dev/null; then
+  [ -n "$RUN" ] || RUN="$LAB_RUN_TREE"
+  [ -n "$DATA" ] || DATA="$LAB_DATA_FOLDER"
+elif [ -z "$RUN" ] || [ -z "$DATA" ]; then
+  lab_paths_init; exit $?   # refait l'appel pour écrire le message du module (code 78) ; sans dossier de données, ni verrou ni repères ne se lisent
+else
+  LAB_BACKUPS_FOLDER=""     # dossier des sauvegardes introuvable : sa partie de l'état du matin est illisible
+fi
+# Module partagé de l'état du matin (morning-guard D1) : il lit le repère de la veille et le dossier des sauvegardes de ce script, avec son horloge.
+. "$(dirname "$chemin_script")/morning_state.sh"
+MORNING_DATA="${DATA:-}"; MORNING_BACKUPS="${LAB_BACKUPS_FOLDER:-}"; MORNING_NOW="$MAINTENANT"
 
 tete_main() { git -C "$DEV" rev-parse --verify -q refs/heads/main; }
 
@@ -207,23 +245,17 @@ repere_perime() {
   return 1
 }
 
-# 0 si l'heure locale de MAINTENANT est dans la fenêtre « HH:MM-HH:MM » (bornes comprises)
-dans_fenetre() {
-  local f=$1 debut fin h m cur d fi_
-  [[ "$f" =~ ^([0-9]{2}):([0-9]{2})-([0-9]{2}):([0-9]{2})$ ]] || return 1
-  d=$(( 10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]} ))
-  fi_=$(( 10#${BASH_REMATCH[3]} * 60 + 10#${BASH_REMATCH[4]} ))
-  cur=$(date -r "$MAINTENANT" +%H:%M 2>/dev/null || date -d "@$MAINTENANT" +%H:%M 2>/dev/null) || return 1
-  h=${cur%%:*}; m=${cur##*:}
-  cur=$(( 10#$h * 60 + 10#$m ))
-  if [ "$d" -le "$fi_" ]; then
-    [ "$cur" -ge "$d" ] && [ "$cur" -le "$fi_" ]
-  else
-    [ "$cur" -ge "$d" ] || [ "$cur" -le "$fi_" ]
-  fi
-}
+# Minutes depuis minuit de « HH:MM »
+minutes_de() { echo $(( 10#${1%%:*} * 60 + 10#${1##*:} )); }
+# date <instant> <format> selon le système (BSD puis GNU)
+date_de() { date -r "$MAINTENANT" "+$1" 2>/dev/null || date -d "@$MAINTENANT" "+$1" 2>/dev/null; }
 
-garde_horaire() { # sort avec 7 si un repère est tenu ou si l'heure est dans une fenêtre
+# Les parties veille et sauvegarde de l'état du matin sont lues par le module partagé tools/morning_state.sh (change morning-guard, D1) :
+# morning_watch_state (fini | echoue | interrompu | reporte | commence | autrejour | illisible) et morning_backup_state (fini | pasfini |
+# ignore | illisible). Ici, les états finaux de ETATS_FINAUX comptent comme « fini » (règle propre à ce script ; le garde-fou des fins de
+# branche n'accepte que « termine »).
+
+garde_horaire() { # sort avec 7 si un repère est tenu ou si les passages du matin ne sont pas terminés
   local def dossier tache job nom max premier=""
   for def in "veille.verrou|veille|watch|$AGE_MAX_VERROU" "sauvegarde.encours|sauvegarde|backup|$AGE_MAX_REPERE" \
              "horsmac-copie.encours|copie hors du Mac|off-site copy|$AGE_MAX_REPERE" \
@@ -231,7 +263,7 @@ garde_horaire() { # sort avec 7 si un repère est tenu ou si l'heure est dans un
     IFS='|' read -r dossier tache job max <<EOF2
 $def
 EOF2
-    [ -d "$DATA/$dossier" ] || continue
+    [ -n "$DATA" ] && [ -d "$DATA/$dossier" ] || continue
     if [ "$LANGUE" = en ]; then nom=$job; else nom=$tache; fi
     if repere_perime "$DATA/$dossier" "$max"; then
       msg perime "$nom"
@@ -240,7 +272,34 @@ EOF2
     fi
   done
   [ -z "$premier" ] || refus 7 tenu "$premier" rel
-  if dans_fenetre "$FENETRE_MATIN" || dans_fenetre "$FENETRE_SAUVEGARDE"; then refus 7 fenetre "" rel; fi
+  garde_matin
+}
+
+garde_matin() { # état du matin (D2, D3) : lu seulement du début du matin jusqu'à la fin de la période du matin
+  local cur v s illisible=0 nom_veille nom_sauv etat_aff
+  cur=$(date_de %H:%M) || return 0
+  cur=$(minutes_de "$cur")
+  [ "$cur" -ge "$(minutes_de "$DEBUT_MATIN")" ] && [ "$cur" -le "$(minutes_de "$FIN_MATIN")" ] || return 0
+  v=$(morning_watch_state); s=$(morning_backup_state)
+  case " $ETATS_FINAUX " in *" $v "*) v=fini ;; esac
+  if [ "$LANGUE" = en ]; then nom_veille=watch; nom_sauv=backup; else nom_veille=veille; nom_sauv=sauvegarde; fi
+  case "$v" in
+    reporte|commence|autrejour)
+      case "$v:$LANGUE" in
+        reporte:en) etat_aff="reported" ;; reporte:fr) etat_aff="reporté" ;;
+        commence:en) etat_aff="started" ;; commence:fr) etat_aff="commencé" ;;
+        autrejour:en) etat_aff="of another day" ;; *) etat_aff="d'un autre jour" ;;
+      esac
+      msg matin "$nom_veille" >&2; msg attente "$etat_aff" >&2; msg reprise >&2
+      exit 7 ;;
+    illisible) illisible=1 ;;
+  esac
+  [ "$s" != pasfini ] || refus 7 matin "$nom_sauv" rel
+  [ "$s" != illisible ] || illisible=1
+  if [ "$illisible" -eq 1 ]; then
+    if [ "$cur" -lt "$(minutes_de "$HEURE_REPLI")" ]; then refus 7 illisible "$HEURE_REPLI" rel; fi
+    msg repli
+  fi
 }
 
 # --- préparation des dépendances : uv sync --locked --script pour chaque script à bloc de dépendances et fichier .lock

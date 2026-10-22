@@ -146,6 +146,36 @@ The system SHALL compute the total of a run over every expected blocking verific
 
 Source: tests/posture_evals/test_cases_fixture.py (PassageAvecBaseJetable)
 
+### Requirement: The run record carries the fingerprint of the evaluated files
+The system SHALL write in every run record, next to the tested state, the fingerprint of the evaluated paths of the tested tree: `v1:` followed by the SHA-256 of the sorted lines mode, content identifier and path of each matching file (posture-evals-on-branch-tip design D2). A rejudge SHALL copy the rejudged run's fingerprint. It SHALL NOT write a path, a name or a file content in clear in that field.
+
+#### Scenario: Same evaluated files
+- **WHEN** two runs test trees whose evaluated files are identical and whose other files differ
+- **THEN** both records hold the same fingerprint
+
+#### Scenario: One evaluated file changed
+- **WHEN** a posture skill differs between the two tested trees
+- **THEN** the fingerprints differ
+
+#### Scenario: Rejudge
+- **WHEN** a past run is rejudged
+- **THEN** the new record holds the rejudged run's fingerprint
+
+### Requirement: The evaluated paths come from one tracked list
+The system SHALL read the evaluated paths from one tracked data file shared with the finishing script, each entry a Git path specification from the repository root, and SHALL exit 2 with `liste des fichiers évalués absente ou vide`, before any copy, when that file is missing or empty (design D3, D7). It SHALL NOT fall back to built-in paths.
+
+#### Scenario: Missing list
+- **WHEN** the list file is absent
+- **THEN** the script exits 2 with its phrase and no copy is created
+
+#### Scenario: Families kept
+- **WHEN** the list file is read by its test
+- **THEN** it covers the session instructions file, the posture skills, the Critic agent file, the posture vocabulary and the frozen posture memory
+
+#### Scenario: Sub-folder instructions file outside the fingerprint
+- **WHEN** two tested trees differ only by a `CLAUDE.md` file under a sub-folder
+- **THEN** both records hold the same fingerprint
+
 ## Open questions
 
 1. A run of the command-case file is a separate run with its own summary, report and record, marked not complete (tested); nothing in its report names the case file it came from. Whether the report should carry a dedicated line for it is not decided.

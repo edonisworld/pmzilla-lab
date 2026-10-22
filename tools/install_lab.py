@@ -137,7 +137,7 @@ def afficher_rapport(ctx: Contexte, resultats: dict) -> None:
     for ligne in A_FAIRE_A_LA_MAIN:
         ctx.dire(f"  - {ligne}")
     for role in roles_de_la_base(ctx.racine):
-        ctx.dire(f"  - Keychain entry of role {role}: uv run tools/db.py role-password {role} (then the command it prints)")
+        ctx.dire(f"  - Keychain entry of role {role}: uv run tools/db.py role-password {role} (generates the password, stores it in the Keychain and tests it)")
     for commande in ctx.manuel:
         ctx.dire(f"  - {commande}")
 

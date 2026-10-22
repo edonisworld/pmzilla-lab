@@ -191,6 +191,35 @@ The system SHALL refuse the former library back-end option, whatever its value, 
 - **WHEN** the library server configuration of a run is produced, with the former variable set in the environment
 - **THEN** it declares the server launched in serve mode with no back-end argument
 
+### Requirement: Copies can be built from the tip of a named branch
+The system SHALL, with the branch option, build every case's disposable copy, replays included, from the tip commit of that local branch, wherever it is checked out, and print `état testé : sommet de <branche> (<sommet court>)` before the first case and in the report header (posture-evals-on-branch-tip design D1). It SHALL NOT copy the workspace's working state, uncommitted changes or untracked files when the option is given.
+
+#### Scenario: Branch checked out in a worktree
+- **WHEN** the branch option names a branch checked out in another worktree whose tip differs from the workspace's working state
+- **THEN** each copy holds the tip's files and none of the workspace's uncommitted changes, and the record's tested state is the tip commit
+
+#### Scenario: Merged tip after a finish refusal
+- **WHEN** the worktree finish merged `main` into the branch and refused with 33, and the branch option names that branch
+- **THEN** each copy holds the merged tip's files
+
+### Requirement: The branch option refuses before any copy
+The system SHALL exit 2 with `branche inconnue : <branche>` for an unknown local branch, and 2 with `--branch ne se combine pas avec <option>` when it is combined with the last-commit option. It SHALL NOT create a copy, a database or a session after either refusal.
+
+#### Scenario: Unknown branch
+- **WHEN** the branch option names no local branch
+- **THEN** the script exits 2 with its phrase and no copy is created
+
+### Requirement: Uncommitted evaluated files of the branch's worktree refuse the run
+The system SHALL exit 2 with `le worktree de <branche> a des modifications non commitées des fichiers évalués : commite-les ou retire-les, puis relance` when the named branch's worktree holds uncommitted changes of evaluated paths, before any copy (posture-evals-on-branch-tip design D1). It SHALL compare paths only and SHALL NOT read a file of that worktree.
+
+#### Scenario: Dirty worktree
+- **WHEN** the branch's worktree holds a modified posture skill
+- **THEN** the script exits 2 with that phrase and no copy is created
+
+#### Scenario: Where the run reads and writes
+- **WHEN** a run with the branch option completes with a fake session command
+- **THEN** the copies hold the tip's cases and posture memory, and the run record and report are written where a run without the option writes them
+
 ## Open questions
 
 1. The back-end option only changes the library server configuration (tested); whether both back-ends give the same hits during a session is not covered by any test run on a real database.

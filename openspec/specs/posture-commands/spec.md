@@ -72,7 +72,7 @@ The system SHALL make `/monthly-flow` have a series of ten teams or fewer read b
 Source: Delivery tag and judged criteria of tests/postures/cas-commandes.yaml (cmd-monthly-flow, evaluation run on request); product-wide reading untested
 
 ### Requirement: /dependencies opens with a verdict on the map
-The system SHALL make `/dependencies [scope or path]` read the named dependency report, else the latest, and open after the posture tag with a verdict on what the map allows to conclude, from its warnings (unknown-state or untyped links, truncated exports, small samples). Without a report it SHALL stop and give the diagnose and compute commands. It SHALL NOT read the Jira exports, nor decide anything structural on a map mostly of unknown state.
+The system SHALL make `/dependencies [scope or path]` read the named dependency report, else the latest, and open after the posture tag with a verdict on what the map allows to conclude, from its warnings (unknown-state or untyped links, truncated exports, small samples, exclusion source). Without a report it SHALL stop and give the diagnose and compute commands. It SHALL NOT read the Jira exports, edit the settings, nor decide anything structural on a map mostly of unknown state.
 
 #### Scenario: No report
 - **WHEN** the reports folder holds no dependency report
@@ -81,6 +81,10 @@ The system SHALL make `/dependencies [scope or path]` read the named dependency 
 #### Scenario: Map mostly of unknown state
 - **WHEN** most links of the report are of unknown state
 - **THEN** the verdict says nothing structural can be decided and what to redo first
+
+#### Scenario: Exclusion from the shared setting
+- **WHEN** the report's source line says the excluded projects come from the setting shared with the flow report
+- **THEN** the verdict says so and names the map's own setting or the exclusion option as the way to change the list, without editing the settings file
 
 Source: .claude/commands/dependencies.md; untested
 

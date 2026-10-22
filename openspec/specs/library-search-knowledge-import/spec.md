@@ -4,7 +4,7 @@
 
 Records that the library reaches the PostgreSQL `knowledge` schema through the indexer only: the former copy of a SQLite index into the database, with its verification and comparison commands, is retired, and no tool replaces it.
 
-Source of truth: `tests/knowledge_import/test_knowledge_import.py`, `tools/knowledge_import.py`, `tools/knowledge_library.py`.
+Source of truth: `tests/sqlite_guard/test_sqlite_guard.py` (the import tool was removed with SQLite), `tools/knowledge_library.py`.
 
 ## Requirements
 

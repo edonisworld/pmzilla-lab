@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 COMMANDES = Path(__file__).resolve().parents[2] / ".claude" / "commands"
-NOMS = ("implement", "close", "add-books", "next", "start", "batch", "doctor")
+NOMS = ("implement", "close", "add-books", "next", "start", "batch", "doctor", "pilot")
 # Contrôles d'en-tête : /audit s'y ajoute (son corps a ses propres règles, vérifiées plus bas).
 NOMS_EN_TETE = NOMS + ("audit",)
 
@@ -33,6 +33,9 @@ CORPS_PAR_COMMANDE = {
     "start": ("--no-verify", "db.py", "--source db", "Push, merge", "implement.md"),
     "doctor": ("--record", "doctor.sh", "launchctl", "security", "docker", "db.py", "--source db"),
     "batch": ("--no-verify", "db.py", "--source db", "Merge, or push", "finish_worktree"),
+    # R-75 (multi-session-piloting, D8) : /pilot nomme chaque action interdite de l'exigence « launches nothing ».
+    "pilot": ("--no-verify", "db.py", "--source db", "finish_worktree", "Write a note without the user's yes", "Commit, merge, or push",
+              "Remove a worktree", "Write to GitHub", "read a note's file"),
 }
 
 
@@ -93,6 +96,13 @@ class Commandes(unittest.TestCase):
         approuve = pre_approbations(lire("next")[0])
         self.assertEqual(approuve, "Bash(uv run --with pyyaml python tools/roadmap.py next:*)")
 
+    def test_next_accepte_un_filtre_de_produit_et_le_passe_au_lecteur(self):
+        corps = lire("next")[1]
+        for motif in ("--product mothra", "--product pmzilla", "product:mothra", "whole queue"):
+            with self.subTest(motif=motif):
+                self.assertIn(motif, corps)
+        self.assertEqual(pre_approbations(lire("next")[0]), "Bash(uv run --with pyyaml python tools/roadmap.py next:*)")
+
     def test_doctor_ne_pre_approuve_que_le_lancement_du_doctor_sans_record(self):
         approuve = pre_approbations(lire("doctor")[0])
         self.assertEqual(approuve, "Bash(uv run tools/doctor.py:*)")
@@ -132,9 +142,17 @@ class Commandes(unittest.TestCase):
         corps = lire("start")[1]
         for motif in ("`Ready`", "blocker", "not_before", "conditions", "main", "roadmap.py check", "roadmap.py show",
                       "gh_issue.py status", "gh_issue.py sync-tasks", "gh_issue.py close-feature", "In progress",
-                      "bash tools/finish_branch.sh", "`change`", "spec-writer"):
+                      "bash tools/finish_worktree.sh", "`change`", "spec-writer"):   # finish-under-lock D7 : la fin en worktree pour tout job
             with self.subTest(motif=motif):
                 self.assertIn(motif, corps)
+
+    def test_start_propose_la_commande_ready_quand_il_refuse_pour_le_status(self):
+        """#207 : le refus pour le Status affiche la commande exacte qui passe en Ready, à faire approuver, jamais lancée."""
+        corps = lire("start")[1]
+        for motif in ('uv run tools/gh_issue.py status <id> Ready', "never run it yourself"):
+            with self.subTest(motif=motif):
+                self.assertIn(motif, corps)
+        self.assertNotIn("gh_issue.py status", lire("start")[0])
 
     def test_start_ne_pre_approuve_que_les_lectures_du_lecteur(self):
         approuve = pre_approbations(lire("start")[0])
@@ -152,6 +170,14 @@ class Commandes(unittest.TestCase):
         for motif in ("[model: opus]", "[model: sonnet]", "[model: haiku]", "[user]", "[parallel]"):
             with self.subTest(motif=motif):
                 self.assertIn(motif, texte)
+
+    def test_spec_writer_verifie_les_regles_deny_dans_sa_liste_de_controle(self):
+        """Change deny-rules-review (D4) : la liste « Done » exige la fonction de liste --json et la garde partagée."""
+        texte = (COMMANDES.parent / "agents" / "spec-writer.md").read_text(encoding="utf-8")
+        liste = texte.split("## Done", 1)[1]
+        for motif in ("deny rules", "--json", "shared guard", "Write(path)", "NotebookEdit(path)", "empty permission key"):
+            with self.subTest(motif=motif):
+                self.assertIn(motif, liste)
 
     def test_start_ne_fixe_pas_le_modele(self):
         """Le modèle vient du travail : l'en-tête n'en impose pas, le corps demande de changer de modèle s'il diffère."""
@@ -351,6 +377,25 @@ class Commandes(unittest.TestCase):
                 self.assertIn("PMZILLA_AFTER_COMMIT", corps)
                 self.assertRegex(corps, r"(?i)never set `PMZILLA_AFTER_COMMIT`")
                 self.assertIn("session's environment", corps)
+
+    # R-75 (multi-session-piloting, D8) : /pilot est une commande de lecture.
+    def test_pilot_le_fichier_de_commande_existe(self):
+        self.assertTrue((COMMANDES / "pilot.md").is_file())
+
+    def test_pilot_ne_pre_approuve_que_status_et_freeze_check(self):
+        self.assertEqual(pre_approbations(lire("pilot")[0]),
+                         "Bash(uv run tools/pilot.py status:*), Bash(uv run tools/pilot.py freeze --check:*)")
+
+    def test_pilot_ne_pre_approuve_ni_note_ni_attente(self):
+        approuve = pre_approbations(lire("pilot")[0])
+        for motif in ("note", "--wait", "finish_worktree", "finish_branch", "gh"):
+            self.assertNotIn(motif, approuve, motif)
+
+    def test_pilot_donne_la_commande_de_fin_comme_celle_de_l_utilisateur(self):
+        corps = lire("pilot")[1]
+        self.assertIn("bash tools/finish_worktree.sh <branch>", corps)
+        self.assertIn("labelled as the user's command", corps)
+        self.assertIn("Only one finish runs at a time", corps)
 
     def test_la_detection_attrape_une_pre_approbation_interdite(self):
         """Garde du test lui-même : un en-tête fautif serait refusé."""

@@ -1,0 +1,16 @@
+# Fichiers évalués par le jeu d'essai des postures (change posture-evals-on-branch-tip, D3 et D7).
+# Une entrée par ligne ; les lignes vides et celles qui commencent par # sont ignorées.
+# Chaque entrée est une spécification de chemin Git relative à la racine du dépôt, lue de la même façon par
+# `git diff -- <entrée>` (tools/finish_branch.sh, contrôle 6) et par l'empreinte des fichiers évalués
+# (tools/posture_eval_fingerprint.py, lue par tools/posture_evals.py) : « CLAUDE.md » désigne le fichier de la racine seulement,
+# un CLAUDE.md de sous-dossier n'est pas évalué ; un « * » peut traverser les dossiers.
+# Les deux lecteurs refusent une liste absente ou vide : aucun repli sur des chemins internes.
+# Deux listes, assumées (décision du 2026-10-21, point 5) : celle-ci fait foi pour la fin et le jeu payant ; le crochet
+# tools/hooks/post-commit (gratuit, local) surveille plus large (commandes, tous les agents, serveur de la bibliothèque).
+# Le test tests/posture_evals/test_branche.py (ListePartagee) garde l'inclusion : chaque entrée d'ici est surveillée par le post-commit.
+CLAUDE.md
+.claude/skills/pmzilla-*
+.claude/agents/pmzilla-critic.md
+tests/postures/cas.yaml
+tests/postures/vocabulaire.yaml
+tests/postures/memoire

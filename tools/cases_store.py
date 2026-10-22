@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 
 import hybrid_search
+import lab_paths
 import sensitive_names
 from hybrid_search import HybridSpec
 
@@ -46,7 +47,6 @@ MAX_TEXT_LENGTH = 600   # au-delà, ce n'est plus une note de journal : résumer
 
 AUTHOR_VARIABLE = "PMZILLA_LAB_CASES_AUTHOR"
 DBNAME_VARIABLE = "PMZILLA_LAB_CASES_DBNAME"
-AUTHOR_FILE = Path(".pmzilla") / "cases.yaml"
 ROLE_READ = "pmzilla_cases_ro"
 ROLE_WRITE = "pmzilla_cases"
 
@@ -95,7 +95,7 @@ def connect_cases(role, timeout=None):
 
 
 def default_workspace() -> Path:
-    return Path(os.environ.get("PMZILLA_LAB_WORKSPACE") or RACINE).expanduser()
+    return lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78 (R-77)
 
 
 def resolve_author(workspace=None, environ=None):
@@ -104,7 +104,8 @@ def resolve_author(workspace=None, environ=None):
     value = (env.get(AUTHOR_VARIABLE) or "").strip()
     if value:
         return value
-    path = Path(workspace) / AUTHOR_FILE if workspace is not None else default_workspace() / AUTHOR_FILE
+    # registre des fichiers locaux de tools/lab_paths.py (décision du 2026-10-21, A9), sous l'espace donné ou la racine de contenu
+    path = lab_paths.local_file("cases_author", Path(workspace) if workspace is not None else default_workspace(), env)
     try:
         import yaml
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -115,11 +116,17 @@ def resolve_author(workspace=None, environ=None):
     return str(data["author"]).strip() or None
 
 
+def author_file_label() -> str:
+    """Chemin relatif du fichier de l'auteur, tel que le registre des fichiers locaux de tools/lab_paths.py le déclare (seule source)."""
+    return Path(*lab_paths.LOCAL_FILES["cases_author"][0]).as_posix()
+
+
 def require_author(workspace=None, environ=None):
     author = resolve_author(workspace, environ)
     if not author:
-        raise CasesError(f"no author configured: set {AUTHOR_VARIABLE} or the key `author` of {AUTHOR_FILE.as_posix()}",
-                         code="author_missing", field=AUTHOR_FILE.as_posix())
+        fichier = author_file_label()
+        raise CasesError(f"no author configured: set {AUTHOR_VARIABLE} or the key `author` of {fichier}",
+                         code="author_missing", field=fichier)
     return author
 
 

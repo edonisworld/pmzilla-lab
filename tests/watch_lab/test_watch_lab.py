@@ -384,6 +384,23 @@ class Collecte(Base):
         self.collecter()
         self.assertIsNone(self.store.source_runs()["panne.test"]["error"])
 
+    def test_source_en_erreur_la_collecte_sort_avec_le_code_0(self):
+        """Change morning-guard, tâche 2.3 : une source seule en erreur ne fait pas sortir la collecte en code non nul (la veille écrit
+        alors `termine` si les autres étapes passent) ; aucun code dédié, donc rien à ajouter côté veille."""
+        self.activer(self.source("panne.test"), self.source("blog.test"))
+        self.routes["https://panne.test/feed"] = httpx.Response(404, text="absent")
+        self.routes["https://blog.test/feed"] = rss([
+            {"title": "Article", "link": "https://blog.test/un", "date": il_y_a(1), "html": paragraphes(30)}])
+        sortie = io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(sortie):
+            try:
+                veille.main(["collect"])
+            except SystemExit as fin:
+                code = fin.code or 0
+        self.assertIn("panne.test : ERREUR", sortie.getvalue())
+        self.assertEqual(code, 0)
+
     def test_flux_mal_forme(self):
         self.activer(self.source("texte.test"), self.source("vide.test"), self.source("tronque.test"),
                      self.source("injoignable.test"))
@@ -841,10 +858,12 @@ class VerifierReseau(Base):
         self.ecoute.listen(5)
         self.addCleanup(self.ecoute.close)
         self.port_ouvert = self.ecoute.getsockname()[1]
+        # Port fermé : une prise liée qui n'écoute pas refuse les connexions, et aucune autre suite ne peut prendre ce port
+        # entre-temps (libéré puis réutilisé sous le runner parallèle, il ferait répondre l'hôte « mort »).
         libre = socket.socket()
         libre.bind(("127.0.0.1", 0))
+        self.addCleanup(libre.close)
         self.port_ferme = libre.getsockname()[1]
-        libre.close()
 
     def flux(self, port, **reste):
         return {"key": f"h{port}.test", "name": "Blog inventé", "active": True, "feed": f"http://127.0.0.1:{port}/feed", **reste}

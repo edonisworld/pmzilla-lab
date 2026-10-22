@@ -32,6 +32,7 @@ FAUX_UV = """#!/bin/sh
 echo "$* (args complets)" >> "$APPELS_COMPLETS"
 echo "$* WS=${PMZILLA_LAB_WORKSPACE:-}" >> "$HOME/espaces.txt"
 [ "$2" = "--python" ] && set -- "$1" "$4"   # uv run --python <version> <script> : le script redevient le 2e argument
+[ "$2" = "--offline" ] && { premier="$1"; shift 2; set -- "$premier" "$@"; }   # uv run --offline <script> <commande> (tests de mutation)
 script=$(basename "$2")
 appel="$script${3:+ $3}"
 # le résumé du matin (R-50) : appel noté à part (APPELS_RESUME) avec le repère tel qu'il est à cet instant ; rend RESUME_CODE (0 par défaut),
@@ -74,6 +75,8 @@ class Base(unittest.TestCase):
         outils = self.home / "PMZilla-Lab" / "workspace" / "tools"      # watch.sh y appelle watch_paths.py (le vrai)
         outils.mkdir(parents=True)
         shutil.copy(SCRIPT.parent / "watch_paths.py", outils / "watch_paths.py")
+        shutil.copy(SCRIPT.parent / "lab_paths.sh", outils / "lab_paths.sh")
+        shutil.copy(SCRIPT.parent / "lab_paths.py", outils / "lab_paths.py")
         shutil.copy(SCRIPT, outils / "watch.sh")      # dépôt de développement factice : dossier de code et dossier de contenu à la fois
         self.script = outils / "watch.sh"
         self.appels = self.home / "appels.txt"
@@ -100,9 +103,9 @@ class Base(unittest.TestCase):
 
     def lancer(self, echec: str = "", curl: int = 0, osascript: int = 0, args=(), script=None, **environnement):
         env = {k: v for k, v in os.environ.items()
-               if k not in ("PMZILLA_LAB_DATA", "PMZILLA_INDEXATION_MAX_JOURS", "PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN")
+               if k not in ("PMZILLA_LAB_DATA", "PMZILLA_INDEXATION_MAX_JOURS", "PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN", "PMZILLA_LAB_OLLAMA")
                and not k.startswith("PMZILLA_WATCH_")}
-        env = {**env, **environnement, "HOME": str(self.home), "APPELS": str(self.appels),
+        env = {**env, "PMZILLA_LAB_WORKSPACE": str(self.home / "PMZilla-Lab" / "workspace"), **environnement, "HOME": str(self.home), "APPELS": str(self.appels),
                "APPELS_COMPLETS": str(self.complets), "APPELS_RESUME": str(self.appels_resume), "ECHEC": echec, "CURL_CODE": str(curl),
                "OSASCRIPT_CODE": str(osascript)}
         resultat = subprocess.run(["zsh", str(script or self.script), *args], env=env, capture_output=True, text=True, timeout=60)
@@ -122,7 +125,7 @@ class BaseDeDonnees(Base):
         return self.lancer(echec="watch_lab.py check-db", ECHEC_CODE=str(code), **environnement)
 
     def verifier_jour_saute(self, resultat, appels):
-        self.assertEqual(appels, ["watch_lab.py check-db", "composants.py check", "dashboard.py"])   # veille des composants, puis tableau de bord
+        self.assertEqual(appels, ["watch_lab.py check-db", "composants.py check", "mutation_masking.py run", "dashboard.py"])   # composants, mutation, tableau de bord
         for sautee in self.SAUTEES:
             self.assertNotIn(sautee, appels)
         self.assertIn("=== Veille terminée avec 1 étape(s) en échec : base de données ===", resultat.stdout)
@@ -628,7 +631,7 @@ exec /bin/mkdir "$@"
         self.assertIn(self.CLE_REPORT, resultat.stdout)
         self.assertLess(resultat.stdout.index("Base de données injoignable"), resultat.stdout.index(self.CLE_REPORT))
         self.assertIn("=== Veille terminée avec 1 étape(s) en échec : base de données ===", resultat.stdout)
-        self.assertEqual(appels, ["watch_lab.py check-network", "watch_lab.py check-db", "composants.py check", "dashboard.py"])
+        self.assertEqual(appels, ["watch_lab.py check-network", "watch_lab.py check-db", "composants.py check", "mutation_masking.py run", "dashboard.py"])
         self.assertEqual(len(self.notifications), 1)
         repere = self.lire()
         self.assertEqual((repere["etat"], repere["code"], repere["notifie"], repere["essais"]), ("reporte", 1, True, 1))
@@ -689,7 +692,7 @@ exec /bin/mkdir "$@"
 
     def test_reseau_absent_reporte_sans_collecte_et_avec_tableau_de_bord(self):
         resultat, appels = self.planifie(echec="watch_lab.py check-network", ECHEC_CODE="6")
-        self.assertEqual(appels, ["watch_lab.py check-network", "composants.py check", "dashboard.py"])
+        self.assertEqual(appels, ["watch_lab.py check-network", "composants.py check", "mutation_masking.py run", "dashboard.py"])
         self.assertRegex(resultat.stdout, r"Réseau absent à \d\d:\d\d : collecte, pré-tri, listes à lire et indexation du jour reportés\.")
         self.assertIn(self.CLE_REPORT, resultat.stdout)
         self.assertIn("=== Veille terminée avec 1 étape(s) en échec : réseau ===", resultat.stdout)
@@ -764,7 +767,8 @@ class WatchSh(Base):
         resultat, appels = self.lancer()
         self.assertEqual(appels, [
             "watch_lab.py check-db", "watch_lab.py collect", "watch_triage.py score", "watch_triage.py apply", "watch_triage.py shares",
-            "watch_triage.py digest", "pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "dashboard.py"])
+            "watch_triage.py digest", "pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "mutation_masking.py run",
+            "dashboard.py"])
         self.assertEqual(resultat.returncode, 0)
         self.assertNotIn("erreur", resultat.stdout.lower().replace("sans erreur", ""))
         self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
@@ -777,7 +781,8 @@ class WatchSh(Base):
 
     def test_passage_complet_sans_fichier_sqlite_dans_le_dossier_de_donnees(self):
         resultat, appels = self.lancer()
-        self.assertEqual(appels[-4:], ["pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "dashboard.py"])
+        self.assertEqual(appels[-5:], ["pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "mutation_masking.py run",
+                                       "dashboard.py"])
         self.assertEqual(resultat.returncode, 0)
         self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
         self.assertEqual(self.notifications, [])
@@ -788,7 +793,8 @@ class WatchSh(Base):
         resultat, appels = self.lancer()
         self.assertEqual(appels, [
             "watch_lab.py check-db", "watch_lab.py collect", "watch_triage.py score", "watch_triage.py apply", "watch_triage.py shares",
-            "watch_triage.py digest", "pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "dashboard.py"])
+            "watch_triage.py digest", "pmzilla_lab_library.py index", "pmzilla_lab_library.py probe", "composants.py check", "mutation_masking.py run",
+            "dashboard.py"])
         self.assertFalse(any(a.startswith("ancien") or "knowledge_import" in a for a in appels))
         self.assertEqual(resultat.returncode, 0)
         self.assertEqual(self.notifications, [])
@@ -851,6 +857,21 @@ class WatchSh(Base):
         _, appels = self.lancer(curl=7)
         self.assertNotIn("pmzilla_lab_library.py probe", appels)
 
+    def appels_curl(self):
+        return [a for a in self.appels.read_text().splitlines() if a.startswith("curl")]
+
+    def test_ollama_par_defaut_comme_l_indexeur(self):
+        # Décision du 2026-10-21, point 8 (A12) : même adresse par défaut que tools/pmzilla_lab_library.py (OLLAMA_URL).
+        self.lancer()
+        self.assertTrue(any("http://localhost:11434/api/tags" in a for a in self.appels_curl()))
+
+    def test_ollama_lu_dans_pmzilla_lab_ollama(self):
+        # PMZILLA_LAB_OLLAMA, la variable de l'indexeur, barre oblique finale retirée comme lui ; jamais l'adresse codée en dur.
+        self.lancer(PMZILLA_LAB_OLLAMA="http://ollama-ailleurs:9999/")
+        appels = self.appels_curl()
+        self.assertTrue(any("http://ollama-ailleurs:9999/api/tags" in a for a in appels))
+        self.assertFalse(any("11434" in a for a in appels))
+
     def test_journal_horodate_et_les_deux_dossiers_indexes(self):
         resultat, _ = self.lancer()
         self.assertRegex(resultat.stdout.splitlines()[0], r"^=== \d{4}-\d{2}-\d{2} \d{2}:\d{2} ===$")
@@ -879,7 +900,8 @@ class WatchSh(Base):
     def test_ollama_absent_liste_simple_sans_pre_tri_ni_index(self):
         self.repere(jours=1)
         resultat, appels = self.lancer(curl=7)
-        self.assertEqual(appels, ["watch_lab.py check-db", "watch_lab.py collect", "watch_lab.py digest", "composants.py check", "dashboard.py"])
+        self.assertEqual(appels, ["watch_lab.py check-db", "watch_lab.py collect", "watch_lab.py digest", "composants.py check", "mutation_masking.py run",
+                                  "dashboard.py"])
         self.assertIn("Ollama ne répond pas : pré-tri et indexation reportés au prochain passage", resultat.stdout)
         self.assertEqual(resultat.returncode, 0)   # report prévu, pas un échec
         self.assertEqual(self.notifications, [])
@@ -1147,6 +1169,8 @@ class CacheUv(Base):
         (run / "tools").mkdir(parents=True)
         shutil.copy(SCRIPT, run / "tools" / "watch.sh")
         shutil.copy(SCRIPT.parent / "watch_paths.py", run / "tools" / "watch_paths.py")
+        shutil.copy(SCRIPT.parent / "lab_paths.sh", run / "tools" / "lab_paths.sh")
+        shutil.copy(SCRIPT.parent / "lab_paths.py", run / "tools" / "lab_paths.py")
         reveil = run / ".claude" / "skills" / "pmzilla-discovery-bmad" / "scripts"
         reveil.mkdir(parents=True)
         (reveil / "wake.py").write_text("# /// script\n# dependencies = [\"entete-du-dossier-de-code\"]\n# ///\n")
@@ -1185,6 +1209,8 @@ class DossiersDeCodeEtDeContenu(Base):
         (self.run / "tools").mkdir(parents=True)
         shutil.copy(SCRIPT, self.run / "tools" / "watch.sh")
         shutil.copy(SCRIPT.parent / "watch_paths.py", self.run / "tools" / "watch_paths.py")
+        shutil.copy(SCRIPT.parent / "lab_paths.sh", self.run / "tools" / "lab_paths.sh")
+        shutil.copy(SCRIPT.parent / "lab_paths.py", self.run / "tools" / "lab_paths.py")
         reveil = self.run / ".claude" / "skills" / "pmzilla-discovery-bmad" / "scripts"
         reveil.mkdir(parents=True)
         (reveil / "wake.py").write_text("# /// script\n# dependencies = [\"dependance-du-dossier-de-code\"]\n# ///\nraise SystemExit('jamais')\n")
@@ -1345,7 +1371,7 @@ class Plist(unittest.TestCase):
 
     def test_etiquette_et_chemins_du_modele(self):
         self.assertIn("<string>com.pmzilla.watch</string>", self.texte)
-        self.assertIn("<string>__HOME__/PMZilla-Lab/watch.sh</string>", self.texte)
+        self.assertIn("<string>__LAB__/watch.sh</string>", self.texte)
         self.assertEqual(self.texte.count("<string>__HOME__/Library/Logs/pmzilla-watch.log</string>"), 2)
 
     def test_aucun_chemin_reel(self):
@@ -1353,31 +1379,33 @@ class Plist(unittest.TestCase):
         self.assertNotIn("veille", self.texte.lower())
 
     def test_le_rendu_par_sed_donne_un_plist_valide(self):
-        rendu = subprocess.run(["sed", "s|__HOME__|/home/essai|g"], input=self.texte, text=True, capture_output=True).stdout
+        rendu = subprocess.run(["sed", "-e", "s|__HOME__|/home/essai|g", "-e", "s|__LAB__|/home/essai/PMZilla-Lab|g"], input=self.texte, text=True, capture_output=True).stdout
         self.assertNotIn("__HOME__", rendu)
+        self.assertNotIn("__LAB__", rendu)
         import plistlib
         donnees = plistlib.loads(rendu.encode())
         self.assertEqual(donnees["ProgramArguments"][1], "/home/essai/PMZilla-Lab/watch.sh")
 
     def test_le_chemin_du_plist_est_le_dossier_des_outils_de_watch_sh(self):
-        """Le modèle lance __HOME__/PMZilla-Lab/watch.sh ; watch.sh en déduit ses dossiers (TOOLS, WORKSPACE) : les deux
+        """Le modèle lance __LAB__/watch.sh ; watch.sh en déduit ses dossiers (TOOLS, WORKSPACE) : les deux
         doivent désigner la même racine, sinon le script lancé ne retrouve pas ses outils."""
         import re
         import plistlib
         script = SCRIPT.read_text(encoding="utf-8")
         outils = re.search(r'^TOOLS="([^"]+)"', script, re.M).group(1)
         espace = re.search(r'^WORKSPACE="([^"]+)"', script, re.M).group(1)
-        self.assertEqual(espace, "${PMZILLA_LAB_WORKSPACE:-$TOOLS/workspace}")   # contenu : la variable, par défaut le dépôt de développement
-        rendu = self.texte.replace("__HOME__", "/home/essai")
+        self.assertEqual(espace, "$LAB_CONTENT_ROOT")   # contenu : le module partagé (la variable, sinon le dépôt Git du code)
+        rendu = self.texte.replace("__HOME__", "/home/essai").replace("__LAB__", "/home/essai/PMZilla-Lab")
         programme = plistlib.loads(rendu.encode())["ProgramArguments"][1]
-        self.assertEqual(str(Path(programme).parent), outils.replace("$HOME", "/home/essai"))
+        self.assertEqual(outils, "$LAB_FOLDER")   # le dossier du lab, donné par le module partagé
+        self.assertEqual(str(Path(programme).parent), "/home/essai/PMZilla-Lab")
         self.assertEqual(Path(programme).name, "watch.sh")
 
 
     def test_les_modeles_planifies_de_la_veille_lancent_le_lien_et_ne_nomment_aucun_dossier_de_code(self):
         for nom in ("com.pmzilla.watch.plist", "com.pmzilla.watch-catchup.plist"):
             texte = (SCRIPT.parent / nom).read_text(encoding="utf-8")
-            self.assertIn("<string>__HOME__/PMZilla-Lab/watch.sh</string>", texte, nom)
+            self.assertIn("<string>__LAB__/watch.sh</string>", texte, nom)
             self.assertNotRegex(texte, r"PMZilla-Lab/(workspace|run)\b", nom)
             self.assertNotIn("/tools/", texte, nom)
 
@@ -1391,7 +1419,7 @@ class VeilleDesComposants(Base):
 
     def test_rien_de_nouveau_appel_avec_l_option_d_echeance_juste_avant_le_tableau_de_bord(self):
         resultat, appels = self.lancer()
-        self.assertEqual(appels[-2:], ["composants.py check", "dashboard.py"])
+        self.assertEqual(appels[-3:], ["composants.py check", "mutation_masking.py run", "dashboard.py"])
         self.assertIn("composants.py check --if-due", self.complets.read_text())
         self.assertEqual(self.notifications, [])
         self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
@@ -1416,7 +1444,7 @@ class VeilleDesComposants(Base):
 
     def test_base_injoignable_la_verification_tourne_quand_meme(self):
         resultat, appels = self.lancer(echec="watch_lab.py check-db", ECHEC_CODE="4")
-        self.assertEqual(appels, ["watch_lab.py check-db", "composants.py check", "dashboard.py"])
+        self.assertEqual(appels, ["watch_lab.py check-db", "composants.py check", "mutation_masking.py run", "dashboard.py"])
         self.assertIn("=== Veille terminée avec 1 étape(s) en échec : base de données ===", resultat.stdout)
         self.assertEqual(resultat.returncode, 1)
 
@@ -1436,6 +1464,63 @@ class VeilleDesComposants(Base):
         resultat, appels = self.lancer(curl=7)
         self.assertIn("composants.py check", appels)
         self.assertEqual(appels[-1], "dashboard.py")
+
+
+class TestsDeMutation(Base):
+    """Étape « tests de mutation » (masking-mutation-tests, design.md D7) : `uv run --offline tools/mutation_masking.py run --due`
+    juste après la veille des composants et avant le tableau de bord, jamais dans les étapes en échec, sans changer le code de sortie ;
+    un code 2 ou 3 est nommé dans le journal. Le faux `mutation_masking.py run` rend le code que le test fixe (ECHEC, ECHEC_CODE)."""
+
+    APPEL = "mutation_masking.py run"
+
+    def test_appel_hors_ligne_avec_l_option_d_echeance_apres_les_composants_et_avant_le_tableau_de_bord(self):
+        resultat, appels = self.lancer()
+        self.assertEqual(appels[-3:], ["composants.py check", self.APPEL, "dashboard.py"])
+        complets = self.complets.read_text()
+        self.assertRegex(complets, r"run --offline \S*/tools/mutation_masking\.py run --due")
+        self.assertEqual(self.notifications, [])
+        self.assertNotIn("Tests de mutation", resultat.stdout)
+        self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_lancement_impossible_code_2_nomme_dans_le_journal_sans_compter_comme_echec(self):
+        resultat, appels = self.lancer(echec=self.APPEL, ECHEC_CODE="2")
+        self.assertIn("Tests de mutation en échec : lancement impossible (code 2)", resultat.stdout)
+        self.assertEqual(appels[-1], "dashboard.py")
+        self.assertNotIn("étape(s) en échec", resultat.stdout)
+        self.assertTrue(resultat.stdout.rstrip().endswith("=== Veille terminée sans erreur ==="))
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_score_sous_le_seuil_code_3_nomme_dans_le_journal_sans_compter_comme_echec(self):
+        resultat, appels = self.lancer(echec=self.APPEL, ECHEC_CODE="3")
+        self.assertIn("Tests de mutation en échec : score sous le seuil (code 3)", resultat.stdout)
+        self.assertEqual(appels[-1], "dashboard.py")
+        self.assertNotIn("étape(s) en échec", resultat.stdout)
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_autre_code_journalise_sans_compter_comme_echec(self):
+        resultat, _ = self.lancer(echec=self.APPEL, ECHEC_CODE="1")
+        self.assertIn("Tests de mutation en échec (code 1)", resultat.stdout)
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_base_injoignable_l_etape_tourne_et_le_resume_ne_nomme_que_la_base(self):
+        resultat, appels = self.lancer(echec="watch_lab.py check-db," + self.APPEL, ECHEC_CODE="4")
+        self.assertEqual(appels, ["watch_lab.py check-db", "composants.py check", self.APPEL, "dashboard.py"])
+        self.assertIn("Tests de mutation en échec (code 4)", resultat.stdout)
+        self.assertIn("=== Veille terminée avec 1 étape(s) en échec : base de données ===", resultat.stdout)
+        self.assertEqual(resultat.returncode, 1)
+
+    def test_composants_en_echec_l_etape_tourne_quand_meme(self):
+        resultat, appels = self.lancer(echec="composants.py check", ECHEC_CODE="2")
+        self.assertEqual(appels[-3:], ["composants.py check", self.APPEL, "dashboard.py"])
+        self.assertEqual(resultat.returncode, 0)
+
+    def test_aucune_notification_pour_l_etape(self):
+        for code in ("2", "3"):
+            with self.subTest(code=code):
+                self.appels.unlink(missing_ok=True)
+                self.lancer(echec=self.APPEL, ECHEC_CODE=code)
+                self.assertEqual(self.notifications, [])
 
 
 class NiNettoyageNiInstallation(Base):

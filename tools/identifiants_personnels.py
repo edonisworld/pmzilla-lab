@@ -7,13 +7,13 @@ PMZilla Lab : cherche les identifiants personnels de l'auteur dans les fichiers 
     python3 tools/identifiants_personnels.py --arbre DOSSIER [--racine DOSSIER] [--lignes]
 
 Condition de publication de la version anglaise (plan, section 6.1) : aucun fichier suivi de l'édition ne contient le
-nom d'utilisateur de l'auteur ni un chemin /Users/<nom> ou /home/<nom>, ni le chemin du workspace réel (qui figure
+nom d'utilisateur de l'auteur ni un chemin de dossier personnel (/home/<nom> ou son équivalent macOS), ni le chemin du workspace réel (qui figure
 dans les sanctums créés depuis les modèles). Depuis le lot 6, la recherche porte aussi sur les sanctums eux-mêmes :
 chaque modèle de skill est instancié par init-sanctum.py dans un dossier temporaire et le résultat est cherché comme
 un fichier suivi (un modèle qui réintroduirait un chemin absolu au moment de la création est ainsi repéré).
 
 Les identifiants ne sont écrits dans aucun fichier suivi : ils viennent du compte de la session (`getpass`, nom du
-dossier personnel), du chemin de la racine, au besoin de `.pmzilla/identifiants.txt` (un par ligne, local, ignoré par
+dossier personnel, sauf compte générique comme « node » du conteneur de la CI locale), du chemin de la racine, au besoin du fichier d'identifiants locaux `.pmzilla/identifiants.txt`, lu en place dans le dossier de contenu (un par ligne, local, ignoré par
 Git) et de l'identifiant d'auteur du module des cas, clé `author` de `.pmzilla/cases.yaml` (local, ignoré par Git ; la
 variable d'environnement PMZILLA_LAB_CASES_AUTHOR n'est pas lue ; un fichier illisible donne le code 2). La recherche ignore la casse. Les fichiers personnels hors édition sont exclus : bibliotheque-lacunes.md, le plan de la version anglaise et les tables rondes (_bmad-output/pmzilla/table-ronde/).
 
@@ -36,11 +36,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths  # noqa: E402
+
 POSTURES = ("delivery", "discovery", "scaling", "facilitation")
 
 EXCLUS_PAR_DEFAUT = ("docs/pmzilla/bibliotheque-lacunes.md", "docs/pmzilla/version-anglaise.md",
                      "_bmad-output/pmzilla/table-ronde/")   # un chemin qui finit par « / » exclut tout le dossier
 SUFFIXES_TEXTE_IGNORES = (".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".woff", ".woff2", ".zip")
+# Comptes génériques (image officielle de Node du conteneur de la CI locale, root, exécuteurs de CI) : un mot banal, pas
+# un identifiant de l'auteur ; ignorés quand ils viennent du compte de la session ou du nom du dossier personnel, jamais
+# quand ils sont écrits dans le fichier d'identifiants locaux. Le chemin de la racine reste cherché.
+COMPTES_GENERIQUES = ("node", "root", "runner")
 
 
 def identifiant_auteur(racine: Path) -> str | None:
@@ -66,9 +73,10 @@ def identifiant_auteur(racine: Path) -> str | None:
 
 def identifiants(racine: Path) -> list[str]:
     """Identifiants à chercher (minuscules, sans doublon, 3 caractères au moins)."""
-    trouves = {getpass.getuser(), Path.home().name, str(racine.resolve()), str(racine)}
-    fichier = racine / ".pmzilla" / "identifiants.txt"
-    if fichier.is_file():
+    trouves = {c for c in (getpass.getuser(), Path.home().name) if c.strip().lower() not in COMPTES_GENERIQUES}
+    trouves.update((str(racine.resolve()), str(racine)))
+    fichier = lab_paths.local_file_for("personal_identifiers", racine)   # lu en place, depuis un worktree aussi (R-77)
+    if fichier is not None and fichier.is_file():
         trouves.update(ligne.strip() for ligne in fichier.read_text(encoding="utf-8").splitlines())
     auteur = identifiant_auteur(racine)
     if auteur:

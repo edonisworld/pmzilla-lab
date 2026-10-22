@@ -5,15 +5,19 @@
 """
 PMZilla Lab : seul chemin d'écriture vers GitHub pour la file de travail (change github-roadmap, design D7 à D9).
 
-    uv run tools/gh_issue.py new-feature --title T --theme X --milestone M [--blocked-by R-a,R-b] [--set key=value]...
-    uv run tools/gh_issue.py edit R-<n> [--title T] [--milestone M] [--set key=value]...
+    uv run tools/gh_issue.py new-feature --title T --theme X --milestone M [--blocked-by R-a,R-b] [--set key=value]... [--product mothra]
+    uv run tools/gh_issue.py edit R-<n> [--title T] [--milestone M] [--set key=value]... [--product mothra|none]   (--product : pose le label product:<valeur> (liste fermée, aujourd'hui mothra) ou, avec none, le retire ; l'absence de label vaut PMZilla ; sync-tasks recopie le label de la feature sur ses tâches ;--title : texte sans clé, la commande ajoute « R-<n> · » ; non vide, refusé s'il commence déjà par une clé)
     uv run tools/gh_issue.py status R-<n> <Todo|Ready|"In progress"|Done>
     uv run tools/gh_issue.py block R-<n> --by R-<m>      /      unblock R-<n> --by R-<m>
     uv run tools/gh_issue.py comment R-<n> --body-file F
     uv run tools/gh_issue.py sync-tasks R-<n>
-    uv run tools/gh_issue.py close-step <clé> [--reason R]   (R-<n>/g<groupe> ou R-<n>/t<tâche> ; --reason obligatoire hors étape utilisateur)
+    uv run tools/gh_issue.py new-task R-<n> --title T --body-file F [--milestone M]   (tâche utilisateur autonome, sans tasks.md : issue type:task + owner:user (+ product: de la feature) de clé R-<n>/u<k>, k = prochain numéro libre, sous-issue de la feature, dans son jalon sauf --milestone (existant) ; --title : texte sans clé, la commande ajoute « R-<n> · » ; relance avec le même titre : rien de recréé ; garde-fou sur titre et corps)
+    uv run tools/gh_issue.py close-step <clé> [--reason R]   (R-<n>/g<groupe>, R-<n>/t<tâche> ou R-<n>/u<k> ; --reason obligatoire hors étape utilisateur)
     uv run tools/gh_issue.py close-feature R-<n> [--edition-public]   (--edition-public : ajoute l'étiquette edition:public avant la fermeture, ou seule sur une feature déjà fermée ; edition-publish-tooling, D19)
-    uv run tools/gh_issue.py new-idea --title T --body B   (idée : étiquette type:idea, marqueur roadmap-idea, ni jalon ni Project ; change single-tracking-github, D7)
+    uv run tools/gh_issue.py new-idea --title T (--body B | --body-file F) [--milestone M] [--value 1|2|3] [--product mothra]   (idée : étiquette type:idea, marqueur roadmap-idea, jamais de Project ; --body et --body-file s'excluent, l'un des deux est obligatoire, le texte du fichier passe par le même garde-fou ; fichier absent, vide ou non ordinaire : code 2, rien d'envoyé ; jalon existant et étiquette value:N facultatifs ; change single-tracking-github, D7 ; #184)
+    uv run tools/gh_issue.py edit-idea <n|#n> [--title T] [--milestone M] [--value 1|2|3] [--product mothra|none] [--body-file F]   (change le titre (non vide, marqueur conservé), le jalon, remplace l'étiquette value:N ou remplace le corps d'une idée par le texte de F, marqueur conservé, mêmes contrôles que new-idea ; refuse une issue sans type:idea ; #184)
+    uv run tools/gh_issue.py comment-idea <n|#n> --body-file F   (commente une idée ; `comment` reste réservé aux R-<n> ; refuse une issue sans type:idea ; #244, point F)
+    uv run tools/gh_issue.py close-idea <n|#n> [--comment-file F]   (ferme une idée, avec un commentaire facultatif posté avant ; refuse une issue sans type:idea ; #244, point F)
     uv run tools/gh_issue.py ensure-labels
     uv run tools/gh_issue.py ensure-milestone M [--closed]
 
@@ -55,7 +59,10 @@ ENV_GH = "PMZILLA_GH"
 PROJECT_TITLE = "PMZilla Lab roadmap"
 TICKET_KEY = re.compile(r"(?<![A-Za-z0-9_])[A-Z]{2,}-\d+")
 FENCE = re.compile(r"^```roadmap[ \t]*\n.*?^```[ \t]*$", re.S | re.M)
-LABEL_COLORS = {"type": "1f6feb", "theme": "0e8a16", "model": "5319e7", "parallel": "fbca04", "owner": "d93f0b", "edition": "c5def5"}
+LABEL_COLORS = {"value": "bfd4f2", "type": "1f6feb", "theme": "0e8a16", "model": "5319e7", "parallel": "fbca04", "owner": "d93f0b", "edition": "c5def5",
+                "product": "b60205"}
+LABEL_DESCRIPTIONS = {"product:mothra": "Feature, task or idea of the Mothra product (no product: label means PMZilla)"}
+PRODUCT_NONE = "none"        # --product none : retire le label product: (edit, edit-idea)
 sleep = time.sleep           # remplaçable par les tests
 now = time.time              # idem (limite de débit : X-Ratelimit-Reset)
 SECONDARY_WAIT = 60          # attente minimale sur une limite secondaire
@@ -150,6 +157,7 @@ class Guard:
         except sensitive_names.SensitiveNamesUnavailable as e:
             cause = {"missing": "absent", "empty": "empty", "unreadable": "unreadable"}[e.reason]
             raise Stop(4, f"guard could not run: sensitive-names list {cause}") from None
+        names = names + sensitive_names.extract_names()      # team-names-readable, D8 : jamais d'erreur, liste vide sans extrait
         try:
             ids = identifiants_personnels.identifiants(Path(root) if root else RACINE)
         except BaseException as e:   # SystemExit(2) du scanner compris
@@ -412,7 +420,10 @@ def ensure_label(client, name):
     if name in client.labels():
         return False
     color = LABEL_COLORS.get(name.split(":")[0], "ededed")
-    client.send("POST", "labels", {"name": name, "color": color}, {"label": name})
+    payload = {"name": name, "color": color}
+    if name in LABEL_DESCRIPTIONS:
+        payload["description"] = LABEL_DESCRIPTIONS[name]
+    client.send("POST", "labels", payload, {"label": name, **({"description": payload["description"]} if "description" in payload else {})})
     client.labels().add(name)
     return True
 
@@ -729,6 +740,12 @@ def await_listed(client, key, issue):
                   f"wait before the next new-feature, then check with {SHOW_CMD} {key}")
 
 
+def with_product(labels, product):
+    """Étiquettes avec le label `product:` demandé : `none` le retire, une valeur le pose à la place de tout autre label `product:`."""
+    rest = [l for l in labels if not l.startswith(rm.LABEL_PRODUCT_PREFIX)]
+    return rest if product == PRODUCT_NONE else rest + [rm.label_product(product)]
+
+
 def cmd_new_feature(ctx, a):
     snap, client = ctx.snap, ctx.client
     if a.theme not in rm.THEMES:
@@ -751,6 +768,8 @@ def cmd_new_feature(ctx, a):
     title = rm.feature_title(n, a.title)
     body = feature_body(key, block)
     labels = [rm.LABEL_FEATURE, rm.label_theme(a.theme)]
+    if a.product:
+        labels.append(rm.label_product(a.product))
     client.guard.scan({"title": title, "body": body, "labels": "\n".join(labels), "milestone": a.milestone})
     project = ctx.project
     milestone_number(client, a.milestone)
@@ -775,14 +794,27 @@ def cmd_edit(ctx, a):
         raise Stop(7, f"rank already used by {open_ranks(ctx.snap, ignore=key)[sets['rank']]}")
     payload, texts = {}, {}
     if a.title is not None:
-        payload["title"] = rm.feature_title(n, a.title)
-        texts["title"] = payload["title"]
+        # --title prend le texte sans clé ; la commande ajoute « R-n · » (comme new-feature) ; un titre déjà préfixé est refusé
+        if not a.title.strip():
+            raise Stop(2, "usage: --title must not be empty")
+        if re.match(rf"\s*R-\d+\s*{rm.SEP}", a.title):
+            raise Stop(2, f"usage: --title takes the text without the R-<n> {rm.SEP} prefix, the command adds it")
+        new_title = rm.feature_title(n, a.title.strip())
+        if new_title != issue.get("title"):
+            payload["title"] = texts["title"] = new_title
     body = replace_block(issue.get("body") or "", block)
     if body != issue.get("body"):
         payload["body"] = body
         texts["body"] = body
+    labels = label_names(issue)
+    relabel = False
     if "theme" in sets:
-        labels = [l for l in label_names(issue) if not l.startswith("theme:")] + [rm.label_theme(block["theme"])]
+        labels = [l for l in labels if not l.startswith("theme:")] + [rm.label_theme(block["theme"])]
+        relabel = True
+    if a.product is not None:
+        labels = with_product(labels, a.product)
+        relabel = relabel or sorted(labels) != sorted(label_names(issue))
+    if relabel:
         payload["labels"] = labels
         texts["labels"] = "\n".join(labels)
     if a.milestone is not None:
@@ -932,6 +964,9 @@ def do_sync(ctx, key, issue, required=True):
     if plan is None:
         return 0
     client, snap = ctx.client, ctx.snap
+    product = [l for l in label_names(issue) if l in {rm.label_product(x) for x in rm.PRODUCTS}]   # la feature donne son produit à ses tâches
+    for p in plan:
+        p["labels"] = p["labels"] + product
     fields = {}
     for p in plan:
         fields[f"{p['key']} title"] = p["title"]
@@ -977,9 +1012,9 @@ def cmd_close_step(ctx, a):
     try:
         kind = rm.parse_key(a.key)[0]
     except ValueError:
-        raise Stop(2, "usage: close-step expects R-<n>/g<group> or R-<n>/t<task>") from None
+        raise Stop(2, "usage: close-step expects R-<n>/g<group>, R-<n>/t<task> or R-<n>/u<k>") from None
     if kind == "feature":
-        raise Stop(2, "usage: close-step expects R-<n>/g<group> or R-<n>/t<task>")
+        raise Stop(2, "usage: close-step expects R-<n>/g<group>, R-<n>/t<task> or R-<n>/u<k>")
     issue = ctx.snap.get(a.key)
     if issue is None:
         raise Stop(7, f"unknown identifier {a.key}")
@@ -997,6 +1032,48 @@ def cmd_close_step(ctx, a):
             posted = True
     closed = close_issue(client, issue)
     ctx.say(f"closed {a.key}" if closed else ("nothing to do" if not posted else f"reason recorded on {a.key}"))
+
+
+def cmd_new_task(ctx, a):
+    """Tâche utilisateur autonome R-<n>/u<k> (sans tasks.md) : type:task + owner:user (+ produit de la feature), sous-issue de la
+    feature, dans son jalon sauf --milestone ; idempotente sur le titre."""
+    feature = ctx.feature(a.key)
+    n = rm.parse_key(a.key)[1]
+    if not a.title.strip():
+        raise Stop(2, "usage: --title must not be empty")
+    if re.match(rf"\s*R-\d+\s*{rm.SEP}", a.title):
+        raise Stop(2, f"usage: --title takes the text without the R-<n> {rm.SEP} prefix, the command adds it")
+    texte = read_body_file(a.body_file)
+    title = rm.feature_title(n, a.title.strip())
+    key = None
+    taken = 0
+    for k, issues in ctx.snap.by_key.items():
+        kind, kn, k_id = rm.parse_key(k)
+        if kind == "user-task" and kn == n:
+            taken = max(taken, int(k_id))
+            if issues[0].get("title") == title and key is None:
+                key = k
+    new_key = rm.user_task_key(n, taken + 1)
+    body = f"{rm.marker(new_key)}\n\n{texte.strip()}"
+    labels = [rm.LABEL_TASK, rm.LABEL_USER] + [l for l in label_names(feature) if l in {rm.label_product(x) for x in rm.PRODUCTS}]
+    milestone = a.milestone or issue_milestone(feature)
+    texts = {"title": title, "body": body, "labels": "\n".join(labels)}
+    if milestone:
+        texts["milestone"] = milestone
+    ctx.client.guard.scan(texts)
+    if milestone:
+        milestone_number(ctx.client, milestone)
+    if key is not None:
+        issue = ctx.snap.get(key)
+        if issue["number"] not in sub_issue_numbers(ctx.client, feature["number"]):
+            add_sub_issue(ctx.client, feature, issue)
+            ctx.say(f"linked {key} (#{issue['number']}) to {a.key}")
+        else:
+            ctx.say(f"already exists: {key} (#{issue['number']})")
+        return
+    issue, _ = create_issue(ctx.client, ctx.snap, new_key, title, body, labels, milestone)
+    add_sub_issue(ctx.client, feature, issue)
+    ctx.say(f"created {new_key} (#{issue['number']})")
 
 
 def cmd_close_feature(ctx, a):
@@ -1062,18 +1139,125 @@ def cmd_close_feature(ctx, a):
 def cmd_new_idea(ctx, a):
     """Enregistre une idée (D7) : une issue étiquetée type:idea, sans jalon, Project, statut ni bloc ; idempotente sur le slug."""
     slug = rm.idea_slug(a.title)
-    if not a.title.strip() or not a.body.strip() or not slug:
-        raise Stop(2, "usage: new-idea needs a non-empty --title with letters or digits, and a non-empty --body")
-    body = f"{rm.idea_marker(slug)}\n\n{a.body.strip()}"
-    ctx.client.guard.scan({"title": a.title, "body": body, "labels": rm.LABEL_IDEA})
+    texte = read_body_file(a.body_file) if a.body_file is not None else (a.body or "")
+    if not a.title.strip() or not texte.strip() or not slug:
+        raise Stop(2, "usage: new-idea needs a non-empty --title with letters or digits, and a non-empty --body or --body-file")
+    body = f"{rm.idea_marker(slug)}\n\n{texte.strip()}"
+    labels = [rm.LABEL_IDEA] + ([idea_value_label(a.value)] if a.value else []) + ([rm.label_product(a.product)] if a.product else [])
+    texts = {"title": a.title, "body": body, "labels": "\n".join(labels)}
+    if a.milestone:
+        texts["milestone"] = a.milestone
+    ctx.client.guard.scan(texts)
     for i in ctx.snap.issues:     # ouverte ou fermée : le slug reste pris
         if rm.parse_idea_marker(i.get("body") or "") == slug:
             ctx.say(f"already exists: idea {slug} (#{i['number']})")
             return
-    ensure_label(ctx.client, rm.LABEL_IDEA)
-    issue = ctx.client.send("POST", "issues", {"title": a.title, "body": body, "labels": [rm.LABEL_IDEA]},
-                            {"title": a.title, "body": body, "labels": rm.LABEL_IDEA})
+    payload = {"title": a.title, "body": body, "labels": labels}
+    if a.milestone:
+        payload["milestone"] = milestone_number(ctx.client, a.milestone)
+    for l in labels:
+        ensure_label(ctx.client, l)
+    issue = ctx.client.send("POST", "issues", payload, texts)
     ctx.say(f"created idea {slug} (#{issue['number']})")
+
+
+def read_body_file(path):
+    """Texte d'un --body-file d'idée : un fichier ordinaire, lisible et non vide ; sinon Stop(2) (rien n'est envoyé)."""
+    p = Path(path)
+    if not p.is_file():
+        raise Stop(2, "usage: --body-file must name an existing regular file")
+    texte = read_text_file(p, "--body-file")
+    if not texte.strip():
+        raise Stop(2, "usage: --body-file names an empty file")
+    return texte
+
+
+IDEA_VALUES = ("1", "2", "3")
+
+
+def idea_value_label(value):
+    return f"value:{value}"
+
+
+def idea_of(ctx, ref):
+    """L'issue de l'idée désignée par `<n>` ou `#<n>` ; Stop(2) si ce n'est pas un numéro, Stop(7) si l'issue manque ou n'a pas l'étiquette type:idea."""
+    m = re.fullmatch(r"#?(\d+)", ref or "")
+    if not m:
+        raise Stop(2, "usage: expected an issue number like 244 or #244")
+    issue = ctx.snap.by_number.get(int(m.group(1)))
+    if issue is None or rm.LABEL_IDEA not in label_names(issue):
+        raise Stop(7, f"#{m.group(1)} is not an idea (no {rm.LABEL_IDEA} label)")
+    return issue
+
+
+def cmd_edit_idea(ctx, a):
+    """Change la valeur (étiquette value:N), le jalon ou le corps (--body-file) d'une idée existante (#184)."""
+    if a.value is None and a.milestone is None and a.body_file is None and a.title is None and a.product is None:
+        raise Stop(2, "usage: edit-idea needs --title, --value, --milestone, --product or --body-file")
+    if a.title is not None and not a.title.strip():
+        raise Stop(2, "usage: --title must not be empty")
+    issue = idea_of(ctx, a.number)
+    client = ctx.client
+    payload, texts = {}, {}
+    if a.title is not None and a.title.strip() != issue.get("title"):
+        payload["title"] = texts["title"] = a.title.strip()      # le marqueur (slug) ne change pas
+    if a.body_file is not None:
+        texte = read_body_file(a.body_file).strip()
+        slug = rm.parse_idea_marker(issue.get("body") or "")      # le marqueur de l'idée reste en tête du corps
+        body = f"{rm.idea_marker(slug)}\n\n{texte}" if slug else texte
+        if body != (issue.get("body") or ""):
+            payload["body"], texts["body"] = body, body
+    if a.value is not None:
+        wanted = idea_value_label(a.value)
+        labels = [l for l in label_names(issue) if not re.fullmatch(r"value:\d+", l)] + [wanted]
+        if sorted(labels) != sorted(label_names(issue)):
+            payload["labels"], texts["labels"] = labels, "\n".join(labels)
+    if a.product is not None:
+        labels = with_product(payload.get("labels", label_names(issue)), a.product)
+        if sorted(labels) != sorted(label_names(issue)):
+            payload["labels"], texts["labels"] = labels, "\n".join(labels)
+    if a.milestone is not None and issue_milestone(issue) != a.milestone:
+        texts["milestone"] = a.milestone
+    if not texts:
+        ctx.say("nothing to do")
+        return
+    client.guard.scan(texts)
+    if "milestone" in texts:
+        payload["milestone"] = milestone_number(client, a.milestone)
+    for l in payload.get("labels", []):
+        ensure_label(client, l)
+    patch_issue(client, issue["number"], payload, texts)
+    ctx.say(f"edited idea #{issue['number']}")
+
+
+def read_text_file(path, option):
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise Stop(2, f"usage: {option} must name a readable text file") from None
+
+
+def cmd_comment_idea(ctx, a):
+    """Commente une idée (issue type:idea) ; le texte passe par le garde avant toute requête (#244, point F)."""
+    issue = idea_of(ctx, a.number)
+    texte = read_text_file(a.body_file, "--body-file")
+    ctx.client.send("POST", f"issues/{issue['number']}/comments", {"body": texte}, {"comment": texte})
+    ctx.say(f"commented idea #{issue['number']}")
+
+
+def cmd_close_idea(ctx, a):
+    """Ferme une idée (issue type:idea), avec un commentaire facultatif posté avant la fermeture ; rien à faire si elle est fermée (#244, point F)."""
+    issue = idea_of(ctx, a.number)
+    texte = read_text_file(a.comment_file, "--comment-file") if a.comment_file else None
+    if texte is not None:
+        ctx.client.guard.scan({"comment": texte})      # le refus du garde précède toute écriture
+    if issue.get("state") == "closed":
+        ctx.say("nothing to do")
+        return
+    if texte is not None and texte.strip():
+        ctx.client.send("POST", f"issues/{issue['number']}/comments", {"body": texte}, {"comment": texte})
+    close_issue(ctx.client, issue)
+    ctx.say(f"closed idea #{issue['number']}")
 
 
 def cmd_ensure_labels(ctx, a):
@@ -1104,6 +1288,7 @@ def build_parser():
     s.add_argument("--milestone", required=True)
     s.add_argument("--blocked-by")
     s.add_argument("--set", action="append")
+    s.add_argument("--product", choices=rm.PRODUCTS, help="adds the label product:<value> (no label means PMZilla)")
     s.set_defaults(fn=cmd_new_feature)
 
     s = sub.add_parser("edit", parents=[common])
@@ -1111,6 +1296,7 @@ def build_parser():
     s.add_argument("--title")
     s.add_argument("--milestone")
     s.add_argument("--set", action="append")
+    s.add_argument("--product", choices=(*rm.PRODUCTS, PRODUCT_NONE), help="sets the label product:<value>; none removes it")
     s.set_defaults(fn=cmd_edit)
 
     s = sub.add_parser("status", parents=[common])
@@ -1129,6 +1315,13 @@ def build_parser():
     s.add_argument("--body-file", required=True)
     s.set_defaults(fn=cmd_comment)
 
+    s = sub.add_parser("new-task", parents=[common])
+    s.add_argument("key", help="the feature, R-<n>")
+    s.add_argument("--title", required=True, help="text without key; the command adds the prefix R-<n> ·")
+    s.add_argument("--body-file", required=True, help="file holding the text of the task")
+    s.add_argument("--milestone", help="an existing milestone (default: the milestone of the feature)")
+    s.set_defaults(fn=cmd_new_task)
+
     for name, fn in (("sync-tasks", cmd_sync_tasks), ("close-feature", cmd_close_feature), ("close-step", cmd_close_step)):
         s = sub.add_parser(name, parents=[common])
         s.add_argument("key")
@@ -1140,8 +1333,32 @@ def build_parser():
 
     s = sub.add_parser("new-idea", parents=[common])
     s.add_argument("--title", required=True)
-    s.add_argument("--body", required=True)
+    grp = s.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--body", help="text of the idea")
+    grp.add_argument("--body-file", help="file holding the text of the idea (exclusive with --body)")
+    s.add_argument("--milestone", help="an existing milestone")
+    s.add_argument("--value", choices=IDEA_VALUES, help="adds the label value:N")
+    s.add_argument("--product", choices=rm.PRODUCTS, help="adds the label product:<value> (no label means PMZilla)")
     s.set_defaults(fn=cmd_new_idea)
+
+    s = sub.add_parser("edit-idea", parents=[common])
+    s.add_argument("number", help="issue number of the idea, 244 or #244")
+    s.add_argument("--title", help="new title of the idea (not empty)")
+    s.add_argument("--value", choices=IDEA_VALUES, help="replaces the value:N label")
+    s.add_argument("--product", choices=(*rm.PRODUCTS, PRODUCT_NONE), help="sets the label product:<value>; none removes it")
+    s.add_argument("--milestone", help="an existing milestone")
+    s.add_argument("--body-file", help="file whose text replaces the body of the idea (its marker is kept)")
+    s.set_defaults(fn=cmd_edit_idea)
+
+    s = sub.add_parser("comment-idea", parents=[common])
+    s.add_argument("number", help="issue number of the idea, 244 or #244")
+    s.add_argument("--body-file", required=True)
+    s.set_defaults(fn=cmd_comment_idea)
+
+    s = sub.add_parser("close-idea", parents=[common])
+    s.add_argument("number", help="issue number of the idea, 244 or #244")
+    s.add_argument("--comment-file", help="text posted as a comment before the closing")
+    s.set_defaults(fn=cmd_close_idea)
 
     s = sub.add_parser("ensure-labels", parents=[common])
     s.set_defaults(fn=cmd_ensure_labels)

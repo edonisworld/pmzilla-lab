@@ -33,7 +33,10 @@ case "$MODE" in
 esac
 ROOT=$(git rev-parse --show-toplevel) || exit 0
 # Les copies temporaires du jeu d'essai partagent les hooks du dépôt : on ne réagit qu'au vrai workspace
-[[ "$ROOT" == "$HOME/PMZilla-Lab/workspace" ]] || exit 0
+# (R-77) le dépôt de développement est le dossier de contenu du module partagé tools/lab_paths.sh, trouvé depuis ce hook
+. "${${(%):-%x}:A:h:h}/lab_paths.sh"
+lab_paths_init || exit 0
+[[ "${ROOT:A}" == "$LAB_CONTENT_ROOT" ]] || exit 0
 
 CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD)
 # règles, postures, agents, commandes, cas d'essai, et le serveur de bibliothèque (la recherche

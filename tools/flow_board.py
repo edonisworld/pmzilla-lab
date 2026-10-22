@@ -50,11 +50,12 @@ import yaml
 
 ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI))
+import lab_paths                                  # noqa: E402
 import flux_config                              # noqa: E402
 from yaml_strict import charger                # noqa: E402
 import flow_glossary as glossaire          # noqa: E402
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 FLUX_DIR = WORKSPACE / "Flux-Lab"
 RAPPORTS = FLUX_DIR / "rapports"
 TABLEAUX = FLUX_DIR / "tableaux"

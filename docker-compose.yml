@@ -3,8 +3,8 @@
 #     bash tools/db_up.sh          # lit le mot de passe dans le Trousseau macOS puis lance ce fichier
 #
 # Image : ParadeDB (PostgreSQL 18 avec pgvector et pg_search), version fixée, jamais « latest ».
-# Version 0.26.0-pg18, vérifiée en arm64 le 2026-10-08.
-# Digest de l'index multi-architecture tiré : sha256:52fc9c95fdfd462201168d1d82334ed61f85cbd921957cab083ec39800a217ac
+# Version 0.26.2-pg18, vérifiée en arm64 le 2026-10-17.
+# Digest de l'index multi-architecture tiré : sha256:c552094b6b68dcb0a4e7a3969963d801eaec02490db4d2dd032dcb096bc86cf8
 # Une montée de version se teste avant adoption (tests et parité), puis ce tag et ce digest sont mis à jour ensemble.
 #
 # Aucun secret dans ce fichier : POSTGRES_PASSWORD vient de l'environnement du processus (db_up.sh), et seulement pour la
@@ -17,7 +17,7 @@ name: pmzilla-lab
 
 services:
   db:
-    image: paradedb/paradedb:0.26.0-pg18
+    image: paradedb/paradedb:0.26.2-pg18
     restart: unless-stopped
     environment:
       # Le mot de passe ne sert qu'à la première initialisation du volume : il n'est pas exigé à l'interpolation, pour que

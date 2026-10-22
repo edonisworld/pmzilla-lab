@@ -1,5 +1,6 @@
 #!/bin/sh
-# PMZilla Lab : installe les hooks Git du dépôt (pre-commit, post-commit, commit-msg, pre-push) en liens symboliques RELATIFS
+# PMZilla Lab : installe les six hooks Git du dépôt (pre-commit, post-commit, commit-msg, pre-push, et pre-merge-commit et reference-transaction,
+# qui refusent un commit de fusion et un déplacement de main sous le verrou de fin, change finish-under-lock D17) en liens symboliques RELATIFS
 # .git/hooks/<hook> -> ../../tools/hooks/<hook> : tools/hooks/ (suivi par Git) fait foi.
 #
 #   bash tools/install_hooks.sh              crée les liens, rend les hooks exécutables, puis vérifie
@@ -8,7 +9,7 @@
 # Relançable sans risque : un lien déjà correct n'est pas touché. Un hook existant qui n'est pas ce lien est déplacé en
 # <hook>.avant-install (jamais supprimé). Sort avec le code 1 si un hook n'est pas en place à la fin.
 set -u
-HOOKS="pre-commit post-commit commit-msg pre-push"
+HOOKS="pre-commit post-commit commit-msg pre-push pre-merge-commit reference-transaction"
 RACINE=$(cd "$(dirname "$0")/.." && pwd -P) || exit 1
 VERIFIER=0
 [ "${1:-}" = "--verify" ] && VERIFIER=1

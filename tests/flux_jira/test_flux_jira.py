@@ -19,7 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 ICI = Path(__file__).resolve().parent
-SCRIPT = ICI.parent.parent / "tools" / "flux_jira.py"
+SCRIPT = ICI / "lancer_flux_jira.py"          # database-only D11 : les fixtures CSV passent par le chargeur de test (le produit lit la base)
 FMT = "%d/%b/%Y %H:%M"
 AUJOURDHUI = dt.date(2026, 10, 4)
 
@@ -151,10 +151,11 @@ class MultiProjets(unittest.TestCase):
         self.assertEqual(r["ecartes"]["par_projet"], {"BUG": len(bugs)})
         self.assertIn("Écartés du débit", md)
 
-    def test_fusion_par_cle(self):
+    def test_plus_de_fusion_d_exports_dans_le_rapport(self):
+        """La fusion de fichiers a disparu avec la voie CSV : le chargeur de test fusionne les fixtures, le rapport n'en parle pas."""
         r, md = self.lancer_calcul()
-        self.assertEqual(r["exports"], {"fichiers": 2, "doublons_retires": self.doublons})
-        self.assertIn("Fusion de 2 exports par clé", md)
+        self.assertNotIn("exports", r)
+        self.assertNotIn("Fusion de", md)
 
     def test_categorie_decide_en_cours_et_a_faire(self):
         r, _ = self.lancer_calcul()
@@ -266,6 +267,25 @@ class Perimetre(unittest.TestCase):
 
     def test_perimetre_avec_les_exclusions_de_flux_yaml(self):
         r, md, _ = self.calcul(self.abc + self.def_, "--scope", "ABC,DEF", yaml_texte="excluded_projects: [DEF]\n")
+        seul, _, _ = self.calcul(self.abc)
+        self.assertEqual(r["termines"], seul["termines"])
+        self.assertEqual(r["ecartes"]["par_projet"], {"DEF": 50})
+
+    def test_le_reglage_de_la_carte_ne_change_pas_le_rapport_de_flux(self):
+        # R-72 : dependency_excluded_projects sert à dependencies_jira.py seul ; flux_jira.py ne le lit pas
+        lot = self.abc + self.def_
+        for commun in ("", "excluded_projects: [DEF]\n"):
+            with self.subTest(commun=commun):
+                sans, md_sans, _ = self.calcul(lot, yaml_texte=commun)
+                for carte in ("dependency_excluded_projects: [ABC]\n", "dependency_excluded_projects: []\n",
+                              "dependency_excluded_projects: [DEF, GHI]\n"):
+                    avec, md_avec, _ = self.calcul(lot, yaml_texte=commun + carte)
+                    self.assertEqual(sans, avec)
+                    self.assertEqual(md_sans, md_avec)
+
+    def test_la_liste_commune_garde_son_effet_avec_le_reglage_de_la_carte(self):
+        r, _, _ = self.calcul(self.abc + self.def_,
+                              yaml_texte="excluded_projects: [DEF]\ndependency_excluded_projects: []\n")
         seul, _, _ = self.calcul(self.abc)
         self.assertEqual(r["termines"], seul["termines"])
         self.assertEqual(r["ecartes"]["par_projet"], {"DEF": 50})
@@ -445,9 +465,11 @@ class PlusieursEquipes(unittest.TestCase):
         self.assertIn(f"Tickets à plusieurs équipes : {attendu} sur {len(lot)}", md)
         self.assertIn("Attribution actuelle", md)
 
-    def test_attribution_inchangee_premiere_colonne_cellule_entiere(self):
+    def test_attribution_premiere_valeur_de_la_premiere_colonne(self):
+        """Idée #179 (D10) : plus de cellule entière ; la cellule « Equipe A;Equipe D » attribue à « Equipe A »."""
         lot, cles, r, _ = self.lancer_calcul()
-        self.assertIn("Equipe A;Equipe D", r["par_equipe"])          # cellule entière : ligne à part
+        self.assertNotIn("Equipe A;Equipe D", r["par_equipe"])
+        self.assertNotIn("Equipe D", r["par_equipe"])                 # la seconde valeur n'attribue rien
         self.assertNotIn("Equipe C", r["par_equipe"])                 # la seconde colonne n'attribue rien
 
     def test_sans_plusieurs_equipes_rien_ne_change(self):
@@ -785,21 +807,6 @@ class Dormants(unittest.TestCase):
 class ExportDeLApiSeulement(unittest.TestCase):
     """Les CSV de export_jira_api.py sont la seule entrée : en-têtes anglais, date %d/%b/%Y %H:%M."""
 
-    def test_export_a_en_tetes_francais_refuse_avec_la_voie_api(self):
-        for langue in ("fr", "en"):
-            with self.subTest(langue=langue), tempfile.TemporaryDirectory() as tmp:
-                ws = Path(tmp)
-                ecrire_yaml(ws, "")
-                (ws / "manuel.csv").write_text("Clé,Type de ticket,Statut,Créé,Résolu\n"
-                                               "ABC-1,Story,Fait,01/août/2026 09:00,10/août/2026 09:00\n", encoding="utf-8")
-                env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(ws)}
-                for commande in ("statuses", "compute"):
-                    r = subprocess.run(["uv", "run", str(SCRIPT), commande, str(ws / "manuel.csv"), "--language", langue],
-                                       env=env, capture_output=True, text=True)
-                    self.assertNotEqual(r.returncode, 0)
-                    self.assertIn("export_jira_api.py export", r.stdout + r.stderr)
-                    self.assertNotIn("Traceback", r.stdout + r.stderr)
-
     def test_dates_hors_format_de_l_api_comptees_illisibles(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
@@ -808,8 +815,7 @@ class ExportDeLApiSeulement(unittest.TestCase):
                                       "ABC-1,Story,Done,2026-08-01,2026-08-10\n"
                                       "ABC-2,Story,Done,01/Aug/2026 09:00,10/Aug/2026 09:00\n", encoding="utf-8")
             sortie = lancer(ws, "statuses", str(ws / "x.csv"))
-            self.assertIn("1 ligne(s) avec une date de création illisible", sortie)
-            self.assertIn("export_jira_api.py", sortie)
+            self.assertIn("1 ticket(s) avec une date de création illisible", sortie)
 
     def test_flux_yaml_ancien_avec_date_format_ou_alias_francais_est_refuse(self):
         lot = construire(random.Random(3), "ABC", WORKFLOW_1, 60, ["Equipe A", "Equipe B"], ["Story", "Task"])
@@ -1172,17 +1178,19 @@ class TempsParSegment(unittest.TestCase):
     def test_cache_introuvable(self):
         ws = self.preparer(sans_cache=True)
         r, _, _ = self.calcul(ws, "--history")
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("history_jira.py collect", r.stdout + r.stderr)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("aucun historique dans la base : lancez d'abord la collecte de l'historique", r.stdout + r.stderr)
+        self.assertFalse((ws / "Flux-Lab" / "rapports").exists() and list((ws / "Flux-Lab" / "rapports").glob("flux-seg-*")))
 
-    def test_chemin_de_cache_en_argument(self):
+    def test_chemin_de_cache_en_argument_refuse(self):
+        """Database-only : --history ne prend aucun fichier (le lanceur de test retire d'ordinaire la valeur ; LANCEUR_BRUT la garde)."""
         ws = self.preparer()
-        ailleurs = ws / "ailleurs.json"
-        ailleurs.write_text((ws / "Flux-Lab" / "historique" / "transitions.json").read_text(encoding="utf-8"), encoding="utf-8")
-        (ws / "Flux-Lab" / "historique" / "transitions.json").unlink()
-        r, js, _ = self.calcul(ws, "--history", str(ailleurs))
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("temps_par_segment", js)
+        env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(ws), "LANCEUR_BRUT": "1"}
+        r = subprocess.run(["uv", "run", str(SCRIPT), "compute", "--name", "seg", "--today", AUJOURDHUI.isoformat(),
+                            "--history", str(ws / "ailleurs.json")], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("--history ne prend aucun fichier : l'historique est lu dans la base", r.stdout + r.stderr)
+        self.assertNotIn("ailleurs", r.stdout + r.stderr)
 
 
 class DonneesDuTableau(unittest.TestCase):

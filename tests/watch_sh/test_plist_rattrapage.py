@@ -18,7 +18,7 @@ SCRIPT = TOOLS / "watch.sh"
 
 def rendre(chemin: Path) -> dict:
     texte = chemin.read_text(encoding="utf-8")
-    rendu = subprocess.run(["sed", "s|__HOME__|/home/essai|g"], input=texte, text=True, capture_output=True).stdout
+    rendu = subprocess.run(["sed", "-e", "s|__HOME__|/home/essai|g", "-e", "s|__LAB__|/home/essai/PMZilla-Lab|g"], input=texte, text=True, capture_output=True).stdout
     return plistlib.loads(rendu.encode())
 
 
@@ -54,8 +54,10 @@ class GabaritRattrapage(unittest.TestCase):
         self.assertNotIn("veille", self.texte.lower())
 
     def test_rendu_valide(self):
-        self.assertNotIn("__HOME__", subprocess.run(["sed", "s|__HOME__|/home/essai|g"], input=self.texte, text=True,
-                                                    capture_output=True).stdout)
+        rendu = subprocess.run(["sed", "-e", "s|__HOME__|/home/essai|g", "-e", "s|__LAB__|/home/essai/PMZilla-Lab|g"], input=self.texte,
+                               text=True, capture_output=True).stdout
+        self.assertNotIn("__HOME__", rendu)
+        self.assertNotIn("__LAB__", rendu)
 
 
 class GabaritCalendrier(unittest.TestCase):

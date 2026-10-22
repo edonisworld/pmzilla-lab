@@ -98,9 +98,10 @@ class Source(unittest.TestCase):
         texte = self.SCRIPT.read_text(encoding="utf-8")
         appels = [n for n in ast.walk(ast.parse(texte)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                   and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess" and n.func.attr != "SubprocessError"]
-        self.assertEqual(len(appels), 2)     # osascript (notification) et git rev-parse (dossier de contenu, R-43)
+        self.assertEqual(len(appels), 1)     # osascript (notification) ; le git rev-parse du dossier de contenu est dans tools/lab_paths.py (R-77)
         self.assertEqual(re.findall(r"commande = \[(.*?)\]", texte), ['"osascript"'])
-        self.assertEqual(re.findall(r'subprocess\.run\(\["git", "-C", str\(code\), "(.*?)"', texte), ["rev-parse"])
+        lab = (RACINE / "tools" / "lab_paths.py").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r'\["git", "-C", str\(code\), "(.*?)"', lab), ["rev-parse"])
 
     def test_pas_de_shell_et_pas_de_os_system(self):
         texte = self.SCRIPT.read_text(encoding="utf-8")
@@ -116,7 +117,7 @@ class AutreArbre(Labo):
         (self.racine / ".pmzilla" / "cases.yaml").write_text("author: auteur-de-test\n", encoding="utf-8")
         os.environ.pop("PMZILLA_LAB_CASES_AUTHOR")
         env = {**os.environ, "PMZILLA_LAB_DB_PORT": "1", "PMZILLA_LAB_DB_SECURITY_BIN": str(self.tmp / "absent")}
-        fait = subprocess.run([sys.executable, "-I", str(copie / "morning_summary.py"), "--json"], capture_output=True, text=True, env=env,
+        fait = subprocess.run([sys.executable, "-I", "-B", str(copie /"morning_summary.py"), "--json"], capture_output=True, text=True, env=env,
                               cwd=self.tmp, timeout=60)
         self.assertEqual(fait.returncode, 0, fait.stderr)
         donnees = json.loads(fait.stdout)
@@ -142,7 +143,7 @@ class AutreArbre(Labo):
         self.tout_connu()
         env = {k: v for k, v in os.environ.items() if k not in ("PMZILLA_LAB_CASES_AUTHOR", "PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN")}
         env.update(HOME=str(home), PMZILLA_LAB_DB_PORT="1", PMZILLA_LAB_DB_SECURITY_BIN=str(self.tmp / "absent"))
-        fait = subprocess.run([sys.executable, "-I", str(lab / "morning_summary.py"), "--json"], capture_output=True, text=True, env=env,
+        fait = subprocess.run([sys.executable, "-I", "-B", str(lab /"morning_summary.py"), "--json"], capture_output=True, text=True, env=env,
                               cwd=self.tmp, timeout=60)
         self.assertEqual(fait.returncode, 0, fait.stderr)
         self.assertEqual(json.loads(fait.stdout)["reviews"]["state"], "unavailable")     # l'auteur est trouvé : la ligne existe
@@ -177,6 +178,7 @@ class DossierContenu(unittest.TestCase):
         return mock.patch.dict(os.environ, env, clear=True)
 
     def test_la_variable_gagne(self):
+        (self.tmp / "voulu").mkdir()
         with self.avec_env(PMZILLA_LAB_WORKSPACE=str(self.tmp / "voulu")):
             self.assertEqual(self.ms.dossier_contenu(self.tmp), self.tmp / "voulu")
 
@@ -186,13 +188,26 @@ class DossierContenu(unittest.TestCase):
             self.assertEqual(self.ms.dossier_contenu(self.tmp / "lie").resolve(), (self.tmp / "principal").resolve())
             self.assertEqual(self.ms.dossier_contenu(self.tmp / "principal").resolve(), (self.tmp / "principal").resolve())
 
-    def test_git_en_echec_rend_le_dossier_du_code(self):
+    def test_git_en_echec_ou_variable_sur_un_dossier_absent_rend_none(self):
         (self.tmp / "vide").mkdir()
         with self.avec_env(GIT_CEILING_DIRECTORIES=str(self.tmp)):
-            self.assertEqual(self.ms.dossier_contenu(self.tmp / "vide"), self.tmp / "vide")
+            self.assertIsNone(self.ms.dossier_contenu(self.tmp / "vide"))      # jamais le dossier du code en repli
         creer_depot_et_arbre(self.tmp / "principal", self.tmp / "lie")
         with self.avec_env(PATH=str(self.tmp / "sans-git")):
-            self.assertEqual(self.ms.dossier_contenu(self.tmp / "lie"), self.tmp / "lie")
+            self.assertIsNone(self.ms.dossier_contenu(self.tmp / "lie"))
+        with self.avec_env(PMZILLA_LAB_WORKSPACE=str(self.tmp / "absent")):
+            self.assertIsNone(self.ms.dossier_contenu(self.tmp))
+
+    def test_la_partie_des_bilans_est_inconnue_sans_dossier_de_contenu_et_le_resume_continue(self):
+        from unittest import mock
+        with mock.patch.object(self.ms, "dossier_contenu", return_value=None):
+            self.assertEqual(self.ms.partie_bilans(None, None), {"state": "content_unknown"})
+        for langue, attendu in (("fr", "Bilans : dossier de contenu introuvable"), ("en", "Reviews: content folder not found")):
+            t = self.ms.Messages(self.ms.CATALOGS, langue)
+            parties = {"watch": {"state": "unknown"}, "reviews": {"state": "content_unknown"}, "queue": {"state": "no_cache"},
+                       "doctor": {"state": "absent"}}
+            self.assertIn(attendu, self.ms.lignes(parties, t))
+            self.assertNotIn("/", attendu)
 
 
 if __name__ == "__main__":

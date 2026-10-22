@@ -64,6 +64,18 @@ class Contexte:
     manuel: list = field(default_factory=list)     # commandes manuelles à afficher en fin de passage
     reportes: list = field(default_factory=list)   # raisons de report à lister dans le rapport (ex. "backup job not installed")
 
+    # --- dossiers du lab (module partagé tools/lab_paths.py, R-77) ----------------------------------------------------------
+    def dossier_lab(self) -> Path:
+        """Le dossier du lab : le parent du dossier de contenu (PMZILLA_LAB_WORKSPACE, sinon le dépôt Git du clone). Échec : message sur
+        la sortie d'erreur, jamais un chemin, et sortie avec le code 78."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import lab_paths
+        try:
+            return lab_paths.lab_folder(lab_paths.content_root(os.environ, self.racine, "en"))
+        except lab_paths.LabPathsError as erreur:
+            print(erreur, file=sys.stderr)
+            sys.exit(lab_paths.EXIT_CONFIG)
+
     # --- affichage -------------------------------------------------------------------------------------------------------
     def dire(self, message: str) -> None:
         print(PREFIXE + message, flush=True)

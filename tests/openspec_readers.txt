@@ -1,0 +1,17 @@
+# Suites qui lisent le dossier openspec/ de l'arbre réel (change light-spec-finish, design D6, question Q10).
+# Le chemin allégé d'une fin de branche de spécification lance seulement ces suites (tools/select_suites.py --openspec-readers),
+# plus les gardes toujours sélectionnées. Le sélecteur ne lit que cette liste ; la garde est tests/select_suites/test_openspec_readers.py :
+# elle échoue quand une suite lit openspec/ sans figurer ici, ou quand une suite listée n'existe pas.
+#
+# Une ligne : « <suite> » éventuellement suivie de « # pourquoi », ou « !<suite> : <raison> » pour une suite que le balayage signale
+# sans qu'elle lise le contenu de openspec/ (exemptée : jamais lancée sur le chemin allégé). Une suite apparaît une seule fois.
+# Le nom d'une suite est celui de son dossier sous tests/ (« hooks » et « installation » comme le lanceur les nomme).
+
+workflow_commands      # lit openspec/config.yaml du dépôt
+roadmap_model          # lit le tasks.md d'un change depuis la racine du dépôt (ignoré une fois le change archivé)
+build_edition          # classe chaque chemin suivi, openspec/ compris, face au manifeste de l'édition
+correspondance_suites  # vérifie chaque chemin suivi face à la correspondance des suites
+composants             # déclarée à la main : DepotReel lance « composants.py inventory --verify » sur la racine réelle, qui lit openspec/config.yaml
+secret_scan            # la garde du dépôt réel cherche des secrets dans chaque fichier suivi, openspec/ compris (pre-commit-secret-scan, D6)
+
+# Aucune exemption aujourd'hui : la suite db liste les fichiers suivis mais n'en garde que tools/, et le balayage ne la signale pas.

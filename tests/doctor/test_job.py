@@ -14,7 +14,7 @@ SCRIPT = TOOLS / "doctor.sh"
 
 
 def horaire(nom):
-    donnees = plistlib.loads((TOOLS / nom).read_text(encoding="utf-8").replace("__HOME__", "/h").encode())
+    donnees = plistlib.loads((TOOLS / nom).read_text(encoding="utf-8").replace("__HOME__", "/h").replace("__LAB__", "/h/PMZilla-Lab").encode())
     planning = donnees["StartCalendarInterval"]
     return (planning["Hour"], planning["Minute"])
 
@@ -22,7 +22,7 @@ def horaire(nom):
 class Modele(unittest.TestCase):
     def setUp(self):
         self.texte = PLIST.read_text(encoding="utf-8")
-        self.donnees = plistlib.loads(self.texte.replace("__HOME__", "/home/essai").encode())
+        self.donnees = plistlib.loads(self.texte.replace("__HOME__", "/home/essai").replace("__LAB__", "/home/essai/PMZilla-Lab").encode())
 
     def test_etiquette_et_commande(self):
         self.assertEqual(self.donnees["Label"], "com.pmzilla.doctor")
@@ -44,6 +44,8 @@ class Modele(unittest.TestCase):
         self.assertNotIn("/Users/", self.texte)
         self.assertNotIn("PASSWORD", self.texte.upper())
         self.assertNotIn("__HOME__", repr(self.donnees))
+        self.assertNotIn("__LAB__", repr(self.donnees))
+        self.assertIn("<string>__LAB__/doctor.sh</string>", self.texte)
 
 
 class Enveloppeur(Labo):

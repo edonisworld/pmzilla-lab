@@ -2,7 +2,9 @@
 
 Quatre protections, à ajouter par l'auteur à `permissions.deny` de .claude/settings.json (tâche 9.2) :
   1. les outils Edit, Write et NotebookEdit sont refusés sur tout chemin du dossier d'exécution (~/PMZilla-Lab/run), en forme absolue
-     (« // »), relative au dossier personnel (« ~/ ») et en motif libre ; la lecture reste permise ;
+     (« // »), relative au dossier personnel (« ~/ ») et en motif libre ; la lecture reste permise. Depuis R-84, seules les trois règles
+     Edit sont écrites : une règle Edit s'applique à tous les outils qui modifient un fichier (Write et NotebookEdit compris), et les six
+     règles Write et NotebookEdit d'origine sont retirées ;
   2. les commandes Git lancées avec `git -C <dossier d'exécution>` qui le modifient sont refusées (les lectures restent permises) ;
   3. `tools/run_worktree.sh create` et `update` sont refusés avec chaque lanceur et chaque façon d'écrire le chemin ; `status`, `--help`,
      la lecture du script et sa suite restent permis ;
@@ -43,8 +45,8 @@ DOSSIER_EXEC = "PMZilla-Lab/run"
 
 def _regles():
     regles = []
-    for outil in ("Edit", "Write", "NotebookEdit"):
-        regles += [f"{outil}(~/{DOSSIER_EXEC}/**)", f"{outil}(//**/{DOSSIER_EXEC}/**)", f"{outil}(**/{DOSSIER_EXEC}/**)"]
+    # R-84 : les règles Edit couvrent aussi Write et NotebookEdit ; les six règles de ces deux outils sont retirées.
+    regles += [f"Edit(~/{DOSSIER_EXEC}/**)", f"Edit(//**/{DOSSIER_EXEC}/**)", f"Edit(**/{DOSSIER_EXEC}/**)"]
     regles += [f"Bash(git -C *{DOSSIER_EXEC}* {c}*)" for c in COMMANDES_GIT]
     regles += ["Bash(*run_worktree.sh create*)", "Bash(*run_worktree.sh update*)",
                "Bash(*run_worktree.sh --language*create*)", "Bash(*run_worktree.sh --language*update*)"]
@@ -113,11 +115,12 @@ class Verifications:
 
     def edition_interdite(self, outil, chemin):
         """« // » = chemin absolu depuis la racine du disque, « ~/ » = depuis le dossier personnel, sinon relatif au dossier courant
-        (un chemin absolu ou en ~ n'est jamais relatif)."""
+        (un chemin absolu ou en ~ n'est jamais relatif). Une règle Edit s'applique à tous les outils qui modifient un fichier : c'est
+        elle qui décide pour Edit, Write et NotebookEdit (R-84)."""
         for regle in self.regles:
-            if not regle.startswith(f"{outil}("):
+            if not regle.startswith("Edit("):
                 continue
-            motif = regle[len(outil) + 1:-1]
+            motif = regle[len("Edit("):-1]
             if motif.startswith("//"):
                 if chemin.startswith("/") and glob_en_regex(motif[1:]).fullmatch(chemin):
                     return True
@@ -209,7 +212,7 @@ class DansLeFichierDeReglages(Verifications, unittest.TestCase):
     def exiger_les_regles(self):
         presentes, manquantes = self.presentes()
         if not presentes:
-            self.skipTest("tâche 9.2 : l'auteur n'a pas encore ajouté les règles du dossier d'exécution (REGLES_R43)")
+            self.fail("tâche 9.2 : l'auteur n'a pas encore ajouté les règles du dossier d'exécution (REGLES_R43)")
         if manquantes:
             self.fail(f"{len(manquantes)} règle(s) de REGLES_R43 absente(s) de .claude/settings.json, dont : " + " ; ".join(manquantes[:5]))
 

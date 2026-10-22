@@ -46,6 +46,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths  # noqa: E402
 from messages import Messages, add_language_option  # noqa: E402
 from morning_summary_messages import CATALOGS  # noqa: E402
 
@@ -79,23 +80,14 @@ def dossier_donnees() -> Path:
     return Path(os.environ.get("PMZILLA_LAB_DATA") or "~/.pmzilla-lab").expanduser()
 
 
-def dossier_contenu(code: Path | None = None) -> Path:
-    """Dossier de contenu (run-worktree D2) : PMZILLA_LAB_WORKSPACE s'il est posé ; sinon le parent du dossier Git commun du dossier
-    du code (`git rev-parse --git-common-dir`, comme tools/worktree.sh) : le dépôt de développement depuis l'arbre d'exécution, lui-même
-    depuis le dépôt ; si Git échoue (pas un dépôt, absent, délai, sortie inattendue), le dossier du code, sans rien deviner."""
-    voulu = os.environ.get("PMZILLA_LAB_WORKSPACE")
-    if voulu:
-        return Path(voulu).expanduser()
-    code = code if code is not None else Path(__file__).resolve().parents[1]
+def dossier_contenu(code: Path | None = None) -> Path | None:
+    """Dossier de contenu par le module partagé tools/lab_paths.py (R-77, D1) : PMZILLA_LAB_WORKSPACE s'il est posé, sinon le parent du
+    dossier Git commun du dossier du code. None quand il est introuvable (variable sur un dossier absent, pas un dépôt Git, Git absent,
+    délai) : le résumé ne s'arrête jamais (D7), la partie qui en a besoin est inconnue ; jamais le dossier du code en repli."""
     try:
-        fait = subprocess.run(["git", "-C", str(code), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL, timeout=5)
-        sortie = fait.stdout.strip()
-        if fait.returncode == 0 and sortie and "\n" not in sortie and Path(sortie).is_absolute():
-            return Path(sortie).parent
-    except (OSError, subprocess.SubprocessError, ValueError):
-        pass
-    return code
+        return lab_paths.content_root(os.environ, code)
+    except lab_paths.LabPathsError:
+        return None
 
 
 def lire_objet(chemin: Path):
@@ -152,7 +144,10 @@ def bilans_de_la_base(auteur: str, jour: dt.date) -> list:
 
 def partie_bilans(jour: dt.date, bilans) -> dict:
     import cases_store
-    auteur = cases_store.resolve_author(dossier_contenu())
+    contenu = dossier_contenu()
+    if contenu is None:      # dossier de contenu introuvable : la partie est inconnue, sans arrêt (R-77, D7)
+        return {"state": "content_unknown"}
+    auteur = cases_store.resolve_author(contenu)
     if not auteur:
         return {"state": "no_author"}
     try:
@@ -216,6 +211,8 @@ def lignes(parties: dict, t: Messages) -> list[str]:
         sortie.append(t("reviews_unreachable"))
     elif b["state"] == "unavailable":
         sortie.append(t("reviews_unavailable"))
+    elif b["state"] == "content_unknown":
+        sortie.append(t("reviews_content_unknown"))
     f = parties["queue"]
     if f["state"] == "ok":
         sortie.append(t("queue_older", n=f["ready"], date=f["cache_date"]) if f["cache_date"] else t("queue", n=f["ready"]))

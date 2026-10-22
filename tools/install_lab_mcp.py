@@ -2,7 +2,7 @@
 PMZilla Lab : Étape mcp : enregistrement du serveur de la bibliothèque (design D14, D15).
 Module du script d'installation (orchestrateur du même nom sans suffixe) ; ne se lance pas seul.
 
-Le serveur est enregistré pour l'utilisateur, lancé par le lien du dossier du laboratoire (<maison>/PMZilla-Lab/pmzilla_lab_library.py)
+Le serveur est enregistré pour l'utilisateur, lancé par le lien du dossier du laboratoire (<dossier du lab>/pmzilla_lab_library.py)
 avec `uv` trouvé par le PATH. L'étape dépend de `links` et de `database` : sans base prête, elle est reportée (design D8).
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ NOM_SERVEUR = "pmzilla-library"
 
 
 def lien_du_serveur(ctx: Contexte) -> Path:
-    return ctx.maison / "PMZilla-Lab" / "pmzilla_lab_library.py"
+    return ctx.dossier_lab() / "pmzilla_lab_library.py"
 
 
 def enregistrement_actuel(ctx: Contexte) -> str | None:

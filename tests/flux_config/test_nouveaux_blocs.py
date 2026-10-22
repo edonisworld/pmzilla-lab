@@ -7,12 +7,18 @@ import contextlib
 import datetime
 import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
+import dependencies_jira  # noqa: E402
+import flow_board  # noqa: E402
 import flux_config  # noqa: E402
+import flux_jira  # noqa: E402
+import history_jira  # noqa: E402
 from yaml_strict import ErreurConfig, charger  # noqa: E402
 
 # six cycles de huit semaines consécutifs (lundi -> vendredi) et une version de fin d'année
@@ -72,6 +78,20 @@ class TestIdentifiantEtJeton(Base):
         self.refus("jira_token_expires: PasUneDateZZ\n", "jira_token_expires", "L1", interdits=("PasUneDateZZ",))
         self.refus("jira_token_warning_days: 0\n", "jira_token_warning_days", "L1")
         self.refus("a: 1\njira_token_warning_days: abcZZ\n", "jira_token_warning_days", "L2", interdits=("abcZZ",))
+
+
+class TestPassagesIntrouvables(Base):
+    """Réglage de la collecte de l'historique (change database-only, D5) : nombre de passages consécutifs en 404 après lequel un ticket
+    est marqué disparu."""
+
+    def test_defaut_trois_et_valeur_lue(self):
+        self.assertEqual(flux_config.history_not_found_limit(lire("jira_site: x\n")), 3)
+        self.assertEqual(flux_config.history_not_found_limit(lire("history_not_found_limit: 5\n")), 5)
+
+    def test_refus_zero_texte_et_booleen(self):
+        self.refus("history_not_found_limit: 0\n", "history_not_found_limit", "L1")
+        self.refus("a: 1\nhistory_not_found_limit: abcZZ\n", "history_not_found_limit", "L2", interdits=("abcZZ",))
+        self.refus("history_not_found_limit: true\n", "history_not_found_limit", "L1")
 
 
 class TestEtiquettesDeclarees(Base):
@@ -286,6 +306,14 @@ class TestRetention(Base):
         self.assertEqual(r["backup_label"], "abc1")
         self.assertEqual(r["period_days"], 200)
 
+    def test_le_nom_du_reglage_de_l_age_maximal_est_inchange(self):
+        """Database-only (Q4) : un fichier de réglages écrit avant le change se lit sans message, le réglage garde son nom."""
+        self.assertIn("max_file_age_days", flux_config.CHAMPS_RETENTION)
+        r = flux_config.retention(lire("retention:\n  max_file_age_days: 90\n"))
+        self.assertEqual(r["max_file_age_days"], 90)
+        for ancien in ("csv_age_days", "max_csv_age_days", "forbidden_columns"):
+            self.assertNotIn(ancien, flux_config.CHAMPS_RETENTION)
+
     def test_cle_inconnue(self):
         self.refus("retention:\n  inconnue: 3\n", "retention", "L2")
 
@@ -329,3 +357,78 @@ class TestMigrate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExclusionCarte(Base):
+    """R-72 : `dependency_excluded_projects`, liste de clés de projet propre à la carte des dépendances (clés inventées)."""
+    MESSAGE = ("réglage invalide : dependency_excluded_projects, liste de clés de projet attendue "
+               "/ invalid setting: dependency_excluded_projects, list of project keys expected")
+
+    def test_lue_sans_message_sous_son_nom_anglais(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err, contextlib.redirect_stdout(io.StringIO()) as out:
+            i = lire("dependency_excluded_projects: [ZZA, ' zzb ']\nexcluded_projects: [ZZC]\n")
+        self.assertEqual(i["dependency_excluded_projects"], ["ZZA", " zzb "])
+        self.assertEqual(i["projets_exclus"], ["ZZC"])
+        self.assertEqual(err.getvalue() + out.getvalue(), "")
+
+    def test_liste_vide_acceptee(self):
+        self.assertEqual(lire("dependency_excluded_projects: []\n")["dependency_excluded_projects"], [])
+
+    def test_absente_sans_refus(self):
+        self.assertNotIn("dependency_excluded_projects", lire("excluded_projects: [ZZC]\n"))
+
+    def test_chaine_refusee(self):
+        m = self.refus("a: 1\ndependency_excluded_projects: ValeurDistinctiveZZ\n", self.MESSAGE, "flux.yaml : L2 : ",
+                       interdits=("ValeurDistinctiveZZ",))
+        self.assertNotIn("L1", m)
+
+    def test_liste_avec_un_nombre_refusee(self):
+        self.refus("dependency_excluded_projects: [ZZA, 4217]\n", self.MESSAGE, "L1", interdits=("4217", "ZZA"))
+
+    def test_liste_avec_une_chaine_vide_refusee(self):
+        self.refus("dependency_excluded_projects: [ZZA, '  ']\n", self.MESSAGE, "L1", interdits=("ZZA",))
+        self.refus("dependency_excluded_projects: ['']\n", self.MESSAGE, "L1")
+
+    def test_bloc_et_nul_refuses(self):
+        self.refus("dependency_excluded_projects: {k: v}\n", self.MESSAGE, "L1")
+        self.refus("dependency_excluded_projects:\n", self.MESSAGE, "L1")
+
+    def test_cle_ecrite_deux_fois_refusee_comme_toute_cle(self):
+        self.refus("dependency_excluded_projects: [ZZA]\nx: 1\ndependency_excluded_projects: [ZZB]\n",
+                   "« dependency_excluded_projects » est écrite deux fois (L1 et L3)")
+
+
+class TestExclusionCarteLecteurs(unittest.TestCase):
+    """Chaque lecteur de flux.yaml refuse une valeur invalide avant tout travail, sans la valeur dans le message."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.fichier = Path(self.tmp.name) / "flux.yaml"
+
+    def lecteurs(self):
+        return {
+            "flux_jira": (lambda: flux_jira.config(), mock.patch.object(flux_jira, "CONFIG_FILE", self.fichier)),
+            "dependencies_jira": (lambda: dependencies_jira.config(),
+                                  mock.patch.object(dependencies_jira, "CONFIG_FILE", self.fichier)),
+            "history_jira": (lambda: history_jira.reglages(), mock.patch.object(history_jira, "CONFIG_FILE", self.fichier)),
+            "flow_board": (lambda: flow_board.reglages(), mock.patch.object(flow_board, "CONFIG", self.fichier)),
+        }
+
+    def test_valeurs_invalides_refusees_par_chaque_lecteur(self):
+        for valeur in ("ValeurDistinctiveZZ", "[ZZA, 12]", "[ZZA, '']"):
+            self.fichier.write_text(f"portfolio_types: [Epic]\ndependency_excluded_projects: {valeur}\n", encoding="utf-8")
+            for nom, (lire, patch) in self.lecteurs().items():
+                with self.subTest(nom=nom, valeur=valeur), patch, self.assertRaises(ErreurConfig) as c:
+                    lire()
+                m = str(c.exception)
+                self.assertIn("L2 : réglage invalide : dependency_excluded_projects", m)
+                self.assertIn("invalid setting: dependency_excluded_projects", m)
+                for secret in ("ValeurDistinctiveZZ", "ZZA", "12"):
+                    self.assertNotIn(secret, m)
+
+    def test_valeur_valide_lue_par_chaque_lecteur(self):
+        self.fichier.write_text("dependency_excluded_projects: [ZZA]\nexcluded_projects: [ZZC]\n", encoding="utf-8")
+        for nom, (lire, patch) in self.lecteurs().items():
+            with self.subTest(nom), patch:
+                lire()

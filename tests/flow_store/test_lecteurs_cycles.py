@@ -22,7 +22,7 @@ ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI))
 import aide_base as base          # noqa: E402
 import jeu                        # noqa: E402
-import test_sources_scripts as sc  # noqa: E402
+import aide_scripts as sc         # noqa: E402
 
 import flow_store                 # noqa: E402
 

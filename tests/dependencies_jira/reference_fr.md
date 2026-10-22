@@ -16,6 +16,7 @@ Colonnes de liens typées : 2 (1 types)
 Liens par type :
   Blocks                            50  dépendance (sortant = bloque)
 Liens de décomposition (Epic vers un autre niveau) : 1, comptés à part
+Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 Liens avec le projet exclu BUG : 1 (attend l'export), comptés à part
 Liens avec le projet exclu BUG : 1 (attendu par l'export), comptés à part
 Liens avec le projet exclu BUG : 1 (interne), comptés à part
@@ -24,7 +25,6 @@ Projets des tickets liés absents de l'export (Terminal seulement) :
   ZZZ              8  8 l'export l'attend
 Plus de 30 % des liens sortent de l'export : élargissez la requête JQL aux projets liés, sinon l'équipe de l'autre côté reste inconnue.
 États non terminés ni « en cours » ni « à faire » (1 tickets) : Weird
-Attention : 1000 tickets, un nombre rond. L'export a probablement atteint la limite de Jira et des tickets manquent : réduisez la requête.
 Tickets sans équipe : 1
 
 === rich diagnose scope ===
@@ -46,6 +46,7 @@ Liens par type :
   Blocks                            50  dépendance (sortant = bloque)
 Liens de décomposition (Epic vers un autre niveau) : 1, comptés à part
 Périmètre : AAA, BBB (25 tickets ; les autres servent à situer l'autre côté des liens)
+Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 Liens avec le projet exclu BUG : 1 (attend l'export), comptés à part
 Liens avec le projet exclu BUG : 1 (attendu par l'export), comptés à part
 Mode : orienté · dépendances distinctes : 16 · vers un ticket absent de l'export : 6
@@ -53,7 +54,6 @@ Projets des tickets liés absents de l'export (Terminal seulement) :
   ZZZ              6  6 l'export l'attend
 Plus de 30 % des liens sortent de l'export : élargissez la requête JQL aux projets liés, sinon l'équipe de l'autre côté reste inconnue.
 États non terminés ni « en cours » ni « à faire » (1 tickets) : Weird
-Attention : 1000 tickets, un nombre rond. L'export a probablement atteint la limite de Jira et des tickets manquent : réduisez la requête.
 Tickets sans équipe : 0
 
 === rich compute ===
@@ -63,11 +63,11 @@ Rapport : <WS>/Flux-Lab/rapports/dependances-riche-<DATE>.md
 [report dependances-riche-<DATE>.md]
 # Dépendances : riche, <DATE>
 
-Export : riche.csv · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
-
-> **Export probablement tronqué** : riche.csv (1000) tickets, un nombre rond qui correspond à une limite d'export de Jira. Des tickets manquent (les plus anciens si la requête trie par date décroissante) : ne pas lire cette carte, découper la requête en lots plus petits.
+Export : base · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
 
 > Liens de décomposition (Epic relié à un ticket d'un autre niveau) : 1, hors de la carte (réglage portfolio_types). Les liens entre deux tickets de ce niveau restent dans la carte.
+
+> Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 
 > Liens avec le projet exclu BUG : 1 (attend l'export), hors de la carte (réglage excluded_projects).
 
@@ -209,11 +209,11 @@ Blocages en cours (Terminal seulement, rien n'est écrit) :
 [report dependances-cles-<DATE>.md]
 # Dépendances : cles, <DATE>
 
-Export : riche.csv · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
-
-> **Export probablement tronqué** : riche.csv (1000) tickets, un nombre rond qui correspond à une limite d'export de Jira. Des tickets manquent (les plus anciens si la requête trie par date décroissante) : ne pas lire cette carte, découper la requête en lots plus petits.
+Export : base · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
 
 > Liens de décomposition (Epic relié à un ticket d'un autre niveau) : 1, hors de la carte (réglage portfolio_types). Les liens entre deux tickets de ce niveau restent dans la carte.
+
+> Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 
 > Liens avec le projet exclu BUG : 1 (attend l'export), hors de la carte (réglage excluded_projects).
 
@@ -331,11 +331,11 @@ Rapport : <WS>/Flux-Lab/rapports/dependances-projets-projets-<DATE>.md
 [report dependances-projets-projets-<DATE>.md]
 # Dépendances : projets, <DATE>
 
-Export : riche.csv · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
-
-> **Export probablement tronqué** : riche.csv (1000) tickets, un nombre rond qui correspond à une limite d'export de Jira. Des tickets manquent (les plus anciens si la requête trie par date décroissante) : ne pas lire cette carte, découper la requête en lots plus petits.
+Export : base · 1000 tickets · 25 dépendances distinctes (liens de blocage, orientés) · 8 vers un ticket absent de l'export.
 
 > Liens de décomposition (Epic relié à un ticket d'un autre niveau) : 1, hors de la carte (réglage portfolio_types). Les liens entre deux tickets de ce niveau restent dans la carte.
+
+> Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 
 > Liens avec le projet exclu BUG : 1 (attend l'export), hors de la carte (réglage excluded_projects).
 
@@ -469,6 +469,7 @@ Colonnes reconnues :
 Colonnes de liens sans type : Linked Issues
 Liens par type :
   (sans type)                        5  sans type
+Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 Mode : non orienté · dépendances distinctes : 3 · vers un ticket absent de l'export : 0
 Tickets sans équipe : 0
 
@@ -479,9 +480,11 @@ Rapport : <WS>/Flux-Lab/rapports/dependances-sans-<DATE>.md
 [report dependances-sans-<DATE>.md]
 # Dépendances : sans, <DATE>
 
-Export : sans-type.csv · 5 tickets · 3 dépendances distinctes (liens sans type, non orientés) · 0 vers un ticket absent de l'export.
+Export : base · 5 tickets · 3 dépendances distinctes (liens sans type, non orientés) · 0 vers un ticket absent de l'export.
 
 > Les liens n'ont pas de type : impossible de distinguer un blocage d'une simple relation, ni de dire qui attend qui. Les chiffres comptent des liens, pas des blocages. Pour des blocages, il faut des colonnes de liens typées (« Inward/Outward issue link (Blocks) »).
+
+> Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 
 ## En bref
 
@@ -523,7 +526,9 @@ Rapport : <WS>/Flux-Lab/rapports/dependances-vide-<DATE>.md
 [report dependances-vide-<DATE>.md]
 # Dépendances : vide, <DATE>
 
-Export : vide.csv · 2 tickets · 0 dépendances distinctes (liens de blocage, orientés) · 0 vers un ticket absent de l'export.
+Export : base · 2 tickets · 0 dépendances distinctes (liens de blocage, orientés) · 0 vers un ticket absent de l'export.
+
+> Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 
 ## En bref
 
@@ -552,7 +557,6 @@ Aucun type n'a assez d'éléments des deux côtés pour comparer (avec/sans : au
 
 === two exports diagnose ===
 [console]
-Exports fusionnés : 2
 Tickets lus : 3
 Colonnes reconnues :
   cle     -> Issue key
@@ -571,14 +575,11 @@ Liens par type :
   (sans type)                        1  sans type
   Blocks                             1  dépendance (sortant = bloque)
   Relates                            1  ignoré
+Projets exclus de la carte : 1 (source : réglage excluded_projects, commun avec le rapport de flux)
 Mode : orienté · dépendances distinctes : 1 · vers un ticket absent de l'export : 0
 États non terminés ni « en cours » ni « à faire » (1 tickets) : Weird
   Ajoutez la colonne « Status Category » à la vue Jira : elle classe les états de tous les workflows.
 Tickets sans équipe : 0
-
-=== missing key ===
-[console]
-Colonne absente de l'export : clé du ticket (Issue key). Sans la clé, impossible de relier un ticket à ceux qu'il cite dans ses liens. Ce script lit les CSV de export_jira_api.py (uv run tools/export_jira_api.py export), dont les en-têtes sont en anglais ; un export manuel de Jira n'est plus lu. Autre nom de colonne : à ajouter dans <WS>/Flux-Lab/flux.yaml (columns: key).
 
 === no link columns diagnose ===
 [console]

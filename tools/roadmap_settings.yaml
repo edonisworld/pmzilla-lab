@@ -1,4 +1,4 @@
 # Réglages de la file de travail (change workflow-tooling-fixes, D12). Fichier suivi par Git, modifié à la main.
 # current_release : titre du jalon de l'édition publique en cours, ou vide si aucune. Le lecteur ne l'écrit jamais ;
 # `roadmap.py check` refuse un jalon absent, fermé ou Tarasque.
-current_release: Namazu
+current_release: Cerberus

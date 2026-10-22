@@ -25,7 +25,7 @@ Usage :
         seulement _statistiques_figures.txt dans <dossier_sortie> (par défaut Bibliotheque-MD du workspace) ;
         le fichier n'est pas lisible par Claude Code. L'agrégat, sans aucun titre de livre, est la dernière
         partie de la sortie : c'est elle qu'on peut copier. Voir la piste « Illustrations et schémas ».
-        Écrit aussi ~/PMZilla-Lab/figures-a-refaire.txt (variable PMZILLA_LAB_FIGURES_A_REFAIRE) : un livre
+        Écrit aussi <dossier du lab>/figures-a-refaire.txt (variable PMZILLA_LAB_FIGURES_A_REFAIRE) : un livre
         source par ligne qui a au moins une figure retenue, chemin relatif au dossier des livres, et en
         commentaire le nombre de figures retenues ; la liste se donne telle quelle à --redo-figures (@liste).
 
@@ -94,12 +94,13 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import unquote
 
+import lab_paths
 from mapping_lab import EXCLUSIONS, MAPPING, SOURCES, fold
 
 MIN_CHARS_PER_PAGE = 200    # PDF : en dessous, probablement scanné
 MIN_CHARS_EPUB = 2000       # EPUB : en dessous, probablement protégé par DRM ou vide
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 IMAGES_DIR = Path(os.environ.get("PMZILLA_LAB_IMAGES", str(WORKSPACE / "Bibliotheque-Images"))).expanduser()
 LISTE_A_REFAIRE = Path(os.environ.get("PMZILLA_LAB_FIGURES_A_REFAIRE",
                                       str(WORKSPACE.parent / "figures-a-refaire.txt"))).expanduser()

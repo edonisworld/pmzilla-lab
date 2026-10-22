@@ -32,7 +32,7 @@ class DossierDExecution(unittest.TestCase):
             (run / "tests" / "dashboard").mkdir(parents=True)
             shutil.copy(base.RUNNER, run / "tests" / "dashboard" / "run_with_fake_library.py")
             base.write(run / "watch" / "tri.yaml", "mode: observation\n")
-            base.write(run / "tools" / "mapping_lab.py", "MAPPING = {\n    # À re-télécharger d'une autre source :\n    #   Livre Du Dossier De Code (Auteur) F.\n\n    'x': 'F',\n}\n")
+            base.write(run / "tools" / "mapping_lab.py", "MAPPING = {\n    # À re-télécharger d'une autre source :\n    #   Livre Fictif F (Auteur Fictif) F.\n\n    'x': 'F',\n}\n")
             sortie = root / "page.html"
             env = {**base.without_cases_variables(os.environ), **env, "PMZILLA_LAB_TODAY": "2026-10-12",
                    "PMZILLA_TEST_CODE_ROOT": "derived"}
@@ -42,8 +42,8 @@ class DossierDExecution(unittest.TestCase):
             page = sortie.read_text(encoding="utf-8")
             self.assertIn('<span class="badge warn">observation</span>', page)          # tri.yaml du dossier de code
             self.assertNotIn('<span class="badge ok">filtre</span>', page)
-            self.assertIn("<li>Livre Du Dossier De Code (Auteur)</li>", page)           # mapping_lab.py du dossier de code
-            self.assertNotIn("Livre Absent Un", page)
+            self.assertIn("<li>Livre Fictif F (Auteur Fictif)</li>", page)           # mapping_lab.py du dossier de code
+            self.assertNotIn("Livre Fictif A", page)
             self.assertIn("Décrire la règle", page)                                     # journal : dossier de contenu
             self.assertEqual(sorted(p.name for p in (run).iterdir() if p.name not in ("tools", "tests", "watch")), [])   # rien d'écrit dans le dossier de code
 

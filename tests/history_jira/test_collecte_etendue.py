@@ -1,14 +1,14 @@
-"""Collecte étendue de history_jira.py (R-58, tâches 6.1 et 6.3), sur le faux serveur de test_history_jira.py.
+"""Collecte étendue de history_jira.py (R-58, tâches 6.1 et 6.3 ; change database-only, D5), sur le faux serveur et la base fictive.
 
     bash tests/run_all.sh history_jira
 
-Le cache garde le drapeau terminé, la date de résolution (colonne Resolved de l'export), le dernier jour vu (le jour de la
-collecte), les transitions, les événements de fix versions et, si des étiquettes sont déclarées, ceux des étiquettes déclarées.
-Les autres champs, les étiquettes non déclarées et l'auteur ne sont jamais gardés. Les tickets résolus depuis plus que la
-durée de conservation ne sont pas interrogés. Données inventées, date du jour figée.
+La collecte lit dans Jira les événements de statut, de versions correctives et, si des étiquettes sont déclarées, d'étiquettes
+déclarées, ainsi que les valeurs courantes des versions et des étiquettes (l'export ne les demande plus). Elle écrit dans la base les
+transitions et les PÉRIODES d'étiquettes déclarées et de versions (history_common.construire_periodes), jamais l'auteur, les autres champs
+ni les étiquettes non déclarées. Les tickets résolus depuis plus que la durée de conservation ne sont pas interrogés. Données inventées,
+date du jour figée.
 """
 import datetime as dt
-import json
 import sys
 import unittest
 from pathlib import Path
@@ -40,6 +40,13 @@ def version(de: str | None, vers: str | None) -> dict:
     return {"field": "Fix Version", "fieldId": "fixVersions", "fromString": de, "toString": vers}
 
 
+def instant(texte: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(texte)
+
+
+CREE = dt.datetime(2026, 1, 2, 9, 0, tzinfo=base.PARIS)       # création des tickets de la base fictive
+
+
 class Etendue(base.Base):
     def setUp(self):
         super().setUp()
@@ -55,151 +62,158 @@ class Etendue(base.Base):
                        {"field": "assignee", "fieldId": "assignee", "fromString": None, "toString": base.AUTEUR}),
             historique("2026-03-02T09:00:00.000+0200", version(VERSION_1, None), version(None, VERSION_2)),
             historique("2026-03-03T09:00:00.000+0200", etiquettes(f"cyc-a {NON_DECLAREE}", NON_DECLAREE))])
+        self.faux.courantes[cle] = {"fixVersions": [VERSION_2], "labels": [NON_DECLAREE]}
         return [(cle, "Story", "Equipe Test", True)]
 
-    # --- Grouped mode -------------------------------------------------------------------------------------------
+    def periodes(self, nature: str, cle: str = "ABC-1") -> dict:
+        return self.magasin.periodes[nature].get(cle, {})
 
-    def test_mode_groupe_drapeau_deux_dates_et_transitions_a_trois_elements(self):
-        lignes = self.inventer(3, termines={"ABC-1"})
-        code, sortie = self.lancer("collect", self.ecrire_export(lignes))
+    # --- Mode groupé -----------------------------------------------------------------------------------------------
+
+    def test_mode_groupe_transitions_a_trois_elements_et_aucune_periode_sans_valeur(self):
+        self.ecrire_export(self.inventer(3, termines={"ABC-1"}))
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
         self.assertIn("Mode : groupé", sortie)
-        cache = self.cache()
-        for cle, entree in cache.items():
-            self.assertEqual(set(entree), {"termine", "resolu", "vu_le", "transitions"}, cle)   # ni version ni étiquette
-            self.assertEqual(entree["vu_le"], "2026-10-13")
+        for cle, entree in self.cache().items():
+            self.assertEqual(set(entree), {"transitions"}, cle)
             self.assertTrue(all(len(t) == 3 for t in entree["transitions"]))
-            self.assertNotIn("assignee", json.dumps(entree))
-        self.assertTrue(cache["ABC-1"]["termine"])
-        self.assertEqual(cache["ABC-1"]["resolu"], "2026-09-13T10:00:00")      # colonne Resolved de l'export (30 jours avant)
-        self.assertFalse(cache["ABC-2"]["termine"])
-        self.assertIsNone(cache["ABC-2"]["resolu"])
+            self.assertNotIn("assignee", repr(entree))
+        self.assertEqual(self.periodes("versions"), {})                       # aucune version courante, aucun événement
+        self.assertEqual(self.periodes("etiquettes"), {})                     # étiquettes non suivies sans bloc declared_labels
 
     def test_la_requete_groupee_demande_statut_etiquettes_et_fix_versions(self):
-        corps = []
-        original = base.hj.Client.json
-
-        def espion(client, methode, chemin, **kwargs):
-            if chemin == "/rest/api/3/changelog/bulkfetch":
-                corps.append(kwargs.get("json"))
-            return original(client, methode, chemin, **kwargs)
-        with mock.patch.object(base.hj.Client, "json", espion):
-            code, sortie = self.lancer("collect", self.ecrire_export(self.inventer(2)))
+        self.ecrire_export(self.inventer(2))
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
-        self.assertEqual(sorted(corps[0]["fieldIds"]), ["fixVersions", "labels", "status"])
+        corps = next(c for api, c in self.faux.corps if api == "/rest/api/3/changelog/bulkfetch")
+        self.assertEqual(sorted(corps["fieldIds"]), ["fixVersions", "labels", "status"])
 
-    # --- Étiquettes déclarées et fix versions --------------------------------------------------------------------
+    # --- Valeurs courantes et périodes ---------------------------------------------------------------------------------
 
-    def test_evenements_d_etiquette_declaree_et_de_fix_version(self):
+    def test_les_valeurs_courantes_sont_demandees_a_la_recherche(self):
         self.ecrire_reglages("scopes", extra=DECLAREES)
-        lignes = self.historique_riche()
-        code, sortie = self.lancer("collect", self.ecrire_export(lignes))
+        self.ecrire_export(self.inventer(2))
+        self.lancer("collect")
+        champs = [c["fields"] for api, c in self.faux.corps if api == "/rest/api/3/search/jql" and c["fields"] != ["key"]]
+        self.assertEqual(champs, [["fixVersions", "labels"]])
+        self.faux.corps.clear()
+        self.ecrire_reglages("scopes")                                         # sans étiquette déclarée : les étiquettes ne sont pas demandées
+        self.lancer("collect", "--refresh")
+        champs = [c["fields"] for api, c in self.faux.corps if api == "/rest/api/3/search/jql" and c["fields"] != ["key"]]
+        self.assertEqual(champs, [["fixVersions"]])
+
+    def test_periodes_d_etiquette_declaree_et_de_fix_version(self):
+        self.ecrire_reglages("scopes", extra=DECLAREES)
+        self.ecrire_export(self.historique_riche())
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
-        entree = self.cache()["ABC-1"]
-        self.assertEqual(entree["etiquettes"], [["2026-03-01T09:00:00.000+0200", "add", "cyc-a"],
-                                                ["2026-03-03T09:00:00.000+0200", "remove", "cyc-a"]])
-        self.assertEqual(entree["versions"], [["2026-03-02T09:00:00.000+0200", "remove", VERSION_1],
-                                              ["2026-03-02T09:00:00.000+0200", "add", VERSION_2]])
-        self.assertEqual(len(entree["transitions"]), 1)
-        self.assertNotIn(NON_DECLAREE, json.dumps(entree))
+        self.assertEqual(self.periodes("etiquettes"),
+                         {("cyc-a", instant("2026-03-01T09:00:00+02:00")): instant("2026-03-03T09:00:00+02:00")})
+        self.assertEqual(self.periodes("versions"),
+                         {(VERSION_1, CREE): instant("2026-03-02T09:00:00+02:00"),             # retirée sans ajout connu : posée à la création
+                          (VERSION_2, instant("2026-03-02T09:00:00+02:00")): None})            # ajoutée, toujours posée
+        self.assertEqual(len(self.cache()["ABC-1"]["transitions"]), 1)
+        self.assertNotIn(NON_DECLAREE, repr(self.magasin.periodes))
+        self.assertIn("historique écrit : 1 transitions ajoutées, 3 périodes écrites", sortie)
+
+    def test_valeur_courante_sans_evenement_ouvre_une_periode_a_la_creation(self):
+        self.ecrire_reglages("scopes", extra=DECLAREES)
+        self.faux.ajouter("ABC-1")
+        self.faux.courantes["ABC-1"] = {"fixVersions": [VERSION_2], "labels": ["cyc-b", NON_DECLAREE]}
+        self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)])
+        self.lancer("collect")
+        self.assertEqual(self.periodes("etiquettes"), {("cyc-b", CREE): None})
+        self.assertEqual(self.periodes("versions"), {(VERSION_2, CREE): None})
+
+    def test_une_periode_qui_n_est_plus_dans_jira_est_retiree(self):
+        self.ecrire_reglages("scopes", extra=DECLAREES)
+        self.faux.ajouter("ABC-1")
+        self.faux.courantes["ABC-1"] = {"fixVersions": [VERSION_1], "labels": []}
+        self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)])
+        self.lancer("collect")
+        self.assertEqual(self.periodes("versions"), {(VERSION_1, CREE): None})
+        self.faux.courantes["ABC-1"] = {"fixVersions": [VERSION_2], "labels": []}
+        self.lancer("collect", "--refresh")
+        self.assertEqual(self.periodes("versions"), {(VERSION_2, CREE): None})          # l'ensemble construit fait foi
 
     def test_cache_ajout_non_declare_et_retrait_declare(self):
-        """Scénario « Cache events » de jira-flow-labels : seul le retrait de l'étiquette déclarée est gardé."""
+        """Scénario « Cache events » de jira-flow-labels : seul le retrait de l'étiquette déclarée compte."""
         self.ecrire_reglages("scopes", extra=DECLAREES)
         self.faux.tickets["ABC-1"] = ("30001", [
             historique("2026-04-01T09:00:00.000+0200", etiquettes("cyc-b", f"cyc-b {NON_DECLAREE}")),
             historique("2026-04-02T09:00:00.000+0200", etiquettes(f"cyc-b {NON_DECLAREE}", NON_DECLAREE))])
-        code, sortie = self.lancer("collect", self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)]))
-        self.assertEqual(code, 0, sortie)
-        self.assertEqual(self.cache()["ABC-1"]["etiquettes"], [["2026-04-02T09:00:00.000+0200", "remove", "cyc-b"]])
-        self.assertNotIn(NON_DECLAREE, json.dumps(self.cache()))
+        self.faux.courantes["ABC-1"] = {"fixVersions": [], "labels": [NON_DECLAREE]}
+        self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)])
+        self.lancer("collect")
+        self.assertEqual(self.periodes("etiquettes"), {("cyc-b", CREE): instant("2026-04-02T09:00:00+02:00")})
+        self.assertNotIn(NON_DECLAREE, repr(self.magasin.periodes))
 
     def test_etiquettes_remplacees_difference_d_ensembles(self):
         self.ecrire_reglages("scopes", extra=DECLAREES)
-        self.faux.tickets["ABC-1"] = ("30001", [
-            historique("2026-04-01T09:00:00.000+0200", etiquettes("cyc-a x", "cyc-b x"))])
-        self.lancer("collect", self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)]))
-        self.assertEqual(self.cache()["ABC-1"]["etiquettes"], [["2026-04-01T09:00:00.000+0200", "remove", "cyc-a"],
-                                                               ["2026-04-01T09:00:00.000+0200", "add", "cyc-b"]])
+        self.faux.tickets["ABC-1"] = ("30001", [historique("2026-04-01T09:00:00.000+0200", etiquettes("cyc-a x", "cyc-b x"))])
+        self.faux.courantes["ABC-1"] = {"fixVersions": [], "labels": ["cyc-b", "x"]}
+        self.ecrire_export([("ABC-1", "Story", "Equipe Test", False)])
+        self.lancer("collect")
+        self.assertEqual(self.periodes("etiquettes"),
+                         {("cyc-a", CREE): instant("2026-04-01T09:00:00+02:00"),
+                          ("cyc-b", instant("2026-04-01T09:00:00+02:00")): None})
 
     def test_sans_etiquette_declaree_aucune_etiquette_n_est_gardee(self):
-        lignes = self.historique_riche()
-        code, sortie = self.lancer("collect", self.ecrire_export(lignes))
+        self.ecrire_export(self.historique_riche())
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
-        entree = self.cache()["ABC-1"]
-        self.assertNotIn("etiquettes", entree)
-        self.assertEqual(len(entree["versions"]), 2)                          # les fix versions restent gardées
-        self.assertNotIn("cyc-a", json.dumps(entree))
-        self.assertNotIn(NON_DECLAREE, json.dumps(entree))
+        self.assertEqual(self.periodes("etiquettes"), {})
+        self.assertEqual(len(self.periodes("versions")), 2)                   # les fix versions restent gardées
+        self.assertNotIn("cyc-a", repr(self.magasin.periodes))
+        self.assertNotIn(NON_DECLAREE, repr(self.magasin.periodes))
 
-    def test_mode_ticket_par_ticket_garde_les_memes_evenements(self):
+    def test_mode_ticket_par_ticket_donne_les_memes_periodes(self):
         self.faux.groupe = False
         self.ecrire_reglages("scopes", extra=DECLAREES)
-        lignes = self.historique_riche()
-        code, sortie = self.lancer("collect", self.ecrire_export(lignes))
+        self.ecrire_export(self.historique_riche())
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
         self.assertIn("Mode : ticket par ticket", sortie)
-        entree = self.cache()["ABC-1"]
-        self.assertEqual([e[1:] for e in entree["etiquettes"]], [["add", "cyc-a"], ["remove", "cyc-a"]])
-        self.assertEqual([e[1:] for e in entree["versions"]], [["remove", VERSION_1], ["add", VERSION_2]])
-        self.assertNotIn(NON_DECLAREE, json.dumps(entree))
+        self.assertEqual([(valeur, fin is None) for (valeur, _), fin in self.periodes("versions").items()],
+                         [(VERSION_1, False), (VERSION_2, True)])
+        self.assertEqual(list(self.periodes("etiquettes")), [("cyc-a", instant("2026-03-01T09:00:00+02:00"))])
 
-    def test_rien_de_sensible_dans_la_console_ni_les_fichiers(self):
+    def test_rien_de_sensible_dans_la_console_ni_la_base(self):
         self.ecrire_reglages("scopes", extra=DECLAREES)
-        lignes = self.historique_riche()
-        code, sortie = self.lancer("collect", self.ecrire_export(lignes), "--team", "Equipe Test")
+        self.ecrire_export(self.historique_riche())
+        code, sortie = self.lancer("collect", "--team", "Equipe Test")
         self.assertEqual(code, 0, sortie)
         self.assertIn("transitions de statut : 1 ;", sortie)
-        ecrit = self.tous_les_fichiers()
+        ecrit = self.tous_les_fichiers() + repr(self.magasin.transitions) + repr(self.magasin.periodes)
         for texte in (sortie, ecrit):
             for interdit in (base.JETON, base.AUTEUR, "p@example.org", "assignee", base.EMAIL, NON_DECLAREE):
                 self.assertNotIn(interdit, texte)
         for interdit in ("ABC-", "Equipe Test", "cyc-a", VERSION_1, VERSION_2, self.url):
             self.assertNotIn(interdit, sortie)
 
-    # --- Cache existant -----------------------------------------------------------------------------------------
-
-    def test_ticket_en_cache_et_termine_garde_son_entree_et_son_dernier_jour_vu_est_mis_a_jour(self):
-        lignes = self.inventer(2, termines={"ABC-1"})
-        export = self.ecrire_export(lignes)
-        self.lancer("collect", export)
-        cache = self.cache()
-        cache["ABC-1"]["vu_le"] = "2026-09-01"
-        cache["ABC-1"]["versions"] = [["2026-03-02T09:00:00.000+0200", "add", VERSION_1]]
-        (self.ws / "Flux-Lab" / "historique" / "transitions.json").write_text(json.dumps(cache), encoding="utf-8")
-        self.faux.appels.clear()
-        self.assertEqual(self.lancer("collect", export)[0], 0)
-        entree = self.cache()["ABC-1"]
-        self.assertEqual(entree["vu_le"], "2026-10-13")
-        self.assertEqual(entree["versions"], [["2026-03-02T09:00:00.000+0200", "add", VERSION_1]])
-        self.assertEqual(entree["transitions"], cache["ABC-1"]["transitions"])
-
-    def test_tout_en_cache_et_termine_aucun_appel_meme_avec_un_ancien_cache(self):
-        lignes = self.inventer(2, termines={"ABC-1", "ABC-2"})
-        export = self.ecrire_export(lignes)
-        self.lancer("collect", export)
-        cache = {cle: {"termine": v["termine"], "transitions": v["transitions"]} for cle, v in self.cache().items()}
-        (self.ws / "Flux-Lab" / "historique" / "transitions.json").write_text(json.dumps(cache), encoding="utf-8")
-        self.faux.appels.clear()
-        code, sortie = self.lancer("collect", export)
-        self.assertEqual(code, 0, sortie)
-        self.assertEqual(self.faux.appels, [])
-        self.assertEqual(self.cache()["ABC-1"]["resolu"], "2026-09-13T10:00:00")   # complété sans interroger Jira
+    def test_l_ensemble_des_periodes_se_remplace_dans_la_meme_ecriture(self):
+        self.ecrire_reglages("scopes", extra=DECLAREES)
+        self.ecrire_export(self.historique_riche())
+        self.magasin.echec = RuntimeError("base")
+        code, sortie = self.lancer("collect")
+        self.assertEqual(code, 1, sortie)
+        self.assertEqual((self.magasin.periodes, self.cache()), ({"etiquettes": {}, "versions": {}}, {}))
 
     # --- Conservation (6.3) ---------------------------------------------------------------------------------------
 
-    def export_ancien(self, jours: int, cles=("ABC-1",)) -> str:
-        """Tickets résolus il y a `jours` jours (plus un ticket ouvert)."""
-        resolu = (AUJOURD_HUI - dt.timedelta(days=jours)).strftime("%d/%b/%Y") + " 10:00"
-        chemin = self.ws / "ancien.csv"
-        chemin.write_text("Issue key,Issue Type,Status,Resolved,Team\n" + "".join(
-            f"{c},Story,Done,{resolu},Equipe Test\n" for c in cles) + "ABC-9,Story,Open,,Equipe Test\n", encoding="utf-8")
-        return str(chemin)
+    def tickets_anciens(self, jours: int, cles=("ABC-1",)):
+        """Tickets résolus il y a `jours` jours (plus un ticket ouvert ABC-9)."""
+        for cle in (*cles, "ABC-9"):
+            self.faux.ajouter(cle)
+        self.ecrire_export([(c, "Story", "Equipe Test", True) for c in cles] + [("ABC-9", "Story", "Equipe Test", False)])
+        resolu = dt.datetime.combine(AUJOURD_HUI - dt.timedelta(days=jours), dt.time(10, 0), tzinfo=base.PARIS)
+        for cle in cles:
+            self.magasin.stock[cle]["resolu"] = resolu
 
     def test_ticket_au_dela_de_la_conservation_n_est_pas_interroge_et_est_compte(self):
-        for cle in ("ABC-1", "ABC-9"):
-            self.faux.ajouter(cle)
-        code, sortie = self.lancer("collect", self.export_ancien(400))
+        self.tickets_anciens(400)
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
         self.assertIn("tickets au-delà de la conservation, ignorés : 1", sortie)
         self.assertEqual(set(self.cache()), {"ABC-9"})                    # seul le ticket ouvert est collecté
@@ -207,47 +221,42 @@ class Etendue(base.Base):
         self.assertNotIn("ABC-", sortie)
 
     def test_ticket_au_dela_de_la_conservation_en_anglais(self):
-        self.faux.ajouter("ABC-9")
-        code, sortie = self.lancer("collect", self.export_ancien(400), "--language", "en")
+        self.tickets_anciens(400)
+        code, sortie = self.lancer("collect", "--language", "en")
         self.assertIn("tickets past retention, skipped: 1", sortie)
 
     def test_aucun_appel_quand_tous_les_tickets_sont_au_dela(self):
-        chemin = self.export_ancien(400, cles=("ABC-1", "ABC-2"))
-        texte = Path(chemin).read_text(encoding="utf-8").replace("ABC-9,Story,Open,,Equipe Test\n", "")
-        Path(chemin).write_text(texte, encoding="utf-8")
-        code, sortie = self.lancer("collect", chemin)
+        self.tickets_anciens(400, cles=("ABC-1", "ABC-2"))
+        del self.magasin.stock["ABC-9"]                                    # plus de ticket ouvert
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
         self.assertIn("ignorés : 2", sortie)
         self.assertEqual(self.faux.appels, [])
-        self.assertFalse((self.ws / "Flux-Lab" / "historique" / "transitions.json").exists())
+        self.assertEqual(self.cache(), {})
 
     def test_ticket_dans_la_conservation_est_interroge(self):
-        for cle in ("ABC-1", "ABC-9"):
-            self.faux.ajouter(cle)
-        code, sortie = self.lancer("collect", self.export_ancien(300))
+        self.tickets_anciens(300)
+        code, sortie = self.lancer("collect")
         self.assertIn("ignorés : 0", sortie)
         self.assertEqual(set(self.cache()), {"ABC-1", "ABC-9"})
 
     def test_duree_reglable(self):
         self.ecrire_reglages("scopes", extra="retention:\n  period_days: 100\n")
-        for cle in ("ABC-1", "ABC-9"):
-            self.faux.ajouter(cle)
-        code, sortie = self.lancer("collect", self.export_ancien(150))
+        self.tickets_anciens(150)
+        code, sortie = self.lancer("collect")
         self.assertIn("ignorés : 1", sortie)
 
-    def test_entree_de_cache_existante_d_un_ticket_hors_regle_n_est_pas_supprimee(self):
-        for cle in ("ABC-1", "ABC-9"):
-            self.faux.ajouter(cle)
-        (self.ws / "Flux-Lab" / "historique").mkdir()
-        (self.ws / "Flux-Lab" / "historique" / "transitions.json").write_text(
-            json.dumps({"ABC-1": {"termine": True, "transitions": []}}), encoding="utf-8")
-        self.lancer("collect", self.export_ancien(400))
-        self.assertIn("ABC-1", self.cache())                              # la suppression est le fait de la purge
+    def test_historique_deja_stocke_d_un_ticket_hors_regle_n_est_pas_supprime(self):
+        self.tickets_anciens(400)
+        self.magasin.transitions["ABC-1"] = [(instant("2026-01-05T10:00:00+01:00"), "Open", "Done")]
+        self.magasin.stock["ABC-1"]["a_historique"] = True
+        self.lancer("collect")
+        self.assertIn("ABC-1", self.cache())                              # la suppression est le fait de la purge de flow_retention.py
 
     def test_duree_au_dela_d_un_an_refusee_avant_tout_appel(self):
         self.ecrire_reglages("scopes", extra="retention:\n  period_days: 400\n")
-        self.faux.ajouter("ABC-9")
-        code, sortie = self.lancer("collect", self.export_ancien(10))
+        self.tickets_anciens(10)
+        code, sortie = self.lancer("collect")
         self.assertEqual(code, 1, sortie)
         self.assertIn("retention.period_days", sortie)
         self.assertNotIn("400", sortie)

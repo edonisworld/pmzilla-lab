@@ -4,22 +4,96 @@
 #
 # Pour chaque référence poussée vers refs/heads/main :
 #   - l'empreinte complète égale l'arbre du commit poussé : le push passe, sans lancer de test ;
+#   - sinon, l'empreinte allégée (pmzilla-light-ok, écrite par tools/finish_branch.sh après un passage allégé vert, change light-spec-finish D5)
+#     égale l'arbre poussé ET le hook revérifie par tools/light_finish.sh : les chemins que le commit poussé change depuis son premier parent
+#     sont tous des fichiers ordinaires sous openspec/, et l'arbre du premier parent est enregistré comme validé (pmzilla-main-validated,
+#     moins de 8 jours, même signature d'environnement, calculée par tools/finish_env.sh --main-signature ; un calcul impossible refuse l'empreinte allégée) : le push passe, sans lancer de test. Le hook n'écrit jamais
+#     ni l'une ni l'autre de ces deux fiches ;
 #   - sinon, si l'arbre de travail est propre et que HEAD est le commit poussé : le hook lance lui-même le lanceur complet
 #     (bash tests/run_all.sh) et accepte seulement s'il réussit ;
 #   - sinon : refus « pre-push : main exige une exécution complète réussie de l'arbre poussé ».
-# Les autres références (branches de travail, étiquettes) passent sans contrôle ; la suppression de main aussi.
+# Les autres références (branches de travail, étiquettes) passent sans ce contrôle des tests ; la suppression de main aussi.
 # Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP_GREEN_CHECK=1 git push ...
 # Le hook ne lance jamais de test sur un arbre autre que celui qui est poussé.
 # PRE_PUSH_RUNNER remplace la commande du lanceur (tests de ce hook).
-[ -n "${PMZILLA_SKIP_GREEN_CHECK:-}" ] && exit 0
+#
+# Contrôle des noms dans les messages qui partent (fix/sorties-et-masquage, décision de l'auteur du 2026-10-21, point 3), avant celui des
+# tests et pour TOUTE référence poussée (branches, étiquettes, main) : les messages des commits qui partent, c'est-à-dire ceux du commit
+# poussé absents des références de suivi du distant (git log <local> --not --remotes=<distant>, plus le sommet distant quand il est connu
+# localement : plage distant..local pour une branche existante, tous les commits absents du distant pour une nouvelle référence), sont lus
+# par tools/commit_names_scan.py (à côté de ce hook, liens suivis), avec les deux listes et les règles du crochet pre-commit. Un nom trouvé :
+# refus avec une ligne « pre-push : nom sensible dans le message du commit <sha court> » par commit touché, le compte « <n> commit(s) lu(s),
+# <m> dont le message contient un nom » et la phrase « pre-push : push refusé : nom sensible dans un message qui part… », jamais le nom ni le
+# message. Fermé par défaut : liste absente ou illisible, outil absent ou en erreur, commit illisible : refus. Une suppression (rien ne part) n'est pas contrôlée. PMZILLA_SKIP_GREEN_CHECK ne lève jamais ce refus.
+# Revue du 2026-10-21 : le message d'une étiquette annotée poussée est lu aussi (git cat-file tag, sans l'en-tête, texte entier : « pre-push :
+# nom sensible dans le message de l'étiquette annotée <sha court> ») ; un distant donné par adresse (pas un distant connu de git remote) n'a
+# aucune référence de suivi : seul le sommet distant, quand il est connu localement, est exclu (sinon tout l'historique du commit poussé
+# est relu), et le hook le dit (« distant donné par adresse ») ; seules les lignes de l'outil (« commit_names_scan : … ») sont montrées,
+# jamais une trace ; l'outil et git cat-file lisent /dev/null, jamais l'entrée du crochet (qui porte les références restantes).
+distant=${1:-origin}
+if git config --get "remote.$distant.url" >/dev/null 2>&1 </dev/null; then distant_nomme=1; else distant_nomme=0; fi
 zero=0000000000000000000000000000000000000000
 refuse=0
+refuse_noms=0
+lignes_outil() {   # sortie de l'outil -> seules ses lignes, préfixe du crochet, « nom » devient « nom sensible »
+  printf '%s\n' "$1" | sed -n 's/^commit_names_scan : /pre-push : /p' | sed 's/^pre-push : nom dans/pre-push : nom sensible dans/' >&2
+}
+avertissements_outil() {   # code 0 : seulement l'avertissement de la liste vide, s'il y en a un
+  printf '%s\n' "$1" | sed -n 's/^commit_names_scan : \(garde-fou.*\)$/pre-push : \1/p' >&2
+}
+# Le module de la décision allégée est à côté de ce hook (lien relatif : tools/hooks/pre-push -> tools/light_finish.sh) ; absent, l'empreinte allégée n'est pas acceptée.
+chemin_hook=$0
+while [ -L "$chemin_hook" ]; do
+  cible=$(readlink "$chemin_hook")
+  case "$cible" in /*) chemin_hook=$cible ;; *) chemin_hook=$(dirname "$chemin_hook")/$cible ;; esac
+done
+LIGHT_FINISH_DIR=$(cd "$(dirname "$chemin_hook")/.." 2>/dev/null && pwd)
+module_leger=0
+if [ -n "$LIGHT_FINISH_DIR" ] && [ -f "$LIGHT_FINISH_DIR/light_finish.sh" ]; then
+  . "$LIGHT_FINISH_DIR/light_finish.sh" && module_leger=1
+fi
 while read -r ref_locale sha_local ref_distante sha_distant; do
+  [ "$sha_local" = "$zero" ] && continue   # suppression : rien ne part, aucun contrôle
+  if [ -z "$LIGHT_FINISH_DIR" ] || [ ! -f "$LIGHT_FINISH_DIR/commit_names_scan.py" ]; then
+    echo "pre-push : outil de contrôle des noms introuvable (tools/commit_names_scan.py)" >&2; refuse_noms=1
+  else
+    set -- "$sha_local" --not
+    [ "$distant_nomme" -eq 1 ] && set -- "$@" --remotes="$distant"
+    if [ "$sha_distant" != "$zero" ] && git cat-file -e "$sha_distant^{commit}" 2>/dev/null </dev/null; then set -- "$@" "$sha_distant"; fi
+    [ "$distant_nomme" -eq 0 ] && echo "pre-push : distant donné par adresse (aucune référence de suivi) : seul le sommet distant connu est exclu, sinon tout l'historique du commit poussé est relu" >&2
+    sortie_noms=$(python3 "$LIGHT_FINISH_DIR/commit_names_scan.py" -- "$@" 2>&1 </dev/null); code_noms=$?
+    case $code_noms in
+      0) avertissements_outil "$sortie_noms" ;;
+      1|2) lignes_outil "$sortie_noms"; refuse_noms=1 ;;
+      *) lignes_outil "$sortie_noms"
+         echo "pre-push : les messages qui partent vers ${ref_distante} n'ont pas pu être vérifiés (code $code_noms)" >&2; refuse_noms=1 ;;
+    esac
+    if [ "$(git cat-file -t "$sha_local" 2>/dev/null </dev/null)" = tag ]; then   # étiquette annotée : son propre message part aussi
+      court=$(git rev-parse --short "$sha_local" </dev/null)
+      sortie_etiquette=$(git cat-file tag "$sha_local" </dev/null | sed '1,/^$/d' | python3 "$LIGHT_FINISH_DIR/commit_names_scan.py" --message - --sans-ciseaux 2>&1)
+      code_etiquette=$?
+      case $code_etiquette in
+        0) ;;
+        1) echo "pre-push : nom sensible dans le message de l'étiquette annotée $court" >&2; lignes_outil "$sortie_etiquette"; refuse_noms=1 ;;
+        *) lignes_outil "$sortie_etiquette"
+           echo "pre-push : le message de l'étiquette annotée $court n'a pas pu être vérifié (code $code_etiquette)" >&2; refuse_noms=1 ;;
+      esac
+    fi
+  fi
+  [ -n "${PMZILLA_SKIP_GREEN_CHECK:-}" ] && continue   # le contournement ne saute que le contrôle des tests de main
   [ "$ref_distante" = "refs/heads/main" ] || continue
-  [ "$sha_local" = "$zero" ] && continue
   arbre=$(git rev-parse "$sha_local^{tree}" 2>/dev/null) || { refuse=1; continue; }
   fichier=$(git rev-parse --git-path pmzilla-run-all-ok)
   if [ -f "$fichier" ] && [ "$(cat "$fichier")" = "$arbre" ]; then continue; fi
+  if [ "$module_leger" -eq 1 ]; then   # empreinte allégée revérifiée : même arbre, openspec/ seulement, premier parent validé
+    fichier_leger=$(git rev-parse --git-path pmzilla-light-ok)
+    if [ -f "$fichier_leger" ] && [ "$(cat "$fichier_leger")" = "$arbre" ]; then
+      premier_parent=$(git rev-parse -q --verify "$sha_local^1" 2>/dev/null) \
+        && light_paths_ok "$premier_parent" "$sha_local" \
+        && [ "$(main_validated "$(git rev-parse "$premier_parent^{tree}")")" = ok ] \
+        && continue
+    fi
+  fi
   if [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$sha_local" ]; then
     racine=$(git rev-parse --show-toplevel)
     echo "pre-push : aucune empreinte complète pour l'arbre poussé : lancement complet des tests" >&2
@@ -27,8 +101,10 @@ while read -r ref_locale sha_local ref_distante sha_distant; do
   fi
   refuse=1
 done
+if [ "$refuse_noms" -ne 0 ]; then
+  echo "pre-push : push refusé : nom sensible dans un message qui part, ou messages non vérifiables. Reformule ces messages avec une désignation générique (voir CLAUDE.md, Confidentialité)." >&2
+fi
 if [ "$refuse" -ne 0 ]; then
   echo "pre-push : main exige une exécution complète réussie de l'arbre poussé" >&2
-  exit 1
 fi
-exit 0
+[ "$refuse_noms" -eq 0 ] && [ "$refuse" -eq 0 ]

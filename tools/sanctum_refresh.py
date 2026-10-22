@@ -47,7 +47,7 @@ CHEMIN_ABSOLU = re.compile(r"/(?:Users|home)/[^/\s]+/")
 
 
 def verifier_sans_chemin_absolu(neuf: Path, temporaire: Path) -> None:
-    """Les modèles ne portent aucun chemin absolu (ni celui du dossier temporaire, ni /Users/<nom>/) : sinon, rien n'est écrit."""
+    """Les modèles ne portent aucun chemin absolu (ni celui du dossier temporaire, ni un dossier personnel) : sinon, rien n'est écrit."""
     anciens = {str(temporaire), str(temporaire.resolve())}
     sources = [neuf / nom for nom in FICHIERS] + [f for sous in DOSSIERS for f in sorted((neuf / sous).rglob("*"))]
     fautifs = []

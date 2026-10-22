@@ -71,15 +71,6 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (ManuelEtApi, Ancienne
 - **WHEN** two tickets wait on tickets of one project missing from the export
 - **THEN** the unknown waits list that project with the count two and the outside-export total is two
 
-### Requirement: Manual and API exports give the same map
-The system SHALL produce the same report from an export in the manual layout and from the API export for the same tickets, apart from the export information and the name.
-
-Source: tests/dependencies_jira/test_dependencies_jira.py (ManuelEtApi.test_meme_carte_depuis_le_csv_manuel_et_le_csv_de_l_api)
-
-#### Scenario: Same data in both layouts
-- **WHEN** both layouts are computed
-- **THEN** the reports are equal once the export and name keys are removed
-
 ### Requirement: No key nor ticket name in outputs
 The system SHALL NOT write ticket keys in the diagnosis output or in the Markdown or JSON reports, and SHALL NOT write team names in the diagnosis output (team names appear in the reports); the `--keys` option SHALL show blockages with keys on the console only.
 
@@ -94,34 +85,21 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (ManuelEtApi, AretesDu
 - **THEN** the console shows lines of the form "ticket (team) waits for ticket (team, state)" and the files stay key-free
 
 ### Requirement: Database source
-The system SHALL read the export files by default (no source, or `csv`) and SHALL accept the option `--source db` for the dependency report, reading the tickets and links from the database instead of the export files (no CSV file read, settings passed to the database reader), and this SHALL be the target path for the dependency report. With the database source the source list of the report SHALL name the database ("base" in French, "database" in English) instead of file names. An unknown source SHALL stop with a message naming the value and the allowed values ("csv, db"). Files given with the database source SHALL be refused before any connection, with "no CSV file may be given" (French equivalent in French). A database error SHALL stop with the database-read message followed by the error detail. The report SHALL keep the same content and the same confidentiality rules (no ticket key, no title) whatever the source.
+The system SHALL read the tickets and links only from the database, with the settings passed to the database reader, and the source list of the report SHALL name the database ("base" in French, "database" in English). The retired option `--source`, whatever its value, SHALL stop with exit code 2 and the key phrase of design D6, and an export file given as argument SHALL stop with exit code 2 and the key phrase of design D6, before any connection. A database error SHALL stop with the database-read message followed by the error detail. The report SHALL keep the same confidentiality rules (no ticket key, no title).
 
-Source: tests/dependencies_jira/test_source.py; end-to-end parity with a database: tests/flow_store/test_sources_scripts.py
+Source: tests/dependencies_jira/test_lecteur_base.py (Lecture, Refus); tests/flow_store/test_erreurs_scripts.py (Erreurs)
 
 #### Scenario: Database source
-- **WHEN** `compute` runs with `--source db`
-- **THEN** the dependencies are read from the database, no export file is read, and the source is named "database" in English
+- **WHEN** `compute` runs with no option
+- **THEN** the dependencies are read from the database, no file is read, and the source is named "database" in English
 
 #### Scenario: Files with database
-- **WHEN** CSV files are passed with the database source
-- **THEN** the run stops with "no CSV file may be given" and no connection is attempted
+- **WHEN** an export file is given, with or without `--source db`
+- **THEN** the run stops with exit code 2, no connection is attempted, and the output holds "--source is retired: the database is the only source" when the option is given, "export files are no longer read: the database is the only source" otherwise
 
 #### Scenario: Unknown source
 - **WHEN** `--source ftp` is given with `--language en`
-- **THEN** the message names the unknown value "ftp" and the allowed values "csv, db"
-
-### Requirement: Merging several exports and truncation hint
-The system SHALL merge several exports by key, and SHALL warn in the diagnosis and record in the report when the ticket count is a round number (a sign of a truncated export; not for the database source). A missing key column SHALL stop with a message.
-
-Source: tests/dependencies_jira/test_dependencies_jira.py (ManuelEtApi)
-
-#### Scenario: Round number
-- **WHEN** an export holds a round number of tickets
-- **THEN** the diagnosis warns that a round number suggests truncation and the report lists one truncated export
-
-#### Scenario: Missing key column
-- **WHEN** the export has no key column
-- **THEN** the exit code is 1 and the message says the column is absent
+- **THEN** the message is "--source is retired: the database is the only source" and the exit code is 2
 
 ### Requirement: Project scope
 The system SHALL, with `--scope` (or a settings list), keep dependencies of which at least one side belongs to the listed projects, report the number of tickets in scope, let the option replace the setting, and let the word "all" disable it. The diagnosis SHALL state the scope.
@@ -137,13 +115,21 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Perimetre)
 - **THEN** all links are counted
 
 ### Requirement: Exclusions
-The system SHALL count dependencies of excluded projects separately (waits for the export and awaited by the export) and remove them from the matrices.
+The system SHALL count dependencies of the projects excluded from the map separately (waits for the export and awaited by the export) and remove them from the matrices. The list in force SHALL be, in this order, the exclusion option, else the map's own exclusion setting when present (an empty list excluding nothing), else the shared excluded-projects setting. The system SHALL NOT merge the two settings into one list.
 
-Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
+Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions); precedence: tests/dependencies_jira/test_exclusion_carte.py (to be written, task 3.1)
 
 #### Scenario: Excluded project
 - **WHEN** a project is excluded
 - **THEN** its links appear in the excluded list and not in the dependency count or the matrix
+
+#### Scenario: Map setting over the shared setting
+- **WHEN** the shared setting excludes one project and the map's setting excludes another
+- **THEN** only the project of the map's setting leaves the matrices, and the links of the other are counted in them
+
+#### Scenario: Empty map setting
+- **WHEN** the map's setting is present with an empty list and the shared setting excludes a project
+- **THEN** no project is excluded from the map
 
 ### Requirement: Portfolio decomposition links
 The system SHALL leave decomposition links involving a portfolio-level ticket type out of the main map (counted by type and mapped in a separate portfolio matrix when both ends are of that kind), and SHALL refuse the former setting name for portfolio types (exit code 1, naming the current one).
@@ -228,6 +214,66 @@ Source: tests/dependencies_jira/test_chaines_distinctives.py; tests/dependencies
 #### Scenario: Keys option
 - **WHEN** `compute` runs with the keys option on data holding a distinctive label and version
 - **THEN** the console lines hold keys, teams and states only
+
+### Requirement: Map exclusion setting
+The system SHALL apply the map's own exclusion setting, project keys compared without case or surrounding spaces, to the map only, in every view. Without it, the matrices, counts, lead-time groups and old blockages SHALL equal those of the shared setting alone. The system SHALL NOT write the values of the setting in the source line.
+
+Source: tests/dependencies_jira/test_exclusion_carte.py; tests/dependencies_jira/test_lecteur_base.py (ExclusionAvecLaBase)
+
+#### Scenario: No map setting
+- **WHEN** the settings hold only the shared exclusion list
+- **THEN** the matrices, counts, lead-time groups and old blockages equal those of the tool before the exclusion change
+
+#### Scenario: Project view
+- **WHEN** `compute --by project` runs with the map's setting
+- **THEN** the projects of that setting are absent from the project matrix and counted in the excluded list
+
+#### Scenario: Database source
+- **WHEN** the report is computed from the database with the map's setting
+- **THEN** the report applies that list, and its source line names the map setting without its values
+
+### Requirement: Exclusion option
+The system SHALL accept `--exclude` on `diagnose` and `compute`: comma-separated project keys, empty entries ignored, or the word `none` or `aucun` to exclude nothing. The option SHALL replace both settings for the run and SHALL NOT write to the settings file. An option holding no key SHALL stop with exit code 2 and the empty-exclusion key phrase of design D4, before any export or database read, writing no report.
+
+Source: tests/dependencies_jira/test_exclusion_carte.py (to be written, task 3.1)
+
+#### Scenario: Option over the settings
+- **WHEN** both settings exclude projects and `--exclude` names another one
+- **THEN** only the project named by the option leaves the matrices, and the settings file is unchanged
+
+#### Scenario: Nothing excluded
+- **WHEN** `--exclude none` is given
+- **THEN** no project is excluded and the source line says none, from the option
+
+#### Scenario: Empty option
+- **WHEN** `--exclude ","` is given with `--language en`
+- **THEN** the exit code is 2, the output holds "--exclude: no project key", no export is read and no report is written
+
+### Requirement: Exclusion source stated
+The system SHALL print in the diagnosis and write in the Markdown report the source line of design D4, with the number of projects in force and its source (option, map setting or shared setting), whenever a list is in force, and SHALL add that source and that number to the JSON report. With no option, no map setting and an empty shared list, it SHALL write no such line. The line SHALL NOT name a project key.
+
+Source: tests/dependencies_jira/test_exclusion_carte.py (to be written, task 3.1)
+
+#### Scenario: Shared setting
+- **WHEN** only the shared setting excludes two projects and `--language en` is given
+- **THEN** the diagnosis and the report hold "Projects excluded from the map: 2 (source: setting excluded_projects, shared with the flow report)"
+
+#### Scenario: Map setting in French
+- **WHEN** the map's setting excludes one project
+- **THEN** the report holds "Projets exclus de la carte : 1 (source : réglage dependency_excluded_projects)" and the JSON source is the map setting
+
+#### Scenario: No exclusion
+- **WHEN** no option, no map setting and an empty shared list are used
+- **THEN** no source line is written and the JSON source says none
+
+### Requirement: Dependency tool refused inside a Claude Code session
+The system SHALL refuse `diagnose` and `compute` to start, with the exit code and the session key phrase of design D6, when the variable that Claude Code sets in its shells is present, before reading any setting (design D12). It SHALL NOT offer an option that bypasses that refusal.
+
+Source: tests/dependencies_jira/test_lecteur_base.py (Refus: test_session_claude_code_refusee_code_3_avant_le_reste, test_session_variable_vide_refuse_aussi, test_main_refuse_avant_de_lire_les_reglages)
+
+#### Scenario: Started from a session
+- **WHEN** `diagnose` starts with the variable present
+- **THEN** the output holds "Refused inside a Claude Code session", nothing is read and no report is written
 
 ## Open questions
 

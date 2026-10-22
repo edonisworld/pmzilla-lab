@@ -147,5 +147,44 @@ class FonctionsPartagees(unittest.TestCase):
             self.assertNotIn(copie, hook)
 
 
+class MotsCourants(unittest.TestCase):
+    """Règle des mots courants, partagée par migrate-teams et le hook (change names-and-team-review, D2, D3)."""
+
+    def test_mot_courant_casse_et_accents_ignores(self):
+        for mot in ("platform", "PLATFORM", "Delivery", "Qualité", "plateforme", "release", "discovery", "integration"):
+            with self.subTest(mot=mot):
+                self.assertTrue(sn.is_common_word(mot))
+
+    def test_mot_inconnu_n_est_pas_courant(self):
+        for mot in ("Zorblax", "quimbo", ""):
+            with self.subTest(mot=mot):
+                self.assertFalse(sn.is_common_word(mot))
+
+    def test_est_distinctif(self):
+        self.assertTrue(sn.is_distinctive("Zorblx"))
+        self.assertFalse(sn.is_distinctive("Zorbl"))                     # trop court
+        self.assertFalse(sn.is_distinctive("Équipe"))
+        self.assertFalse(sn.is_distinctive("Delivery Platform"))
+        self.assertFalse(sn.is_distinctive("ABC DEF GHI"))               # mots de trois lettres ou moins seulement
+        self.assertTrue(sn.is_distinctive("api zorblax"))
+        self.assertEqual(sn.MIN_LENGTH, 6)
+
+    def test_lignes_de_mots_courants(self):
+        texte = "# commentaire\n\nZorblax Quimbo\nPlatform\n  Delivery Quality  \nabc\nteam\nZORBLAX\nPlatform Zorblax\n"
+        self.assertEqual(sn.common_word_lines(texte), [4, 5, 7])
+
+    def test_lignes_renvoient_des_numeros_jamais_des_entrees(self):
+        resultat = sn.common_word_lines("Platform\nZorblax\n")
+        self.assertEqual(resultat, [1])
+        self.assertTrue(all(isinstance(n, int) for n in resultat))
+
+    def test_entree_de_trois_caracteres_ou_moins_jamais_signalee(self):
+        self.assertEqual(sn.common_word_lines("api\nops\nA&B\n"), [])
+
+    def test_bom_et_liste_vide(self):
+        self.assertEqual(sn.common_word_lines("﻿Platform\n"), [1])
+        self.assertEqual(sn.common_word_lines(""), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,11 +3,15 @@
     uv run --with pyyaml python -m unittest discover -s tests/doctor -v
 """
 import json
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import aide_doctor  # noqa: E402
 from aide_doctor import DOCTOR, RACINE, TOOLS, Labo  # noqa: E402
 
 import doctor  # noqa: E402
@@ -69,17 +73,58 @@ class Codes(unittest.TestCase):
 
 
 class Ligne(Labo):
+    def test_le_lancement_courant_appelle_main_dans_le_processus(self):
+        with mock.patch.object(doctor, "main", wraps=doctor.main) as main, \
+                mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+            p = self.lancer("--quiet")
+        main.assert_called_once_with(["--quiet"])
+        self.assertEqual(p.returncode, 0)
+        self.assertTrue(p.stdout.strip().endswith("doctor : tout va bien"))
+        self.assertFalse([c for c in run.call_args_list if str(DOCTOR) in map(str, c.args[0])])
+
+    def test_le_depot_du_laboratoire_est_copie_d_un_modele(self):
+        shutil.rmtree(self.run.parent)
+        with mock.patch.object(aide_doctor, "git", wraps=aide_doctor.git) as git:
+            self._depot_principal()
+        verbes = {c.args[1] for c in git.call_args_list}
+        self.assertFalse(verbes & {"init", "add", "commit"}, verbes)
+        self.assertEqual(aide_doctor.git(self.principal, "rev-parse", "main").stdout.strip(),
+                         aide_doctor.git(self.run, "rev-parse", "HEAD").stdout.strip())
+        self.assertIn(str(self.run), aide_doctor.git(self.principal, "worktree", "list", "--porcelain").stdout)
+        commun = aide_doctor.git(self.run, "rev-parse", "--git-common-dir").stdout.strip()
+        self.assertEqual(Path(commun).resolve(), (self.principal / ".git").resolve())
+        self.assertEqual(aide_doctor.git(self.run, "status", "--porcelain").stdout, "")
+
+    def test_l_etat_sain_installe_une_seule_tache(self):
+        self.assertEqual(len(list(self.agents.glob("*.plist"))), 1)
+        niveau, entree, _ = self.niveau("launchd")
+        self.assertEqual(niveau, "ok")
+        self.assertEqual(entree["reason"]["counts"]["loaded"], 1)
+
+    def test_le_lancement_reel_reste_un_processus(self):
+        with mock.patch.object(doctor, "main", wraps=doctor.main) as main:
+            p = self.lancer("--quiet", reel=True)
+        main.assert_not_called()
+        self.assertEqual(p.returncode, 0)
+        self.assertTrue(p.stdout.strip().endswith("doctor : tout va bien"))
+
+    def test_un_probleme_dans_le_vrai_processus_donne_le_code_1(self):
+        self.fermer_base()
+        p = self.lancer("--quiet", reel=True)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertNotIn("doctor : tout va bien", p.stdout)
+
     def test_option_inconnue_code_2_et_aucun_controle(self):
-        p = self.lancer("--inconnue")
+        p = self.lancer("--inconnue", reel=True)
         self.assertEqual(p.returncode, 2)
         self.assertEqual([a for a in self.appels() if not a.startswith("git ")], [])
         self.assertEqual(self.ollama.requetes, [])
 
     def test_langue_inconnue_code_2(self):
-        self.assertEqual(self.lancer("--language", "de").returncode, 2)
+        self.assertEqual(self.lancer("--language", "de", reel=True).returncode, 2)
 
     def test_aide_en_francais_avec_les_codes(self):
-        p = self.lancer("--help")
+        p = self.lancer("--help", reel=True)
         self.assertEqual(p.returncode, 0)
         for option in ("--json", "--language", "--quiet", "--record"):
             self.assertIn(option, p.stdout)
@@ -114,10 +159,48 @@ class Ligne(Labo):
         self.assertFalse((self.donnees / "doctor-etat.json").exists())
 
     def test_code_2_quand_la_racine_est_introuvable_n_est_pas_un_plantage(self):
-        p = self.lancer(env={"PMZILLA_LAB_TODAY": "pas-une-date"})
+        p = self.lancer(env={"PMZILLA_LAB_TODAY": "pas-une-date"}, reel=True)
         self.assertEqual(p.returncode, 2)
         self.assertIn("doctor : impossible de lancer", p.stdout + p.stderr)
         self.assertNotIn("Traceback", p.stderr)
+
+
+class ParitePasDeControle(Labo):
+    """Change doctor-parity-removal (design D4) : le doctor n'a plus de contrôle de parité. Un fichier du nom de l'ancien marqueur et un
+    journal de verdicts qui finit sur un écart n'ajoutent ni ligne, ni contrôle JSON, ni entrée du fichier d'état, et ne changent pas le code de sortie."""
+
+    def poser_anciens_fichiers(self):
+        (self.donnees / "parite-sqlite").write_text("2026-10-10\n", encoding="utf-8")
+        (self.donnees / "parite-sqlite.log").write_text("2026-10-13 identique livres 10\n2026-10-14 écart livres 10\n", encoding="utf-8")
+
+    def sorties(self):
+        sortie = {}
+        for langue in ("fr", "en"):
+            sortie[langue] = self.lancer("--language", langue)
+        p_json, donnees = self.resultat_json()
+        p_etat = self.lancer("--record")
+        etat = json.loads((self.donnees / "doctor-etat.json").read_text(encoding="utf-8"))
+        return sortie, (p_json, donnees), (p_etat, etat)
+
+    def test_aucune_trace_de_parite_ni_changement_du_code_de_sortie(self):
+        sans_fichiers = self.sorties()
+        self.poser_anciens_fichiers()
+        avec_fichiers = self.sorties()
+        for langue in ("fr", "en"):
+            self.assertNotIn("parity", avec_fichiers[0][langue].stdout)
+            self.assertEqual(avec_fichiers[0][langue].returncode, sans_fichiers[0][langue].returncode)
+            self.assertEqual(avec_fichiers[0][langue].stdout, sans_fichiers[0][langue].stdout)
+        self.assertNotIn("parity", [c["id"] for c in avec_fichiers[1][1]["checks"]])
+        self.assertEqual(avec_fichiers[1][0].returncode, sans_fichiers[1][0].returncode)
+        self.assertNotIn("parity", [c["id"] for c in avec_fichiers[2][1]["checks"]])
+        self.assertEqual(avec_fichiers[2][0].returncode, sans_fichiers[2][0].returncode)
+        self.assertEqual(avec_fichiers[2][0].returncode, 0, avec_fichiers[2][0].stdout)
+
+    def test_aucune_raison_de_parite_dans_les_catalogues_ni_dans_le_squelette(self):
+        for langue, catalogue in doctor_messages.CATALOGS.items():
+            self.assertEqual([cle for cle in catalogue if cle.startswith("raison_parity_")], [], langue)
+        self.assertNotIn("parity", [cle[0] for cle in doctor.TOUTES_LES_RAISONS])
+        self.assertNotIn("parity", doctor.ORDRE)
 
 
 if __name__ == "__main__":

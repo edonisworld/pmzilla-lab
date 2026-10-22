@@ -17,10 +17,11 @@ PREFIXE = "Bash("
 LANCEURS_PYTHON = ("uv run", "python", "python3")
 LANCEURS_SHELL = ("bash", "zsh")
 
-# Façons d'écrire le chemin d'un script (même liste que tests/settings_deny), avec un faux dossier personnel fixe.
-CHEMINS = ("tools/{s}", "./tools/{s}", "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}",
-           "~/PMZilla-Lab/workspace/tools/{s}", "~/PMZilla-Lab/{s}", "$HOME/PMZilla-Lab/{s}",
-           "/Users/quelquun/PMZilla-Lab/{s}", "{s}")
+# Façons d'écrire le chemin d'un script (même liste que tests/settings_deny), avec un faux dossier personnel et un faux dossier de lab :
+# les règles `deny` s'écrivent avec des jokers sur le dossier, jamais avec un nom de dossier réel (R-77 : aucun chemin du lab en dur).
+CHEMINS = ("tools/{s}", "./tools/{s}", "/home/essai/labo/workspace/tools/{s}",
+           "~/labo/workspace/tools/{s}", "~/labo/{s}", "$HOME/labo/{s}",
+           "/home/essai/labo/{s}", "{s}")
 
 TERMINAL_SEUL = "Terminal seulement"
 TERMINAL_OU_CLAUDE = "Terminal ou Claude Code"

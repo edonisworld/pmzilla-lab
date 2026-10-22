@@ -1,7 +1,7 @@
 # tooling-components Specification
 
 ## Purpose
-TBD - created by archiving change components-watch. Update Purpose after archive.
+The system SHALL inventory every component of the lab (packages, Python, database image, Ollama models, tools) in a checkable format and check weekly, without installing anything, for newer published versions.
 
 ## Requirements
 
@@ -215,3 +215,63 @@ Source: to be covered by tests/composants (task 2.1)
 #### Scenario: Guard
 - **WHEN** a test triggers a request to a non-loopback address
 - **THEN** the test fails and names the attempted connection kind without its address
+
+### Requirement: The CI image's pinned items are inventoried by name and checked against the definition
+The system SHALL hold in `docs/pmzilla/composants.yaml` one entry per pinned item of the CI image (base image, uv image, OpenSpec CLI) with `pinned_in: CI Dockerfile`, and SHALL NOT copy any digest or version into the inventory: values live in `ci/Dockerfile` only (design D4, decision C15). The inventory test SHALL check the definition against the entries and name any value still to be filled by the author.
+
+#### Scenario: Item pinned in the definition without an entry
+- **WHEN** `ci/Dockerfile` pins an item that has no `pinned_in: CI Dockerfile` entry in the inventory
+- **THEN** `tests/composants` fails and names the item
+
+#### Scenario: Entry without a pinned item
+- **WHEN** an inventory entry says `pinned_in: CI Dockerfile` and `ci/Dockerfile` does not use that item
+- **THEN** `tests/composants` fails and names the entry
+
+#### Scenario: Unpinned or malformed base
+- **WHEN** `ci/Dockerfile` names an image by a tag without digest, or with a malformed digest
+- **THEN** `tests/composants` fails
+
+#### Scenario: CLI version and Python
+- **WHEN** the OpenSpec CLI is pinned without an exact version, or the Python differs from `.python-version`
+- **THEN** `tests/composants` fails
+
+#### Scenario: No value in the inventory
+- **WHEN** an inventory entry of the CI image carries a digest
+- **THEN** `tests/composants` fails: the value belongs in `ci/Dockerfile` only
+
+### Requirement: Mothra's Node is pinned in one version file and inventoried apart from BMAD's
+The system SHALL accept the inventory kind `node-runtime`, read the version of Mothra's Node from `mothra/.node-version`, and keep one entry for it distinct from BMAD's unpinned `node`; the inventory test SHALL require the entry exactly when the file exists and refuse an invalid version with the phrase of design D2. It SHALL NOT copy the version, nor write one before the author's LTS check (design D1 of mothra-node-lts). Untested until implemented (suite `composants`).
+
+#### Scenario: File without entry
+- **WHEN** a fake repository holds a valid `mothra/.node-version` and no `node-runtime` entry
+- **THEN** the inventory test fails with "Composant à ajouter à l'inventaire" naming the version file
+
+#### Scenario: Alias instead of a version
+- **WHEN** the version file holds `lts/*` or a version with a `v` prefix
+- **THEN** the inventory command exits 1 with `version de Node de Mothra invalide : <texte> (attendu MAJEUR.MINEUR.CORRECTIF)`
+
+#### Scenario: BMAD's Node unchanged
+- **WHEN** the inventory is printed with both entries
+- **THEN** BMAD's `node` is still reported as not pinned and Mothra's Node with the version read from its file
+
+### Requirement: The check of Mothra's Node reports only LTS lines as major versions
+The system SHALL, in the weekly check, report a newer patch or minor of the pinned line as an update, a newer line marked LTS in the official release list as a major version, and SHALL NOT report a newer line that the list does not mark LTS. A release list without the LTS marker SHALL make the component incomplete. It SHALL NOT install or download Node. Untested until implemented (suite `composants`).
+
+#### Scenario: Current line published
+- **WHEN** the fake release list holds a newer line not marked LTS
+- **THEN** nothing is reported for it
+
+#### Scenario: Next LTS line
+- **WHEN** the fake release list marks a newer line LTS
+- **THEN** it is reported with the nature "version majeure" and a suggested job naming the procedure "Update the Node of Mothra"
+
+### Requirement: The CI image runs exactly Mothra's Node
+The system SHALL fail the inventory test, when both the local CI's image definition and `mothra/.node-version` exist and the image's Node version differs from the file's, with `Node de l'image de CI différent du Node de Mothra : <version de l'image> contre <version du fichier>`, and SHALL skip the check with `contrôle Node de l'image sauté : <fichier> absent` while either is missing. It SHALL NOT pull the image or query a registry. Untested until implemented (suite `composants`).
+
+#### Scenario: Patch moved on one side
+- **WHEN** the version file is moved to a newer patch and the image line is not
+- **THEN** the inventory test fails with the phrase naming both versions
+
+#### Scenario: No image definition yet
+- **WHEN** the repository has no image definition of the local CI
+- **THEN** the check is skipped with its reason and the test passes

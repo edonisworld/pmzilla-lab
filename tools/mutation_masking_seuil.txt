@@ -1,0 +1,9 @@
+# Seuil des tests de mutation (tools/mutation_masking.py, change masking-mutation-tests, design D5).
+# Première ligne non commentée : le plancher, un entier de 50 à 100 ; sous lui, le passage sort avec le code 3.
+# Deuxième ligne non commentée : la cible, informative seulement (affichée dans le résumé, sans effet sur le code de sortie).
+# Plancher 70 et cible 80 confirmés par l'auteur le 2026-10-19 (#386) ; la cible devient le plancher quand un passage l'atteint.
+# Un survivant se corrige par un test, jamais en le retirant du compte : changer ce fichier est un changement relu.
+# 2026-10-20 : un passage sur l'arbre commité atteint 98 % (107 sur 109, deux survivants équivalents jugés par une relecture Opus) :
+# la cible devient le plancher, comme le prévoit la règle de 2026-10-19 (tâche 6.3).
+80
+80

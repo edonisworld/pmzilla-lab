@@ -177,7 +177,8 @@ class SansBase(unittest.TestCase):
 
     def test_roles_de_lecture_limitee_et_leur_trousseau(self):
         self.assertEqual(db.ROLES_AVEC_MOT_DE_PASSE,
-                         ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases"))
+                         ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases", "pmzilla_flow",
+                          "pmzilla_quality_views"))
         self.assertEqual(db.service_du_role("pmzilla_knowledge_ro"), "pmzilla-lab-db-pmzilla_knowledge_ro")
 
     def test_migration_0005_presente_sans_donnee_et_documentee(self):

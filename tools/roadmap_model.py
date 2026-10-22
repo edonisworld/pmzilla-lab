@@ -36,6 +36,8 @@ LABEL_PARALLEL = "parallel"
 LABEL_USER = "owner:user"
 LABEL_EDITION_PUBLIC = "edition:public"     # édition publique (edition-publish-tooling, D19) : posée à la fermeture, jamais retirée
 LABEL_IDEA = "type:idea"     # hors de all_labels() : une idée n'est pas un élément de la file
+PRODUCTS = ("mothra",)       # produits étiquetés (liste fermée) ; l'absence de label `product:` vaut PMZilla, on ne réétiquette pas l'existant
+LABEL_PRODUCT_PREFIX = "product:"
 
 SEP = "·"
 
@@ -79,7 +81,7 @@ def parse_settings(text):
 
 # --- Marqueurs et clés (D1) ---------------------------------------------------------------------------------------
 
-_KEY = re.compile(r"^R-(\d+)(?:/(?:g(\d+)|t(\d+\.\d+)))?$")
+_KEY = re.compile(r"^R-(\d+)(?:/(?:g(\d+)|t(\d+\.\d+)|u(\d+)))?$")
 _MARKER = re.compile(r"\A<!-- roadmap-id: (\S+) -->")
 _IDEA_MARKER = re.compile(r"\A<!-- roadmap-idea: ([a-z0-9-]+) -->")
 
@@ -96,8 +98,13 @@ def task_key(n, task_id):
     return f"R-{int(n)}/t{task_id}"
 
 
+def user_task_key(n, k):
+    """Tâche utilisateur autonome (gh_issue new-task), sans tasks.md : R-<n>/u<k>, jamais confondue avec g<N> ni t<N.M>."""
+    return f"R-{int(n)}/u{int(k)}"
+
+
 def parse_key(key):
-    """('feature'|'group'|'task', n, None|groupe|id de tâche). ValueError si la clé est mal formée."""
+    """('feature'|'group'|'task'|'user-task', n, None|groupe|id de tâche|numéro). ValueError si la clé est mal formée."""
     mo = _KEY.match(key or "")
     if not mo:
         raise ValueError(f"clé d'identité mal formée : {key!r}")
@@ -106,6 +113,8 @@ def parse_key(key):
         return ("group", n, mo.group(2))
     if mo.group(3) is not None:
         return ("task", n, mo.group(3))
+    if mo.group(4) is not None:
+        return ("user-task", n, mo.group(4))
     return ("feature", n, None)
 
 
@@ -177,9 +186,20 @@ def label_model(model):
     return f"model:{model}"
 
 
+def label_product(product):
+    if product not in PRODUCTS:
+        raise ValueError(f"produit inconnu : {product!r}")
+    return f"{LABEL_PRODUCT_PREFIX}{product}"
+
+
+def product_labels(labels):
+    """Les labels `product:` d'une liste de noms de labels (connus ou non), dans l'ordre."""
+    return [l for l in labels if l.startswith(LABEL_PRODUCT_PREFIX)]
+
+
 def all_labels():
     return ([LABEL_FEATURE, LABEL_TASK] + [label_theme(t) for t in THEMES] + [label_model(x) for x in MODELS]
-            + [LABEL_PARALLEL, LABEL_USER, LABEL_EDITION_PUBLIC])
+            + [LABEL_PARALLEL, LABEL_USER, LABEL_EDITION_PUBLIC] + [label_product(p) for p in PRODUCTS])
 
 
 # --- Bloc roadmap (D5) --------------------------------------------------------------------------------------------
@@ -291,19 +311,6 @@ def validate_block(block, *, is_open=True, marker_key=None, theme_label=None):
     if theme_label is not None and block.get("theme") != theme_label:
         pb.append(f"theme : {block.get('theme')!r} différent du label {theme_label!r}")
     return pb
-
-
-# --- État et Status (D2) ------------------------------------------------------------------------------------------
-
-_STATE_TABLE = {"ready": ("open", "Ready"), "in-progress": ("open", "In progress"), "blocked": ("open", "Todo"),
-                "done": ("closed", "Done")}
-
-
-def status_of_state(state):
-    """(ouverture 'open'|'closed', Status). 'blocked' devient Todo : le blocage est une relation, pas un statut."""
-    if state not in _STATE_TABLE:
-        raise ValueError(f"état inconnu : {state!r}")
-    return _STATE_TABLE[state]
 
 
 # --- Groupes de tasks.md (D3) -------------------------------------------------------------------------------------

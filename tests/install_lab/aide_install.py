@@ -61,7 +61,7 @@ class Passage:
 
 class Decor:
     def __init__(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="install-lab-test-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="install-lab-test-")).resolve()   # résolu : le module partagé résout le dossier de contenu
         self.maison = self.tmp / "home"
         self.racine = self.maison / "PMZilla-Lab" / "workspace"      # chemin attendu du clone (design D17)
         self.simulacres = self.tmp / "bin"
@@ -169,7 +169,7 @@ class Decor:
     def environnement(self, extra: dict | None = None, sans_terminal_ok: bool = True) -> dict:
         env = {
             "PATH": f"{self.simulacres}:/usr/bin:/bin", "HOME": str(self.maison), "USER": "testeur", "TMPDIR": str(self.tmp),
-            "INSTALL_LAB_ROOT": str(self.racine), "INSTALL_LAB_APPLICATIONS": str(self.tmp / "Applications"), "INSTALL_LAB_APPELS": str(self.appels), "INSTALL_LAB_ETAT": str(self.etat),
+            "INSTALL_LAB_ROOT": str(self.racine), "PMZILLA_LAB_WORKSPACE": str(self.racine), "INSTALL_LAB_APPLICATIONS": str(self.tmp / "Applications"), "INSTALL_LAB_APPELS": str(self.appels), "INSTALL_LAB_ETAT": str(self.etat),
             "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
         }
         if sans_terminal_ok:

@@ -6,7 +6,7 @@ A publication tool, run by the user in the Terminal, that checks the local copy 
 ## Requirements
 
 ### Requirement: A publication tool run by the user prepares the public copy
-The system SHALL provide a private-repository publication tool that the user runs in the Terminal with a required public-copy folder option and an optional commit that defaults to the current head of the private workspace. It SHALL accept no option that skips the test run, skips a check or tolerates a file. Untested until implemented.
+The system SHALL provide a private-repository publication tool that the user runs in the Terminal with a required public-copy folder option and an optional commit that defaults to the current head of the private workspace. It SHALL accept no option that skips the test run, skips a check or tolerates a file.
 
 #### Scenario: Missing copy option
 - **WHEN** the tool is started without the public-copy option
@@ -17,14 +17,14 @@ The system SHALL provide a private-repository publication tool that the user run
 - **THEN** it exits with code 2 and no build starts
 
 ### Requirement: The publication tool runs its steps in a fixed order
-The system SHALL exit with code 2 on a usage error and run its steps in the order of design D4: usage, public copy checks, build, sync, summary. Exit codes and key phrases are those of design D4 and D17. Untested until implemented.
+The system SHALL exit with code 2 on a usage error and run its steps in the order of design D4: usage, public copy checks, build, sync, summary. Exit codes and key phrases are those of design D4 and D17.
 
 #### Scenario: Copy refused before the build
 - **WHEN** the public copy is refused
 - **THEN** the generator is not called
 
 ### Requirement: The public copy is checked before any build, without network
-The system SHALL refuse the public copy with exit code 9 and the key phrase "public copy refused:" followed by the cause of design D3. The checks SHALL read local Git state only. On a refusal the system SHALL NOT start a build and SHALL NOT change the copy. The system SHALL NOT fetch, pull or clone to make a check pass. Untested until implemented.
+The system SHALL refuse the public copy with exit code 9 and the key phrase "public copy refused:" followed by the cause of design D3. The checks SHALL read local Git state only. On a refusal the system SHALL NOT start a build and SHALL NOT change the copy. The system SHALL NOT fetch, pull or clone to make a check pass.
 
 #### Scenario: Copy on another branch
 - **WHEN** the copy's head is on a branch other than `main`
@@ -51,7 +51,7 @@ The system SHALL refuse the public copy with exit code 9 and the key phrase "pub
 - **THEN** the tool exits with code 9 with the cause "missing", "not a Git repository" or "working tree not clean"
 
 ### Requirement: The published tree is built in the same run, with the full test run
-The system SHALL obtain the tree by calling the edition generator in the same run, from the given commit, with the test-run option always set, into a build folder that is a sibling of the copy. On a generator exit code other than 0, the system SHALL exit with that code, relay the generator's lines unchanged and leave the copy unchanged. Untested until implemented.
+The system SHALL obtain the tree by calling the edition generator in the same run, from the given commit, with the test-run option always set, into a build folder that is a sibling of the copy. On a generator exit code other than 0, the system SHALL exit with that code, relay the generator's lines unchanged and leave the copy unchanged.
 
 #### Scenario: Finding in the tree
 - **WHEN** the generator exits with code 7
@@ -66,14 +66,14 @@ The system SHALL obtain the tree by calling the edition generator in the same ru
 - **THEN** the tool exits with code 4 and the copy is unchanged
 
 ### Requirement: Only a tree built in the run is synced
-The system SHALL NOT take a tree built by an earlier run, SHALL NOT sync a not-publishable tree, and SHALL delete the build folder after the sync, whatever its outcome. Untested until implemented.
+The system SHALL NOT take a tree built by an earlier run, SHALL NOT sync a not-publishable tree, and SHALL delete the build folder after the sync, whatever its outcome.
 
 #### Scenario: Build folder removed
 - **WHEN** the sync ends, verified or restored
 - **THEN** the build folder no longer exists
 
 ### Requirement: Sync keeps the Git history of the public copy
-The system SHALL replace every entry of the copy except its Git folder by the checked tree, keeping bytes, executable bits and symbolic links, so that the copy holds exactly the tree. The system SHALL NOT change the Git folder, the history, the branches, the remotes or the Git configuration of the copy, and SHALL NOT keep in the copy a file that the tree does not hold. Untested until implemented.
+The system SHALL replace every entry of the copy except its Git folder by the checked tree, keeping bytes, executable bits and symbolic links, so that the copy holds exactly the tree. The system SHALL NOT change the Git folder, the history, the branches, the remotes or the Git configuration of the copy, and SHALL NOT keep in the copy a file that the tree does not hold.
 
 #### Scenario: File removed from the edition
 - **WHEN** a file of the published version is absent from the new tree
@@ -91,7 +91,7 @@ The system SHALL compare the copy, Git folder excluded, with the checked tree af
 - **THEN** nothing is staged and no summary is printed
 
 ### Requirement: A failed sync restores the published state
-On a sync failure, the system SHALL restore the copy to its `HEAD`, exit with code 10 and print "sync failed; public copy restored to" followed by the short commit id. When the restore fails, the system SHALL exit with code 11, print "sync failed and the public copy could not be restored:" and the commands the user runs, and SHALL run nothing else. Untested until implemented.
+On a sync failure, the system SHALL restore the copy to its `HEAD`, exit with code 10 and print "sync failed; public copy restored to" followed by the short commit id. When the restore fails, the system SHALL exit with code 11, print "sync failed and the public copy could not be restored:" and the commands the user runs, and SHALL run nothing else.
 
 #### Scenario: Restored copy
 - **WHEN** a file of the copy differs from the tree after the sync
@@ -102,7 +102,7 @@ On a sync failure, the system SHALL restore the copy to its `HEAD`, exit with co
 - **THEN** the tool exits with code 11 and prints the commands to run
 
 ### Requirement: The tool stages and summarises the differences
-The system SHALL stage every change of the verified copy and print a summary of the differences between the staged state and the copy's `HEAD`, with the content of design D10. It SHALL print "CHANGELOG unchanged since the published version" when the edition CHANGELOG did not change, as a warning that does not change the exit code. When nothing differs, it SHALL print "nothing to publish: the tree equals the published version" and exit 0 with a clean index. Untested until implemented.
+The system SHALL stage every change of the verified copy and print a summary of the differences between the staged state and the copy's `HEAD`, with the content of design D10. It SHALL print "CHANGELOG unchanged since the published version" when the edition CHANGELOG did not change, as a warning that does not change the exit code. When nothing differs, it SHALL print "nothing to publish: the tree equals the published version" and exit 0 with a clean index.
 
 #### Scenario: Changes to publish
 - **WHEN** the tree adds one file and modifies another
@@ -117,21 +117,21 @@ The system SHALL stage every change of the verified copy and print a summary of 
 - **THEN** the warning is printed and the exit code is 0
 
 ### Requirement: The summary holds no content and no private id in the copy
-The system SHALL NOT print file content, and SHALL NOT write the private commit id into the copy. Untested until implemented.
+The system SHALL NOT print file content, and SHALL NOT write the private commit id into the copy.
 
 #### Scenario: No content printed
 - **WHEN** a changed file contains a sentinel string
 - **THEN** the output does not contain it
 
 ### Requirement: The tool ends with the user's commands
-The system SHALL end with the commands the user runs to read, commit and push, then the release lines of design D11 when something is published, then the line "ready to commit in" the copy with "nothing was committed or pushed". The system SHALL NOT commit, create a release or a tag, or run the reader or `gh`. Untested until implemented.
+The system SHALL end with the commands the user runs to read, commit and push, then the release lines of design D11 when something is published, then the line "ready to commit in" the copy with "nothing was committed or pushed". The system SHALL NOT commit, create a release or a tag, or run the reader or `gh`.
 
 #### Scenario: Commit and push left to the user
 - **WHEN** the tool exits with code 0 after staging changes
 - **THEN** the copy's `HEAD` is unchanged and its remote-tracking branch is unchanged
 
 ### Requirement: The release lines name the milestone and a free tag
-The release lines SHALL hold the reader's public release-notes command for the milestone of the current-release setting, the translation and review step, and the release command whose title is that milestone and whose tag is its lower-case name, with the first free numbered suffix when the copy's local tags already hold it. Without a current release, the system SHALL print "no current release; release lines skipped" without changing the exit code. Untested until implemented.
+The release lines SHALL hold the reader's public release-notes command for the milestone of the current-release setting, the translation and review step, and the release command whose title is that milestone and whose tag is its lower-case name, with the first free numbered suffix when the copy's local tags already hold it. Without a current release, the system SHALL print "no current release; release lines skipped" without changing the exit code.
 
 #### Scenario: Release lines
 - **WHEN** the current release is `Namazu`, the copy holds no tag `namazu` and the tree changes files
@@ -150,14 +150,14 @@ The release lines SHALL hold the reader's public release-notes command for the m
 - **THEN** no release line is printed
 
 ### Requirement: The publication tool never publishes, installs or evaluates
-The publication tool SHALL NOT commit, push, fetch, pull or clone; add, change or remove a remote; create a repository; rewrite history, force an update or bypass a hook; launch the install script or an evaluation set; run the real Jira tools, the database scripts or the import and compare tools; connect to the database or make any network call. Untested until implemented.
+The publication tool SHALL NOT commit, push, fetch, pull or clone; add, change or remove a remote; create a repository; rewrite history, force an update or bypass a hook; launch the install script or an evaluation set; run the real Jira tools, the database scripts or the import and compare tools; connect to the database or make any network call.
 
 #### Scenario: Forbidden commands
 - **WHEN** the tool's text is scanned outside comments
 - **THEN** it contains no commit, push, fetch, pull, clone, remote change, forced update, hook bypass, install-script launch or evaluation-set launch
 
 ### Requirement: The publication tool stays out of the edition
-The tool and its test suite SHALL be excluded from the edition by the manifest; the product-version list is untracked and never enters it. Untested until implemented.
+The tool and its test suite SHALL be excluded from the edition by the manifest; the product-version list is untracked and never enters it.
 
 #### Scenario: Not in the edition
 - **WHEN** a tree is built

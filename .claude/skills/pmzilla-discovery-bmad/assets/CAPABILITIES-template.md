@@ -1,6 +1,6 @@
 # Capabilities
 
-Four actions; each produces a structuring deliverable that the `pmzilla-critic` sub-agent examines before it is handed back.
+Five actions; each produces a structuring deliverable that the `pmzilla-critic` sub-agent examines before it is handed back.
 
 ## Built-in
 
@@ -10,6 +10,7 @@ Four actions; each produces a structuring deliverable that the `pmzilla-critic` 
 | HY | Formulate testable hypotheses | Hypotheses ranked by risk (value, usability, feasibility, viability), each with a validation criterion | `references/formulate-hypotheses.md` |
 | XP | Design an experiment | The cheapest experiment that can invalidate the riskiest hypothesis: protocol, expected signal, decision threshold | `references/design-experiment.md` |
 | OS | Build an Opportunity Solution Tree | Target outcome → opportunities → solutions → experiments | `references/opportunity-solution-tree.md` |
+| SQ | Audit a pasted epic's problem, outcome and hypothesis | One verdict per epic criterion of the effective grid with its reason and source, rewrite suggestions for the PO; nothing written unless the user asks to keep | `references/audit-pasted-story.md` |
 
 If the user asks to keep the deliverable, save it as Markdown in `<project-root>/_bmad-output/pmzilla/` as `YYYY-MM-DD-subject.md` (`<project-root>` is the path the wake script prints after "Project root:"), with the posture, the request and the library sources used at the top.
 

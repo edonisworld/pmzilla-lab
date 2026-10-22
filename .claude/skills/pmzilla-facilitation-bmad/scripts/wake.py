@@ -92,6 +92,19 @@ def book_relations(project_root: Path) -> list[str]:
         return []
 
 
+def context_map(project_root: Path) -> list[str]:
+    """Lines of the organisation context map (date, nature, review date, stale mark, capped body), from tools/context_lab.py.
+    It reads the map file and nothing else of the context folder; read-only."""
+    script = project_root / "tools" / "context_lab.py"
+    try:
+        spec = importlib.util.spec_from_file_location("context_lab", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.wake_map_lines(project_root)
+    except Exception as error:  # the map is help, never a reason to fail the wake
+        return [f"(context map not computed: {error})"]
+
+
 def emit_context_and_library(project_root: Path) -> None:
     for name in missing_imports(project_root):
         print(f"\n!!! LOCAL FILE MISSING: {name} (imported by CLAUDE.md). The user's context is not loaded.")
@@ -103,6 +116,8 @@ def emit_context_and_library(project_root: Path) -> None:
     if relations:
         print("\n===== RELATIONS ENTRE OUVRAGES (relations between works, not to be confused) =====")
         print("\n".join(relations))
+    print("\n===== CONTEXT MAP (starting context: a dated statement of the organisation, not a reference; it does not replace the clarification questions) =====")
+    print("\n".join(context_map(project_root)))
 
 
 def main() -> int:

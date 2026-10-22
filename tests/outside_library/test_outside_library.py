@@ -29,10 +29,10 @@ class TestCalcul(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.dossier = Path(self.temp.name)
         self.refs = ecrire(self.dossier, "refs.yaml", {"delivery": [
-            {"titre": "Kanban", "auteurs": ["Anderson"]},
-            {"titre": "The Goal", "auteurs": ["Goldratt"]},
+            {"titre": "Livre Fictif A", "auteurs": ["Auteur Fictif A"]},
+            {"titre": "Livre Fictif B", "auteurs": ["Auteur Fictif B"]},
             {"titre": "Scrum Guide", "document": True},
-            {"titre": "Les mots sont des fenêtres", "auteurs": ["Rosenberg"]},
+            {"titre": "Étrange livre fictif", "auteurs": ["Auteur Fictif C"]},
         ]})
 
     def tearDown(self):
@@ -42,11 +42,11 @@ class TestCalcul(unittest.TestCase):
         return ecrire(self.dossier, "catalogue.yaml", entrees)
 
     def test_livre_present_est_exclu_de_la_liste(self):
-        cat = self.catalogue({"a.pdf": {"titre": "Kanban: Successful Evolutionary Change", "auteurs": ["David J. Anderson"]},
-                              "b.pdf": {"titre": "The Goal", "auteurs": ["Eliyahu M. Goldratt"]}})
+        cat = self.catalogue({"a.pdf": {"titre": "Livre Fictif A: Sous-titre fictif", "auteurs": ["Prénom Auteur Fictif A"]},
+                              "b.pdf": {"titre": "Livre Fictif B", "auteurs": ["Prénom Auteur Fictif B"]}})
         titres = [o["titre"] for o in hb.hors_bibliotheque("delivery", cat, self.refs)]
-        self.assertNotIn("Kanban", titres)
-        self.assertNotIn("The Goal", titres)
+        self.assertNotIn("Livre Fictif A", titres)
+        self.assertNotIn("Livre Fictif B", titres)
 
     def test_document_hors_bibliotheque_tant_qu_il_n_est_pas_indexe(self):
         titres = [o["titre"] for o in hb.hors_bibliotheque("delivery", self.catalogue({}), self.refs)]
@@ -70,14 +70,14 @@ class TestCalcul(unittest.TestCase):
         self.assertEqual(hb.rendre_relations("inconnue", refs), [])
 
     def test_meme_titre_autre_auteur_ne_compte_pas(self):
-        cat = self.catalogue({"a.pdf": {"titre": "The Goal", "auteurs": ["Quelqu'un d'autre"]}})
+        cat = self.catalogue({"a.pdf": {"titre": "Livre Fictif B", "auteurs": ["Quelqu'un d'autre"]}})
         titres = [o["titre"] for o in hb.hors_bibliotheque("delivery", cat, self.refs)]
-        self.assertIn("The Goal", titres)
+        self.assertIn("Livre Fictif B", titres)
 
     def test_accents_et_casse_ignores(self):
-        cat = self.catalogue({"a.pdf": {"titre": "LES MOTS SONT DES FENETRES", "auteurs": ["Marshall Rosenberg"]}})
+        cat = self.catalogue({"a.pdf": {"titre": "ETRANGE LIVRE FICTIF", "auteurs": ["Prénom Auteur Fictif C"]}})
         titres = [o["titre"] for o in hb.hors_bibliotheque("delivery", cat, self.refs)]
-        self.assertNotIn("Les mots sont des fenêtres", titres)
+        self.assertNotIn("Étrange livre fictif", titres)
 
     def test_catalogue_vide_tout_est_hors_bibliotheque(self):
         cat = self.catalogue({})
@@ -94,7 +94,7 @@ class TestCalcul(unittest.TestCase):
 
     def test_catalogue_par_variable_d_environnement(self):
         import os
-        cat = self.catalogue({"a.pdf": {"titre": "Kanban", "auteurs": ["Anderson"]}})
+        cat = self.catalogue({"a.pdf": {"titre": "Livre Fictif A", "auteurs": ["Auteur Fictif A"]}})
         os.environ["PMZILLA_LAB_CATALOGUE"] = str(cat)
         try:
             self.assertEqual(hb.catalogue_par_defaut(), cat)

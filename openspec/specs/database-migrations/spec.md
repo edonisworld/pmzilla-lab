@@ -3,7 +3,9 @@
 ## Purpose
 
 Ordered, tracked, tamper-evident schema migrations for the local PostgreSQL database, and the secret-free connection layer used by the migration runner (`tools/db.py`, `db/migrations/`).
+
 ## Requirements
+
 ### Requirement: Migration files are strictly named and contiguous
 The system SHALL accept only migration files named with a four-digit number, an underscore and a lowercase description (letters, digits, underscores), SHALL ignore non-SQL files, and SHALL refuse a folder whose numbers are duplicated, do not start at 1, or contain a gap.
 
@@ -124,36 +126,40 @@ Source: tests/db/test_db.py (test_verrou_empeche_deux_executeurs, test_verrou_li
 - WHEN a run completes
 - THEN a further run can be started immediately
 
-### Requirement: Set a limited role password from the command line
-The system SHALL offer a command that sets the password of a limited role through a masked prompt asked twice (the prompt naming the role), SHALL refuse a role outside the permitted list at argument parsing, SHALL stop with exit code 1 without connecting when the two entries differ, SHALL stop with exit code 1 and close its connection when the password is too short, and on success SHALL set the password, close the connection and print the instruction for storing the password in the role's keychain entry without storing it. The password SHALL never appear in the output, and no keychain instruction SHALL be printed after a refusal.
-
-Source: tests/db/test_lacunes_base.py (CommandeRolePassword)
-
-#### Scenario: Prompted password
-- WHEN the command runs for a permitted role and the same valid password is entered twice
-- THEN the password is asked twice without echo, the exit code is 0, a confirmation and the keychain instruction for that role are printed, and the password is not printed
-
-#### Scenario: Different entries
-- **WHEN** the two entries differ
-- **THEN** the exit code is 1, the error says the entries differ, no connection is opened and no password is set
-
-#### Scenario: Too short
-- **WHEN** a too short password is entered twice
-- **THEN** the exit code is 1, the error says it is too short, nothing is executed on the connection and the connection is closed
-
-#### Scenario: Role outside the list
-- **WHEN** the command names the superuser role
-- **THEN** the argument parser refuses it
-
 ### Requirement: Status reports applied and pending migrations
-The system SHALL provide a status command listing each applied migration and each pending migration, and SHALL print no password in its output.
+The status command SHALL list applied and pending migrations, then the role and extension lines of the related status requirements and a summary line (key phrases of design D6). It SHALL exit 0 when no line is a problem, 1 when it cannot run, 3 otherwise, and SHALL print no password and change nothing.
 
-Source: tests/db/test_db.py (test_cli_status_et_migrate_sans_mot_de_passe_dans_la_sortie)
+Source: tests/db/test_db.py (test_cli_status_et_migrate_sans_mot_de_passe_dans_la_sortie) for the migration lines; role, extension, summary and exit-code parts untested until implemented.
 
 #### Scenario: Status before and after migrate
-- WHEN status runs before migrate with two files
-- THEN the first is listed as pending
-- AND after migrate, status lists it as applied
+- **WHEN** status runs before migrate with two files
+- **THEN** the first is listed as pending
+- **AND** after migrate, status lists it as applied
+
+#### Scenario: Problem found
+- **WHEN** one role line is a problem and the other checks are fine
+- **THEN** the summary counts one problem and the exit code is 3
+
+#### Scenario: Nothing wrong
+- **WHEN** every role is ok or not set up, the extension matches and one migration is pending
+- **THEN** the summary says there is no problem and the exit code is 0
+
+#### Scenario: Tampered migration
+- **WHEN** an applied migration file was modified
+- **THEN** the exit code is 1 with the existing error and no role or extension check runs
+
+#### Scenario: Status cannot run
+- **WHEN** the connection fails, or a migration is malformed, tampered or missing, or the expected extension version is unreadable
+- **THEN** the exit code is 1
+
+#### Scenario: Pending migrations and roles not set up are not problems
+- **WHEN** a migration is pending or a role is not set up, and no other line is a problem
+- **THEN** the exit code is 0
+
+#### Scenario: Status changes nothing
+- **WHEN** status runs
+- **THEN** no password is printed
+- **AND** no role is altered, no extension is updated, no migration is applied and the keychain is not written
 
 ### Requirement: Connection addresses never carry a password
 The system SHALL refuse a connection address that contains a password (in the authority part or as a query parameter), SHALL explain where the password is read from, and SHALL NOT echo the rejected password. An address without a password SHALL be accepted. The default address SHALL follow the configured port variable.
@@ -228,3 +234,94 @@ Source: tests/db/test_watch_schema.py (SansBase, AvecBase); tests/db/test_flow_g
 - **WHEN** all migrations are applied to a disposable database
 - **THEN** the watch and triage tables and the flow tables hold no row
 
+### Requirement: Generate, store and test a limited role password from the command line
+The system SHALL offer a command that generates a limited role's password (D1), refuses an unlisted role at parsing, alters the role in a transaction (D3), stores the password in the role's keychain entry (D4), reads it back and compares it before committing, then opens a test session as the role (D2), with the exit codes and lines of D6. It SHALL NOT ask for, accept, print, log or write the password. Untested until implemented.
+
+#### Scenario: Generated, stored and tested
+- **WHEN** the command runs for a permitted role, the keychain double accepts the write and the test session as the role succeeds
+- **THEN** the exit code is 0, the success line names the role and its keychain service, no prompt was shown, the commit came after the keychain write, and the password appears in no output, no argument of the keychain double and no statement sent to the connection
+
+#### Scenario: Keychain refuses
+- **WHEN** the keychain double fails the write
+- **THEN** the exit code is 1, the error says nothing was set, the transaction is rolled back and no commit was made
+
+#### Scenario: Entry read back and compared before the commit
+- **WHEN** the keychain write is accepted but the entry read back by the normal search differs from the generated password, or cannot be read
+- **THEN** the exit code is 1, the error says the keychain did not return the password written and that nothing was set, the transaction is rolled back, no commit is made and no test session is opened, and neither the generated password nor the value read appears in any output or error
+
+#### Scenario: Test session fails
+- **WHEN** the role change is committed but the test session as the role is refused
+- **THEN** the exit code is 1 and the error names the role with a message that does not hold the password
+
+#### Scenario: Role outside the list
+- **WHEN** the command names the superuser role
+- **THEN** the argument parser refuses it and no connection is opened
+
+#### Scenario: Password generated, never typed
+- **WHEN** the command runs twice for the same role
+- **THEN** the two stored passwords differ, each is longer than the setter's minimum and uses only letters, digits, dash and underscore
+
+#### Scenario: Throwaway database
+- **WHEN** the command runs against a throwaway database for the views role
+- **THEN** the role can log in with the password read from the keychain double, and the server statements hold no clear password
+
+### Requirement: Status checks the roles of the permitted list
+The system SHALL, in the status command, compute through a service function returning one structured result per role (design D5) the state of each role of the permitted password list: ok, not set up, or a problem with one of the reasons of design D5. The command SHALL only format these results. It SHALL NOT print, return or log a password, SHALL NOT open a session as a role whose password is missing, and SHALL NOT change a role. Untested until implemented.
+
+#### Scenario: Password refused
+- **WHEN** the views role may log in and the keychain double returns a password the server refuses
+- **THEN** its line is a problem with the refused reason and the hint to rerun the password command for that role, and the output does not hold the returned password
+
+#### Scenario: Role ok
+- **WHEN** a permitted role may log in, a password is found and the test session as the role is accepted
+- **THEN** its line is ok
+
+#### Scenario: Role never set up
+- **WHEN** a permitted role may not log in and no password is found for it
+- **THEN** its line says not set up and it does not count as a problem
+
+#### Scenario: Login without stored password
+- **WHEN** a permitted role may log in and neither its keychain entry nor its variable gives a password
+- **THEN** its line is a problem naming the keychain service and the variable searched, and no session as that role is attempted
+
+#### Scenario: Stored password, login forbidden
+- **WHEN** a password is found for a permitted role that may not log in
+- **THEN** its line is a problem saying login is forbidden
+
+#### Scenario: Missing role
+- **WHEN** a permitted role does not exist in the database
+- **THEN** its line is a problem saying it is absent
+
+#### Scenario: Throwaway database
+- **WHEN** status runs on a throwaway database where one role got its password from the password command and another holds a different password in the keychain double
+- **THEN** the first is ok, the second is refused, and roles never set up are not set up
+
+### Requirement: Status flags roles that never get a password but may log in
+The system SHALL, in the status command, report as a problem each application role created by the migrations and outside the permitted password list that may log in, and SHALL print nothing for such a role that may not log in. It SHALL NOT open a session as such a role or change it. Untested until implemented.
+
+#### Scenario: Read-write role with login
+- **WHEN** the read-write role of a schema may log in
+- **THEN** a problem line says it may log in although it never gets a password
+
+#### Scenario: Roles without login
+- **WHEN** no role outside the list may log in
+- **THEN** no line is printed for them
+
+### Requirement: Status checks the pg_search version
+The system SHALL, in the status command, compare through a service function the installed version of the BM25 search extension with the version expected from the pinned database image (design D5), and SHALL report ok, missing or different with the lines of design D6. An unreadable expected version SHALL stop the command with exit 1. It SHALL NOT update or create the extension, nor query a release source or the network. Untested until implemented.
+
+#### Scenario: Different version
+- **WHEN** the fake catalogue gives an extension version other than the one of the fake image tag
+- **THEN** the extension line is a problem naming the installed and the expected versions, and the exit code is 3
+
+#### Scenario: Same version
+- **WHEN** the installed version equals the expected one
+- **THEN** the extension line is ok with that version
+
+#### Scenario: Missing extension
+- **WHEN** the extension is not installed
+- **THEN** the extension line is a problem saying it is missing
+
+#### Scenario: Unreadable tag
+- **WHEN** the compose file has no readable tag for the database image
+- **THEN** the exit code is 1 with the unreadable-version error

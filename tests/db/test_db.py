@@ -4,14 +4,21 @@ Tests de tools/db.py et de db/migrations/ : exécuteur de migrations sur une bas
     uv run --with "psycopg[binary]" python -m unittest discover -s tests/db -v
 
 Les tests sans base (noms de fichiers, empreintes, refus d'une adresse avec mot de passe) tournent toujours. Les autres se
-connectent à l'instance désignée par PMZILLA_LAB_DB_URL et PMZILLA_LAB_DB_PASSWORD, créent une base pmzilla_test_<hex>, y
-appliquent les migrations puis la suppriment, dans tous les cas ; ils sont sautés si psycopg ou la base manque
-(lancer bash tools/db_up.sh). Le vrai Trousseau n'est jamais interrogé : PMZILLA_LAB_DB_SECURITY_BIN pointe un faux binaire.
+connectent à l'instance JETABLE de bash tools/dbtest.sh (PMZILLA_LAB_DB_PORT, PMZILLA_LAB_DB_PASSWORD), créent une base
+pmzilla_test_<hex>, y appliquent les migrations puis la suppriment, dans tous les cas. La garde base_jetable_disponible les saute
+(message : base jetable absente) sauf si DBTEST_PORT, posé par ce seul script, est un port de forme décimale simple autre que 5432, égal en nombre au port de connexion :
+ni la base de 5432 ni celle du port configuré de la vraie base n'est jamais utilisée. Le vrai Trousseau n'est jamais interrogé :
+PMZILLA_LAB_DB_SECURITY_BIN pointe un faux binaire.
+
+psycopg est toujours fourni (le lanceur tests/run_all.sh l'installe, tools/dbtest.sh passe par lui) : les tests sans base qui se
+connectent à une adresse fermée pour lire l'erreur ne sautent plus quand psycopg manque (test-speed-2, D24). Un lancement à nu sans
+psycopg les fait ÉCHOUER au lieu de les sauter : passer par bash tests/run_all.sh db, ou ajouter --with "psycopg[binary]".
 """
 import contextlib
 import hashlib
 import io
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -25,7 +32,7 @@ RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
 import db  # noqa: E402
 
-MESSAGE_SAUT = "base absente : lancer bash tools/db_up.sh"
+MESSAGE_SAUT = "base jetable absente (lancer bash tools/dbtest.sh)"
 FAUX_MOT_DE_PASSE = "FauxMotDePasse-7c1e9b42"
 
 # Faux `security` : refuse toute commande autre que la lecture du service attendu, ne renvoie que ce qu'on lui donne.
@@ -44,18 +51,52 @@ os.environ[db.VARIABLE_SECURITY] = str(_FAUX_ECHEC)  # le vrai Trousseau n'est j
 URL_BASE = os.environ.get(db.VARIABLE_URL) or db.url_par_defaut()
 MOT_DE_PASSE = os.environ.get(db.VARIABLE_MOT_DE_PASSE)
 
+VARIABLE_REPERE = "DBTEST_PORT"   # posée par tools/dbtest.sh : le port de son conteneur jetable (test-speed-2, D1)
+PORT_STANDARD = 5432
 
-def _base_disponible() -> bool:
+
+def _port_valide(texte: str | None) -> int | None:
+    """Une seule règle de port (test-db-guards, D1) : forme décimale simple seulement (chiffres ASCII, sans signe, sans espace, sans
+    zéro en tête, de 1 à 65535), rendue comme nombre ; toute autre forme rend None. Même règle que tools/dbtest.sh."""
+    if texte is None or re.fullmatch(r"[1-9][0-9]{0,4}", texte, re.ASCII) is None:
+        return None
+    nombre = int(texte)
+    return nombre if nombre <= 65535 else None
+
+
+def base_jetable_disponible(env=None, connecter=None) -> bool:
+    """Garde des tests avec base (test-speed-2, D1) : vrai seulement si toutes les conditions tiennent, dans cet ordre, et sans
+    aucune connexion avant la dernière : psycopg importable ; DBTEST_PORT et le port de connexion (PMZILLA_LAB_DB_PORT) sont tous deux
+    de forme décimale simple (chiffres ASCII, sans signe, sans espace, sans zéro en tête, de 1 à 65535, test-db-guards D1) ; le repère
+    n'est pas 5432 ; le port de connexion lui est égal en nombre ; l'adresse (PMZILLA_LAB_DB_URL), si elle existe, vise ce port en
+    nombre ; le mot de passe est non vide ; la connexion (délai de deux secondes) réussit. La vraie base, sur 5432 ou sur son port
+    configuré, n'est donc jamais utilisée."""
+    env = os.environ if env is None else env
+    connecter = db.connect if connecter is None else connecter
     if db.psycopg is None:
         return False
+    repere = _port_valide(env.get(VARIABLE_REPERE))
+    if repere is None or repere == PORT_STANDARD or _port_valide(env.get("PMZILLA_LAB_DB_PORT")) != repere:
+        return False
+    adresse = env.get(db.VARIABLE_URL)
+    if adresse:
+        try:
+            port_adresse = urlsplit(adresse).port
+        except ValueError:
+            return False
+        if port_adresse is None or port_adresse != repere:
+            return False
+    mot_de_passe = env.get(db.VARIABLE_MOT_DE_PASSE)
+    if not mot_de_passe:
+        return False
     try:
-        db.connect(URL_BASE, password=MOT_DE_PASSE, timeout=2, autocommit=True).close()
+        connecter(adresse or db.url_par_defaut(), password=mot_de_passe, timeout=2, autocommit=True).close()
         return True
     except db.ErreurBase:
         return False
 
 
-BASE_DISPONIBLE = _base_disponible()
+BASE_DISPONIBLE = base_jetable_disponible()
 
 
 def url_vers(nom_base: str) -> str:
@@ -151,6 +192,16 @@ class TestSansBase(unittest.TestCase):
             db.connect(f"postgresql://postgres:{FAUX_MOT_DE_PASSE}@127.0.0.1:1/pmzilla")
         self.assertNotIn(FAUX_MOT_DE_PASSE, str(ctx.exception))
 
+    def test_parametre_de_mot_de_passe_vide_ou_fichier_de_mots_de_passe_refuse(self):
+        # masking-mutation-tests 6.2, mutant tué : `keep_blank_values=True` devenu `False` (verifier_url) : un paramètre vide compte
+        for url in ("postgresql://postgres@127.0.0.1:5432/pmzilla?password=",
+                    "postgresql://postgres@127.0.0.1:5432/pmzilla?PassWord=",
+                    "postgresql://postgres@127.0.0.1:5432/pmzilla?passfile=",
+                    "postgresql://postgres@127.0.0.1:5432/pmzilla?sslmode=disable&passfile=/chemin/invente"):
+            with self.subTest(url=url.split("?")[1][:12]):
+                with self.assertRaises(db.ErreurBase):
+                    db.verifier_url(url)
+
     def test_url_sans_mot_de_passe_acceptee(self):
         self.assertEqual(db.verifier_url("postgresql://postgres@127.0.0.1:5432/pmzilla"), "postgresql://postgres@127.0.0.1:5432/pmzilla")
 
@@ -195,8 +246,6 @@ class TestSansBase(unittest.TestCase):
         self.assertIsNone(db.lire_mot_de_passe(str(self.dossier / "inexistant")))
 
     def test_erreur_de_connexion_sans_le_mot_de_passe(self):
-        if db.psycopg is None:
-            self.skipTest("psycopg absent")
         with self.assertRaises(db.ErreurBase) as ctx:
             db.connect("postgresql://postgres@127.0.0.1:1/pmzilla", password=FAUX_MOT_DE_PASSE, timeout=2)
         self.assertNotIn(FAUX_MOT_DE_PASSE, str(ctx.exception))
@@ -407,12 +456,15 @@ class TestAvecBase(unittest.TestCase):
         ecrire(self.dossier, "0001_a.sql")
         ecrire(self.dossier, "0002_b.sql")
         code, sortie, erreurs = self._cli("status")
-        self.assertEqual((code, "En attente : 0001_a.sql" in sortie), (0, True))
+        # Depuis db-roles-status, status contrôle aussi les rôles et pg_search : sur cette base jetable aux migrations factices,
+        # l'extension manque, donc le code est 3 (au moins un problème) et non plus 0. Les lignes de migrations sont inchangées.
+        self.assertEqual((code in (0, 3), "En attente : 0001_a.sql" in sortie), (True, True))
         code, sortie, erreurs = self._cli("migrate")
         self.assertEqual(code, 0)
         self.assertIn("Appliquée : 0002_b.sql", sortie)
         code, sortie, erreurs = self._cli("status")
         self.assertIn("Appliquée  : 0001_a.sql", sortie)
+        self.assertTrue(sortie.rstrip("\n").splitlines()[-1].startswith("État : "))     # la ligne de synthèse est la dernière
         for texte in (sortie, erreurs):
             self.assertNotIn(MOT_DE_PASSE or "\0", texte)
 

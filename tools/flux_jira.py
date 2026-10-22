@@ -3,66 +3,63 @@
 # dependencies = ["pyyaml", "numpy", "psycopg[binary]"]
 # ///
 """
-PMZilla Lab : métriques de flux à partir d'un export CSV de Jira, ou de la base (lot 6).
+PMZilla Lab : métriques de flux lues dans la base (schéma flow, change database-only).
 
 Le script lit uniquement le type, l'état et les dates de chaque ticket. La clé, le titre, la
 description et les personnes ne sont jamais conservés ni écrits : les rapports ne contiennent que
 des agrégats (percentiles, débit par semaine, prévisions). C'est ce rapport, et lui seul, que la
 posture Delivery lit.
 
-    uv run flux_jira.py statuses <export.csv>...
-        Colonnes reconnues, période couverte, et liste des états et des types avec leur nombre de
-        tickets : de quoi remplir les listes d'états de flux.yaml. Plusieurs exports (lots de
-        projets, pour rester sous la limite de Jira) sont fusionnés par clé si la colonne Key est
-        présente.
+    Source unique : la base (rôle pmzilla_flow_ro, lecture seule). `statuses` et `compute` sont à lancer par l'utilisateur seul, dans
+    le Terminal : refusés dans une session Claude Code (code 3, avant toute lecture). L'option --source est retirée (code 2, quelle
+    que soit sa valeur), un fichier d'export donné est refusé (code 2, « les fichiers d'export ne sont plus lus : la base est la seule
+    source »), un chemin donné à --history aussi (code 2, « --history ne prend aucun fichier : l'historique est lu dans la base »).
+    Base injoignable ou rôle absent : message clair, code 1, sans mot de passe. Les dates sont lues dans le fuseau export_timezone
+    de flux.yaml.
 
-    uv run flux_jira.py compute <export.csv>... [--name equipe] [--weeks 26] [--target N]
+    uv run flux_jira.py statuses
+        Colonnes reconnues, période couverte, et liste des états et des types avec leur nombre de
+        tickets : de quoi remplir les listes d'états de flux.yaml.
+
+    uv run flux_jira.py compute [--name equipe] [--weeks 26] [--target N]
                                             [--target-date AAAA-MM-JJ] [--types Story,Bug]
         Lead time, débit par semaine, WIP et âge des éléments en cours, prévisions Monte Carlo.
         Écrit Flux-Lab/rapports/flux-<nom>-AAAA-MM-JJ.md (et .json). S'il existe un rapport plus
         ancien du même nom, la comparaison avec lui suit automatiquement (--no-comparison pour
         l'éviter).
 
-    uv run flux_jira.py compute <export.csv>... --points
+    uv run flux_jira.py compute --points
         Écrit aussi Flux-Lab/tableaux/points-<nom>-AAAA-MM-JJ.json : un point par ticket en cours (équipe, état, segment, âge,
         âge dans le segment, nature actif / attente / dormant), sans clé ni titre, pour l'Aging WIP du tableau de bord
         (fichier hors Git, permissions 600). Segment et âge dans le segment : seulement avec --history.
 
-    uv run flux_jira.py compute <export.csv>... --scope ABC,DEF
+    uv run flux_jira.py compute --scope ABC,DEF
         Ne garde que les tickets des projets listés (clés séparées par des virgules, ou « tous » : aucun filtre), comme
-        dependencies_jira.py. Sans l'option, tous les tickets de l'export sont lus (flux.yaml n'est pas consulté pour ce
+        dependencies_jira.py. Sans l'option, tous les tickets de la base sont lus (flux.yaml n'est pas consulté pour ce
         réglage) et le rapport est identique à celui d'avant. Avec elle, le rapport indique le périmètre en tête.
 
-    uv run flux_jira.py compute <export.csv>... --dormant-from-history [--history cache.json]
-        Sépare le travail dormant : le script déduit les dormants du cache
-        d'historique (non terminé, créé il y a au moins 365 jours, aucun changement d'état depuis au moins 365 jours,
+    uv run flux_jira.py compute --dormant-from-history
+        Sépare le travail dormant : le script déduit les dormants de l'historique de la base (non terminé, créé il y a au moins
+        365 jours, aucun changement d'état depuis au moins 365 jours,
         d'après la date de la dernière transition, ou de la création s'il n'y en a aucune). Un ticket sans historique
-        dans le cache n'est pas compté dormant. Le rapport sépare alors le WIP actif, le WIP en attente et le WIP
+        n'est pas compté dormant. Le rapport sépare alors le WIP actif, le WIP en attente et le WIP
         dormant (un ticket dormant sort des deux autres), et le « à faire » dormant du « à faire » vivant. Sans
         l'option, le rapport est inchangé. L'ancienne option --dormants (export CSV des dormants) est refusée.
+        Aucun historique dans la base : code 1, « aucun historique dans la base : lancez d'abord la collecte de l'historique ».
 
-    uv run flux_jira.py compute <export.csv>... --history [cache.json]
+    uv run flux_jira.py compute --history
         Ajoute la section « Temps par segment » à partir de l'historique des états collecté par
-        history_jira.py (Flux-Lab/historique/transitions.json par défaut) : temps cumulé par état puis par
+        history_jira.py (lu dans la base ; aucun historique : code 1, même phrase) : temps cumulé par état puis par
         segment (réglage « segments » de flux.yaml), tickets sortis d'un segment pendant la période, âge dans
         le segment, lead time de livraison depuis le point d'engagement, efficacité de flux, couverture. Les
         durées sont en jours calendaires (différences de dates). Sans l'option, le rapport est inchangé.
 
-    uv run flux_jira.py statuses|compute --source db [...]
-        Lit les tickets dans le schéma flow de la base (rôle pmzilla_flow_ro, lecture seule) au lieu d'un export CSV :
-        aucun fichier à donner, mêmes options, même rapport pour les mêmes données. Avec --source db, --history lit les
-        transitions de la base (sans cache de fichier ; la valeur donnée à l'option, s'il y en a une, est ignorée). Les dates
-        sont lues dans le fuseau export_timezone de flux.yaml. Défaut : --source csv (comportement inchangé, sans psycopg).
-        Base injoignable ou rôle absent : message clair, code de sortie 1, sans mot de passe.
-        Les deux voies lisent les transitions de l'historique dans ce même fuseau (le cache garde le décalage de l'API : il est
-        ramené dans export_timezone à la lecture), donc comptent les mêmes jours pour les mêmes données.
-
-    uv run flux_jira.py compute <export.csv>... --by team|mission-team|site
+    uv run flux_jira.py compute --by team|mission-team|site
         Agrégation du rapport (R-58, tâche 9.1). Défaut team : rapport inchangé. Avec mission-team ou site, le script lit le
         référentiel Flux-Lab/organisation.yaml (absent ou invalide : code 1, aucun rapport), remplace les sections par équipe par
         des sections par groupe (les équipes que le référentiel ne décrit pas sont regroupées sous « hors référentiel », avec
         leur nombre de tickets), ajoute un résumé de structure (équipes et effectifs par groupe, par ordre de nom, sans ratio
-        ni classement) et écrit flux-<nom>-<agrégation>-AAAA-MM-JJ.md (et .json). Sur les deux sources. La console ne porte aucun
+        ni classement) et écrit flux-<nom>-<agrégation>-AAAA-MM-JJ.md (et .json). La console ne porte aucun
         nom de groupe et la comparaison automatique est sautée (compare --name <nom>-<agrégation> la fait à la demande).
 
     uv run flux_jira.py cycles --name serie [--scope ABC,DEF]
@@ -72,16 +69,26 @@ posture Delivery lit.
         et part contre provision, sans patch, versions non mappées, section Epic Review. Ni clé de ticket, ni personne, ni nom de
         version ou d'étiquette dans la sortie.
 
+    uv run flux_jira.py epics --name serie [--language fr|en]
+        Rapport de flux des épics du domaine pilote (epic-flow-report), lu UNIQUEMENT dans la base (rôle lecture seule) : un fichier CSV
+        donné est refusé (code 1). À lancer par l'utilisateur seul, dans le Terminal (refusé dans une session Claude Code : code 3,
+        avant toute lecture). Écrit Flux-Lab/rapports/epics-<série>-AAAA-MM-JJ.md et .json : pour les épics qui portent l'étiquette de
+        domaine déclarée (rôle pilot_domain), une ligne par domaine, par équipe (ordre de nom) et « sans équipe », pour cinq mesures :
+        de l'idée à Ready (étiquette Ready du rôle ready, sinon colonne ready_column), passages en Epic Review, cycle planifié et report
+        (étiquettes de cycle liées à une clé de cycle par cycle_keys, confirmation par le rôle confirmation), épics par colonne du board,
+        âge des épics en cours (active_columns). Un compte sous cinq, un centile sur moins de cinq épics et la suppression secondaire
+        s'écrivent « masqué » (« masked » en anglais, idée #417 ; l'introduction du rapport donne le seuil) ; les cellules du JSON sont {value, state}. Sans correspondance validée, rapport réduit. Ni clé de
+        ticket, ni titre, ni personne, ni nom d'étiquette ou de version ; les noms d'équipe n'apparaissent que dans les fichiers.
+
     uv run flux_jira.py compare --name equipe [--before AAAA-MM-JJ] [--after AAAA-MM-JJ]
         Compare deux rapports du même périmètre (par défaut les deux plus récents) : ce qui a
         bougé (débit des semaines nouvelles, lead time, WIP, vieillissement, équipes, clôtures
         groupées, prévisions). Écrit Flux-Lab/rapports/evolution-<nom>-AAAA-MM-JJ.md (et .json).
 
 Réglages : Flux-Lab/flux.yaml (créé au premier lancement) : format des dates, noms des colonnes,
-états « en cours » et « à faire ». Les exports CSV vont dans Flux-Lab/exports/ : le dossier
-Flux-Lab est exclu de Git, et Claude Code n'a pas le droit de lire les exports.
+états « en cours » et « à faire ». Le dossier Flux-Lab est exclu de Git.
 
-Export multi-projets (plusieurs workflows) : si l'export a la colonne « Status Category », elle
+Base multi-projets (plusieurs workflows) : si les tickets ont une « Status Category », elle
 décide de « en cours » (In Progress) et « à faire » (To Do) ; in_progress_states et todo_states ne
 servent alors qu'aux tickets sans catégorie. Les tickets des types listés dans portfolio_types
 (épopées, initiatives) et des projets listés dans excluded_projects (colonne Key) sortent du débit, du
@@ -114,12 +121,14 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths                                  # noqa: E402
 import flux_config as cfg
 from yaml_strict import charger
 import flow_glossary as glossaire
@@ -147,11 +156,10 @@ try:
 except ImportError:
     sys.exit(Messages(CATALOGS, langue_demandee())("history_common_missing"))
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 FLUX_DIR = WORKSPACE / "Flux-Lab"
 CONFIG_FILE = FLUX_DIR / "flux.yaml"
 REPORT_DIR = FLUX_DIR / "rapports"
-HISTORIQUE_DEFAUT = FLUX_DIR / "historique" / "transitions.json"
 SIMULATIONS = 10_000
 PERCENTILES = (50, 70, 85, 95)
 
@@ -292,111 +300,29 @@ def config(tr=None) -> dict:
     return settings
 
 
-def read_export(path: Path, settings: dict, tr=None) -> tuple[list[dict], dict[str, str | None], int]:
-    """Tickets réduits au type, à l'état et aux dates. Rien d'autre n'est gardé en mémoire."""
+def verifier_usage_lecteur(args: argparse.Namespace, tr=None) -> None:
+    """Refus d'usage de `statuses` et `compute` (database-only, D6 et D12), avant toute lecture de réglage ou de la base : une session
+    Claude Code (code 3), l'option retirée --source quelle que soit sa valeur (code 2), un fichier d'export (code 2), un chemin donné à
+    --history (code 2). Les phrases ne nomment ni fichier, ni valeur."""
     tr = tr or T_FR
-    with path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.reader(handle)
-        header = next(reader)
-        found: dict[str, str | None] = {}
-        index: dict[str, int] = {}
-        # noms comparés sans casse ni espaces superflus : « Status category changed » = « Status Category Changed »
-        normalized = [h.strip().casefold() for h in header]
-        for field, names in settings["colonnes"].items():
-            position = next((normalized.index(n.strip().casefold()) for n in names
-                             if n.strip().casefold() in normalized), None)
-            if position is None and field == "equipe":
-                position = next((i for i, h in enumerate(normalized) if "team" in h and h.endswith("(label)")),
-                                next((i for i, h in enumerate(normalized) if "team" in h), None))
-            found[field] = header[position] if position is not None else None
-            if position is not None:
-                index[field] = position
-        # un champ à plusieurs valeurs (« [G] Team/s ») peut s'exporter en plusieurs colonnes de même nom
-        colonnes_equipe = ([i for i, h in enumerate(normalized) if h == normalized[index["equipe"]]]
-                           if "equipe" in index else [])
-        separateur = settings.get("separateur_equipes") or ";"
-        if "etat" not in index or "cree" not in index:
-            sys.exit(tr("columns_not_found", path=CONFIG_FILE))
-        tickets, unreadable = [], 0
-        for row in reader:
-            def cell(field: str) -> str:
-                position = index.get(field)
-                return row[position] if position is not None and position < len(row) else ""
-            created = commun.parse_jour(cell("cree"))
-            if created is None:
-                unreadable += 1
-                continue
-            cle = cell("cle").strip()
-            equipes = []
-            for position in colonnes_equipe:
-                for valeur in (row[position].split(separateur) if position < len(row) else []):
-                    if valeur.strip() and valeur.strip() not in equipes:
-                        equipes.append(valeur.strip())
-            tickets.append({
-                "cle": cle,
-                "projet": cle.rsplit("-", 1)[0].upper() if "-" in cle else "",
-                "categorie": cell("categorie").strip().casefold(),
-                "type": cell("type").strip() or "?",
-                "etat": cell("etat").strip(),
-                "cree": created,
-                "resolu": commun.parse_jour(cell("resolu")),
-                "resolu_a": commun.parse_moment(cell("resolu")),     # à la minute (fermetures groupées)
-                "debut": commun.parse_jour(cell("debut")),
-                "equipe": cell("equipe").strip() or "(sans équipe)",   # attribution : première colonne, cellule entière
-                "equipes": equipes,                                      # toutes les équipes du ticket (comptage seulement)
-                "motif": cell("motif").strip(),
-            })
-    return tickets, found, unreadable
+    if VARIABLE_CLAUDE_CODE in os.environ:
+        print(tr("epics_refused_session"))
+        sys.exit(3)
+    for refuse, cle in ((args.source is not None, "source_retired"), (bool(args.export), "export_files_retired"),
+                        (bool(getattr(args, "historique", None)), "history_path_retired")):
+        if refuse:
+            print(tr(cle), file=sys.stderr)
+            sys.exit(2)
 
 
-def read_exports(paths: list[str], settings: dict, tr=None) -> tuple[list[dict], dict[str, str | None], int, int]:
-    """Un ou plusieurs exports. Avec plusieurs, fusion par clé si la colonne Key est présente (le dernier
-    fichier l'emporte) ; sans clé, les fichiers sont simplement mis bout à bout. Retourne aussi le nombre
-    de tickets en double retirés."""
-    lus = [read_export(Path(chemin).expanduser(), settings, tr) for chemin in paths]
-    if len(lus) == 1:
-        return lus[0][0], lus[0][1], lus[0][2], 0
-    found: dict[str, str | None] = {}
-    for _, f, _ in lus:
-        for champ, nom in f.items():
-            found[champ] = found.get(champ) or nom
-    tickets, place, doublons = [], {}, 0
-    for fichier_tickets, _, _ in lus:
-        for t in fichier_tickets:
-            if t["cle"] and t["cle"] in place:
-                tickets[place[t["cle"]]] = t
-                doublons += 1
-            else:
-                if t["cle"]:
-                    place[t["cle"]] = len(tickets)
-                tickets.append(t)
-    return tickets, found, sum(u for _, _, u in lus), doublons
-
-
-SOURCES = ("csv", "db")
-
-
-def lire_source(valeur: str | None, tr=None) -> str:
-    """--source : « csv » (défaut) ou « db ». Toute autre valeur arrête le script avec un message."""
+def lire_tickets(settings: dict, tr=None) -> tuple[list[dict], dict[str, str | None], int, int]:
+    """Les tickets du rapport de flux, lus dans le schéma flow de la base (rôle en lecture seule)."""
     tr = tr or T_FR
-    source = valeur or "csv"
-    if source not in SOURCES:
-        sys.exit(tr("source_unknown", value=source, allowed=", ".join(SOURCES)))
-    return source
-
-
-def lire_tickets(args: argparse.Namespace, settings: dict, tr=None) -> tuple[list[dict], dict[str, str | None], int, int]:
-    """Les tickets de la source choisie : exports CSV (au moins un fichier) ou schéma flow de la base."""
-    tr = tr or T_FR
-    if lire_source(args.source, tr) == "csv":
-        return read_exports(args.export, settings, tr)
-    if args.export:                                   # des fichiers avec la base : refusés, jamais ignorés en silence
-        sys.exit(tr("source_db_no_files"))
     return depuis_la_base(lambda store: store.lire_tickets_flux(settings), tr)
 
 
 def depuis_la_base(lecture, tr):
-    """Appelle une lecture de flow_store (import tardif : la voie CSV ne charge pas psycopg)."""
+    """Appelle une lecture de flow_store (import tardif : psycopg n'est chargé que pour la base)."""
     try:
         import flow_store
         return lecture(flow_store)
@@ -406,13 +332,20 @@ def depuis_la_base(lecture, tr):
         sys.exit(tr("db_unreachable", detail=str(erreur)))
 
 
-def lire_historique_source(args: argparse.Namespace, settings: dict, tr=None) -> dict[str, list]:
-    """Transitions par clé : cache de fichier (défaut) ou schéma flow de la base."""
+def lire_historique(settings: dict, tr=None) -> dict[str, list]:
+    """Transitions par clé en majuscules, lues dans la base, dans le fuseau d'export (une entrée par ticket « avec historique »)."""
     tr = tr or T_FR
-    if args.source == "db":
-        return depuis_la_base(lambda store: store.lire_historique(settings), tr)
-    return charger_historique(Path(args.historique).expanduser() if args.historique else HISTORIQUE_DEFAUT, tr,
-                              fuseau_des_reglages(settings, tr))
+    return depuis_la_base(lambda store: store.lire_historique(settings), tr)
+
+
+def lire_historique_lu(settings: dict, tr=None) -> dict[str, list]:
+    """L'historique de la base pour `--history` et `--dormant-from-history` : aucun historique stocké, code 1 et une phrase."""
+    tr = tr or T_FR
+    histoires = lire_historique(settings, tr)
+    if not histoires:
+        print(tr("no_history_in_db"), file=sys.stderr)
+        sys.exit(1)
+    return histoires
 
 
 def par_effectif(compte) -> dict:
@@ -496,23 +429,6 @@ def weekly_throughput(done: list[dict], first_week: dt.date, last_week: dt.date)
         weeks.append(counts.get(current, 0))
         current += dt.timedelta(days=7)
     return weeks
-
-
-def charger_historique(chemin: Path, tr=None, fuseau: ZoneInfo | None = None) -> dict[str, list]:
-    """Transitions de statut par clé (en majuscules), lues dans le cache de history_jira.py. Avec `fuseau`, chaque date est
-    ramenée dans ce fuseau (export_timezone), comme le fait la lecture de la base : sans cela, le cache garde le décalage de
-    l'API et une transition proche de minuit tomberait un autre jour que dans la voie base."""
-    tr = tr or T_FR
-    if not chemin.exists():
-        sys.exit(tr("history_cache_missing", path=chemin))
-    try:
-        donnees = commun.lire_cache(chemin)
-    except commun.CacheIllisible:
-        sys.exit(tr("history_cache_unreadable"))
-    if fuseau is not None:
-        return {str(cle).upper(): [[commun.en_fuseau(d, fuseau), de, vers] for d, de, vers in entree["transitions"]]
-                for cle, entree in donnees.items()}
-    return {str(cle).upper(): entree["transitions"] for cle, entree in donnees.items()}
 
 
 date_de = commun.date_calendaire
@@ -1036,10 +952,11 @@ def lignes_cycles(r: dict, tr) -> list[str]:
 
 
 def fuseau_des_reglages(settings: dict, tr) -> ZoneInfo:
-    """Fuseau export_timezone de flux.yaml (Europe/Paris par défaut), comme export_jira_api.fuseau_export."""
+    """Fuseau export_timezone de flux.yaml : la règle partagée de history_common (idée #169, D9) ; un fuseau inconnu garde le
+    message et la sortie de `cycles`."""
     try:
-        return ZoneInfo(str(settings.get("export_fuseau") or "Europe/Paris").strip())
-    except (ZoneInfoNotFoundError, ValueError):
+        return commun.fuseau_export(settings)
+    except commun.ErreurFuseau:
         sys.exit(tr("cycles_timezone_unknown"))
 
 
@@ -1075,16 +992,562 @@ def cmd_cycles(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Rapport de flux des épics (epic-flow-report, conceptions D3 à D10)
+#
+# Un épic est le dictionnaire de flow_store.lire_epics ; le contexte (`contexte`) porte les cycles, la correspondance du Discovery
+# Workflow, le fuseau d'export, le jour du calcul, la source de Ready ("label", "colonne" ou None), et les drapeaux `epic_review` (un rôle
+# Epic Review est déclaré), `cycles_lies` (une étiquette de cycle nomme une clé de cycle) et `reference_p85` (85e centile de « de l'idée
+# à Ready » sur tous les cycles, None s'il est masqué ou non calculé). Chaque fonction `calculer_*` rend, pour UNE ligne (une liste
+# d'épics), un dictionnaire nom de cellule -> valeur brute `Brut` ; le masquage et la suppression secondaire sont faits ensuite, une seule
+# fois, par `lignes_par_equipe` (jamais pendant la mise en forme). Aucune clé de ticket, aucun nom d'étiquette ni de version n'entre ici.
+# ---------------------------------------------------------------------------
+
+SEUIL_MASQUE = 5
+ETATS_CELLULE = ("ok", "lt5", "masked", "no_reference", "cycle_in_progress", "not_computed")
+
+
+class Brut(NamedTuple):
+    """Valeur brute d'une cellule avant masquage. genre : « compte » (valeur = n), « pct » (valeur = le centile, n = l'effectif) ou
+    « etat » (valeur = l'état forcé : cycle_in_progress, not_computed ou no_reference). groupe : cellules d'une même ligne qui font un
+    total (compartiments), soumises ensemble à la suppression secondaire."""
+    genre: str
+    valeur: object
+    n: int | None
+    groupe: str | None = None
+
+
+def compte_brut(n: int, groupe: str | None = None) -> Brut:
+    return Brut("compte", n, n, groupe)
+
+
+def percentile_brut(valeur: float | None, n: int) -> Brut:
+    return Brut("pct", valeur, n)
+
+
+def etat_brut(nom: str) -> Brut:
+    return Brut("etat", nom, None)
+
+
+def epics_du_pilote(epics: list[dict], aujourdhui: dt.date) -> list[dict]:
+    """Épics dont une période de l'étiquette de domaine est ouverte le jour du calcul (conception D3). Un épic sans cette étiquette, ou
+    dont elle est retirée, n'est compté nulle part."""
+    def ouverte(p: dict) -> bool:
+        return p["role"] == "pilot_domain" and p["ajout"].date() <= aujourdhui and (p["retrait"] is None or p["retrait"].date() > aujourdhui)
+    return [e for e in epics if any(ouverte(p) for p in e["periodes"])]
+
+
+def transitions_triees(e: dict) -> list[tuple]:
+    return sorted(e.get("transitions") or [], key=lambda x: x[0])
+
+
+def statut_initial(e: dict) -> str | None:
+    """Statut à la création : le départ de la première transition (son arrivée quand le départ est vide : c'est la création), sinon le
+    statut courant."""
+    transitions = transitions_triees(e)
+    if not transitions:
+        return e.get("etat")
+    return transitions[0][1] or transitions[0][2]
+
+
+def debut_idee(e: dict, discovery: dict) -> dt.datetime | None:
+    """Début de « de l'idée à Ready » (conception D5) : l'instant de création quand le statut initial est dans la colonne de départ,
+    sinon la première transition vers un statut de cette colonne ; None si l'épic n'y est jamais entré. Jamais l'instant de création
+    quand le statut initial est ailleurs, jamais l'étiquette de cycle ni la version corrigée."""
+    depart = discovery.get("start_column")
+    if not depart:
+        return None
+    if colonne_du_statut(statut_initial(e), discovery) == depart:
+        return e["cree"]
+    return next((instant for instant, _, vers in transitions_triees(e) if colonne_du_statut(vers, discovery) == depart), None)
+
+
+def fin_ready(e: dict, discovery: dict, source: str | None) -> dt.datetime | None:
+    """Fin de « de l'idée à Ready » : premier ajout de l'étiquette Ready (source « label ») ou première entrée dans la colonne Ready
+    (source « colonne »). Une seule source par exécution."""
+    if source == "label":
+        ajouts = [p["ajout"] for p in e["periodes"] if p["role"] == "ready"]
+        return min(ajouts) if ajouts else None
+    if source == "colonne" and discovery.get("ready_column"):
+        return next((instant for instant, _, vers in transitions_triees(e)
+                     if colonne_du_statut(vers, discovery) == discovery["ready_column"]), None)
+    return None
+
+
+def correspondance_validee(ctx: dict) -> bool:
+    d = ctx.get("discovery")
+    return bool(d and d["validated"])
+
+
+def non_calcule(cles) -> dict:
+    return {cle: etat_brut("not_computed") for cle in cles}
+
+
+def centiles(valeurs: list, prefixe: str) -> dict:
+    """Médiane et 85e centile (np.percentile, interpolation linéaire, comme les autres rapports) d'une liste de durées en jours."""
+    if not valeurs:
+        return {f"{prefixe}p50": percentile_brut(None, 0), f"{prefixe}p85": percentile_brut(None, 0)}
+    return {f"{prefixe}p50": percentile_brut(float(np.percentile(valeurs, 50)), len(valeurs)),
+            f"{prefixe}p85": percentile_brut(float(np.percentile(valeurs, 85)), len(valeurs))}
+
+
+def cycle_du_jour(cycles: list, jour: dt.date | None):
+    return next((c for c in cycles if jour and c.start <= jour <= c.end), None)
+
+
+def calculer_idee_a_ready(epics: list[dict], ctx: dict) -> dict:
+    """De l'idée à Ready (D5) : par cycle (celui du jour de fin) et au total, les épics arrivés à Ready, la médiane et le 85e centile
+    de la durée en jours calendaires (fuseau d'export) ; `sans_entree` : arrivés à Ready sans entrée connue dans la colonne de départ,
+    hors durée. Sans correspondance validée ou sans source de Ready : non calculé."""
+    cycles, discovery, fuseau, source = ctx["cycles"], ctx["discovery"], ctx["fuseau"], ctx.get("source_ready")
+    cles = [f"{c.key}.{x}" for c in cycles for x in ("atteints", "p50", "p85")] + ["total.atteints", "total.p50", "total.p85", "sans_entree"]
+    if not (correspondance_validee(ctx) and discovery.get("start_column") and (source == "label" or (source == "colonne" and discovery.get("ready_column")))):
+        return non_calcule(cles)
+    atteints = {c.key: 0 for c in cycles}
+    durees = {c.key: [] for c in cycles}
+    sans_entree = 0
+    for e in epics:
+        fin = fin_ready(e, discovery, source)
+        if fin is None:
+            continue
+        jour_fin = jour_local(fin, fuseau)
+        cycle = cycle_du_jour(cycles, jour_fin)
+        debut = debut_idee(e, discovery)
+        jours = (jour_fin - jour_local(debut, fuseau)).days if debut is not None else None
+        if jours is not None and jours < 0:
+            jours = None
+        if cycle:
+            atteints[cycle.key] += 1
+        if jours is None:
+            sans_entree += 1
+        elif cycle:
+            durees[cycle.key].append(jours)
+    sortie = {}
+    for c in cycles:
+        sortie[f"{c.key}.atteints"] = compte_brut(atteints[c.key])
+        sortie |= centiles(durees[c.key], f"{c.key}.")
+    sortie["total.atteints"] = compte_brut(sum(atteints.values()))
+    sortie |= centiles([j for v in durees.values() for j in v], "total.")
+    sortie["sans_entree"] = compte_brut(sans_entree)
+    return sortie
+
+
+def calculer_passages(epics: list[dict], ctx: dict) -> dict | None:
+    """Passages en Epic Review (D6) : par cycle, les soumissions (chaque ajout de l'étiquette déclarée) et les resoumissions (les ajouts
+    qui ne sont pas le premier de l'épic) ; pour les épics soumis au moins une fois, la répartition par nombre de soumissions (1, 2, 3 ou
+    plus). Ne demande aucune correspondance. None quand aucun rôle Epic Review n'est déclaré."""
+    if not ctx.get("epic_review"):
+        return None
+    cycles, fuseau = ctx["cycles"], ctx["fuseau"]
+    soumissions = {c.key: 0 for c in cycles}
+    resoumissions = {c.key: 0 for c in cycles}
+    repartition = Counter()
+    for e in epics:
+        ajouts = sorted(p["ajout"] for p in e["periodes"] if p["role"] == "epic_review")
+        for i, ajout in enumerate(ajouts):
+            cycle = cycle_du_jour(cycles, jour_local(ajout, fuseau))
+            if cycle:
+                soumissions[cycle.key] += 1
+                resoumissions[cycle.key] += i > 0
+        if ajouts:
+            repartition[min(len(ajouts), 3)] += 1
+    sortie = {}
+    for c in cycles:
+        sortie[f"{c.key}.soumissions"] = compte_brut(soumissions[c.key])
+        sortie[f"{c.key}.resoumissions"] = compte_brut(resoumissions[c.key])
+    for nombre, nom in ((1, "1"), (2, "2"), (3, "3+")):
+        sortie[f"repartition.{nom}"] = compte_brut(repartition[nombre], "repartition")
+    return sortie
+
+
+def cycle_planifie(e: dict, cycles: list, fuseau: ZoneInfo) -> dict | None:
+    """Cycle planifié d'un épic tel qu'il était au démarrage de ce cycle (D7). On part du cycle de la plus ancienne étiquette de cycle ;
+    on prend la dernière étiquette ajoutée avant le premier jour de la fenêtre de ce cycle, et on recommence avec le cycle qu'elle nomme
+    jusqu'à ce qu'il ne change plus. Aucune étiquette ajoutée avant ce premier jour : planifié tard, le cycle de la plus ancienne étiquette.
+    Rend {"cle", "tard", "replanifie" (le cycle planifié n'est pas celui de la plus ancienne étiquette), "decale" (une étiquette d'un autre
+    cycle ajoutée à partir du premier jour du cycle planifié)} ; None sans étiquette de cycle liée à un cycle."""
+    par_cle = {c.key: c for c in cycles}
+    etiquettes = sorted(((p["ajout"], p["cycle"]) for p in e["periodes"] if p["role"] == "cycle" and p["cycle"] in par_cle),
+                        key=lambda x: x[0])
+    if not etiquettes:
+        return None
+    premier = etiquettes[0][1]
+    jours = [(jour_local(ajout, fuseau), cle) for ajout, cle in etiquettes]
+    tard = not any(jour < par_cle[premier].start for jour, _ in jours)
+    courant, vus = premier, {premier}
+    while not tard:
+        avant = [cle for jour, cle in jours if jour < par_cle[courant].start]
+        if not avant or avant[-1] == courant or avant[-1] in vus:
+            break
+        courant = avant[-1]
+        vus.add(courant)
+    decale = any(cle != courant and jour >= par_cle[courant].start for jour, cle in jours)
+    return {"cle": courant, "tard": tard, "replanifie": courant != premier, "decale": decale}
+
+
+COMPARTIMENTS_REPORT = ("dans_le_cycle", "reportes", "report_provisoire", "rejetes")
+CONFIRMATIONS = ("pris", "non_pris", "sans")
+SENS_VERS_CONFIRMATION = {"taken_in": "pris", "not_taken_in": "non_pris"}
+
+
+def confirmation_a(e: dict, instant: dt.datetime) -> str:
+    """Étiquette de confirmation ouverte à l'instant : la dernière ajoutée avant lui et pas encore retirée ; « sans » s'il n'y en a pas."""
+    ouvertes = sorted((p for p in e["periodes"] if p["role"] == "confirmation" and p["ajout"] < instant
+                       and (p["retrait"] is None or p["retrait"] >= instant)), key=lambda p: p["ajout"])
+    return SENS_VERS_CONFIRMATION.get(ouvertes[-1]["sens"], "sans") if ouvertes else "sans"
+
+
+def calculer_report(epics: list[dict], ctx: dict) -> dict | None:
+    """Cycle planifié et report (D7), sans correspondance. Par cycle planifié : les épics planifiés, leur compartiment (dans le cycle
+    planifié, reporté, report provisoire, rejeté), le découpage par étiquette de confirmation ouverte à la fin du dernier jour du cycle (ou
+    du jour du calcul), les planifiés tard, les replanifiés avant démarrage et les indicateurs de décalage déclaré. Un cycle qui n'est pas
+    terminé donne `cycle_in_progress` aux compartiments et aux décalages (les planifiés et les rejetés sont comptés). Un épic sans étiquette
+    de cycle est « non planifié ». None quand aucune étiquette de cycle ne nomme un cycle."""
+    if not ctx.get("cycles_lies"):
+        return None
+    cycles, fuseau, aujourdhui = ctx["cycles"], ctx["fuseau"], ctx["aujourdhui"]
+    par_cle = {c.key: c for c in cycles}
+    compte = {c.key: Counter() for c in cycles}
+    croise = {c.key: Counter() for c in cycles}
+    confirmation = {c.key: Counter() for c in cycles}
+    non_planifies = non_planifies_rejetes = 0
+    for e in epics:
+        rejete = e["resolu"] is not None and e.get("classe") == "not_done"
+        plan = cycle_planifie(e, cycles, fuseau)
+        if plan is None:
+            non_planifies += 1
+            non_planifies_rejetes += rejete
+            continue
+        c = par_cle[plan["cle"]]
+        if rejete:
+            compartiment = "rejetes"
+        elif e["resolu"] is None:
+            compartiment = "report_provisoire"
+        else:
+            compartiment = "dans_le_cycle" if jour_local(e["resolu"], fuseau) <= c.end else "reportes"
+        fin = dt.datetime.combine(min(c.end, aujourdhui) + dt.timedelta(days=1), dt.time.min, tzinfo=fuseau)
+        choix = confirmation_a(e, fin)
+        compte[c.key]["planifies"] += 1
+        compte[c.key][compartiment] += 1
+        compte[c.key]["planifies_tard"] += plan["tard"]
+        compte[c.key]["replanifies_avant_demarrage"] += plan["replanifie"]
+        confirmation[c.key][choix] += 1
+        croise[c.key][(choix, compartiment)] += 1
+        if compartiment != "rejetes":
+            reporte = compartiment in ("reportes", "report_provisoire")
+            if plan["decale"]:
+                compte[c.key]["decalage_declare_reporte" if reporte else "decalage_declare_non_reporte"] += 1
+            elif reporte:
+                compte[c.key]["reporte_sans_decalage_declare"] += 1
+    sortie = {}
+    for c in cycles:
+        termine = c.end < aujourdhui
+        n = compte[c.key]
+
+        def cellule(valeur: int, groupe: str | None = None, force: bool = False) -> Brut:
+            return etat_brut("cycle_in_progress") if (force and not termine) else compte_brut(valeur, groupe)
+        sortie[f"{c.key}.planifies"] = compte_brut(n["planifies"])
+        for compartiment in COMPARTIMENTS_REPORT:
+            sortie[f"{c.key}.{compartiment}"] = cellule(n[compartiment], f"compartiments:{c.key}", compartiment != "rejetes")
+        sortie[f"{c.key}.planifies_tard"] = compte_brut(n["planifies_tard"])
+        sortie[f"{c.key}.replanifies_avant_demarrage"] = compte_brut(n["replanifies_avant_demarrage"])
+        for nom in ("decalage_declare_reporte", "decalage_declare_non_reporte", "reporte_sans_decalage_declare"):
+            sortie[f"{c.key}.{nom}"] = cellule(n[nom], None, True)
+        for choix in CONFIRMATIONS:
+            sortie[f"{c.key}.confirmation.{choix}"] = compte_brut(confirmation[c.key][choix], f"confirmation:{c.key}")
+        for choix in CONFIRMATIONS:
+            for compartiment in COMPARTIMENTS_REPORT:
+                sortie[f"{c.key}.confirmation.{choix}.{compartiment}"] = cellule(
+                    croise[c.key][(choix, compartiment)], f"croise:{c.key}:{choix}", compartiment != "rejetes")
+    sortie["non_planifies"] = compte_brut(non_planifies)
+    sortie["non_planifies_rejetes"] = compte_brut(non_planifies_rejetes)
+    return sortie
+
+
+def calculer_colonnes(epics: list[dict], ctx: dict) -> dict:
+    """Épics par colonne du board (D8) : les colonnes de la correspondance validée dans l'ordre déclaré, puis « statut non mappé »."""
+    d = ctx.get("discovery")
+    noms = list(d["columns"]) if d else []
+    cles = [f"colonne.{nom}" for nom in noms] + ["statut_non_mappe"]
+    if not correspondance_validee(ctx):
+        return non_calcule(cles)
+    comptes = Counter(colonne_du_statut(e["etat"], d) for e in epics)
+    return {**{f"colonne.{nom}": compte_brut(comptes[nom]) for nom in noms}, "statut_non_mappe": compte_brut(comptes[None])}
+
+
+def calculer_statuts(epics: list[dict], ctx: dict) -> dict:
+    """Épics par statut Jira (rapport réduit, D11), dans l'ordre des noms."""
+    comptes = Counter((e["etat"] or "?").strip() for e in epics)
+    return {f"statut.{nom}": compte_brut(n) for nom, n in sorted(comptes.items())}
+
+
+def entree_dans_la_colonne(e: dict, colonne: str, discovery: dict) -> dt.datetime:
+    """Dernière entrée dans la colonne courante (une transition venue d'une autre colonne) ; la création quand l'épic y est né."""
+    entree = e["cree"] if colonne_du_statut(statut_initial(e), discovery) == colonne else None
+    for instant, depart, arrivee in transitions_triees(e):
+        if colonne_du_statut(arrivee, discovery) == colonne and colonne_du_statut(depart, discovery) != colonne:
+            entree = instant
+    return entree or e["cree"]
+
+
+def calculer_age(epics: list[dict], ctx: dict) -> dict:
+    """Âge des épics en cours (D9) : ceux dont le statut courant est dans une colonne active ; l'âge depuis le début de « de l'idée à
+    Ready » et l'âge dans la colonne (jours calendaires jusqu'au jour du calcul), avec médiane et 85e centile ; `sans_entree` : sans
+    entrée connue dans la colonne de départ, sans âge ; `plus_vieux_que_reference` : plus vieux que le 85e centile de « de l'idée à Ready »."""
+    d, fuseau, aujourdhui = ctx.get("discovery"), ctx["fuseau"], ctx["aujourdhui"]
+    cles = ["en_cours", "sans_entree", "age.p50", "age.p85", "age_colonne.p50", "age_colonne.p85", "plus_vieux_que_reference"]
+    if not (correspondance_validee(ctx) and d.get("active_columns") and d.get("start_column")):
+        return non_calcule(cles)
+    ages, ages_colonne, en_cours, sans_entree = [], [], 0, 0
+    for e in epics:
+        colonne = colonne_du_statut(e["etat"], d)
+        if colonne is None or colonne not in d["active_columns"]:
+            continue
+        en_cours += 1
+        ages_colonne.append((aujourdhui - jour_local(entree_dans_la_colonne(e, colonne, d), fuseau)).days)
+        debut = debut_idee(e, d)
+        if debut is None:
+            sans_entree += 1
+        else:
+            ages.append((aujourdhui - jour_local(debut, fuseau)).days)
+    reference = ctx.get("reference_p85")
+    sortie = {"en_cours": compte_brut(en_cours), "sans_entree": compte_brut(sans_entree)}
+    sortie |= centiles(ages, "age.")
+    sortie |= centiles(ages_colonne, "age_colonne.")
+    sortie["plus_vieux_que_reference"] = (etat_brut("no_reference") if reference is None
+                                          else compte_brut(sum(1 for a in ages if a > reference)))
+    return sortie
+
+
+def cellule_masquee(brut: Brut) -> dict:
+    """Cellule structurée {"value", "state"} d'une valeur brute (D10) : un compte sous cinq (zéro compris) et un centile sur moins de cinq
+    épics sont « lt5 » sans valeur ; un état forcé garde son nom ; jamais une valeur estimée."""
+    if brut.genre == "etat":
+        return {"value": None, "state": brut.valeur}
+    if brut.n < SEUIL_MASQUE:
+        return {"value": None, "state": "lt5"}
+    return {"value": brut.valeur if brut.genre == "compte" else round(float(brut.valeur), 1), "state": "ok"}
+
+
+def suppression_secondaire(cellules: list[dict], genres: list[str], rang: list[int]) -> None:
+    """Quand exactement une cellule du groupe est masquée (« lt5 »), la plus petite des autres cellules de compte affichées devient « masked » :
+    sans cela, le total ferait retrouver la cellule masquée par différence. Modifie les cellules en place ; `rang` : indices du groupe."""
+    masquees = [i for i in rang if cellules[i]["state"] == "lt5" and genres[i] == "compte"]
+    visibles = [i for i in rang if cellules[i]["state"] == "ok" and genres[i] == "compte"]
+    if len(masquees) == 1 and visibles:
+        plus_petite = min(visibles, key=lambda i: cellules[i]["value"])
+        cellules[plus_petite] = {"value": None, "state": "masked"}
+
+
+def lignes_par_equipe(epics: list[dict], calcul, ctx: dict) -> list[dict]:
+    """Une mesure en lignes (D10) : le domaine pilote, puis une ligne par équipe qui a au moins un épic (première équipe de l'attribution),
+    par ordre de nom (jamais par valeur), puis « sans équipe » si elle n'est pas vide. Chaque ligne : {"row": pilot_domain | team | no_team,
+    "team": nom ou None, "cells": {nom: {"value", "state"}}}. Les cellules sont masquées ici ; un état forcé passe tel quel."""
+    par_equipe: dict[str | None, list] = {}
+    for e in epics:
+        par_equipe.setdefault(e["equipes"][0] if e["equipes"] else None, []).append(e)
+    definitions = [("pilot_domain", None, epics)] + [("team", nom, par_equipe[nom]) for nom in sorted(n for n in par_equipe if n is not None)]
+    if None in par_equipe:
+        definitions.append(("no_team", None, par_equipe[None]))
+    bruts = [calcul(liste, ctx) for _, _, liste in definitions]
+    noms = list(bruts[0])
+    for brut in bruts[1:]:                # la ligne du domaine a toutes les cellules (statuts par exemple) : une équipe sans l'une a zéro
+        for nom in noms:
+            brut.setdefault(nom, compte_brut(0))
+    cellules = [{nom: cellule_masquee(brut[nom]) for nom in noms} for brut in bruts]
+    for nom in noms:                      # colonne : lignes d'équipe seulement (la ligne du domaine est le total, jamais masquée par différence)
+        indices = list(range(1, len(definitions)))
+        colonne = [cellules[i][nom] for i in indices]
+        suppression_secondaire(colonne, [bruts[i][nom].genre for i in indices], list(range(len(indices))))
+        for position, i in enumerate(indices):
+            cellules[i][nom] = colonne[position]
+    for i, brut in enumerate(bruts):       # ligne : compartiments qui font un total
+        groupes: dict[str, list[str]] = {}
+        for nom, b in brut.items():
+            if b.groupe:
+                groupes.setdefault(b.groupe, []).append(nom)
+        for membres in groupes.values():
+            ligne = [cellules[i][nom] for nom in membres]
+            suppression_secondaire(ligne, [brut[nom].genre for nom in membres], list(range(len(membres))))
+            for position, nom in enumerate(membres):
+                cellules[i][nom] = ligne[position]
+    return [{"row": rang, "team": equipe, "cells": cellules[i]} for i, (rang, equipe, _) in enumerate(definitions)]
+
+
+VARIABLE_CLAUDE_CODE = "CLAUDECODE"
+SOURCE_READY_JSON = {"label": "label", "colonne": "column", None: None}
+
+
+def nombre(valeur, tr) -> str:
+    texte = f"{valeur:g}" if isinstance(valeur, float) else str(valeur)
+    return texte.replace(".", ",") if tr.language == "fr" else texte
+
+
+TEXTES_ETAT = {"lt5": "epics_cell_lt5", "masked": "epics_cell_masked", "cycle_in_progress": "epics_cell_cycle_in_progress",
+               "no_reference": "epics_cell_no_reference", "not_computed": "epics_cell_not_computed"}
+TEXTES_SOURCE_READY = {"label": "epics_ready_source_label", "column": "epics_ready_source_column"}
+# fin du nom d'une cellule -> clé du catalogue de son libellé (les noms de colonne et de statut s'écrivent tels quels)
+LIBELLES_EPICS = {
+    "atteints": "epics_c_atteints", "p50": "epics_c_p50", "p85": "epics_c_p85", "sans_entree": "epics_c_sans_entree",
+    "soumissions": "epics_c_soumissions", "resoumissions": "epics_c_resoumissions", "repartition.1": "epics_c_repartition_1",
+    "repartition.2": "epics_c_repartition_2", "repartition.3+": "epics_c_repartition_3+", "planifies": "epics_c_planifies",
+    "dans_le_cycle": "epics_c_dans_le_cycle", "reportes": "epics_c_reportes", "report_provisoire": "epics_c_report_provisoire",
+    "rejetes": "epics_c_rejetes", "planifies_tard": "epics_c_planifies_tard",
+    "replanifies_avant_demarrage": "epics_c_replanifies_avant_demarrage",
+    "decalage_declare_reporte": "epics_c_decalage_declare_reporte",
+    "decalage_declare_non_reporte": "epics_c_decalage_declare_non_reporte",
+    "reporte_sans_decalage_declare": "epics_c_reporte_sans_decalage_declare",
+    "confirmation.pris": "epics_c_confirmation_pris", "confirmation.non_pris": "epics_c_confirmation_non_pris",
+    "confirmation.sans": "epics_c_confirmation_sans", "non_planifies": "epics_c_non_planifies",
+    "non_planifies_rejetes": "epics_c_non_planifies_rejetes", "statut_non_mappe": "epics_c_statut_non_mappe",
+    "en_cours": "epics_c_en_cours", "age.p50": "epics_c_age_p50", "age.p85": "epics_c_age_p85",
+    "age_colonne.p50": "epics_c_age_colonne_p50", "age_colonne.p85": "epics_c_age_colonne_p85",
+    "plus_vieux_que_reference": "epics_c_plus_vieux_que_reference", "total": "epics_c_total"}
+
+
+def texte_cellule(cellule: dict, tr) -> str:
+    """Texte d'une cellule structurée : le nombre quand elle est affichée, sinon le libellé de son état. Aucune règle ici."""
+    return nombre(cellule["value"], tr) if cellule["state"] == "ok" else tr(TEXTES_ETAT[cellule["state"]])
+
+
+def libelle_cellule(cle: str, tr) -> tuple[str | None, str]:
+    """(cycle ou None, libellé) d'un nom de cellule. Les noms de colonne et de statut sont écrits tels quels."""
+    premier, _, reste = cle.partition(".")
+    if cfg.CLE_CYCLE.match(premier):
+        if reste.startswith("confirmation.") and reste.count(".") > 1:          # confirmation croisée avec un compartiment
+            confirmation, _, compartiment = reste.rpartition(".")
+            return premier, tr(LIBELLES_EPICS[confirmation]) + " / " + tr(LIBELLES_EPICS[compartiment])
+        return premier, tr(LIBELLES_EPICS[reste])
+    if premier == "total":
+        return tr(LIBELLES_EPICS["total"]), tr(LIBELLES_EPICS[reste])
+    if premier in ("colonne", "statut"):
+        return None, reste
+    return None, tr(LIBELLES_EPICS[cle])
+
+
+def lignes_section(rows: list[dict], tr) -> list[str]:
+    lignes: list[str] = []
+    for ligne in rows:
+        nom = {"pilot_domain": lambda: tr("epics_row_domain"), "no_team": lambda: tr("no_team")}.get(ligne["row"], lambda: ligne["team"])()
+        lignes += [tr("epics_row_heading", row=nom), ""]
+        for cle, cellule in ligne["cells"].items():
+            cycle, libelle = libelle_cellule(cle, tr)
+            texte = texte_cellule(cellule, tr)
+            lignes.append(tr("epics_line_cycle", cycle=cycle, label=libelle, cell=texte) if cycle
+                          else tr("epics_line", label=libelle, cell=texte))
+        lignes.append("")
+    return lignes
+
+
+def lignes_epics(r: dict, tr) -> list[str]:
+    """Rapport Markdown des épics, écrit à partir de la structure du calcul : aucune règle (classement, seuil, masquage) n'est décidée ici."""
+    nom = tr("name_suffix", name=r["series"]) if r["series"] else ""
+    couverture = r["coverage"]
+    lignes = [tr("epics_title", name=nom, date=r["date"]), "", tr("epics_intro"), "",
+              tr("epics_coverage", h=texte_cellule(couverture["with_history"], tr), n=texte_cellule(couverture["epics"], tr)), ""]
+    if r["ready_source"]:
+        lignes += [tr(TEXTES_SOURCE_READY[r["ready_source"]]), ""]
+    if r["ready_label_not_configured"]:
+        lignes += [tr("epics_ready_label_not_configured"), ""]
+    if not r["mapping_validated"]:
+        lignes += [tr("epics_not_validated"), ""]
+    titres = (("idea_to_ready", "epics_sec_ready"), ("epic_review_passages", "epics_sec_passages"), ("planned_cycle", "epics_sec_report"),
+              ("epics_per_column", "epics_sec_columns"), ("age", "epics_sec_age"), ("epics_per_status", "epics_sec_status"))
+    absentes = {"no_epic_review_label": "epics_no_review_label", "no_cycle_label": "epics_no_cycle_label"}
+    for cle, titre in titres:
+        section = r["sections"].get(cle)
+        if section is None or section["status"] == "not_computed":
+            continue                         # rapport réduit : les trois sections non calculées ne sont pas écrites, la phrase le dit
+        lignes += [tr(titre), ""]
+        lignes += [tr(absentes[section["status"]]), ""] if section["status"] in absentes else lignes_section(section["rows"], tr)
+    return lignes + [tr("epics_limits"), ""]
+
+
+def construire_rapport_epics(pilote: list[dict], avec_historique: list[dict], ctx: dict, complet: bool, source: str | None,
+                             serie: str, aujourdhui: dt.date) -> dict:
+    """Structure du rapport (le JSON et le Markdown en sont écrits tels quels). Les mesures qui lisent les transitions et les dates
+    d'étiquettes portent sur les épics avec historique ; les comptes par statut courant portent sur tous les épics du pilote."""
+    def section(statut: str, epics: list[dict], calcul) -> dict:
+        return {"status": statut, "rows": lignes_par_equipe(epics, calcul, ctx)}
+    calcule = "ok" if complet else "not_computed"
+    sections = {
+        "idea_to_ready": section(calcule, avec_historique, calculer_idee_a_ready),
+        "epic_review_passages": (section("ok", avec_historique, calculer_passages) if ctx["epic_review"]
+                                 else {"status": "no_epic_review_label", "rows": []}),
+        "planned_cycle": (section("ok", avec_historique, calculer_report) if ctx["cycles_lies"]
+                          else {"status": "no_cycle_label", "rows": []}),
+        "epics_per_column": section(calcule, pilote, calculer_colonnes),
+        "age": section(calcule, avec_historique, calculer_age),
+    }
+    if not complet:
+        sections["epics_per_status"] = section("ok", pilote, calculer_statuts)
+    return {"series": serie, "date": aujourdhui.isoformat(),
+            "coverage": {"with_history": cellule_masquee(compte_brut(len(avec_historique))),
+                         "epics": cellule_masquee(compte_brut(len(pilote)))},
+            "ready_source": SOURCE_READY_JSON[source], "ready_label_not_configured": source == "colonne",
+            "mapping_validated": complet, "sections": sections}
+
+
+def cmd_epics(args: argparse.Namespace) -> None:
+    """Sous-commande epics (epic-flow-report) : la base seulement (rôle lecture seule), jamais un fichier CSV. Les refus passent avant toute
+    lecture : session Claude Code (code 3, avant même les réglages), fichiers CSV, réglages, cycles, étiquette de domaine."""
+    tr = Messages(CATALOGS, args.language)
+    if VARIABLE_CLAUDE_CODE in os.environ:
+        print(tr("epics_refused_session"))
+        sys.exit(3)
+    if args.export:
+        sys.exit(tr("epics_no_csv"))
+    settings = config(tr)
+    cycles = cfg.cycles(settings)
+    if not cycles:
+        sys.exit(tr("cycles_none_configured"))
+    etiquettes = cfg.declared_labels(settings) or {}
+    if not (etiquettes.get("pilot_domain") or {}).get("labels"):
+        sys.exit(tr("epics_no_domain"))
+    fuseau = fuseau_des_reglages(settings, tr)
+    motifs_exclus = list(settings.get("motifs_exclus") or [])
+    epics = depuis_la_base(lambda store: store.lire_epics(settings, motifs_exclus), tr)
+    aujourdhui = dt.date.fromisoformat(args.aujourdhui) if args.aujourdhui else dt.date.today()
+    pilote = epics_du_pilote(epics, aujourdhui)
+    if not pilote:
+        sys.exit(tr("epics_no_pilot"))
+    avec_historique = [e for e in pilote if e["a_historique"]]
+    if not avec_historique:
+        sys.exit(tr("epics_no_history"))
+    discovery = cfg.discovery_workflow(settings)
+    source = ("label" if (etiquettes.get("ready") or {}).get("labels")
+              else "colonne" if discovery and discovery.get("ready_column") else None)
+    complet = bool(discovery and discovery["validated"] and discovery.get("active_columns") and source)
+    ctx = {"cycles": cycles, "fuseau": fuseau, "aujourdhui": aujourdhui, "source_ready": source,
+           "discovery": discovery if complet or discovery is None else {**discovery, "validated": False},
+           "epic_review": bool((etiquettes.get("epic_review") or {}).get("labels")),
+           "cycles_lies": any((etiquettes.get("cycle") or {}).get("cycle_keys") or {}), "reference_p85": None}
+    reference = calculer_idee_a_ready(avec_historique, ctx)["total.p85"]
+    ctx["reference_p85"] = reference.valeur if reference.genre == "pct" and reference.n >= SEUIL_MASQUE else None
+    resultat = construire_rapport_epics(pilote, avec_historique, ctx, complet, source, args.nom, aujourdhui)
+    lignes = lignes_epics(resultat, tr)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"epics-{args.nom}-{resultat['date']}" if args.nom else f"epics-{resultat['date']}"
+    (REPORT_DIR / f"{stem}.md").write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    (REPORT_DIR / f"{stem}.json").write_text(json.dumps(resultat, ensure_ascii=False, indent=2), encoding="utf-8")
+    couverture = resultat["coverage"]          # la console ne porte que des comptes du domaine, masqués comme le rapport
+    print(tr("epics_coverage", h=texte_cellule(couverture["with_history"], tr), n=texte_cellule(couverture["epics"], tr)))
+    if resultat["ready_label_not_configured"]:
+        print(tr("epics_ready_label_not_configured"))
+    if not complet:
+        print(tr("epics_not_validated"))
+    print(tr("epics_written"))
+    print(tr("report_path", path=REPORT_DIR / (stem + ".md")))
+
+
+# ---------------------------------------------------------------------------
 # Commandes
 # ---------------------------------------------------------------------------
 
 def cmd_statuts(args: argparse.Namespace) -> None:
     tr = Messages(CATALOGS, args.language)
+    verifier_usage_lecteur(args, tr)
     settings = config(tr)
-    tickets, found, unreadable, doublons = lire_tickets(args, settings, tr)
-    if len(args.export) > 1:
-        print(tr("merged_exports", n=len(args.export))
-              + (tr("merged_duplicates", n=doublons) if found.get("cle") else tr("merged_no_key")))
+    tickets, found, unreadable, _ = lire_tickets(settings, tr)
     print(tr("columns_used"))
     for field, label in (("type", tr("col_type")), ("etat", tr("col_status")), ("equipe", tr("col_team")),
                          ("cree", tr("col_created")), ("resolu", tr("col_resolved")), ("debut", tr("col_start"))):
@@ -1093,7 +1556,7 @@ def cmd_statuts(args: argparse.Namespace) -> None:
         if found.get(field):
             print(f"  {label:<36} {found[field]}")
     if unreadable:
-        print(tr("unreadable_dates", n=unreadable, path=CONFIG_FILE))
+        print(tr("unreadable_dates", n=unreadable))
     if not tickets:
         return
     print(tr("tickets_summary", n=len(tickets), first=min(t['cree'] for t in tickets),
@@ -1143,6 +1606,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     tr = Messages(CATALOGS, args.language)
     if args.dormants is not None:
         sys.exit(tr("dormants_removed"))
+    verifier_usage_lecteur(args, tr)
     settings = config(tr)
     referentiel = lire_referentiel() if args.par != "team" else None     # avant toute lecture de ticket : sans lui, rien n'est écrit
     if referentiel:
@@ -1151,7 +1615,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     else:
         tr_texte, nom_rapport = tr, args.nom
     perimetre = lire_perimetre(args.perimetre, tr)
-    tickets, found, _, doublons = lire_tickets(args, settings, tr)
+    tickets, found, _, _ = lire_tickets(settings, tr)
     if not found["resolu"]:
         sys.exit(tr("resolved_column_missing"))
     if referentiel:
@@ -1168,16 +1632,18 @@ def cmd_calcul(args: argparse.Namespace) -> None:
                 sys.exit(tr("scope_no_ticket"))
             print(tr("scope_summary", kept=len(tickets), read=lus, missing=absents))
         perimetre_retenu = {"projets": perimetre or "tous", "tickets_lus": lus, "tickets_retenus": len(tickets)}
+    # les types de niveau portefeuille (épics compris) et les projets exclus sortent avant toute lecture de l'historique : la couverture et
+    # les dormants ne dépendent pas des transitions d'épics que la collecte garde (epic-flow-report, conception D12)
+    tickets, ecartes = ecarter(tickets, settings, bool(found.get("cle")))
     cles_dormantes: set[str] | None = None
     sans_historique = 0
     if args.dormants_historique:
         if not found.get("cle"):
             sys.exit(tr("dormant_history_no_key"))
-        cache_dormants = lire_historique_source(args, settings, tr)
+        cache_dormants = lire_historique_lu(settings, tr)
         aujourdhui_dormants = dt.date.fromisoformat(args.aujourdhui) if args.aujourdhui else dt.date.today()
         cles_dormantes, sans_historique = commun.dormants_selon_historique(
             ((t["cle"], t["cree"], bool(t["resolu"])) for t in tickets), cache_dormants, aujourdhui_dormants)
-    tickets, ecartes = ecarter(tickets, settings, bool(found.get("cle")))
     if args.types:
         kinds = {k.strip() for k in args.types.split(",")}
         tickets = [t for t in tickets if t["type"] in kinds]
@@ -1323,7 +1789,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     if args.historique is not None:
         if not found.get("cle"):
             sys.exit(tr("history_no_key"))
-        histoires = lire_historique_source(args, settings, tr)
+        histoires = lire_historique_lu(settings, tr)
         segment_de, noms_segments = commun.table_segments(settings)
         table = {nom: None for nom in noms_segments}
         engagement = settings.get("point_engagement") or "pret"
@@ -1395,6 +1861,8 @@ def cmd_calcul(args: argparse.Namespace) -> None:
             "total": len(plusieurs), "sur": len(tickets),
             "termines": sum(1 for t in plusieurs if t in done), "en_cours": sum(1 for t in plusieurs if t in wip),
             "separateur": settings.get("separateur_equipes") or ";"}
+        if args.par == "team":       # section absente avec un regroupement par Mission Team ou par site (D10)
+            result["tickets_partages_par_equipe"] = partages_par_equipe(plusieurs)
     if est_attente:
         en_attente = [t for t in wip if est_attente(t)]
         result["wip_attente"] = {"actif": len(wip) - len(en_attente), "attente": len(en_attente),
@@ -1424,8 +1892,6 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         result["temps_par_segment"] = segments_calcules
     if avec_categorie:
         result["classement"] = "catégorie d'état"
-    if len(args.export) > 1:
-        result["exports"] = {"fichiers": len(args.export), "doublons_retires": doublons if found.get("cle") else None}
     if referentiel:
         result["regroupement"] = {"par": args.par, "hors_referentiel": hors_referentiel(tickets, referentiel),
                                   "structure": referentiel.structure_summary(args.par, "fr")}
@@ -1469,7 +1935,8 @@ def lecture_lines(r: dict, tr=None) -> list[str]:
         n = round(pct(lead, 85))
         exemples.append(tr("example_lead", n=n))
     definitions = glossaire.lignes_rapport(tr.language, segments=bool(r.get("temps_par_segment")),
-                                           fermetures=bool(r.get("fermetures_groupees")))
+                                           fermetures=bool(r.get("fermetures_groupees")),
+                                           partages=bool(r.get("tickets_partages_par_equipe")))
     lines = [tr("reading_heading"), ""] + definitions
     ts = r.get("temps_par_segment")
     if ts:
@@ -1582,6 +2049,38 @@ def fermetures_lines(r: dict, tr=None) -> list[str]:
     return lines + [""]
 
 
+SEUIL_MASQUE_PARTAGES = 5    # une cellule de moins de 5 tickets n'est pas rendue (section « Tickets partagés par équipe »)
+
+
+def partages_par_equipe(plusieurs: list[dict]) -> dict:
+    """Section « Tickets partagés par équipe » (idée #179, D10), sur les tickets à plusieurs équipes du rapport. Par équipe, dans
+    l'ordre des noms : tickets attribués à l'équipe et partagés avec une autre ; tickets que l'équipe porte sans qu'ils lui soient
+    attribués. Une cellule de moins de 5 tickets est None (masquée). Aucune clé, aucun couple d'équipes."""
+    attribues: Counter = Counter()
+    portes: Counter = Counter()
+    for t in plusieurs:
+        attribues[t["equipe"]] += 1
+        for nom in t["equipes"]:
+            if nom != t["equipe"]:
+                portes[nom] += 1
+
+    def masque(n: int) -> int | None:
+        return n if n >= SEUIL_MASQUE_PARTAGES else None
+    return {"par_equipe": {nom: {"attribues_partages": masque(attribues[nom]), "portes_ailleurs": masque(portes[nom])}
+                           for nom in sorted(set(attribues) | set(portes))},
+            "seuil_masque": SEUIL_MASQUE_PARTAGES}
+
+
+def partages_lines(r: dict, tr=None) -> list[str]:
+    """Lignes Markdown de la section « Tickets partagés par équipe » : le titre, la phrase d'attribution, un tableau."""
+    tr = tr or T_FR
+    lignes = ["", tr("shared_heading"), "", tr("shared_attribution"), "", tr("shared_table"), "|---|---|---|"]
+    for nom, d in r["tickets_partages_par_equipe"]["par_equipe"].items():
+        cellules = [tr("epics_cell_lt5") if d[c] is None else str(d[c]) for c in ("attribues_partages", "portes_ailleurs")]
+        lignes.append(f"| {libelle_equipe(nom, tr)} | {cellules[0]} | {cellules[1]} |")
+    return lignes
+
+
 def arrivees_lines(r: dict, tr=None) -> list[str]:
     """Section « Arrivées et sorties » : tickets créés et éléments terminés, semaine par semaine."""
     tr = tr or T_FR
@@ -1607,6 +2106,8 @@ def arrivees_lines(r: dict, tr=None) -> list[str]:
             lines.append(f"| {libelle_equipe(team, tr)} | {d['arrivees']} | {d['sorties']} | {signe(d['difference'])} |")
         if len(r["arrivees_sorties_par_equipe"]) > SEUIL_NOTE_EQUIPES:
             lines += ["", tr("teams_note")]
+    if r.get("tickets_partages_par_equipe"):
+        lines += partages_lines(r, tr)
     return lines + [""]
 
 
@@ -1657,10 +2158,6 @@ def write_report(r: dict, tr=None) -> None:
         lines += [tr("scope_line",
                      scope=(tr("scope_all") if pm["projets"] == "tous" else tr("scope_projects", list=", ".join(pm["projets"]))),
                      kept=pm["tickets_retenus"], read=pm["tickets_lus"]), ""]
-    if r.get("exports"):
-        e = r["exports"]
-        lines += [tr("merge_by_key", n=e["fichiers"], dups=e["doublons_retires"]) if e["doublons_retires"] is not None
-                  else tr("merge_no_key", n=e["fichiers"]), ""]
     if r.get("ecartes"):
         ec = r["ecartes"]
         lines += [tr("excluded_line", total=ec["total"])
@@ -2197,24 +2694,21 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Métriques de flux à partir d'un export Jira")
+    parser = argparse.ArgumentParser(description="Métriques de flux lues dans la base")
     commands = parser.add_subparsers(dest="command", required=True)
-    states = commands.add_parser("statuses", help="colonnes, période, états et types de l'export")
-    states.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (lots de projets) ; aucun avec --source db")
-    states.add_argument("--source", default="csv", metavar="{csv,db}",
-                        help="d'où viennent les tickets : csv (défaut, les exports donnés) ou db (schéma flow de la base)")
+    states = commands.add_parser("statuses", help="colonnes, période, états et types de la base")
+    states.add_argument("export", nargs="*", help=argparse.SUPPRESS)       # refusé (code 2) : la base est la seule source
+    states.add_argument("--source", default=None, help=argparse.SUPPRESS)  # retirée (code 2), quelle que soit la valeur
     add_language_option(states)
     calc = commands.add_parser("compute", help="lead time, débit, WIP, âge, prévisions")
-    calc.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (lots de projets) ; aucun avec --source db")
-    calc.add_argument("--source", default="csv", metavar="{csv,db}",
-                      help="d'où viennent les tickets : csv (défaut, les exports donnés) ou db (schéma flow de la base ; "
-                           "--history lit alors les transitions de la base)")
+    calc.add_argument("export", nargs="*", help=argparse.SUPPRESS)         # refusé (code 2) : la base est la seule source
+    calc.add_argument("--source", default=None, help=argparse.SUPPRESS)    # retirée (code 2), quelle que soit la valeur
     calc.add_argument("--name", dest="nom", default="", help="nom court de l'équipe ou du périmètre, pour le rapport")
     calc.add_argument("--weeks", dest="semaines", type=int, default=26, help="semaines complètes analysées (défaut 26)")
     calc.add_argument("--target", dest="objectif", type=int, help="éléments à terminer pour la prévision (défaut : le WIP)")
     calc.add_argument("--target-date", dest="date_cible", help="date (AAAA-MM-JJ) pour la prévision « combien d'ici là »")
     calc.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous » ; sans "
-                                          "l'option, tous les tickets de l'export (flux.yaml n'est pas lu pour ce réglage)")
+                                          "l'option, tous les tickets de la base (flux.yaml n'est pas lu pour ce réglage)")
     calc.add_argument("--by", dest="par", choices=AGREGATIONS, default="team",
                       help="agrégation du rapport : team (défaut, rapport inchangé), mission-team ou site (lit "
                            "Flux-Lab/organisation.yaml ; rapport par groupe, nom de rapport suffixé)")
@@ -2225,11 +2719,11 @@ def main(argv: list[str] | None = None) -> None:
                       help="ne pas comparer avec le rapport précédent du même nom")
     calc.add_argument("--dormants", nargs="?", const="", default=None, help=argparse.SUPPRESS)   # supprimée : refusée avec un message
     calc.add_argument("--dormant-from-history", dest="dormants_historique", action="store_true",
-                      help="déduit les dormants de l'historique des états (cache de --history, ou celui par défaut) "
+                      help="déduit les dormants de l'historique des états lu dans la base "
                            "(seule voie pour séparer le travail dormant)")
-    calc.add_argument("--history", dest="historique", nargs="?", const="", default=None, metavar="CACHE",
+    calc.add_argument("--history", dest="historique", nargs="?", const="", default=None, metavar="CHEMIN",
                       help="ajoute la section « Temps par segment » à partir de l'historique des états collecté par "
-                           "history_jira.py (défaut : Flux-Lab/historique/transitions.json)")
+                           "history_jira.py et lu dans la base (aucun chemin n'est accepté)")
     calc.add_argument("--points", action="store_true",
                       help="écrit aussi Flux-Lab/tableaux/points-<nom>-AAAA-MM-JJ.json : un point par ticket en cours "
                            "(équipe, état, segment, âge, nature), sans clé, pour le tableau de bord (hors Git)")
@@ -2245,6 +2739,11 @@ def main(argv: list[str] | None = None) -> None:
     cyc.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous »")
     cyc.add_argument("--today", dest="aujourdhui", help=argparse.SUPPRESS)   # pour les tests
     add_language_option(cyc)
+    epi = commands.add_parser("epics", help="rapport de flux des épics du domaine pilote, lu dans la base seulement (aucun fichier CSV)")
+    epi.add_argument("export", nargs="*", help="refusé : epics lit la base, jamais un fichier CSV")
+    epi.add_argument("--name", dest="nom", default="", help="nom de la série, pour le rapport epics-<série>-AAAA-MM-JJ")
+    epi.add_argument("--today", dest="aujourdhui", help=argparse.SUPPRESS)   # pour les tests
+    add_language_option(epi)
     comp = commands.add_parser("compare", help="ce qui a bougé entre deux rapports du même périmètre")
     comp.add_argument("--name", dest="nom", default="", help="nom du périmètre, comme dans compute --name")
     comp.add_argument("--before", dest="avant", help="date (AAAA-MM-JJ) du rapport de départ (défaut : celui qui précède --after)")
@@ -2257,9 +2756,7 @@ def main(argv: list[str] | None = None) -> None:
     migrate.add_argument("--dry-run", action="store_true", help="dit ce qui changerait, sans rien écrire")
     add_language_option(migrate)
     args = parser.parse_args(cfg.refuse_old_options(sys.argv[1:] if argv is None else argv, OPTIONS_RENOMMEES))
-    if args.command in ("statuses", "compute") and args.source == "csv" and not args.export:
-        parser.error("the following arguments are required: export")
-    {"statuses": cmd_statuts, "compute": cmd_calcul, "cycles": cmd_cycles, "compare": cmd_comparer,
+    {"statuses": cmd_statuts, "compute": cmd_calcul, "cycles": cmd_cycles, "epics": cmd_epics, "compare": cmd_comparer,
      "config": cmd_config}[args.command](args)
 
 

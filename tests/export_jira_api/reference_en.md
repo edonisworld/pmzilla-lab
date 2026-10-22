@@ -3,40 +3,52 @@
 ## export (exit 0)
 
 ```
-Tickets: 4; pages: 1; columns: 17 (team: 2, links: 5 for 2 type(s)).
-File written: api.csv (permissions 600).
+Tickets: 4; pages: 1.
+teams without a type: 2
+raw layer: 4 tickets seen, 4 snapshots added
 ```
 
 ## export without a team field (exit 0)
 
 ```
-Tickets: 4; pages: 1; columns: 15 (team: 0, links: 5 for 2 type(s)).
-No team column: export_team_field is not set.
-File written: b.csv (permissions 600).
+Tickets: 4; pages: 1.
+No team read: export_team_field is not set.
+teams without a type: 0
+raw layer: 4 tickets seen, 3 snapshots added
 ```
 
-## export with the verification column (exit 0)
+## export with the retired verification setting (exit 0)
 
 ```
-Tickets: 4; pages: 1; columns: 18 (team: 2, links: 5 for 2 type(s)).
-Column "Verification Required": 2 ticket(s) filled out of 4 (no value displayed).
-File written: c.csv (permissions 600).
+Tickets: 4; pages: 1.
+teams without a type: 2
+raw layer: 4 tickets seen, 3 snapshots added
 ```
 
 ## export, named queries (exit 0)
 
 ```
-[a] Tickets: 4; pages: 1; columns: 17 (team: 2, links: 5 for 2 type(s)).
-[a] File written: api-a-<today>.csv (permissions 600).
-[b] Tickets: 4; pages: 1; columns: 17 (team: 2, links: 5 for 2 type(s)).
-[b] File written: api-b-<today>.csv (permissions 600).
+[a] Tickets: 4; pages: 1.
+[b] Tickets: 4; pages: 1.
+teams without a type: 2
+raw layer: 4 tickets seen, 0 snapshots added
 ```
 
 ## export, one named query (exit 0)
 
 ```
-[a] Tickets: 4; pages: 1; columns: 17 (team: 2, links: 5 for 2 type(s)).
-[a] File written: d.csv (permissions 600).
+[a] Tickets: 4; pages: 1.
+teams without a type: 2
+raw layer: 4 tickets seen, 0 snapshots added
+```
+
+## export, full option (exit 0)
+
+```
+[a] Tickets: 4; pages: 1.
+[b] Tickets: 4; pages: 1.
+teams without a type: 2
+raw layer: 4 tickets seen, 0 snapshots added
 ```
 
 ## export, unknown query (exit 1)
@@ -45,10 +57,10 @@ File written: c.csv (permissions 600).
 Error: query "c" unknown. Available: a, b.
 ```
 
-## export, --output with several queries (exit 1)
+## export, --output retired (exit 2)
 
 ```
-Error: --output only works with a single query: add --query NAME.
+Error: --output is retired: the export writes into the database
 ```
 
 ## export, --query without jql_exports (exit 1)
@@ -87,10 +99,10 @@ Error: jql_exports must map a name to a JQL query.
 Error: export_team_field must be a field identifier (customfield_NNNNN).
 ```
 
-## settings, invalid verification field (exit 1)
+## settings, invalid points field (exit 1)
 
 ```
-Error: export_verification_field must be a field identifier (customfield_NNNNN).
+Error: export_points_field must be a field identifier (customfield_NNNNN).
 ```
 
 ## settings, unknown time zone (exit 1)
@@ -156,7 +168,32 @@ Error: the team field is absent from the responses: check its identifier and the
 Page queried: 4 ticket(s).
 Shape of the team field values: empty 1; empty list 1; float 1; text 1.
 Usable labels: no.
-The team field does not return the team label (shape received: empty, empty list, float, text). Nothing is guessed, nothing is written. Fill the organisation referential Flux-Lab/organisation.yaml: under `teams`, each team has the keys `name`, `headcount` and `jira_team_ids` (the list of its Jira team identifiers, entered by hand); the root keys are `source_date`, `sites`, `departments`, `teams` and `cross_cutting_teams`. Then run again; `diagnose` shows the shape of the field. The export then lists the identifiers to complete.
+no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: empty, empty list, float, text). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
 ```
 
 ## diagnose, more shapes (exit 1)
@@ -165,7 +202,32 @@ The team field does not return the team label (shape received: empty, empty list
 Page queried: 4 ticket(s).
 Shape of the team field values: list of object {value} / text 1; object {aa, zz} 1; text 1; text (identifier only) 1.
 Usable labels: no.
-The team field does not return the team label (shape received: list of object {value} / text, object {aa, zz}, text, text (identifier only)). Nothing is guessed, nothing is written. Fill the organisation referential Flux-Lab/organisation.yaml: under `teams`, each team has the keys `name`, `headcount` and `jira_team_ids` (the list of its Jira team identifiers, entered by hand); the root keys are `source_date`, `sites`, `departments`, `teams` and `cross_cutting_teams`. Then run again; `diagnose` shows the shape of the field. The export then lists the identifiers to complete.
+no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: list of object {value} / text, object {aa, zz}, text, text (identifier only)). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
 ```
 
 ## diagnose, Assets objects (exit 1)
@@ -174,38 +236,95 @@ The team field does not return the team label (shape received: list of object {v
 Page queried: 4 ticket(s).
 Shape of the team field values: list of object {id, objectId, workspaceId} 4.
 Usable labels: no.
-The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}). Nothing is guessed, nothing is written. Fill the organisation referential Flux-Lab/organisation.yaml: under `teams`, each team has the keys `name`, `headcount` and `jira_team_ids` (the list of its Jira team identifiers, entered by hand); the root keys are `source_date`, `sites`, `departments`, `teams` and `cross_cutting_teams`. Then run again; `diagnose` shows the shape of the field. The export then lists the identifiers to complete.
+no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
 ```
 
-## export, Assets objects without a table (exit 1)
+## export, Assets objects without a source (exit 1)
 
 ```
-Error: The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}: 4). Nothing is guessed, nothing is written. Fill the organisation referential Flux-Lab/organisation.yaml: under `teams`, each team has the keys `name`, `headcount` and `jira_team_ids` (the list of its Jira team identifiers, entered by hand); the root keys are `source_date`, `sites`, `departments`, `teams` and `cross_cutting_teams`. Then run again; `diagnose` shows the shape of the field. The export then lists the identifiers to complete.
+Error: no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}: 4). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
 ```
 
-## diagnose, with a table (exit 0)
+## diagnose, with a catalogue (exit 0)
 
 ```
 Page queried: 4 ticket(s).
 Shape of the team field values: list of object {objectId} 4.
-Usable labels: through the table equipes-assets.yaml (1 identifier(s)). The export can be written; complete the table if unknown teams show up.
-team table deprecated: fill jira_team_ids in the organisation referential
+Usable labels: through the team sources. The export can be written; complete jira_team_ids or the catalogue if identifiers to add show up.
+team sources: referential 0 identifiers, catalogue 1 identifiers
 ```
 
 ## export, unknown teams (exit 0)
 
 ```
-Tickets: 4; pages: 1; columns: 17 (team: 2, links: 5 for 2 type(s)).
-team table deprecated: fill jira_team_ids in the organisation referential
-Unknown teams: 1 distinct identifier(s) missing from the table, 4 ticket(s) affected, written "(équipe inconnue)".
-Complete equipes-assets.yaml (equipes: identifier -> label) with these identifiers: 999.
-File written: u.csv (permissions 600).
+Tickets: 4; pages: 1.
+teams outside the organisation: 1 identifiers, 4 tickets
+team identifiers in neither the referential nor the catalogue: 1, on 4 tickets
+identifiers to add: 999
+teams without a type: 2
+raw layer: 4 tickets seen, 4 snapshots added
 ```
 
-## export, unreadable table (exit 1)
+## export, obsolete team (exit 0)
 
 ```
-Error: equipes-assets.yaml is unreadable: fix or recreate it by hand (equipes: {identifier: label}).
+Tickets: 4; pages: 1.
+teams outside the organisation: 1 identifiers, 4 tickets
+tickets on obsolete teams: 4
+team identifiers in neither the referential nor the catalogue: 1, on 4 tickets
+identifiers to add: 999
+teams without a type: 2
+raw layer: 4 tickets seen, 0 snapshots added
 ```
 
 ## fields (exit 0)
@@ -234,100 +353,155 @@ Error: --search: give a text to look for in the field names.
 Error: unexpected response from Jira for the field list.
 ```
 
-## export, with the table (exit 0)
+## export, with the catalogue (exit 0)
 
 ```
-Tickets: 6; pages: 1; columns: 12 (team: 2, links: 0 for 0 type(s)).
-team table deprecated: fill jira_team_ids in the organisation referential
-Unknown teams: 3 distinct identifier(s) missing from the table, 2 ticket(s) affected, written "(équipe inconnue)".
-Complete equipes-assets.yaml (equipes: identifier -> label) with these identifiers: 4; 5; 6.
-File written: w.csv (permissions 600).
+Tickets: 6; pages: 1.
+teams outside the organisation: 3 identifiers, 4 tickets
+team identifiers in neither the referential nor the catalogue: 3, on 2 tickets
+identifiers to add: 4; 5; 6
+teams without a type: 4
+raw layer: 6 tickets seen, 6 snapshots added
 ```
 
-## diagnose, with the referential (exit 0)
+## diagnose, with the referential and the catalogue (exit 0)
 
 ```
 Page queried: 6 ticket(s).
 Shape of the team field values: list of object {id, objectId, workspaceId} 6.
-Usable labels: through the organisation referential (2 identifier(s)). The export can be written; complete jira_team_ids if unknown teams show up.
-team table deprecated: fill jira_team_ids in the organisation referential
+Usable labels: through the team sources. The export can be written; complete jira_team_ids or the catalogue if identifiers to add show up.
+team sources: referential 2 identifiers, catalogue 3 identifiers
 ```
 
-## export, referential and former table both present (exit 0)
+## export, referential, catalogue and former table present (exit 0)
 
 ```
-Tickets: 6; pages: 1; columns: 12 (team: 2, links: 0 for 0 type(s)).
-team table deprecated: fill jira_team_ids in the organisation referential
-Unknown teams: 4 distinct identifier(s) missing from the referential, 3 ticket(s) affected, written "(équipe inconnue)".
-Complete jira_team_ids of the organisation referential with these identifiers: 3; 4; 5; 6.
-File written: x.csv (permissions 600).
+Tickets: 6; pages: 1.
+former team table no longer read: delete equipes-assets.yaml
+teams outside the organisation: 1 identifiers, 1 tickets
+team identifiers in neither the referential nor the catalogue: 3, on 2 tickets
+identifiers to add: 4; 5; 6
 referential teams without ticket: 1
+teams without a type: 4
+raw layer: 6 tickets seen, 0 snapshots added
 ```
 
-## export, with the referential (exit 0)
+## export, referential and catalogue share an identifier (exit 0)
 
 ```
-Tickets: 6; pages: 1; columns: 12 (team: 2, links: 0 for 0 type(s)).
-Unknown teams: 4 distinct identifier(s) missing from the referential, 3 ticket(s) affected, written "(équipe inconnue)".
-Complete jira_team_ids of the organisation referential with these identifiers: 3; 4; 5; 6.
-File written: r.csv (permissions 600).
+Tickets: 6; pages: 1.
+team identifiers in neither the referential nor the catalogue: 4, on 3 tickets
+identifiers to add: 3; 4; 5; 6
 referential teams without ticket: 1
+teams without a type: 3
+raw layer: 6 tickets seen, 1 snapshots added
 ```
 
 ## export, strict teams (exit 3)
 
 ```
-Tickets: 6; pages: 1; columns: 12 (team: 2, links: 0 for 0 type(s)).
-Unknown teams: 4 distinct identifier(s) missing from the referential, 3 ticket(s) affected, written "(équipe inconnue)".
-Complete jira_team_ids of the organisation referential with these identifiers: 3; 4; 5; 6.
-File written: s.csv (permissions 600).
+Tickets: 6; pages: 1.
+team identifiers in neither the referential nor the catalogue: 4, on 3 tickets
+identifiers to add: 3; 4; 5; 6
 referential teams without ticket: 1
 unknown team identifiers: export incomplete
 ```
 
-## diagnose, with the former table (exit 0)
+## export, catalogue team named like a referential team (exit 1)
+
+```
+Error: catalogue team named like a referential team: catalogue "teams[0].name" (L2) / referential "teams[0].name" (L9)
+```
+
+## diagnose, with the former table only (exit 1)
 
 ```
 Page queried: 6 ticket(s).
 Shape of the team field values: list of object {id, objectId, workspaceId} 6.
-Usable labels: through the table equipes-assets.yaml (3 identifier(s)). The export can be written; complete the table if unknown teams show up.
-team table deprecated: fill jira_team_ids in the organisation referential
+Usable labels: no.
+no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
+former team table no longer read: delete equipes-assets.yaml
 ```
 
-## export, former table fallback (exit 0)
+## export, former table only (exit 1)
 
 ```
-Tickets: 6; pages: 1; columns: 12 (team: 2, links: 0 for 0 type(s)).
-team table deprecated: fill jira_team_ids in the organisation referential
-Unknown teams: 3 distinct identifier(s) missing from the table, 2 ticket(s) affected, written "(équipe inconnue)".
-Complete equipes-assets.yaml (equipes: identifier -> label) with these identifiers: 4; 5; 6.
-File written: f.csv (permissions 600).
+Error: no team source: fill jira_team_ids in the referential and the catalogue. The team field does not return the team label (shape received: list of object {id, objectId, workspaceId}: 6). Nothing is guessed, nothing is written.
+Organisation referential Flux-Lab/organisation.yaml (keys only):
+source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional
+Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
+teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional
+`diagnose` shows the shape of the field. The export then lists the identifiers to add.
 ```
 
-## export, declared labels and fix versions (exit 0)
+## export, declared labels (not requested any more) (exit 0)
 
 ```
-Tickets: 4; pages: 1; columns: 19 (team: 0, links: 5 for 2 type(s)).
-No team column: export_team_field is not set.
-undeclared labels with a declared prefix: 1
-  tickets carrying them: 2 (no label displayed).
-up-merge items with two labels: 1
-File written: l.csv (permissions 600).
+Tickets: 4; pages: 1.
+No team read: export_team_field is not set.
+teams without a type: 0
+raw layer: 4 tickets seen, 2 snapshots added
 ```
 
 ## export, rows past the retention rule (exit 0)
 
 ```
-Tickets: 3; pages: 1; columns: 12 (team: 0, links: 2 for 2 type(s)).
+Tickets: 3; pages: 1.
 tickets past retention, not written: 1
-No team column: export_team_field is not set.
-File written: k.csv (permissions 600).
+No team read: export_team_field is not set.
+teams without a type: 0
+raw layer: 3 tickets seen, 0 snapshots added
 ```
 
 ## teams-table, retired (exit 2)
 
 ```
-Error: the teams-table subcommand is retired. Flux-Lab/equipes-assets.yaml is completed by hand (equipes: identifier -> label); `export_jira_api.py export` lists the unknown identifiers.
+Error: the teams-table subcommand is retired. Teams are entered by hand in the referential (Flux-Lab/organisation.yaml) and the catalogue (Flux-Lab/equipes-jira.yaml); `export_jira_api.py export` lists the identifiers to add.
 ```
 
 ## compare, retired (exit 2)

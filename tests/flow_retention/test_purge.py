@@ -1,10 +1,9 @@
 """
 Tests de `flow_retention.py purge` (spec jira-flow-retention : « Purge is a dry run by default », « Ticket-level files under the rule,
-aggregated reports kept », « Purge requires a labelled backup of the same day », « Files holding a forbidden column are deleted »).
-Suite : tests/flow_retention.
+aggregated reports kept », « Purge requires a labelled backup of the same day », « Files left from the CSV route are deleted whatever
+their age », change database-only). Suite : tests/flow_retention.
 """
 import json
-import stat
 import unittest
 
 from aide_flow_retention import AUJOURDHUI, ETIQUETTE, Espace, FausseBase, jours_avant
@@ -22,9 +21,9 @@ class Remplissage(Espace):
         self.points_recent = self.fichier(self.tableaux, "points-zzserie-2026-10-01.json", 12, "[]")
         self.cache({"A-1": {"termine": True, "resolu": "2025-01-05T08:00:00.000+0000", "transitions": [], "vu_le": None},
                     "A-2": {"termine": False, "vu_le": jours_avant(3).isoformat(), "transitions": []}})
-        self.historique.chmod(0o644)
         self.vieille_sauvegarde = self.sauvegarde(jours_avant(45), "rgpd")
         self.du_jour = self.sauvegarde(AUJOURDHUI)
+        self.laisses = (self.vieux_csv, self.csv_recent, self.manuel, self.historique)      # les fichiers laissés par la voie CSV
 
 
 class Essai(Remplissage):
@@ -34,15 +33,14 @@ class Essai(Remplissage):
         self.assertEqual(code, 0)
         lignes = sortie.rstrip().splitlines()
         self.assertEqual(lignes[-1], "dry run: nothing deleted")
-        self.assertEqual(lignes[-2], "retention check: 8 items out of rule")
+        self.assertEqual(lignes[-2], "retention check: 9 items out of rule")       # 3 tickets, 4 fichiers laissés, 1 points, 1 dump
         self.assertEqual(self.instantane(), avant)
         self.assertEqual(base.suppressions(), [])
         self.assertEqual((base.commits, base.rollbacks), (0, 0))
 
     def test_essai_avec_trois_tickets_hors_regle(self):
-        for fichier in (self.vieux_csv, self.manuel, self.points_vieux):
+        for fichier in (*self.laisses, self.points_vieux):
             fichier.unlink()
-        self.cache({})
         self.vieille_sauvegarde.joinpath("flow.dump").unlink()
         code, sortie, _, _ = self.lancer("purge", "--language", "en", base=FausseBase(3, jours_avant(400)))
         self.assertEqual(code, 0)
@@ -51,13 +49,13 @@ class Essai(Remplissage):
     def test_essai_en_francais(self):
         code, sortie, _, _ = self.lancer("purge")
         self.assertEqual(code, 0)
-        self.assertTrue(sortie.rstrip().endswith("contrôle de conservation : 5 éléments hors règle\nessai : rien n'est supprimé"),
+        self.assertTrue(sortie.rstrip().endswith("contrôle de conservation : 6 éléments hors règle\nessai : rien n'est supprimé"),
                         sortie)
+        self.assertIn("fichiers laissés par la voie CSV : 4", sortie)
 
     def test_essai_propre(self):
-        for fichier in (self.vieux_csv, self.manuel, self.points_vieux):
+        for fichier in (*self.laisses, self.points_vieux):
             fichier.unlink()
-        self.cache({})
         self.vieille_sauvegarde.joinpath("flow.dump").unlink()
         code, sortie, _, _ = self.lancer("purge", "--language", "en")
         self.assertEqual(code, 0)
@@ -78,11 +76,10 @@ class Application(Remplissage):
         code, sortie, erreur, base = self.appliquer()
         self.assertEqual(code, 0, erreur)
         self.assertEqual(sortie.rstrip().splitlines()[-1], "purge done")
-        for supprime in (self.vieux_csv, self.manuel, self.points_vieux, self.vieille_sauvegarde / "flow.dump"):
+        for supprime in (*self.laisses, self.points_vieux, self.vieille_sauvegarde / "flow.dump"):
             self.assertFalse(supprime.exists(), supprime.name)
-        for reste in (self.csv_recent, self.points_recent, self.du_jour / "flow.dump"):
+        for reste in (self.points_recent, self.du_jour / "flow.dump"):
             self.assertTrue(reste.exists(), reste.name)
-        self.assertEqual(sorted(json.loads(self.historique.read_text())), ["A-2"])
         self.assertEqual(len(base.suppressions()), 1)
 
     def test_purge_en_francais(self):
@@ -101,32 +98,21 @@ class Application(Remplissage):
         code, sortie, _, _ = self.lancer("check", "--language", "en", base=FausseBase(0))
         self.assertEqual(code, 0, sortie)
 
-    def test_le_cache_est_reecrit_en_0600(self):
-        self.appliquer()
-        self.assertEqual(stat.S_IMODE(self.historique.stat().st_mode), 0o600)
-        self.assertFalse(self.historique.with_name("transitions.json.tmp").exists())
-
-    def test_cache_sans_entree_hors_regle_n_est_pas_reecrit(self):
-        self.cache({"A-2": {"termine": False, "vu_le": jours_avant(3).isoformat(), "transitions": []}})
-        self.historique.chmod(0o644)
-        self.appliquer()
-        self.assertEqual(stat.S_IMODE(self.historique.stat().st_mode), 0o644)
-
-    def test_ordre_fichiers_cache_base_puis_sauvegardes(self):
+    def test_ordre_fichiers_laisses_puis_points_puis_base_puis_sauvegardes(self):
         observations = {}
         test = self
 
         class Observatrice(FausseBase):
             def execute(self, sql, params=()):
                 if sql.lstrip().upper().startswith("DELETE"):
-                    observations["csv_deja_supprime"] = not test.vieux_csv.exists() and not test.points_vieux.exists()
-                    observations["cache_deja_reecrit"] = "A-1" not in json.loads(test.historique.read_text())
+                    observations["laisses_deja_supprimes"] = not any(f.exists() for f in test.laisses)
+                    observations["points_deja_supprimes"] = not test.points_vieux.exists()
                     observations["dump_encore_la"] = (test.vieille_sauvegarde / "flow.dump").exists()
                 return super().execute(sql, params)
 
         code, _, _, _ = self.appliquer(Observatrice(3, jours_avant(400)))
         self.assertEqual(code, 0)
-        self.assertEqual(observations, {"csv_deja_supprime": True, "cache_deja_reecrit": True, "dump_encore_la": True})
+        self.assertEqual(observations, {"laisses_deja_supprimes": True, "points_deja_supprimes": True, "dump_encore_la": True})
         self.assertFalse((self.vieille_sauvegarde / "flow.dump").exists())
 
     def test_une_seule_transaction_une_seule_suppression(self):
@@ -176,24 +162,18 @@ class Application(Remplissage):
         self.assertNotIn("points-", sortie + erreur)
         self.assertNotIn("zzserie", sortie + erreur)
 
-    def test_fichiers_du_dossier_des_rapports_ne_sont_pas_exemptes(self):
-        csv_rapports = self.fichier(self.rapports, "zzfichier.csv", 500)
+    def test_fichiers_de_points_du_dossier_des_rapports_ne_sont_pas_exemptes(self):
         points_rapports = self.fichier(self.rapports, "points-zzserie-2024-01-01.json", 500, "[]")
         rapport = self.fichier(self.rapports, "flux-zzserie-2024-01-01.md", 500, "# r")
         self.appliquer()
-        self.assertFalse(csv_rapports.exists())
         self.assertFalse(points_rapports.exists())
         self.assertTrue(rapport.exists())
 
-    def test_entree_de_cache_hors_regle_retiree(self):
+    def test_un_csv_du_dossier_des_rapports_n_est_pas_dans_le_champ(self):
+        """La ligne des fichiers laissés par la voie CSV ne regarde que le dossier des exports."""
+        csv_rapports = self.fichier(self.rapports, "zzfichier.csv", 500)
         self.appliquer()
-        self.assertNotIn("A-1", json.loads(self.historique.read_text()))
-
-    def test_export_de_l_api_recent_et_ancien_rapport_hors_champ(self):
-        # un export de l'API récent reste, même avec colonnes d'étiquettes déclarées
-        recent = self.fichier(self.exports, "api-declare.csv", 5, "Issue key,Declared Label,Fix Version\nK-1,a,b\n")
-        self.appliquer()
-        self.assertTrue(recent.exists())
+        self.assertTrue(csv_rapports.exists())
 
 
 class AnciensRapports(Espace):
@@ -257,46 +237,68 @@ class SansSauvegardeDuJour(Remplissage):
         self.assertFalse((self.sauvegardes / f"db-{AUJOURDHUI.isoformat()}-{ETIQUETTE}").exists())
 
 
-class ColonnesInterdites(Espace):
-    def test_ancien_export_manuel(self):
+class FichiersLaissesParLaVoieCsv(Espace):
+    """Database-only (D10) : tout CSV du dossier des exports et l'ancien cache partent avec --apply, quels que soient âge et en-tête."""
+
+    def test_csv_recent_et_ancien_cache_supprimes_sans_imprimer_leur_nom(self):
+        recent = self.fichier(self.exports, "api-zzfichier-2026-10-13.csv", 0)
+        self.cache({"A-1": {"termine": True, "transitions": []}})
+        self.sauvegarde(AUJOURDHUI)
+        code, sortie, erreur, _ = self.lancer("check", "--language", "en")
+        self.assertEqual(code, 4)
+        self.assertIn("files left from the CSV route: 2", sortie)
+        code, sortie, erreur, _ = self.lancer("purge", "--language", "en")                     # l'essai ne supprime rien
+        self.assertEqual(code, 0)
+        self.assertTrue(recent.exists() and self.historique.exists())
+        code, sortie, erreur, _ = self.lancer("purge", "--apply", "--language", "en")
+        self.assertEqual(code, 0)
+        self.assertFalse(recent.exists())
+        self.assertFalse(self.historique.exists())
+        self.assertNotIn("zzfichier", sortie + erreur)
+        self.assertNotIn("transitions", sortie + erreur)
+        self.assertEqual(self.lancer("check", "--language", "en")[0], 0)
+
+    def test_ancien_export_manuel_a_colonne_interdite_supprime_comme_les_autres(self):
         manuel = self.fichier(self.exports, "manuel-zzfichier.csv", 700, "Issue key,Summary,Description\nZZKEY-1,zz,zz\n")
         self.sauvegarde(AUJOURDHUI)
-        code, sortie, _, _ = self.lancer("check", "--language", "en")
-        self.assertIn("files with a forbidden column: 1", sortie)
         code, sortie, erreur, _ = self.lancer("purge", "--apply", "--language", "en")
         self.assertEqual(code, 0)
         self.assertFalse(manuel.exists())
         self.assertNotIn("zzfichier", sortie + erreur)
 
-    def test_fichier_recent_avec_colonne_interdite_supprime_quel_que_soit_l_age(self):
-        recent = self.fichier(self.exports, "manuel-recent.csv", 0, "Key,Assignee\nK-1,x\n")
-        self.sauvegarde(AUJOURDHUI)
-        self.lancer("purge", "--apply")
-        self.assertFalse(recent.exists())
-
-    def test_export_de_l_api_conserve(self):
+    def test_un_export_de_l_api_n_est_plus_conserve(self):
         api = self.fichier(self.exports, "api-x.csv", 3, "Issue key,Status,Declared Label,Fix Version\nK-1,Done,a,b\n")
         self.sauvegarde(AUJOURDHUI)
         self.lancer("purge", "--apply")
-        self.assertTrue(api.exists())
+        self.assertFalse(api.exists())
 
-    def test_le_fichier_n_est_ni_reecrit_ni_lu_au_dela_de_l_entete(self):
-        # un fichier dont les lignes de données sont illisibles : seul l'en-tête est lu, le fichier est supprimé tel quel
+    def test_le_fichier_n_est_ni_reecrit_ni_lu(self):
         manuel = self.fichier(self.exports, "manuel.csv", 1, "")
         manuel.write_bytes(b"Issue key,Comment\n" + b"\xff\xfe\x00" * 1000)
         self.sauvegarde(AUJOURDHUI)
         self.assertEqual(self.lancer("purge", "--apply")[0], 0)
         self.assertFalse(manuel.exists())
 
-
-class CacheEntrees(Espace):
-    def test_entree_terminee_ancienne_comptee_et_retiree(self):
-        self.cache({"A-1": {"termine": True, "resolu": "2025-01-05T08:00:00.000+0000", "transitions": []}})
+    def test_un_autre_fichier_du_dossier_des_exports_reste(self):
+        notes = self.fichier(self.exports, "notes.txt", 900, "pas un CSV")
         self.sauvegarde(AUJOURDHUI)
-        _, sortie, _, _ = self.lancer("check", "--language", "en")
-        self.assertIn("history cache, entries past the rule: 1", sortie)
         self.lancer("purge", "--apply")
-        self.assertEqual(json.loads(self.historique.read_text()), {})
+        self.assertTrue(notes.exists())
+
+    def test_ancien_cache_illisible_supprime_en_entier(self):
+        self.historique.write_text("pas du json", encoding="utf-8")
+        self.sauvegarde(AUJOURDHUI)
+        code, _, _, _ = self.lancer("purge", "--apply")
+        self.assertEqual(code, 0)
+        self.assertFalse(self.historique.exists())
+
+    def test_ancien_cache_supprime_en_entier_et_non_reecrit(self):
+        self.cache({"A-1": {"termine": True, "resolu": "2025-01-05T08:00:00.000+0000", "transitions": []},
+                    "A-2": {"termine": False, "vu_le": jours_avant(3).isoformat(), "transitions": []}})
+        self.sauvegarde(AUJOURDHUI)
+        self.lancer("purge", "--apply")
+        self.assertFalse(self.historique.exists())
+        self.assertFalse(self.historique.with_name("transitions.json.tmp").exists())
 
 
 if __name__ == "__main__":

@@ -90,26 +90,27 @@ The system SHALL give the edition a CHANGELOG written in English that starts at 
 Source: tests/build_edition/test_gabarits.py (Changelog); tests/build_edition/test_generateur_classement.py (test_changelog_template_missing_gives_code_5, test_template_replaces_whole_file)
 
 ### Requirement: Publication check on the generated tree
-The system SHALL run the publication check on the staging tree as the last step of the build. The check has five parts:
+The system SHALL run the publication check on the staging tree as the last step of the build. The check has six parts:
 - the personal-identifier scanner in tree mode, with the identifiers of the private workspace (the local identifiers file included), no tolerated file, and sanctums instantiated from the tree's own skills;
 - the sensitive-name matching rules of the pre-commit hook, applied to every non-binary file of the tree whatever its size;
 - the book-text check: a line of a non-binary file of the tree is a finding when a sequence of consecutive words starting on it, of the configured minimum length, also occurs in the converted text of a library book or of a third party's watch article, words compared lowercased and without punctuation; a sequence holding no letter (only numbers and punctuation) never counts, and the own-articles folder and the files the watch produces (names starting with "_") are not compared;
 - the library-file-name check: a line of a non-binary file of the tree is a finding when it holds a file name of the private mapping table (keys of MAPPING, SOURCES and EXCLUSIONS, values of SOURCES; the table is read as text, never run), case and accents ignored;
-- the product-version check: a line of a non-binary file of the tree is a finding when it matches a pattern of the local, untracked product-version list.
+- the product-version check: a line of a non-binary file of the tree is a finding when it matches a pattern of the local, untracked product-version list;
+- the listing check: for each file listing of the generator's fixed table present in the tree, an entry is a finding when its path, joined to the listing's base folder, is not a regular file or a symbolic link of the tree, or is absolute, or leaves the base folder; a listing of the table absent from the tree gives no finding (design D3, D5, decided 2026-10-15). A local file name cited in free text is not seen by this part (accepted residual risk, design "Risks"). A listing of the table that is a symbolic link or not a regular file is unreadable. The BMAD skills listing (`_bmad/_config/skill-manifest.csv`) is deliberately not in the table, with its written reason and accepted risk (design D5, decided 2026-10-16).
 
 On any occurrence, the system SHALL:
 - exit with code 7;
-- print one line per occurrence, giving the path relative to the tree and the line number with the key phrase "personal identifier in", "sensitive name in", "book text in" or "product version in", then the "not publishable:" summary;
+- print one line per occurrence, giving the path relative to the tree and the line number with the key phrase "personal identifier in", "sensitive name in", "book text in", "library file name in", "product version in" or "local file in" (for the listing check, the path and line of the listing), then the "not publishable:" summary;
 - rename the tree to the not-publishable sibling name.
 
-When the sensitive-names list is absent or empty, the converted library text is absent or empty, the product-version list is absent, empty or holds a pattern that does not compile, or the scanner fails, the system SHALL:
-- exit with code 8 and the key phrase "publication check could not run:" followed by the cause;
+When the sensitive-names list is absent or empty, the converted library text is absent or empty, the product-version list is absent, empty or holds a pattern that does not compile, a listing of the table present in the tree cannot be read or has no path column, or the scanner fails, the system SHALL:
+- exit with code 8 and the key phrase "publication check could not run:" followed by the cause ("file listing unreadable" and the listing's path in the tree for a listing, design D6);
 - delete the staging tree.
 
-The system SHALL NOT print a matched value, the text of a line, a shared word sequence, a book or article name, or a pattern; SHALL NOT tolerate any file; SHALL NOT copy or write the converted library text; and SHALL NOT name the output folder without suffix unless every check passed.
+The system SHALL NOT print a matched value, the text of a line, a shared word sequence, a book or article name, a pattern, a listed path or a fingerprint; SHALL NOT tolerate any file; SHALL NOT copy or write the converted library text; SHALL NOT read a file outside the staging tree for the listing check; and SHALL NOT name the output folder without suffix unless every check passed.
 
 #### Scenario: Clean tree
-- **WHEN** no identifier, sensitive name, book text or product version occurs in the tree or in the generated sanctums
+- **WHEN** no identifier, sensitive name, book text, product version or listed local file occurs in the tree or in the generated sanctums
 - **THEN** the generator exits with code 0, the tree is at the output path and the last line says "publishable tree written to"
 
 #### Scenario: Identifier in a file
@@ -164,7 +165,39 @@ The system SHALL NOT print a matched value, the text of a line, a shared word se
 - **WHEN** the product-version list is absent, holds only comments, or holds a pattern that does not compile
 - **THEN** the generator exits with code 8, the cause says absent, empty or invalid, an invalid pattern is named by its line number only, and no tree remains
 
-Source: tests/build_edition/test_generateur_publication.py (identifier and sensitive-name parts, code 8 of the list and of the scanner); tests/build_edition/test_generateur_livres_versions.py (book-text and product-version parts, implemented by this change, tasks 3.1 and 3.2)
+#### Scenario: Listing names an ignored file
+- **WHEN** a listing of the table in a fixture tree has an entry for a file that Git ignores and that is therefore absent from the tree
+- **THEN** the generator exits with code 7, prints "local file in" with the listing's path and the entry's line, prints neither the listed path nor the fingerprint, and the tree is kept under the not-publishable name
+
+#### Scenario: Listing names an excluded file
+- **WHEN** a listing of the table has an entry for a tracked file that the manifest excludes
+- **THEN** the generator exits with code 7 and prints "local file in" with the listing's path and the entry's line
+
+#### Scenario: Entry leaving the base folder
+- **WHEN** an entry of a listing holds an absolute path or a path that leaves the listing's base folder
+- **THEN** it is reported as "local file in" and the exit code is 7
+
+#### Scenario: Coherent listing
+- **WHEN** every entry of a listing of the table names a file of the tree
+- **THEN** no listing finding is reported
+
+#### Scenario: Listing excluded from the edition
+- **WHEN** the manifest excludes a listing of the table
+- **THEN** the listing check reports nothing and prints nothing about it
+
+#### Scenario: Listing unreadable
+- **WHEN** a listing of the table in the tree is not valid UTF-8 CSV (a byte order mark is accepted), has no path column, has a row whose column count differs from the header, or is a symbolic link or not a regular file
+- **THEN** the generator exits with code 8, prints "publication check could not run: file listing unreadable" with the listing's path, and no tree remains
+
+#### Scenario: Malformed CSV or symbolic link listing
+- **WHEN** a listing of the table has a row longer or shorter than its header, an orphan quote, or is a symbolic link or a folder
+- **THEN** the generator exits with code 8 with the same unreadable message, and no tree remains
+
+#### Scenario: Frozen exclusion of the skills listing
+- **WHEN** the table of listings is read by its test
+- **THEN** `_bmad/_config/skill-manifest.csv` is not in it and a written reason and risk accompany the exclusion
+
+Source: tests/build_edition/test_generateur_publication.py (identifier and sensitive-name parts, code 8 of the list and of the scanner); tests/build_edition/test_generateur_livres_versions.py (book-text and product-version parts); the listing part: tests/build_edition/test_generateur_listes.py (change edition-local-files, tasks 4.2 and 6.1)
 
 ### Requirement: Optional test run in the generated tree
 The system SHALL, with the test-run option, run the full test runner on a copy of the publishable tree, placed in a temporary folder outside the output with a throwaway repository and one commit. It SHALL run the runner without the variable reserved to git commit and without any bypass variable, print the runner's total line, and delete the temporary folder. On a red run it SHALL exit with code 1 and the key phrase "tests red in the generated tree", and rename the tree to the not-publishable name. Without the option, the system SHALL print the commands that the user runs after creating their repository. The system SHALL NOT run a filtered or targeted run instead of the full one.
@@ -240,3 +273,106 @@ The system SHALL keep the edition generator free of release notes: it SHALL NOT 
 - **THEN** the generator exits with code 5 and names the rule
 
 Source: tests/build_edition/test_generateur_interdits.py (test_scan_catches_a_gh_launch and the forbidden-commands scan); stale rules: tests/build_edition/test_generateur_classement.py (test_stale_rule_is_named) and tests/build_edition/test_manifeste.py (test_aucune_regle_perimee)
+
+### Requirement: The edition ships no listing entry of a local file
+The system SHALL exclude the BMAD files listing from the edition with its reason (design D1, decided 2026-10-15), so that the edition holds no entry naming a file ignored by Git, absent from the commit, or replaced by a template (D2). The system SHALL NOT ship the private listing whole, SHALL NOT edit lines inside it, and SHALL NOT open or fingerprint an ignored local file.
+
+#### Scenario: Personal BMAD answers file
+- **WHEN** the private listing has an entry for the personal BMAD answers file, which Git ignores
+- **THEN** no file of the built tree holds that entry
+
+#### Scenario: Compiled files
+- **WHEN** the private listing has entries for compiled files under ignored cache folders
+- **THEN** no file of the built tree holds those entries
+
+#### Scenario: Manifest test
+- **WHEN** the edition-manifest test reads the real manifest
+- **THEN** it fails if the BMAD files listing is not excluded with a reason before the broad include rule of its folder
+
+Source: tests/build_edition/test_manifeste.py (manifest rule); tests/build_edition/test_generateur_listes.py (the ignored file is created on disk with an identifiable fictitious content, and appears neither in the built tree nor in any output)
+
+### Requirement: Converted-text folders of the book-text check
+The system SHALL take the converted-text folders from the content folder (library and watch) unless a configured folder list replaces them. Only the watch folder MAY be absent: the system SHALL then print "publication check: watch texts folder absent, article comparison not done" once and go on. The system SHALL NOT skip an absent library folder, a list without a library folder, or library folders without text: it SHALL exit with code 8 "library text unavailable".
+
+#### Scenario: Watch folder absent
+- **WHEN** the watch texts folder is absent and the library folder holds text
+- **THEN** the output holds "watch texts folder absent, article comparison not done" once, without a path, and the check goes on
+
+#### Scenario: Library folder absent, watch present
+- **WHEN** the library texts folder is absent and the watch folder holds text
+- **THEN** the generator exits with code 8, prints "publication check could not run: library text unavailable" and no tree remains
+
+#### Scenario: No library folder in the list
+- **WHEN** the configured folder list holds only a watch folder
+- **THEN** the generator exits with code 8 with the same cause
+
+#### Scenario: Library folders without text
+- **WHEN** the library folders hold no compared text and the watch folder holds text
+- **THEN** the generator exits with code 8 with the same cause
+
+#### Scenario: Default folders
+- **WHEN** no folder list is configured
+- **THEN** the folders are the library and watch folders of the content folder, also from a worktree
+
+### Requirement: Mapping table of the built commit
+The system SHALL read the default private mapping table from the Git objects of the built commit, never from the working copy; a configured table path SHALL keep priority. When the table is absent from that commit, is not a regular file there, cannot be parsed as Python source or holds no name, the system SHALL exit with code 8 "mapping table unavailable" (design D3) and SHALL NOT skip the library-file-name part.
+
+#### Scenario: Older commit with another table
+- **WHEN** the build runs with a commit option on a revision whose table differs from the current one
+- **THEN** the names of that revision's table are findings and names found only in the current table are not
+
+#### Scenario: Table absent at its default place
+- **WHEN** no table path is configured and the built commit holds no table
+- **THEN** the generator exits with code 8, prints "publication check could not run: mapping table unavailable" and no tree remains
+
+#### Scenario: Configured table keeps priority
+- **WHEN** a table path is configured
+- **THEN** the names of that file are used, not those of the commit
+
+### Requirement: The edition ships the context mechanism without any context data
+The system SHALL include in the edition the context tool, the private-collections module, the `/context` command, their suites and an invented note template (design D12). The manifest test SHALL fail, naming the path, when a tracked path lies under a context subfolder or the former folder `Contexte-Lab`. The system SHALL NOT ship real context, and the test SHALL NOT refuse a file merely because its name holds `contexte`.
+
+#### Scenario: Mechanism in the tree
+- **WHEN** a tree is built
+- **THEN** it holds the context tool, the module, the command, their suites and the template, byte for byte
+
+#### Scenario: Context folder tracked
+- **WHEN** a tracked path holds `contexte/notes/` or `Contexte-Lab/`
+- **THEN** the edition-manifest test fails and names the path
+
+#### Scenario: Neutral template kept
+- **WHEN** the tree holds the neutral context template `tests/postures/contexte-neutre.md`
+- **THEN** the manifest test does not fail on it
+
+### Requirement: The publication check compares the tree with the context notes
+The system SHALL, when the context notes folder exists, compare every non-binary file of the tree with the text of every note by the book-text rule, report "context text in" with the path and line, and exit with code 7. When the folder is absent it SHALL print "context notes: none compared" and go on. It SHALL NOT print a note's text, title or file name, nor read the originals.
+
+#### Scenario: Note sentence in a document
+- **WHEN** an included document holds a word sequence of the minimum length taken from a fixture note
+- **THEN** the generator exits with code 7, prints "context text in" with the path and line, and the output holds neither the words nor the note name
+
+#### Scenario: No context folder
+- **WHEN** the context folder does not exist
+- **THEN** the output holds "context notes: none compared" and the build goes on to its other checks
+
+### Requirement: The edition ships the overlay mechanism without the real overlay
+The system SHALL include in the edition the story quality tool's overlay reading, the overlay schema and the invented example overlay (design D17). The manifest test SHALL fail, naming the path, when a tracked path holds the real overlay's file name. The system SHALL NOT ship the real overlay or any fixture holding organisation content. Untested until implemented.
+
+#### Scenario: Mechanism in the tree
+- **WHEN** a tree is built
+- **THEN** it holds the overlay schema and the example overlay, byte for byte
+
+#### Scenario: Real overlay name tracked
+- **WHEN** a tracked path holds the real overlay's file name
+- **THEN** the edition-manifest test fails and names the path
+
+### Requirement: The publication check compares the tree with the organisation overlay
+The system SHALL, when the overlay file exists, compare every non-binary file of the tree with the overlay's text by the book-text rule, report "overlay text in" with the path and line, and exit with code 7. When the file is absent it SHALL print "organisation overlay: none compared" and go on. It SHALL NOT print the overlay's text or identifier. Untested until implemented.
+
+#### Scenario: Overlay sentence in a document
+- **WHEN** an included document holds a word sequence of the minimum length taken from a fixture overlay
+- **THEN** the generator exits with code 7, prints "overlay text in" with the path and line, and the output does not hold the words
+
+#### Scenario: No overlay
+- **WHEN** the overlay file does not exist
+- **THEN** the output holds "organisation overlay: none compared" and the build goes on to its other checks

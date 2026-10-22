@@ -86,6 +86,8 @@ class Base(unittest.TestCase):
             mock.patch.object(essai, "WORKSPACE", self.tmp / "workspace"),
             mock.patch.object(essai, "CASES_FILE", self.tmp / "cas.yaml"),
             mock.patch.object(essai, "create_cases_database", lambda: None),     # jamais de base réelle (db-lot2, groupe 12)
+            mock.patch.object(essai, "evaluated_paths", lambda: ["CLAUDE.md"]),    # liste partagée et empreinte : testées dans test_branche.py
+            mock.patch.object(essai, "evaluated_fingerprint", lambda commit, paths: "v1:" + "0" * 64),
         ):
             patch.start()
             self.addCleanup(patch.stop)

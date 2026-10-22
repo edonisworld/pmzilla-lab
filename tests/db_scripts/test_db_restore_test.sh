@@ -61,6 +61,10 @@ case "${1:-}" in
         contenu="$(cat)"
         case "$contenu" in *"DUMP ${FAUX_RESTORE_ECHEC:-aucun}"*) echo "COPY flow.issues: $BRUIT_FAUX" >&2; exit 1 ;; esac
         exit 0 ;;
+      *to_regclass*)
+        case "$args" in *"${FAUX_INDEX_ABSENT:-aucun-index}"*) echo "f" ;; *) echo "t" ;; esac
+        exit 0 ;;
+      *REINDEX*) [ "${FAUX_REINDEX_ECHEC:-0}" = "1" ] && { echo "ERROR: reindex: $BRUIT_FAUX" >&2; exit 1; }; exit 0 ;;
       *"DROP SCHEMA"*) [ "${FAUX_DROP_ECHEC:-0}" = "1" ] && { echo "ERROR: drop: $BRUIT_FAUX" >&2; exit 1; }; exit 0 ;;
       *psql*)
         echo "$BRUIT_FAUX"
@@ -76,10 +80,13 @@ export PATH="$bin:$PATH"
 export HOME="$tmp/home"; mkdir -p "$HOME"
 unset PMZILLA_LAB_DB_PASSWORD PMZILLA_LAB_DB_PORT PMZILLA_LAB_DB_URL POSTGRES_PASSWORD
 export DB_RESTORE_ATTENTE=4
+# Dossier de contenu posé pour tools/lab_paths.sh (la racine copiée de racine_shm n'est pas un clone Git) ; dossier de données propre au test.
+export PMZILLA_LAB_WORKSPACE="$tmp"
+unset PMZILLA_LAB_DATA
 
 # Sauvegarde fabriquée par le test (contenu factice, un fichier par schéma comme db_backup.sh).
 sauv="$tmp/sauvegardes"; mkdir -p "$sauv/db-2026-09-01" "$sauv/db-2026-10-08"
-for d in db-2026-09-01 db-2026-10-08; do for s in knowledge cases flow; do echo "DUMP $s" > "$sauv/$d/$s.dump"; done; done
+for d in db-2026-09-01 db-2026-10-08; do for s in knowledge cases flow quality-sans-texte; do echo "DUMP $s" > "$sauv/$d/$s.dump"; done; done
 export DB_BACKUP_SAUVEGARDES="$sauv"
 
 # Données de référence : mêmes comptes des deux côtés, empreintes calculées sur les vrais fichiers de migration.
@@ -123,7 +130,7 @@ lance
 verifie "restore : succès, code 0" "$([ $code -eq 0 ] && grep -q 'RESTAURATION OK' "$tmp/s"; echo $?)"
 verifie "restore : la dernière sauvegarde (db-2026-10-08) est choisie" "$(grep -q 'Sauvegarde restaurée : .*db-2026-10-08' "$tmp/s"; echo $?)"
 mkdir -p "$sauv/db-2026-10-08-matin" "$sauv/db-2026-10-09-essai"
-for d in db-2026-10-08-matin db-2026-10-09-essai; do for s in knowledge cases flow; do echo "DUMP $s" > "$sauv/$d/$s.dump"; done; done
+for d in db-2026-10-08-matin db-2026-10-09-essai; do for s in knowledge cases flow quality-sans-texte; do echo "DUMP $s" > "$sauv/$d/$s.dump"; done; done
 etat_nominal
 lance
 verifie "restore : les dossiers avec étiquette (db-AAAA-MM-JJ-matin) sont ignorés, db-2026-10-08 est choisi" "$(grep -q 'Sauvegarde restaurée : .*/db-2026-10-08$' "$tmp/s"; echo $?)"
@@ -131,7 +138,7 @@ rm -rf "$sauv/db-2026-10-08-matin" "$sauv/db-2026-10-09-essai"
 etat_nominal
 lance
 verifie "restore : conteneur jetable supprimé après succès" "$([ ! -s "$FX/conteneurs" ] && grep -q 'rm -f -v pmzilla-lab-restore-test-' "$FAUX_LOG" && grep -q 'Conteneur jetable supprimé' "$tmp/s"; echo $?)"
-verifie "restore : les trois schémas sont restaurés" "$([ "$(grep -c 'exec -i pmzilla-lab-restore-test-.* pg_restore' "$FAUX_LOG")" = 3 ]; echo $?)"
+verifie "restore : les trois schémas et le dump partiel de quality sont restaurés (quatre pg_restore)" "$([ "$(grep -c 'exec -i pmzilla-lab-restore-test-.* pg_restore' "$FAUX_LOG")" = 4 ]; echo $?)"
 verifie "restore : comptes identiques signalés OK" "$(grep -q 'flow.issues .*OK' "$tmp/s" && grep -q 'comptes identiques' "$tmp/s"; echo $?)"
 
 # --- jamais la vraie base : image fixée, port non publié en 5432, commandes compose en lecture seule
@@ -152,15 +159,27 @@ verifie "restore : mot de passe jetable aléatoire, passé par l'environnement, 
 verifie "restore : la sortie ne contient aucune valeur parasite ni mot de passe" "$(grep -q "$BRUIT" "$tmp/s"; r1=$?; grep -q "$MDP_REEL" "$tmp/s"; r2=$?; grep -q "$mdp_jetable" "$tmp/s"; r3=$?; [ $r1 -ne 0 ] && [ $r2 -ne 0 ] && [ $r3 -ne 0 ]; echo $?)"
 verifie "restore : les lignes de comptes ne portent que table, deux nombres et un statut" "$(grep -E '^  (cases|flow|knowledge|public)\.' "$tmp/s" | grep -Evq '^  [a-z_]+\.[a-z_]+ +[0-9]+ / [0-9]+ +OK$'; [ $? -ne 0 ]; echo $?)"
 
+# --- dossier des sauvegardes par défaut : « sauvegardes » sous PMZILLA_LAB_DATA (tools/lab_paths.sh), comme db_backup.sh (idée #257)
+etat_nominal
+donnees="$tmp/donnees-lab"; mkdir -p "$donnees/sauvegardes/db-2026-10-12"
+for s in knowledge cases flow quality-sans-texte; do echo "DUMP $s" > "$donnees/sauvegardes/db-2026-10-12/$s.dump"; done
+env -u DB_BACKUP_SAUVEGARDES PMZILLA_LAB_DATA="$donnees" bash "$racine/tools/db_restore_test.sh" > "$tmp/s" 2>&1; code=$?
+verifie "restore : sans DB_BACKUP_SAUVEGARDES, les sauvegardes sont cherchées sous <PMZILLA_LAB_DATA>/sauvegardes" "$([ $code -eq 0 ] && grep -q "Sauvegarde restaurée : $donnees/sauvegardes/db-2026-10-12\$" "$tmp/s"; echo $?)"
+etat_nominal
+PMZILLA_LAB_DATA="$donnees" DB_BACKUP_SAUVEGARDES="$sauv" bash "$racine/tools/db_restore_test.sh" > "$tmp/s" 2>&1; code=$?
+verifie "restore : DB_BACKUP_SAUVEGARDES non vide l'emporte sur PMZILLA_LAB_DATA" "$([ $code -eq 0 ] && grep -q "Sauvegarde restaurée : $sauv/db-2026-10-08\$" "$tmp/s"; echo $?)"
+etat_nominal
+
 # --- schéma vidé dans le conteneur jetable avant pg_restore (R-22 : knowledge a plus de tables que la sauvegarde)
 etat_nominal
 lance
 verifie "restore : chaque schéma est vidé (DROP SCHEMA IF EXISTS … CASCADE) dans le conteneur jetable, juste avant son pg_restore" "$(
   suite="$(grep -E '^docker exec (-i )?pmzilla-lab-restore-test-.*(DROP SCHEMA|pg_restore)' "$FAUX_LOG" | sed -E 's/^docker exec (-i )?pmzilla-lab-restore-test-[0-9]+-[0-9]+ .*DROP SCHEMA IF EXISTS ([a-z_]+) CASCADE.*/D:\2/; s/^docker exec -i .*pg_restore.*/R/' | tr '\n' ' ')"
-  [ "$suite" = "D:knowledge R D:cases R D:flow R " ]; echo $?)"
+  [ "$suite" = "D:knowledge R D:cases R D:flow R R " ]; echo $?)"
 verifie "restore : le vidage ne vise que le conteneur jetable (jamais docker compose)" "$(! grep '^docker compose' "$FAUX_LOG" | grep -qi 'drop'; echo $?)"
 verifie "restore : le vidage précède la restauration mais les migrations restent appliquées avant (uv avant le premier DROP)" "$([ "$(grep -n '^uv ' "$FAUX_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'DROP SCHEMA' "$FAUX_LOG" | head -1 | cut -d: -f1)" ]; echo $?)"
 verifie "restore : pg_restore garde --clean --if-exists --exit-on-error --single-transaction" "$(grep -q 'pg_restore -U postgres -d pmzilla --clean --if-exists --exit-on-error --single-transaction' "$FAUX_LOG"; echo $?)"
+verifie "restore : le dump partiel de quality se restaure en données seulement, sans --clean, après les trois schémas" "$(l="$(grep 'pg_restore' "$FAUX_LOG" | tail -1)"; printf '%s' "$l" | grep -q -- '--data-only --exit-on-error --single-transaction' && ! printf '%s' "$l" | grep -q -- '--clean'; echo $?)"
 etat_nominal
 FAUX_DROP_ECHEC=1 lance
 verifie "restore : vidage en échec, code 1, schéma nommé, pg_restore non lancé, valeurs masquées" "$([ $code -eq 1 ] && grep -q 'ÉCHEC knowledge' "$tmp/s" && ! grep -q 'pg_restore' "$FAUX_LOG" && ! grep -q "$BRUIT" "$tmp/s" && [ ! -s "$FX/conteneurs" ]; echo $?)"
@@ -174,7 +193,7 @@ shm_reel="$(grep -E '^[[:space:]]+shm_size:' "$racine/docker-compose.yml" | head
 verifie "restore : docker run reçoit --shm-size avec la valeur de shm_size du compose réel" "$([ -n "$shm_reel" ] && grep '^docker run' "$FAUX_LOG" | grep -q -- "--shm-size $shm_reel "; echo $?)"
 racine_shm() {   # $1 = ligne shm_size du compose factice (vide : aucune)
   rm -rf "$tmp/root"; mkdir -p "$tmp/root/tools" "$tmp/root/db"
-  cp "$racine/tools/db_restore_test.sh" "$tmp/root/tools/"; cp -R "$racine/db/migrations" "$tmp/root/db/"
+  cp "$racine/tools/db_restore_test.sh" "$racine/tools/lab_paths.sh" "$racine/tools/db_container_common.sh" "$tmp/root/tools/"; cp -R "$racine/db/migrations" "$tmp/root/db/"
   { grep -v 'shm_size' "$racine/docker-compose.yml"; [ -n "$1" ] && echo "    $1"; } > "$tmp/root/docker-compose.yml"
   etat_nominal; bash "$tmp/root/tools/db_restore_test.sh" > "$tmp/s" 2>&1; code=$?
 }
@@ -185,10 +204,62 @@ verifie "restore : sans shm_size dans le compose, repli 1g" "$(grep '^docker run
 racine_shm "shm_size: grand; rm -rf /"
 verifie "restore : shm_size illisible, repli 1g (la valeur n'est jamais passée telle quelle)" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '--shm-size 1g ' && ! grep -q 'rm -rf' "$FAUX_LOG"; echo $?)"
 
+# --- durée de reconstruction des index BM25 (R-88) : REINDEX chronométré dans le conteneur jetable seulement
+etat_nominal; lance
+verifie "restore : un REINDEX INDEX par index BM25, dans le conteneur jetable" "$(for i in knowledge.chunks_bm25 cases.cases_bm25 cases.experiments_bm25; do [ "$(grep '^docker exec pmzilla-lab-restore-test-' "$FAUX_LOG" | grep -c "REINDEX INDEX $i")" = 1 ] || exit 1; done; echo 0)"
+verifie "restore : aucun REINDEX ni to_regclass sur la vraie base (docker compose)" "$(grep '^docker compose' "$FAUX_LOG" | grep -Eqi 'reindex|to_regclass'; [ $? -ne 0 ]; echo $?)"
+verifie "restore : les REINDEX viennent après les pg_restore" "$([ "$(grep -n 'pg_restore' "$FAUX_LOG" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'REINDEX' "$FAUX_LOG" | head -1 | cut -d: -f1)" ]; echo $?)"
+verifie "restore : une ligne de durée par index BM25" "$(grep -Eq '^durée de reconstruction de l.index BM25 knowledge.chunks_bm25 : [0-9]+ s$' "$tmp/s" && grep -Eq '^durée de reconstruction de l.index BM25 cases.cases_bm25 : [0-9]+ s$' "$tmp/s" && grep -Eq '^durée de reconstruction de l.index BM25 cases.experiments_bm25 : [0-9]+ s$' "$tmp/s"; echo $?)"
+verifie "restore : durée totale affichée avec la mention d'estimation du REINDEX de la vraie base" "$(grep -Eq '^durée totale de reconstruction des index BM25 : [0-9]+ s \(estimation du REINDEX de la vraie base\)$' "$tmp/s"; echo $?)"
+verifie "restore : les durées ne changent ni le code de sortie ni la phrase de bilan" "$([ $code -eq 0 ] && grep -q 'RESTAURATION OK, comptes identiques' "$tmp/s"; echo $?)"
+etat_nominal
+FAUX_INDEX_ABSENT=cases.experiments_bm25 lance
+verifie "restore : index absent signalé, compté 0 s, pas d'échec, pas de REINDEX sur lui" "$([ $code -eq 0 ] && grep -q 'cases.experiments_bm25 : absent' "$tmp/s" && grep -Eq '^durée totale de reconstruction des index BM25 : [0-9]+ s' "$tmp/s" && ! grep -q 'REINDEX INDEX cases.experiments_bm25' "$FAUX_LOG"; echo $?)"
+etat_nominal
+FAUX_REINDEX_ECHEC=1 lance
+verifie "restore : REINDEX en échec signalé sans valeur, compté 0 s, code 0" "$([ $code -eq 0 ] && grep -q 'REINDEX en échec' "$tmp/s" && ! grep -q "$BRUIT" "$tmp/s"; echo $?)"
+etat_nominal
+FAUX_RESTORE_ECHEC=cases lance
+verifie "restore : restauration en échec, aucun REINDEX chronométré" "$([ $code -eq 1 ] && ! grep -q 'REINDEX' "$FAUX_LOG" && ! grep -q 'durée de reconstruction' "$tmp/s"; echo $?)"
+
 # --- écart de lignes : attendu possible, code 0
 etat_nominal; sed -i.bak 's/^flow.issues|120/flow.issues|100/' "$FX/comptes-restaures"
 lance
 verifie "restore : écart de lignes affiché avec sa valeur, signalé comme attendu possible, code 0" "$([ $code -eq 0 ] && grep -q 'flow.issues .*100 / 120 .*écart -20 (attendu possible' "$tmp/s"; echo $?)"
+
+# --- schéma quality (R-78, design D10) : jamais sauvegardé, recréé vide par les migrations ; l'écart de lignes est attendu, jamais un échec
+quality_pose() {   # vraie base : des lignes ; base restaurée : tables recréées vides par les migrations
+  printf 'quality.items|40\nquality.contents|40\nquality.assessments|900\n' >> "$FX/comptes-reels"
+  printf 'quality.items|0\nquality.contents|0\nquality.assessments|0\n' >> "$FX/comptes-restaures"
+  # les trois tables du dump partiel : restaurées avec leurs lignes
+  printf 'quality.team_attributes|2\nquality.team_reviews|3\nquality.overlay_versions|1\n' | tee -a "$FX/comptes-reels" >> "$FX/comptes-restaures"
+}
+etat_nominal; quality_pose
+lance
+verifie "restore : tables quality vides après restauration, vraie base remplie : code 0, pas d'échec" "$([ $code -eq 0 ] && grep -q 'RESTAURATION OK' "$tmp/s"; echo $?)"
+verifie "restore : l'écart quality est signalé comme attendu (table jamais sauvegardée), avec ses deux comptes" "$(grep -q "quality.items .* 0 / 40 .*écart -40 (attendu : cette table de quality n'est jamais sauvegardée" "$tmp/s" && grep -q 'quality.assessments .*0 / 900' "$tmp/s"; echo $?)"
+verifie "restore : les trois tables du dump partiel sont comparées comme n'importe quelle table (restaurées avec leur compte réel)" "$(grep -Eq 'quality.team_attributes +2 / 2 +OK$' "$tmp/s" && grep -Eq 'quality.team_reviews +3 / 3 +OK$' "$tmp/s" && grep -Eq 'quality.overlay_versions +1 / 1 +OK$' "$tmp/s"; echo $?)"
+verifie "restore : l'avertissement des tables restaurées à 0 ligne ne vient pas des tables quality" "$(grep -q 'ATTENTION' "$tmp/s"; [ $? -ne 0 ]; echo $?)"
+verifie "restore : la requête de comptes vise aussi le schéma quality (pour que l'écart soit vu)" "$(grep '^docker compose exec' "$FAUX_LOG" | grep -q "'quality'"; echo $?)"
+verifie "restore : quality n'est ni restauré en entier ni vidé (quatre pg_restore dont le dump partiel, aucun DROP SCHEMA quality)" "$([ "$(grep -c 'exec -i pmzilla-lab-restore-test-.* pg_restore' "$FAUX_LOG")" = 4 ] && ! grep -q 'DROP SCHEMA IF EXISTS quality' "$FAUX_LOG" && ! grep -qi 'drop schema.*quality' "$FAUX_LOG"; echo $?)"
+etat_nominal; quality_pose; sed -i.bak 's/^quality.team_reviews|3$/quality.team_reviews|1/' "$FX/comptes-restaures"
+lance
+verifie "restore : un écart sur une table du dump partiel est signalé comme attendu possible (comme toute table), code 0" "$([ $code -eq 0 ] && grep -q 'quality.team_reviews .*1 / 3 .*écart -2 (attendu possible' "$tmp/s"; echo $?)"
+etat_nominal; quality_pose
+rm "$sauv/db-2026-10-08/quality-sans-texte.dump"
+lance
+verifie "restore : sauvegarde sans quality-sans-texte, code 1, une ligne dit qu'elle précède probablement le dump partiel, conteneur supprimé" "$([ $code -eq 1 ] && grep -q 'ÉCHEC quality-sans-texte' "$tmp/s" && grep -q 'précède probablement le dump partiel' "$tmp/s" && [ ! -s "$FX/conteneurs" ]; echo $?)"
+echo "DUMP quality-sans-texte" > "$sauv/db-2026-10-08/quality-sans-texte.dump"
+etat_nominal; quality_pose
+FAUX_RESTORE_ECHEC=quality-sans-texte lance
+verifie "restore : restauration du dump partiel en échec, code 1, dump nommé, valeurs masquées" "$([ $code -eq 1 ] && grep -q 'ÉCHEC quality-sans-texte : pg_restore a échoué' "$tmp/s" && ! grep -q "$BRUIT" "$tmp/s" && ! grep -q 'précède probablement' "$tmp/s"; echo $?)"
+etat_nominal; quality_pose
+etat_nominal; quality_pose; sed -i.bak 's/^flow.issues|120/flow.issues|100/' "$FX/comptes-restaures"
+lance
+verifie "restore : un écart flow reste signalé avec son avertissement habituel à côté de l'écart quality, code 0" "$([ $code -eq 0 ] && grep -q 'flow.issues .*écart -20 (attendu possible' "$tmp/s" && grep -q "cette table de quality n'est jamais sauvegardée" "$tmp/s"; echo $?)"
+etat_nominal; quality_pose; grep -v '^quality.contents' "$FX/comptes-restaures" > "$FX/c"; mv "$FX/c" "$FX/comptes-restaures"
+lance
+verifie "restore : une table quality absente de la base restaurée (migration non appliquée) reste un échec, code 1" "$([ $code -eq 1 ] && grep -q 'quality.contents .*MANQUE' "$tmp/s"; echo $?)"
 
 # --- table manquante
 etat_nominal; grep -v '^flow.transitions' "$FX/comptes-restaures" > "$FX/c"; mv "$FX/c" "$FX/comptes-restaures"
@@ -248,6 +319,16 @@ lance --port 5432
 verifie "restore : --port 5432 refusé (code 2), aucun conteneur démarré" "$([ $code -eq 2 ] && grep -q 'Refus' "$tmp/s" && grep -q 'vraie base' "$tmp/s" && ! grep -q 'docker run' "$FAUX_LOG"; echo $?)"
 PMZILLA_LAB_DB_PORT=5433 lance --port 5433
 verifie "restore : --port égal au port configuré de la vraie base refusé (code 2)" "$([ $code -eq 2 ] && grep -q 'Refus' "$tmp/s" && ! grep -q 'docker run' "$FAUX_LOG"; echo $?)"
+for forme in "05432" "+5544" " 5544" "5544 " "65536" "0" "00" $'5544\nx'; do
+  etat_nominal
+  lance --port "$forme"
+  verifie "restore : --port $(printf '%q' "$forme") refusé (code 2, « Port invalide »), aucun conteneur (une seule règle de port, test-db-guards D1)" "$([ $code -eq 2 ] && grep -q '^Port invalide : ' "$tmp/s" && ! grep -q 'docker run' "$FAUX_LOG"; echo $?)"
+done
+for reel in "05432" "05433" " 5433" "5433 " "+5433" "65536" "0" "abc"; do
+  etat_nominal
+  PMZILLA_LAB_DB_PORT="$reel" lance --port 5544
+  verifie "restore : port configuré de la vraie base illisible $(printf '%q' "$reel") refusé (code 2, ligne dédiée), aucun conteneur" "$([ $code -eq 2 ] && grep -qxF 'Refus : le port configuré de la vraie base est illisible (PMZILLA_LAB_DB_PORT) : corrige-le ou retire-le, puis relance.' "$tmp/s" && ! grep -q 'docker run' "$FAUX_LOG"; echo $?)"
+done
 etat_nominal
 lance --port 5544
 verifie "restore : --port libre accepté et publié sur 127.0.0.1 seulement" "$(grep '^docker run' "$FAUX_LOG" | grep -q -- '-p 127.0.0.1:5544:5432'; echo $?)"

@@ -10,7 +10,7 @@ interactif, vérifie que les règles tiennent toujours (posture annoncée, reche
 bibliothèque, citations, questions de contexte, intervention de Critic, aucun nom en mémoire)
 et écrit un rapport comparé au passage précédent.
 
-    uv run ~/PMZilla-Lab/posture_evals.py [--cases id1,id2] [--model M] [--judge-model M] [--keep]
+    uv run <dossier du lab>/posture_evals.py [--cases id1,id2] [--model M] [--judge-model M] [--keep]
                                            [--real-memory] [--cases-file FICHIER] [--prerequisites-only]
 
 Chaque cas tourne dans une copie temporaire du workspace (git worktree), créée à partir de l'état
@@ -22,6 +22,12 @@ par init-sanctum.py (ils ne sont plus suivis par Git) et le contexte local est u
 (tests/postures/contexte-neutre.md déposé en .pmzilla/contexte.md). --real-memory teste avec la
 mémoire et le contexte réels ; le rapport indique « mémoire : figée » ou « mémoire : réelle ». Les vérifications automatiques sont lues dans la trace de la séance ; les critères qui
 demandent une lecture sont jugés par Claude, avec une justification.
+
+--branch <branche> teste le sommet commité d'une branche locale (extraite ou non), jamais l'état du workspace : l'état testé est
+`état testé : sommet de <branche> (<sommet court>)`. Chaque passage écrit dans son enregistrement l'empreinte `v1:` des fichiers évalués de
+l'arbre testé (`evaluated_fingerprint`, calculée par tools/posture_eval_fingerprint.py sur la liste partagée tests/postures/fichiers-evalues.txt,
+spécifications de chemin Git depuis la racine) : la fin de branche compte un passage par cette empreinte. Liste absente ou vide, branche inconnue,
+--branch avec --committed-state ou --rejudge, worktree de la branche avec des fichiers évalués non commités : refus, code 2, avant toute copie.
 
 Sorties :
     _bmad-output/essais/essai-AAAA-MM-JJ-HHMMSS.md   rapport : verdicts et justifications seulement
@@ -51,12 +57,20 @@ from pathlib import Path
 
 import yaml
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
-TOOLS = Path(os.environ.get("PMZILLA_LAB_TOOLS", "~/PMZilla-Lab")).expanduser()
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths  # noqa: E402
+import posture_eval_fingerprint  # noqa: E402   # empreinte des fichiers évalués, partagée avec tools/finish_branch.sh
+
+LAB = lab_paths.resolve_or_exit()   # module partagé : variable, sinon dépôt Git du code, sinon code 78
+WORKSPACE = LAB["content_root"]
+TOOLS = Path(os.environ.get("PMZILLA_LAB_TOOLS") or LAB["lab_folder"]).expanduser()   # le dossier du lab : les liens des scripts
 DATA = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser() / "essais"
 CASES_FILE = WORKSPACE / "tests" / "postures" / "cas.yaml"
 REPORT_DIR = WORKSPACE / "_bmad-output" / "essais"
 CLAUDE = os.environ.get("PMZILLA_LAB_CLAUDE", "claude")
+# Liste partagée des chemins évalués (posture-evals-on-branch-tip, D3 et D7) : lue aussi par tools/finish_branch.sh, contrôle 6
+EVALUATED_LIST = Path("tests/postures/fichiers-evalues.txt")
+EVALUATED_LIST_MISSING = "liste des fichiers évalués absente ou vide"
 DEFAULT_MODEL_LABEL = "défaut"   # aucun --model / --judge-model : le modèle habituel de Claude Code
 CASE_TIMEOUT = 900   # secondes par cas
 JUDGE_TIMEOUT = 300
@@ -70,7 +84,14 @@ ALLOWED_TOOLS = ["mcp__pmzilla-library", "Read", "Glob", "Grep", "Skill", "Agent
                  "TodoWrite", "Write", "Edit",
                  "Bash(uv run .claude/skills/*)", "Bash(uv run scripts/wake.py *)",
                  "Bash(cd * && uv run scripts/wake.py *)",
-                 "Bash(uv run tools/journal_lab.py *)"]
+                 "Bash(uv run tools/journal_lab.py *)",
+                 # grille d'audit des stories (R-94) : la seule sous-commande `grid`, avec ou sans options ; jamais
+                 # collect, review, analyse ni coach
+                 "Bash(uv run tools/story_quality.py grid)", "Bash(uv run tools/story_quality.py grid *)"]
+# Dossier de contexte vide créé dans la copie de chaque séance (PMZILLA_LAB_CONTEXT) : la surcouche de la grille
+# (story_quality_overlay.overlay_path) n'y est jamais trouvée, et le vrai dossier de contexte n'est jamais atteint
+CONTEXT_VARIABLE = "PMZILLA_LAB_CONTEXT"
+EMPTY_CONTEXT_FOLDER = ".eval-contexte-vide"
 # Fichiers exclus de Git mais nécessaires aux agents BMAD (configuration locale) : recopiés dans
 # chaque copie temporaire, sinon les agents ne retrouvent pas leur mémoire et se croient neufs.
 LOCAL_FILES = ["_bmad/custom/config.user.toml"]
@@ -105,7 +126,8 @@ CONTEXTE_NEUTRE_EN = Path("tests/postures/contexte-neutre.en.md")
 POSTURE_TAG = re.compile(r"\[\s*Posture\s*:\s*([^\]]+?)\s*\]", re.IGNORECASE)   # tolérante : aucune langue en particulier
 # Vocabulaire par langue (balise de posture, mention hors bibliothèque, formules de Critic) : un fichier unique, lu
 # aussi par tools/critic_mirror.py. Celui de l'outil lui-même, pas celui de l'état testé.
-VOCABULARY_FILE = Path(__file__).resolve().parents[1] / "tests" / "postures" / "vocabulaire.yaml"
+VOCABULARY_RELATIVE = Path("tests/postures/vocabulaire.yaml")      # chemin dans un état testé (copie de --branch)
+VOCABULARY_FILE = Path(__file__).resolve().parents[1] / VOCABULARY_RELATIVE
 LANGUAGES = ("fr", "en")
 DEFAULT_LANGUAGE = "fr"
 
@@ -129,8 +151,8 @@ def posture_tags(text: str, language: str, vocabulary: dict | None = None) -> li
 # Copie temporaire du workspace
 # ---------------------------------------------------------------------------
 
-def git(*args: str, cwd: Path = WORKSPACE, check: bool = True) -> str:
-    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+def git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
+    result = subprocess.run(["git", *args], cwd=cwd or WORKSPACE, capture_output=True, text=True)
     if check and result.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} : {result.stderr.strip()}")
     return result.stdout
@@ -140,6 +162,47 @@ def snapshot_commit() -> str:
     """Commit de l'état courant (modifications non commitées des fichiers suivis comprises), sans
     toucher au workspace ni à la pile de stash."""
     return git("stash", "create").strip() or git("rev-parse", "HEAD").strip()
+
+
+def refuse(message: str) -> None:
+    """Refus d'usage : le message sur la sortie d'erreur, code 2, avant toute copie, base ou séance."""
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def evaluated_paths() -> list[str]:
+    """Les chemins évalués de la liste partagée du workspace (D3) ; absente ou vide : refus 2, jamais de repli sur des chemins internes."""
+    path = WORKSPACE / EVALUATED_LIST
+    entries = posture_eval_fingerprint.read_list(path.read_text(encoding="utf-8")) if path.is_file() else []
+    if not entries:
+        refuse(EVALUATED_LIST_MISSING)
+    return entries
+
+
+def evaluated_fingerprint(commit: str, paths: list[str]) -> str:
+    """Empreinte `v1:` des chemins évalués de l'arbre du commit testé (D2) : le même calcul que le contrôle 6 de la fin de branche."""
+    return posture_eval_fingerprint.fingerprint(WORKSPACE, commit, paths)
+
+
+def branch_tip(branch: str) -> str:
+    """Le commit du sommet de la branche locale ; inconnue : refus 2 avec `branche inconnue : <branche>`."""
+    tip = git("rev-parse", "--verify", "-q", f"refs/heads/{branch}^{{commit}}", check=False).strip()
+    if not tip:
+        refuse(f"branche inconnue : {branch}")
+    return tip
+
+
+def refuse_dirty_branch_worktree(branch: str, paths: list[str]) -> None:
+    """Si la branche est extraite dans un worktree (le workspace compris) qui a des modifications non commitées des chemins évalués
+    (suivis ou nouveaux), refus 2 : un brouillon n'est jamais pris pour le sommet testé. Seuls les chemins sont comparés
+    (git status), aucun fichier de ce worktree n'est lu par le script."""
+    folder = None
+    for block in git("worktree", "list", "--porcelain").split("\n\n"):
+        fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
+        if fields.get("branch") == f"refs/heads/{branch}":
+            folder = fields.get("worktree")
+    if folder and git("status", "--porcelain", "--untracked-files=all", "--", *paths, cwd=Path(folder), check=False).strip():
+        refuse(f"le worktree de {branch} a des modifications non commitées des fichiers évalués : commite-les ou retire-les, puis relance")
 
 
 def make_copy(target: Path, commit: str, untracked: bool = True) -> None:
@@ -257,9 +320,10 @@ def prepare_memory(copy: Path, real: bool, language: str = DEFAULT_LANGUAGE) -> 
         if (WORKSPACE / "_bmad" / "memory").is_dir():
             shutil.copytree(WORKSPACE / "_bmad" / "memory", copy / "_bmad" / "memory", dirs_exist_ok=True)
             redirect_sanctum_paths(copy)
-        if (WORKSPACE / CONTEXTE_LOCAL).is_file():
+        contexte_local = lab_paths.local_file("local_context", WORKSPACE)   # lu en place (R-77)
+        if contexte_local.is_file():
             (copy / CONTEXTE_LOCAL).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(WORKSPACE / CONTEXTE_LOCAL, copy / CONTEXTE_LOCAL)
+            shutil.copy2(contexte_local, copy / CONTEXTE_LOCAL)
         return {}
     build_sanctums(copy, language)
     placed = freeze_memory(copy, language)
@@ -401,13 +465,25 @@ def drop_copy(target: Path) -> None:
     git("worktree", "prune", check=False)
 
 
+OUTPUT_DIR_PREFIX = "_bmad-output/"                     # livrables de la séance : vus même ignorés par Git
+IGNORED_OUTPUT_NOISE = {"__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+
+
 def changed_files(copy: Path, placed: dict[str, str] | None = None) -> dict[str, str]:
     """Fichiers créés ou modifiés par la séance dans la copie, avec leur contenu. Les fichiers
     identiques à ceux du workspace (modifications non commitées recopiées au départ) et ceux de la
-    mémoire figée posés au départ (s'ils n'ont pas été modifiés depuis) sont ignorés."""
+    mémoire figée posés au départ (s'ils n'ont pas été modifiés depuis) sont ignorés. Sous `_bmad-output/`, les
+    fichiers ignorés par Git sont vus aussi (un livrable gardé va dans `_bmad-output/pmzilla/internes/`, ignoré),
+    sauf les caches ; ailleurs, l'outillage ignoré (.venv, caches, sanctum de la mémoire) n'est pas ramassé."""
     out = {}
-    for line in git("status", "--porcelain", "--untracked-files=all", cwd=copy).splitlines():
+    lines = git("status", "--porcelain", "--untracked-files=all", cwd=copy).splitlines()
+    lines += [line for line in git("status", "--porcelain", "--ignored", "--untracked-files=all", "--",
+                                   OUTPUT_DIR_PREFIX, cwd=copy).splitlines() if line.startswith("!! ")]
+    for line in lines:
         name = line[3:].strip().strip('"')
+        if line.startswith("!! ") and (not name.startswith(OUTPUT_DIR_PREFIX)
+                                       or set(Path(name).parts) & IGNORED_OUTPUT_NOISE):
+            continue
         path, original = copy / name, WORKSPACE / name
         if not path.is_file():
             continue
@@ -594,7 +670,9 @@ def case_library(case: dict, folder: Path, cases_env: dict[str, str] | None = No
     """Cas à bibliothèque jetable (`library: dossier`, relatif à la racine du workspace : un sous-dossier par collection,
     des articles inventés) : vide la bibliothèque de la base jetable `dbname` du passage, y indexe ce dossier par l'indexeur
     (`pmzilla_lab_library.py index`, la base désignée par PMZILLA_LAB_KNOWLEDGE_DBNAME) et rend la configuration MCP qui la lit.
-    Rien n'est écrit dans la base de l'installation. Sans base jetable, ou si l'indexation échoue : LibraryUnavailable."""
+    Rien n'est écrit dans la base de l'installation. Sans base jetable, ou si l'indexation échoue : LibraryUnavailable.
+    `context_notes: dossier` (organisation-context) : un dossier inventé dont le sous-dossier `notes/` est indexé avec l'option --context
+    de l'indexeur dans la même base jetable ; jamais le vrai dossier de contexte."""
     if not case.get("library"):
         return None
     if not dbname:
@@ -603,9 +681,10 @@ def case_library(case: dict, folder: Path, cases_env: dict[str, str] | None = No
         reset_case_library(dbname)
     except Exception as error:
         raise LibraryUnavailable(f"vidage impossible ({type(error).__name__})") from None
+    context = ["--context", str(WORKSPACE / case["context_notes"])] if case.get("context_notes") else []
     try:
         done = subprocess.run([shutil.which("uv") or "/opt/homebrew/bin/uv", "run", str(TOOLS / "pmzilla_lab_library.py"), "index",
-                               str(WORKSPACE / case["library"])], env={**os.environ, KNOWLEDGE_DBNAME_VARIABLE: dbname},
+                               str(WORKSPACE / case["library"]), *context], env={**os.environ, KNOWLEDGE_DBNAME_VARIABLE: dbname},
                               capture_output=True, text=True, timeout=INDEX_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise LibraryUnavailable(f"indexation interrompue après {INDEX_TIMEOUT} s") from None
@@ -635,9 +714,19 @@ SESSION_NOTE = {
 }
 
 
+def empty_context_folder(copy: Path) -> Path:
+    """Dossier de contexte de la séance : vide, dans la copie (recréé vide s'il a servi à une séance précédente)."""
+    folder = copy / EMPTY_CONTEXT_FOLDER
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    return folder
+
+
 def run_session(question: str, copy: Path, mcp: Path, model: str | None, trace: Path, bash: bool,
                 language: str = DEFAULT_LANGUAGE, env: dict[str, str] | None = None) -> list[dict]:
-    command = [CLAUDE, "-p", question, "--output-format", "stream-json", "--verbose",
+    context = empty_context_folder(copy)
+    command =[CLAUDE, "-p", question, "--output-format", "stream-json", "--verbose",
                "--permission-mode", "acceptEdits", "--mcp-config", str(mcp), "--strict-mcp-config",
                "--allowedTools", *ALLOWED_TOOLS, *(["Bash"] if bash else []),
                # Claude Code refuse en mode non interactif toute commande qui contient une expansion
@@ -650,7 +739,8 @@ def run_session(question: str, copy: Path, mcp: Path, model: str | None, trace: 
         # La séance prend sa copie pour espace de travail : le crochet de début de séance (journal_lab) y cherche l'auteur des cas,
         # jamais dans le .pmzilla/cases.yaml du vrai dépôt (la copie n'en contient pas), pour rester silencieux avec un auteur vide.
         result = subprocess.run(command, cwd=copy, capture_output=True, text=True, timeout=CASE_TIMEOUT,
-                                env={**os.environ, "PMZILLA_LAB_WORKSPACE": str(copy), **(env or {})})
+                                env={**os.environ, "PMZILLA_LAB_WORKSPACE": str(copy), **(env or {}),
+                                     CONTEXT_VARIABLE: str(context)})
         output, error = result.stdout, result.stderr
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
@@ -1144,7 +1234,7 @@ def model_label(model: str | None) -> str:
 
 def write_report(stamp: str, results: list[dict], before: dict, base: str, memoire: str = "réelle",
                  language: str = DEFAULT_LANGUAGE, retry_cost: float = 0.0, retry_note: str = "",
-                 session_model: str | None = None, judge_model: str | None = None) -> Path:
+                 session_model: str | None = None, judge_model: str | None = None, tested_line: str | None = None) -> Path:
     total = expected_total(results)
     passed = sum(v["ok"] for c in results for v in blocking(c["verifications"]))
     skipped = [c["id"] for c in results if c.get("non_evaluable")]
@@ -1154,6 +1244,7 @@ def write_report(stamp: str, results: list[dict], before: dict, base: str, memoi
     lines = [f"# Jeu d'essai des postures, {stamp}", "", f"mémoire : {memoire}"
              + (f" · langue : {language}" if language != DEFAULT_LANGUAGE else ""), "",
              f"modèles : sessions {model_label(session_model)} · juge {model_label(judge_model)}", "",
+             *([tested_line, ""] if tested_line else []),
              f"{passed}/{total} vérifications réussies sur {len(results)} cas"
              + (f", dont {len(skipped)} non évaluable(s)" if skipped else "") + ". "
              f"État testé : {base[:10]}. Traces brutes : {DATA / stamp}.", ""]
@@ -1343,6 +1434,9 @@ def main() -> None:
                              "skills, recherches), sans rien relancer")
     parser.add_argument("--committed-state", action="store_true",
                         help="tester le dernier commit, sans les modifications en cours (lancement automatique)")
+    parser.add_argument("--branch", metavar="BRANCHE",
+                        help="tester le sommet commité de cette branche locale (extraite dans un worktree, dans le workspace ou nulle part), "
+                             "jamais l'état du workspace ; refuse un worktree de la branche qui a des fichiers évalués non commités")
     parser.add_argument("--with-bash", action="store_true",
                         help="autoriser Bash pendant les séances (si le rapport signale des refus de Bash)")
     parser.add_argument("--prerequisites-only", action="store_true",
@@ -1390,6 +1484,18 @@ def main() -> None:
         if check_prerequisites_only(cases):
             raise SystemExit(1)
         return
+    args.tested_line = None
+    args.evaluated_paths = None
+    args.tested_base = None
+    if args.branch and (args.committed_state or args.rejudge):    # avant toute copie, base ou séance
+        refuse(f"--branch ne se combine pas avec {'--committed-state' if args.committed_state else '--rejudge'}")
+    if not args.rejudge:
+        args.evaluated_paths = evaluated_paths()
+        if args.branch:
+            tip = branch_tip(args.branch)
+            refuse_dirty_branch_worktree(args.branch, args.evaluated_paths)
+            args.tested_base = tip
+            args.tested_line = f"état testé : sommet de {args.branch} ({git('rev-parse', '--short', tip).strip()})"
     check_fixtures(cases)
     cases_db = None if args.rejudge else create_cases_database()    # un rejugement ne crée aucune base
     try:
@@ -1419,10 +1525,15 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
         memoire = previous_data.get("memoire", "réelle")   # les passages d'avant la mémoire figée utilisaient la mémoire réelle
         session_model = previous_data.get("modele_sessions")   # un rejugement garde le modèle (et le statut) des séances rejugées
         validant = previous_data.get("validant", True)
+    elif args.tested_base:
+        base = args.tested_base
     elif args.committed_state:
         base = git("rev-parse", "HEAD").strip()
     else:
         base = snapshot_commit()
+    fingerprint = previous_data.get("evaluated_fingerprint") if args.rejudge else evaluated_fingerprint(base, args.evaluated_paths)
+    if args.tested_line:
+        print(args.tested_line, flush=True)
     if not args.rejudge:
         memoire = "réelle" if args.real_memory else "figée"
         session_model = args.model
@@ -1436,6 +1547,7 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
         remplir la base jetable entre-temps)."""
         nonlocal sanctum_before
         label = case["id"] + (f".rejeu{attempt}" if attempt else "")
+        vocabulary = None      # None : celui du dépôt de l'outil ; avec --branch, celui de la copie (lu après sa création)
         technical = False      # exception de préparation ou de séance : un incident, pas une variation du modèle
         if source:
             events, files = saved_session(source, case["id"])
@@ -1446,7 +1558,9 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
         else:
             copy = folder / f"copie-{label}"
             try:
-                make_copy(copy, base, untracked=not args.committed_state)
+                make_copy(copy, base, untracked=not (args.committed_state or args.branch))
+                if args.branch:     # le vocabulaire est un fichier évalué : celui du sommet, lu dans la copie
+                    vocabulary = load_vocabulary(copy / VOCABULARY_RELATIVE)
                 placed = prepare_memory(copy, args.real_memory, language)
                 place_files(case, copy)
                 if cases_db:
@@ -1469,7 +1583,7 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
                     drop_copy(copy)
             (folder / f"{label}.fichiers.json").write_text(
                 json.dumps(files, ensure_ascii=False, indent=2), encoding="utf-8")
-        checks = [check_posture(case.get("posture"), trace, language)]
+        checks = [check_posture(case.get("posture"), trace, language, vocabulary)]
         if sanctum_before is not None and sanctum_digest() != sanctum_before:
             # une séance ne doit jamais écrire dans le sanctum réel : c'est un échec, et on repart de l'état modifié
             print("    ATTENTION : le sanctum réel a changé pendant ce cas", flush=True)
@@ -1477,12 +1591,12 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
                            "justification": "le sanctum réel (_bmad/memory/) a été modifié pendant ce cas : la séance a écrit hors de sa copie"})
             sanctum_before = sanctum_digest()
         checks += [check_auto(rule, trace, files) for rule in case.get("verifications") or []]
-        checks.append(check_language_formulas(trace, language))
+        checks.append(check_language_formulas(trace, language, vocabulary))
         checks.append(check_single_final(trace))
-        checks.append(check_tag_placement(case.get("posture"), trace, language))
+        checks.append(check_tag_placement(case.get("posture"), trace, language, vocabulary))
         checks += judge(case, trace, args.judge_model, folder, language)
         checks = [c for c in checks if c]
-        found = posture_tags(trace["all_text"], language) or list(dict.fromkeys(m.strip() for m in POSTURE_TAG.findall(trace["all_text"])))
+        found = posture_tags(trace["all_text"], language, vocabulary) or list(dict.fromkeys(m.strip() for m in POSTURE_TAG.findall(trace["all_text"])))
         return {"id": case["id"], "question": case["question"], "verifications": checks,
                         "posture": ", ".join(found), "cost": trace["cost"], "turns": trace["turns"],
                         "error": trace["error"] or not events, "fichiers_ecrits": sorted(files),
@@ -1566,10 +1680,11 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
         json.dumps({"date": stamp, "base": base, "memoire": memoire, "langue": language, "cas": results,
                     "complet": not args.cases and not args.cases_file, "rejuge": bool(source),
                     "modele_sessions": session_model, "modele_juge": args.judge_model, "validant": validant,
-                    "non_evaluables": non_evaluables, "cout_rejeux": round(retry_cost, 4)},
+                    "non_evaluables": non_evaluables, "cout_rejeux": round(retry_cost, 4),
+                    **({"evaluated_fingerprint": fingerprint} if fingerprint else {})},
                    ensure_ascii=False, indent=2), encoding="utf-8")
     report = write_report(stamp, results, before, base, memoire, language, retry_cost, retry_note,
-                          session_model, args.judge_model)
+                          session_model, args.judge_model, args.tested_line)
     def outside_reports(status: str) -> list[str]:
         return [line for line in status.splitlines() if "_bmad-output/essais" not in line]
     if outside_reports(git("status", "--porcelain", "--untracked-files=all")) != outside_reports(status_before):

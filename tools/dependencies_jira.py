@@ -3,18 +3,23 @@
 # dependencies = ["pyyaml", "psycopg[binary]"]
 # ///
 """
-PMZilla Lab : carte des dépendances entre équipes, à partir d'un export CSV de Jira, ou de la base (lot 6).
+PMZilla Lab : carte des dépendances entre équipes, lue dans la base (schéma flow, change database-only).
 
 Comme flux_jira.py, le script ne garde que le type, l'état, l'équipe, les dates et les liens de
 chaque ticket. Les clés servent seulement à relier les tickets entre eux, en mémoire : elles ne
 sont jamais écrites dans le rapport (option --keys pour les afficher dans le Terminal seulement).
 Ni titre, ni description, ni personne ne sont lus.
 
-    uv run dependencies_jira.py diagnose <export.csv>
-        Colonnes reconnues, format des liens (avec ou sans type), types de liens et leur nombre,
-        part des liens qui pointent vers un ticket absent de l'export. Aucune clé affichée.
+    Source unique : la base (rôle pmzilla_flow_ro, lecture seule). `diagnose` et `compute` sont à lancer par l'utilisateur seul, dans
+    le Terminal : refusés dans une session Claude Code (code 3, avant toute lecture). L'option --source est retirée (code 2, quelle
+    que soit sa valeur), un fichier d'export donné est refusé (code 2, « les fichiers d'export ne sont plus lus : la base est la seule
+    source »). Base injoignable ou rôle absent : message clair, code 1. Les dates sont lues dans le fuseau export_timezone de flux.yaml.
 
-    uv run dependencies_jira.py compute <export.csv> [--name perimetre] [--weeks 26] [--keys] [--by team|project|mission-team|site]
+    uv run dependencies_jira.py diagnose
+        Colonnes reconnues, format des liens (avec ou sans type), types de liens et leur nombre,
+        part des liens qui pointent vers un ticket absent de la base. Aucune clé affichée.
+
+    uv run dependencies_jira.py compute [--name perimetre] [--weeks 26] [--keys] [--by team|project|mission-team|site]
         Matrice des dépendances entre équipes, blocages en cours, graphe Mermaid, effet des
         dépendances externes sur le lead time. Écrit Flux-Lab/rapports/dependances-<nom>-AAAA-MM-JJ.md
         (et .json). Avec --by mission-team ou --by site, les équipes sont regroupées d'après le référentiel
@@ -24,11 +29,11 @@ Ni titre, ni description, ni personne ne sont lus.
         (dependances-<nom>-mission-team-AAAA-MM-JJ.md) et ne divise rien par un effectif. Référentiel absent ou
         invalide : code de sortie 1, aucun rapport.
 
-    uv run dependencies_jira.py diagnose|compute --source db [...]
-        Lit tickets et liens dans le schéma flow de la base (rôle pmzilla_flow_ro, lecture seule) au lieu d'un export CSV :
-        aucun fichier à donner, mêmes options, même rapport pour les mêmes données (le rapport nomme la source « base » à la
-        place du fichier). Les dates sont lues dans le fuseau export_timezone de flux.yaml. Défaut : --source csv
-        (comportement inchangé, sans psycopg). Base injoignable ou rôle absent : message clair, code de sortie 1.
+Projets exclus de la carte (R-72) : l'option --exclude ABC,DEF (ou « none » / « aucun » pour ne rien exclure), sinon le
+réglage dependency_excluded_projects de flux.yaml (une liste vide n'exclut rien), sinon excluded_projects, commun avec le
+rapport de flux. Les deux réglages ne sont jamais fusionnés. Le diagnostic et le rapport disent la source et le nombre de
+projets (jamais les clés) ; le JSON porte exclus_source (option, reglage_carte, reglage_commun, aucune) et exclus_projets.
+Une option sans clé : code de sortie 2 avant toute lecture ; un réglage invalide : code 1 (flux_config).
 
 Réglages : Flux-Lab/flux.yaml, le même que flux_jira.py (format des dates, colonnes, états).
 Une clé facultative « blocking_link_types » y liste les types de liens qui comptent comme dépendance.
@@ -36,7 +41,6 @@ Une clé facultative « blocking_link_types » y liste les types de liens qui co
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import json
 import os
@@ -49,17 +53,18 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths                                  # noqa: E402
 import flux_config as cfg
-import history_common as commun
 from yaml_strict import charger
 from dependencies_jira_messages import CATALOGS
 from messages import Messages, add_language_option
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 FLUX_DIR = WORKSPACE / "Flux-Lab"
 CONFIG_FILE = FLUX_DIR / "flux.yaml"
 REPORT_DIR = FLUX_DIR / "rapports"
-MIN_ECHANTILLON = 5       # en dessous, pas de comparaison de lead time
+VARIABLE_CLAUDE_CODE = "CLAUDECODE"    # présente dans une session Claude Code : diagnose et compute y sont refusés (code 3)
+MIN_ECHANTILLON = 5      # en dessous, pas de comparaison de lead time
 SEUIL_ANCIEN = 365        # blocage en cours depuis plus longtemps : probablement un ticket abandonné, à nettoyer
 SANS_ENFANT = "sans enfant de livraison"
 FENETRE_ACTIVITE = 90     # un Epic ancien est « vivant » si un de ses enfants a bougé dans ces derniers jours
@@ -154,59 +159,20 @@ def config() -> dict:
     return settings
 
 
-def colonnes_liens(header: list[str]) -> tuple[list[tuple[int, str, str]], list[int]]:
-    """Colonnes typées (index, type, sens) et colonnes de liens sans type (index)."""
-    typees, simples = [], []
-    for i, h in enumerate(header):
-        bas = h.strip().casefold()
-        m = re.match(r"(.*?)\((.+)\)\s*$", h.strip())
-        est_lien = "link" in bas or "lien" in bas or "lié" in bas or "liés" in bas
-        if not est_lien:
-            continue
-        if m and ("inward" in bas or "outward" in bas or "entrant" in bas or "sortant" in bas):
-            sens = "entrant" if ("inward" in bas or "entrant" in bas) else "sortant"
-            typees.append((i, m.group(2).strip(), sens))
-        else:
-            simples.append(i)
-    return typees, simples
-
-
-def read_exports(paths: list[str], settings: dict, t: Messages | None = None) -> dict:
-    """Plusieurs exports (lots de projets, pour rester sous la limite de Jira) fusionnés par clé."""
-    total = None
-    for chemin in paths:
-        data = read_export(Path(chemin).expanduser(), settings, t)
-        taille = len(data["tickets"])
-        if total is None:
-            total = data
-            total["_tailles"] = [taille]
-            continue
-        total["_tailles"].append(taille)
-        total["tickets"].update(data["tickets"])
-        total["liens"].extend(data["liens"])
-        total["liens_types"].extend(t for t in data["liens_types"] if t not in total["liens_types"])
-        total["liens_simples"].extend(t for t in data["liens_simples"] if t not in total["liens_simples"])
-        for k, v in data["colonnes"].items():
-            total["colonnes"][k] = total["colonnes"].get(k) or v
-    total["liens"] = sorted(set(total["liens"]), key=lambda x: (x[0], x[1], x[2] or "", x[3] or ""))
-    total["fichiers"] = [Path(c).name for c in paths]
-    total["tronques"] = [f"{Path(c).name} ({n})" for c, n in zip(paths, total.get("_tailles", [])) if n and n % 1000 == 0]
-    return total
-
-
-SOURCES = ("csv", "db")
+def verifier_usage(args: argparse.Namespace, t: Messages) -> None:
+    """Refus d'usage de `diagnose` et `compute` (database-only, D6 et D12), avant toute lecture de réglage ou de la base : une session
+    Claude Code (code 3), l'option retirée --source quelle que soit sa valeur (code 2), un fichier d'export (code 2)."""
+    if VARIABLE_CLAUDE_CODE in os.environ:
+        print(t("refused_session"))
+        sys.exit(3)
+    for refuse, cle in ((args.source is not None, "source_retired"), (bool(args.export), "export_files_retired")):
+        if refuse:
+            print(t(cle), file=sys.stderr)
+            sys.exit(2)
 
 
 def lire_donnees(args: argparse.Namespace, settings: dict, t: Messages) -> dict:
-    """Les données de la source choisie : exports CSV (au moins un fichier) ou schéma flow de la base (import tardif :
-    la voie CSV ne charge ni psycopg ni flow_store)."""
-    source = args.source or "csv"
-    if source not in SOURCES:
-        sys.exit(t("source_unknown", value=source, allowed=", ".join(SOURCES)))
-    if source == "csv":
-        return read_exports(args.export, settings, t)
-    if args.export:                                   # des fichiers avec la base : refusés, jamais ignorés en silence
-        sys.exit(t("source_db_no_files"))
+    """Tickets et liens lus dans le schéma flow de la base (rôle en lecture seule ; import tardif de flow_store)."""
     try:
         import flow_store
         data = flow_store.lire_dependances(settings)
@@ -216,57 +182,6 @@ def lire_donnees(args: argparse.Namespace, settings: dict, t: Messages) -> dict:
         sys.exit(t("db_unreachable", detail=str(erreur)))
     data["fichiers"] = [t("source_name")]
     return data
-
-
-def read_export(path: Path, settings: dict, t: Messages | None = None) -> dict:
-    t = t or Messages(CATALOGS)
-    with path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.reader(handle)
-        header = next(reader)
-        normalized = [h.strip().casefold() for h in header]
-        index, found = {}, {}
-        for field, names in settings["colonnes"].items():
-            pos = next((normalized.index(n.strip().casefold()) for n in names
-                        if n.strip().casefold() in normalized), None)
-            if pos is None and field == "equipe":
-                pos = next((i for i, h in enumerate(normalized) if "team" in h and h.endswith("(label)")),
-                           next((i for i, h in enumerate(normalized) if "team" in h), None))
-            found[field] = header[pos] if pos is not None else None
-            if pos is not None:
-                index[field] = pos
-        if "cle" not in index or "etat" not in index:
-            manque = [n for n, f in ((t("missing_key_column"), "cle"), (t("missing_status_column"), "etat")) if f not in index]
-            sys.exit(t("exit_missing_column", missing=", ".join(manque), config=CONFIG_FILE))
-        typees, simples = colonnes_liens(header)
-        tickets, liens_bruts = {}, []
-        for row in reader:
-            def cell(field: str) -> str:
-                p = index.get(field)
-                return row[p].strip() if p is not None and p < len(row) else ""
-            cle = cell("cle")
-            if not cle:
-                continue
-            tickets[cle] = {
-                "type": cell("type") or "?",
-                "etat": cell("etat"),
-                "categorie": cell("categorie").casefold(),
-                "cree": commun.parse_jour(cell("cree")),
-                "resolu": commun.parse_jour(cell("resolu")),
-                "debut": commun.parse_jour(cell("debut")),
-                "motif": cell("motif"),
-                "equipe": cell("equipe") or "(sans équipe)",
-                "parent": (CLE.findall(cell("parent")) or [""])[0],
-            }
-            for i, typ, sens in typees:
-                if i < len(row):
-                    for autre in CLE.findall(row[i]):
-                        liens_bruts.append((cle, autre, typ, sens))
-            for i in simples:
-                if i < len(row):
-                    for autre in CLE.findall(row[i]):
-                        liens_bruts.append((cle, autre, None, None))
-    return {"tickets": tickets, "liens": liens_bruts, "colonnes": found,
-            "liens_types": [(header[i], t, s) for i, t, s in typees], "liens_simples": [header[i] for i in simples]}
 
 
 def role(typ: str | None, settings: dict) -> str | None:
@@ -423,6 +338,53 @@ def a_faire(t: dict, settings: dict) -> bool:
 # Commandes
 # ---------------------------------------------------------------------------
 
+SOURCES_EXCLUSION = {"option": "exclusion_src_option", "reglage_carte": "exclusion_src_map",
+                     "reglage_commun": "exclusion_src_shared"}     # valeurs du JSON (françaises) -> clé du catalogue
+
+
+def cles_exclues(valeurs) -> list[str]:
+    """Clés de projet sans espaces, en majuscules, sans doublon, dans l'ordre de première apparition."""
+    vues: dict[str, None] = {}
+    for v in valeurs or []:
+        if str(v).strip():
+            vues.setdefault(str(v).strip().upper(), None)
+    return list(vues)
+
+
+def lire_option_exclusion(valeur: str | None, t: Messages) -> list[str] | None:
+    """--exclude : None si absente ; [] pour « none » / « aucun » ; sinon les clés. Aucune clé : arrêt, code 2."""
+    if valeur is None:
+        return None
+    if valeur.strip().casefold() in ("none", "aucun"):
+        return []
+    cles = cles_exclues(valeur.split(","))
+    if not cles:
+        print(t("exit_empty_exclusion"), file=sys.stderr)
+        sys.exit(2)
+    return cles
+
+
+def appliquer_exclusion(settings: dict, option: list[str] | None) -> None:
+    """Liste exclue de la carte : option, sinon dependency_excluded_projects (même vide), sinon excluded_projects.
+    Rend la liste en vigueur dans settings["projets_exclus"] (lue par separer_exclus) et note sa source."""
+    if option is not None:
+        source, liste = "option", option
+    elif "dependency_excluded_projects" in settings:
+        source, liste = "reglage_carte", cles_exclues(settings["dependency_excluded_projects"])
+    else:
+        liste = cles_exclues(settings.get("projets_exclus"))
+        source = "reglage_commun" if liste else "aucune"
+    settings["projets_exclus"] = liste
+    settings["exclus_source"] = source
+
+
+def ligne_source_exclusion(source: str, n: int, t: Messages) -> str | None:
+    """La ligne de source (nombre de projets, jamais les clés) ; None sans liste en vigueur."""
+    if source not in SOURCES_EXCLUSION:
+        return None
+    return t("exclusion_line", n=n or t("exclusion_none"), source=t(SOURCES_EXCLUSION[source]))
+
+
 def appliquer_perimetre(settings: dict, valeur: str | None) -> None:
     """--scope surcharge scope_projects de flux.yaml : « tous », ou des clés séparées par des virgules."""
     if valeur:
@@ -434,9 +396,8 @@ def cmd_diagnostic(args: argparse.Namespace) -> None:
     t = Messages(CATALOGS, args.language)
     settings = config()
     appliquer_perimetre(settings, args.perimetre)
+    appliquer_exclusion(settings, args.exclusion)
     data = lire_donnees(args, settings, t)
-    if len(args.export) > 1:
-        print(t("merged_exports", n=len(args.export)))
     tickets = data["tickets"]
     print(t("tickets_read", n=len(tickets)))
     print(t("recognized_columns"))
@@ -467,6 +428,9 @@ def cmd_diagnostic(args: argparse.Namespace) -> None:
     if settings.get("projets_perimetre"):
         print(t("scope_line", projects=", ".join(settings["projets_perimetre"]),
                 n=sum(1 for k in tickets if dans_perimetre(k, settings))))
+    ligne = ligne_source_exclusion(settings["exclus_source"], len(settings["projets_exclus"]), t)
+    if ligne:
+        print(ligne)
     for (proj, sens), n in sorted(exclus.items()):
         print(t("excluded_project_links", project=proj, n=n, side=t(SIDES[sens])))
     hors = sum(1 for a, b in paires if a not in tickets or b not in tickets)
@@ -492,8 +456,6 @@ def cmd_diagnostic(args: argparse.Namespace) -> None:
         print(t("unknown_states", n=sum(1 for x in ouverts if x["etat"] in inconnus), states=", ".join(inconnus)))
         if not data["colonnes"].get("categorie"):
             print(t("hint_status_category"))
-    if args.source == "csv" and len(tickets) % 1000 == 0:      # un nombre rond trahit un export tronqué, pas la base
-        print(t("round_number", n=len(tickets)))
     sans_equipe = sum(1 for k, x in tickets.items() if x["equipe"] == "(sans équipe)" and dans_perimetre(k, settings))
     print(t("tickets_without_team", n=sans_equipe))
 
@@ -511,6 +473,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     t = Messages(CATALOGS, args.language)
     settings = config()
     appliquer_perimetre(settings, args.perimetre)
+    appliquer_exclusion(settings, args.exclusion)
     referentiel = None
     if args.par in GROUPEMENTS:
         # avant toute lecture des données : référentiel absent ou invalide = code 1 (ErreurConfig), aucun rapport
@@ -645,7 +608,6 @@ def cmd_calcul(args: argparse.Namespace) -> None:
     rapport = {
         "nom": nom, "date": aujourdhui.isoformat(), "export": ", ".join(data["fichiers"]), "mode": mode,
         "par": args.par,
-        "tronques": data.get("tronques", []),
         "tickets": len(tickets), "semaines": args.semaines,
         "dependances": len(orientees) if mode == "orienté" else len(non_orientees),
         "hors_export": sum(1 for a, b in (orientees or non_orientees) if a not in tickets or b not in tickets),
@@ -672,6 +634,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         "tickets_perimetre": sum(1 for k in tickets if dans_perimetre(k, settings)),
         "lead_time": lt,
         "exclus": [[p, sens, n] for (p, sens), n in sorted(exclus.items())],
+        "exclus_source": settings["exclus_source"], "exclus_projets": len(settings["projets_exclus"]),
         "types_exclus": [[t, n] for t, n in plus_frequents(types_exclus)],
         **par_groupe,
     }
@@ -728,10 +691,11 @@ def rendu(r: dict, t: Messages | None = None) -> str:
         L += ["\x00GROUPE"]               # remplacé après les échanges de mots : le texte des groupes les évite
     if not oriente:
         L += [t("note_untyped"), ""]
-    if r.get("tronques"):
-        L += [t("note_truncated", files=", ".join(r["tronques"])), ""]
     for typ, n in r.get("types_exclus", []):
         L += [t("note_decomposition", type=typ, n=n), ""]
+    ligne = ligne_source_exclusion(r.get("exclus_source", "aucune"), r.get("exclus_projets", 0), t)
+    if ligne:
+        L += [f"> {ligne}", ""]                      # même forme que note_excluded
     for p, sens, n in r.get("exclus", []):
         L += [t("note_excluded", project=p, n=n, side=t(SIDES[sens])), ""]
     if r["dependances"] and r["hors_export"] / r["dependances"] > 0.3:
@@ -899,17 +863,18 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Carte des dépendances entre équipes (export Jira).")
     sub = parser.add_subparsers(dest="commande", required=True)
     d = sub.add_parser("diagnose", help="colonnes et format des liens, sans aucune clé")
-    d.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (lots de projets) ; aucun avec --source db")
-    d.add_argument("--source", default="csv", metavar="{csv,db}",
-                   help="d'où viennent les tickets et les liens : csv (défaut, les exports donnés) ou db (schéma flow de la base)")
+    d.add_argument("export", nargs="*", help=argparse.SUPPRESS)       # refusé (code 2) : la base est la seule source
+    d.add_argument("--source", default=None, help=argparse.SUPPRESS)  # retirée (code 2), quelle que soit la valeur
     d.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous » ; "
                    "remplace scope_projects de flux.yaml")
+    d.add_argument("--exclude", dest="exclude", metavar="KEYS",
+                   help="projets exclus de la carte pour ce passage (clés séparées par des virgules) ou « none » / « aucun » ; "
+                        "remplace dependency_excluded_projects et excluded_projects de flux.yaml, sans rien écrire")
     add_language_option(d)
     d.set_defaults(func=cmd_diagnostic)
     c = sub.add_parser("compute", help="matrice, blocages, graphe et lead time")
-    c.add_argument("export", nargs="*", help="un ou plusieurs exports CSV (lots de projets) ; aucun avec --source db")
-    c.add_argument("--source", default="csv", metavar="{csv,db}",
-                   help="d'où viennent les tickets et les liens : csv (défaut, les exports donnés) ou db (schéma flow de la base)")
+    c.add_argument("export", nargs="*", help=argparse.SUPPRESS)       # refusé (code 2) : la base est la seule source
+    c.add_argument("--source", default=None, help=argparse.SUPPRESS)  # retirée (code 2), quelle que soit la valeur
     c.add_argument("--by", dest="par", type=valeur_by, choices=["team", "project", *GROUPEMENTS], default="team",
                    help="agrégation : par équipe (défaut), par projet Jira (plus lisible à l'échelle du produit), "
                         "par Mission Team ou par site (d'après le référentiel d'organisation)")
@@ -918,11 +883,15 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous » ; "
                    "remplace scope_projects de flux.yaml")
     c.add_argument("--keys", dest="cles", action="store_true", help="affiche les clés des blocages dans le Terminal seulement")
+    c.add_argument("--exclude", dest="exclude", metavar="KEYS",
+                   help="projets exclus de la carte pour ce passage (clés séparées par des virgules) ou « none » / « aucun » ; "
+                        "remplace dependency_excluded_projects et excluded_projects de flux.yaml, sans rien écrire")
     add_language_option(c)
     c.set_defaults(func=cmd_calcul)
     args = parser.parse_args(cfg.refuse_old_options(sys.argv[1:] if argv is None else argv, OPTIONS_RENOMMEES))
-    if args.source == "csv" and not args.export:
-        parser.error("the following arguments are required: export")
+    verifier_usage(args, Messages(CATALOGS, args.language))    # session (3), --source et fichiers (2) : avant toute lecture
+    # avant toute lecture de la base : une option sans clé arrête avec le code 2
+    args.exclusion = lire_option_exclusion(args.exclude, Messages(CATALOGS, args.language))
     if getattr(args, "par", None):
         args.par = {"team": "equipe", "project": "projet", "mission-team": "mission-team", "site": "site"}[args.par]
         # valeurs internes (rapport JSON, noms de fichier)

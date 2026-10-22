@@ -1,63 +1,86 @@
-"""PMZilla Lab : messages de tools/flow_import.py par langue (lot 6, import de Jira en base).
+"""PMZilla Lab : messages de tools/flow_import.py par langue (lot 6, import de Jira en base ; change database-only).
 
-Aucun message ne contient de clé de ticket, de nom d'équipe, d'étiquette, de version ni de valeur de champ : seulement des effectifs, des noms de
-fichiers et des noms de colonnes de l'export. Les erreurs de la base (db.ErreurBase) sont affichées telles quelles, sans
-être passées par ce catalogue.
+Aucun message ne contient de clé de ticket, de nom d'équipe, d'étiquette, de version ni de valeur de champ : seulement des effectifs et
+des noms d'options. Les erreurs de la base (db.ErreurBase) sont affichées telles quelles, sans être passées par ce catalogue.
 """
 
 CATALOGS = {
     "fr": {
         "dry_run_notice": "Essai à blanc (--dry-run) : comptes calculés dans la base, rien n'est écrit.",
-        "tickets_summary": "Tickets lus : {read} ; insérés : {inserted} ; mis à jour : {updated} ; inchangés : {unchanged} ; "
-                           "écartés illisibles : {unreadable}.",
+        "no_new_run": "couche brute : aucun nouveau passage à appliquer",
+        "tickets_summary": "Tickets lus : {read} ; insérés : {inserted} ; mis à jour : {updated} ; inchangés : {unchanged}.",
         "teams_links_summary": "Équipes créées : {teams} ; liens ajoutés : {links_added} ; liens retirés : {links_removed}.",
-        "transitions_summary": "Transitions ajoutées : {added} ; ignorées sans ticket : {orphans} ; illisibles : {unreadable}.",
-        "history_marked": "Tickets marqués « avec historique » (une entrée du cache, avec ou sans transition) : {marked} nouveau(x).",
-        "no_history_notice": "Sans --history : aucune transition importée.",
-        "periods_summary": "Périodes ajoutées ou mises à jour : étiquettes déclarées : {label_periods} ; versions : {version_periods}.",
-        "labels_refused": "Valeurs d'étiquette refusées (non déclarées dans les réglages) : {refused}.",
         "past_retention": "tickets au-delà de la conservation, ignorés : {skipped}",
         "out_of_export": "Tickets sortis de l'export : {marked} marqués, {back} revenus",
+        "gone_sighted": "tickets marqués disparus, revus par l'export : {n}",
         "incomplete_set": "jeu d'exports incomplet : --mark-absent refusé",
+        "partial_run": "dernier passage d'export limité à une requête (--query) : lancez d'abord un passage complet de l'export, "
+                       "sans --query",
         "empty_export": "export vide : --mark-absent refusé",
-        "absent_share_exceeded": "trop de tickets absents des fichiers (plus de {percent} % des tickets stockés) : "
+        "absent_share_exceeded": "trop de tickets absents du dernier passage (plus de {percent} % des tickets stockés) : "
                                  "--mark-absent refusé, rien n'est écrit ; pour relancer volontairement (élargissement d'une "
                                  "requête, par exemple), relever --max-absent-percent",
-        "column_missing": "{file} : colonne {column} absente de l'export (voir les noms de colonnes de flux.yaml). "
-                          "Seuls les CSV de export_jira_api.py sont lus (uv run tools/export_jira_api.py export). Rien n'a été écrit.",
-        "updated_unreadable": "{file} : la colonne {column} contient une valeur vide ou illisible. Rien n'a été écrit.",
-        "file_unreadable": "{file} : fichier illisible.",
-        "file_empty": "{file} : fichier vide.",
-        "timezone_unknown": "export_timezone de flux.yaml : fuseau horaire inconnu.",
-        "cache_missing": "--history : cache introuvable ({path}). Lance d'abord tools/history_jira.py collect.",
-        "cache_unreadable": "--history : cache illisible.",
+        "export_files_retired": "les fichiers d'export ne sont plus lus : l'import part de la couche brute",
+        "history_retired": "--history est retirée : la collecte de l'historique écrit les transitions",
         "unexpected_error": "Erreur inattendue ({name}) : rien n'a été écrit.",
+        # reconstruction depuis la couche brute (jira-data-architecture, D5, D11) : des effectifs et des noms de champs neutres
+        "rebuild_compared": "reconstruction : {n} tickets comparés, {d} changeraient",
+        "rebuild_field": "reconstruction : {field} diffère : {k}",
+        "rebuild_dry_end": "reconstruction à blanc : rien n'est écrit",
+        "rebuild_done": "reconstruction faite : {d} tickets modifiés",
+        "rebuild_raw_empty": "couche brute vide : reconstruction refusée",
+        "rebuild_no_snapshot": "tickets sans instantané : {n}, reconstruction refusée",
+        "seed_done": "amorçage : {n} instantanés construits depuis les tables courantes",
+        "usage_flags_need_rebuild": "--apply et --seed demandent --rebuild",
+        "usage_rebuild_options": "--mark-absent et --dry-run ne sont pas acceptés avec --rebuild",
+        "rebuild_field_ticket": "ticket",
+        "rebuild_field_status": "statut",
+        "rebuild_field_status_category": "catégorie de statut",
+        "rebuild_field_type": "type",
+        "rebuild_field_resolution": "résolution",
+        "rebuild_field_dates": "dates",
+        "rebuild_field_story_points": "story points",
+        "rebuild_field_parent": "parent",
+        "rebuild_field_team": "équipe",
+        "rebuild_field_teams": "équipes",
+        "rebuild_field_links": "liens",
     },
     "en": {
         "dry_run_notice": "Dry run (--dry-run): counts computed in the database, nothing is written.",
-        "tickets_summary": "Tickets read: {read}; inserted: {inserted}; updated: {updated}; unchanged: {unchanged}; "
-                           "discarded as unreadable: {unreadable}.",
+        "no_new_run": "raw layer: no new run to apply",
+        "tickets_summary": "Tickets read: {read}; inserted: {inserted}; updated: {updated}; unchanged: {unchanged}.",
         "teams_links_summary": "Teams created: {teams}; links added: {links_added}; links removed: {links_removed}.",
-        "transitions_summary": "Transitions added: {added}; ignored without ticket: {orphans}; unreadable: {unreadable}.",
-        "history_marked": "Tickets marked \"with history\" (a cache entry, with or without a transition): {marked} new.",
-        "no_history_notice": "Without --history: no transitions imported.",
-        "periods_summary": "Periods added or updated: declared labels: {label_periods}; versions: {version_periods}.",
-        "labels_refused": "Label values refused (not declared in the settings): {refused}.",
         "past_retention": "tickets past retention, skipped: {skipped}",
         "out_of_export": "Tickets out of the export: {marked} marked, {back} back",
+        "gone_sighted": "tickets marked gone, sighted again by the export: {n}",
         "incomplete_set": "incomplete export set: --mark-absent refused",
+        "partial_run": "last export run limited to one query (--query): run a complete export first, without --query",
         "empty_export": "empty export: --mark-absent refused",
-        "absent_share_exceeded": "too many tickets absent from the files (more than {percent}% of stored tickets): "
+        "absent_share_exceeded": "too many tickets absent from the last run (more than {percent}% of stored tickets): "
                                  "--mark-absent refused, nothing is written; to rerun on purpose (a query was widened, for "
                                  "example), raise --max-absent-percent",
-        "column_missing": "{file}: column {column} is missing from the export (see the column names in flux.yaml). "
-                          "Only the CSV files of export_jira_api.py are read (uv run tools/export_jira_api.py export). Nothing was written.",
-        "updated_unreadable": "{file}: column {column} holds an empty or unreadable value. Nothing was written.",
-        "file_unreadable": "{file}: file unreadable.",
-        "file_empty": "{file}: file is empty.",
-        "timezone_unknown": "export_timezone in flux.yaml: unknown time zone.",
-        "cache_missing": "--history: cache not found ({path}). Run tools/history_jira.py collect first.",
-        "cache_unreadable": "--history: cache unreadable.",
+        "export_files_retired": "export files are no longer read: the import derives from the raw layer",
+        "history_retired": "--history is retired: the history collection writes the transitions",
         "unexpected_error": "Unexpected error ({name}): nothing was written.",
+        "rebuild_compared": "rebuild: {n} tickets compared, {d} would change",
+        "rebuild_field": "rebuild: {field} differs: {k}",
+        "rebuild_dry_end": "rebuild dry run: nothing written",
+        "rebuild_done": "rebuild done: {d} tickets changed",
+        "rebuild_raw_empty": "raw layer empty: rebuild refused",
+        "rebuild_no_snapshot": "tickets without snapshot: {n}, rebuild refused",
+        "seed_done": "seed: {n} snapshots built from the live tables",
+        "usage_flags_need_rebuild": "--apply and --seed need --rebuild",
+        "usage_rebuild_options": "--mark-absent and --dry-run are not accepted with --rebuild",
+        "rebuild_field_ticket": "ticket",
+        "rebuild_field_status": "status",
+        "rebuild_field_status_category": "status category",
+        "rebuild_field_type": "type",
+        "rebuild_field_resolution": "resolution",
+        "rebuild_field_dates": "dates",
+        "rebuild_field_story_points": "story points",
+        "rebuild_field_parent": "parent",
+        "rebuild_field_team": "team",
+        "rebuild_field_teams": "teams",
+        "rebuild_field_links": "links",
     },
 }

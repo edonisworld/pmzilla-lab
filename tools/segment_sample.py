@@ -6,16 +6,18 @@
 PMZilla Lab : échantillon de tickets d'un segment, pour regarder dans l'historique Jira ce qui se cache derrière
 un temps par segment (le P50 de « Revue et vérification » d'un rapport de flux, par exemple).
 
-    uv run tools/segment_sample.py <export.csv>... [--segment revue_verification] [--today AAAA-MM-JJ]
+    uv run tools/segment_sample.py [--segment revue_verification] [--today AAAA-MM-JJ]
                                         [--seed 42] [--longest 6] [--near-median 4] [--oldest 3]
-                                        [--by-state] [--starts] [--exclude-batch-closures] [--weeks 26] [--scope ABC,DEF] [--types Story,Bug] [--history CACHE]
+                                        [--by-state] [--starts] [--exclude-batch-closures] [--weeks 26] [--scope ABC,DEF] [--types Story,Bug]
 
 Même population et même calcul que la section « Temps par segment » de flux_jira.py compute --history : les
 tickets sortis du segment pendant la période (une visite terminée dont la date de sortie tombe dans les semaines
-complètes analysées), temps cumulé sur toutes leurs visites terminées du segment. Les exports, le cache, les
-réglages de flux.yaml (états des segments, projets et types écartés) et les fonctions de calcul sont ceux de
-flux_jira.py : le P50 affiché en tête doit retomber sur celui du rapport. Pour refaire le calcul d'un rapport
-daté, passer --today à la date du rapport (la période en dépend).
+complètes analysées), temps cumulé sur toutes leurs visites terminées du segment. Les tickets et l'historique sont lus dans la base
+(rôle en lecture seule, par les lecteurs de flux_jira.py) ; les réglages de flux.yaml (états des segments, projets et types écartés) et
+les fonctions de calcul sont ceux de flux_jira.py : le P50 affiché en tête doit retomber sur celui du rapport. Pour refaire le calcul
+d'un rapport daté, passer --today à la date du rapport (la période en dépend). À lancer par l'utilisateur seul : refusé dans une
+session Claude Code (code 3, avant toute lecture). Un fichier d'export donné est refusé (code 2, « les fichiers d'export ne sont plus
+lus : la base est la seule source ») ; un chemin donné à --history aussi (code 2) ; aucun historique dans la base : code 1.
 
 Sortie, dans le Terminal seulement (rien n'est écrit sur le disque) :
   1. les états qui composent le segment, tels que flux_jira.py les range ;
@@ -53,19 +55,20 @@ temps par état, les passages par projet et les jours actifs contre le hasard so
 dans la date de résolution : sans heure, un ticket n'est jamais en lot. Sans l'option, la sortie ne change pas.
 Pour chaque ticket : clé, projet, jours, nombre de visites, dates d'entrée et de sortie de la visite la plus longue,
 état d'origine (celui d'où le ticket arrive) et état de destination (celui où il va). Clés et états seulement : le
-script ne lit ni titre ni personne (flux_jira.read_export ne les garde pas). Les clés ne vont dans aucun fichier
+script ne lit ni titre ni personne (les lecteurs de la base ne les gardent pas). Les clés ne vont dans aucun fichier
 suivi par Git.
 
 Le tirage est reproductible à données, date de calcul et graine identiques.
 
 Exemple :
-    uv run tools/segment_sample.py export.csv
+    uv run tools/segment_sample.py --today 2026-10-04
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import math
+import os
 import random
 import sys
 import zlib
@@ -403,9 +406,9 @@ def ecarter_lots(sortis: list[dict], lot: dict) -> tuple[list[dict], dict]:
 
 
 def preparer(args: argparse.Namespace, t: Messages) -> dict:
-    """Lit les exports et le cache, applique les mêmes filtres que flux_jira.cmd_calcul, calcule les chronologies."""
+    """Lit les tickets et l'historique dans la base, applique les mêmes filtres que flux_jira.cmd_calcul, calcule les chronologies."""
     settings = fj.config()
-    tickets, found, _, _ = fj.read_exports(args.export, settings)
+    tickets, found, _, _ = fj.lire_tickets(settings)
     if not found["resolu"]:
         sys.exit(t("resolved_column_missing"))
     if not found.get("cle"):
@@ -425,8 +428,9 @@ def preparer(args: argparse.Namespace, t: Messages) -> dict:
     resolus = [t["resolu"] for t in tickets if t["resolu"]]
     if resolus:
         first_week = max(first_week, fj.week_start(min(resolus)))
-    histoires = fj.charger_historique(Path(args.historique).expanduser() if args.historique else fj.HISTORIQUE_DEFAUT,
-                                  fuseau=fj.fuseau_des_reglages(settings, fj.T_FR))
+    histoires = fj.lire_historique(settings)
+    if not histoires:
+        sys.exit(t("no_history_in_db"))
     segment_de, noms_segments = commun.table_segments(settings)
     if args.segment not in noms_segments:
         sys.exit(t("segment_not_computed", segment=nom_segment(args.segment, t),
@@ -446,7 +450,7 @@ OPTIONS_RENOMMEES = {**cfg.OPTIONS_COMMUNES, "--graine": "--seed", "--plus-longs
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Échantillon de tickets d'un segment (clés et états seulement)")
-    parser.add_argument("export", nargs="+", help="un ou plusieurs exports CSV (comme flux_jira.py compute)")
+    parser.add_argument("export", nargs="*", help=argparse.SUPPRESS)          # un fichier d'export est refusé (code 2)
     parser.add_argument("--segment", default="revue_verification", help="segment de flux.yaml (défaut revue_verification)")
     parser.add_argument("--today", dest="aujourdhui", help="date du calcul AAAA-MM-JJ (défaut : aujourd'hui) ; la période en dépend")
     parser.add_argument("--seed", dest="graine", type=int, default=42, help="graine du tirage au hasard (défaut 42)")
@@ -464,12 +468,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--weeks", dest="semaines", type=int, default=26, help="semaines complètes analysées (défaut 26)")
     parser.add_argument("--scope", dest="perimetre", help="projets du périmètre (clés séparées par des virgules) ou « tous »")
     parser.add_argument("--types", help="types de tickets retenus, séparés par des virgules")
-    parser.add_argument("--history", dest="historique", help="cache de l'historique (défaut Flux-Lab/historique/transitions.json)")
+    parser.add_argument("--history", dest="historique", nargs="?", const="", default=None, help=argparse.SUPPRESS)   # un chemin donné est refusé
     add_language_option(parser)
     args = parser.parse_args(cfg.refuse_old_options(sys.argv[1:] if argv is None else argv, OPTIONS_RENOMMEES))
     args.segment = {v: k for k, v in cfg.SEGMENTS.items()}.get(args.segment, args.segment)   # nom anglais -> nom interne
 
     t = Messages(CATALOGS, args.language)
+    if fj.VARIABLE_CLAUDE_CODE in os.environ:          # utilisateur seul : refus avant toute lecture de réglage (design D12)
+        print(t("session_refused"))
+        sys.exit(3)
+    if args.export:                                    # design D6 : refusé avant toute connexion, sans nommer le fichier
+        print(t("export_files_retired"))
+        sys.exit(2)
+    if args.historique:
+        print(t("history_path_retired"))
+        sys.exit(2)
     p = preparer(args, t)
     etats_segment = p["etats"][args.segment]
     canon = {e.strip().casefold(): e for e in etats_segment}

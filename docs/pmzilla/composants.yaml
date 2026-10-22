@@ -14,6 +14,7 @@ components:
   - {name: ebooklib, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   - {name: feedparser, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   - {name: httpx, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
+  - {name: jsonschema, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   - {name: markdownify, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   - {name: mcp, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   - {name: numpy, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
@@ -25,6 +26,10 @@ components:
   - {name: trafilatura, kind: python-package, pinned_in: lock files, upstream: PyPI, procedure: Update a Python package of the scripts}
   # --- Python des scripts
   - {name: python, kind: python-runtime, pinned_in: .python-version, upstream: uv Python list, procedure: Update the Python runtime}
+  # --- Node de Mothra (change mothra-node-lts) : version exacte dans mothra/.node-version ; la veille ne signale comme version
+  # majeure que les lignes LTS. L'étiquette de la base Node de ci/Dockerfile lui est égale (inventory --verify) ; le node de BMAD
+  # (outil non épinglé, fnm) et l'image library/node de la CI restent des entrées à part.
+  - {name: node-mothra, kind: node-runtime, pinned_in: mothra/.node-version, upstream: Node.js releases, procedure: Update the Node of Mothra, flags: [major-watch-only]}
   # --- base de données : l'image apporte PostgreSQL et ses extensions ; une ligne PostgreSQL plus haute demande une migration
   - {name: paradedb/paradedb, kind: docker-image, pinned_in: docker-compose.yml, upstream: Docker Hub tags, procedure: Update the database image, flags: [major-watch-only]}
   # --- modèles Ollama : embedding de la bibliothèque (tout réindexer s'il change) et modèle du pré-tri de la veille
@@ -52,3 +57,7 @@ components:
   - {name: claude, kind: tool, pinned_in: not pinned, channel: official installer, upstream: npm registry, procedure: Update Claude Code}
   # --- CLI OpenSpec (fiche C8) : déclarée par openspec/config.yaml, absente des prérequis d'installation
   - {name: openspec, kind: tool, pinned_in: not pinned, channel: npm registry, upstream: npm registry, procedure: Update the OpenSpec CLI}
+  # --- image de la CI locale (local-ci-container D4) : versions et empreintes dans ci/Dockerfile, jamais recopiées ici
+  - {name: library/node, kind: docker-image, pinned_in: CI Dockerfile, upstream: Docker Hub tags, procedure: Update the CI image}
+  - {name: ghcr.io/astral-sh/uv, kind: docker-image, pinned_in: CI Dockerfile, upstream: GitHub releases, procedure: Update the CI image}
+  - {name: "@fission-ai/openspec", kind: tool, pinned_in: CI Dockerfile, upstream: npm registry, procedure: Update the CI image}

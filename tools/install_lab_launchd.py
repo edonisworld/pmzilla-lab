@@ -17,6 +17,7 @@ from install_lab_context import A_BLANC, ECHEC, FAIT, REFUSE, REPORTE, Contexte,
 
 NOM = "launchd"
 MARQUEUR = "__HOME__"
+MARQUEUR_LAB = "__LAB__"   # le dossier du lab (parent du dépôt de développement), donné par le module partagé tools/lab_paths.py (R-77, D4)
 
 
 @dataclass
@@ -41,7 +42,7 @@ def _rendu(ctx: Contexte, tache: Tache) -> str | None:
         modele = (ctx.racine / "tools" / tache.gabarit).read_text(encoding="utf-8")
     except OSError:
         return None
-    return modele.replace(MARQUEUR, str(ctx.maison))
+    return modele.replace(MARQUEUR, str(ctx.maison)).replace(MARQUEUR_LAB, str(ctx.dossier_lab()))
 
 
 def _etiquette(rendu: str) -> str:

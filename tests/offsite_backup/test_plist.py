@@ -19,7 +19,7 @@ MODELES = {COPIE: ("com.pmzilla.offsite-copy", "copy"), TEST: ("com.pmzilla.offs
 
 
 def rendu(chemin: Path, home="/home/essai"):
-    sortie = subprocess.run(["sed", f"s|__HOME__|{home}|g", str(chemin)], capture_output=True, text=True, check=True).stdout
+    sortie = subprocess.run(["sed", "-e", f"s|__HOME__|{home}|g", "-e", f"s|__LAB__|{home}/PMZilla-Lab|g", str(chemin)], capture_output=True, text=True, check=True).stdout
     return plistlib.loads(sortie.encode())
 
 
@@ -95,10 +95,11 @@ class Modeles(unittest.TestCase):
                 self.assertNotIn("VolumeUUID", texte)
                 self.assertIsNone(re.search(r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}", texte, re.I))
                 self.assertNotIn("__HOME__", repr(rendu(chemin)))
+                self.assertNotIn("__LAB__", repr(rendu(chemin)))
                 reste = re.findall(r"<string>(/[^<]*)</string>", texte)
                 self.assertEqual([c for c in reste if not c.startswith("/bin/")], [])
-                for chemin_utilisateur in re.findall(r"<string>(__HOME__[^<]*)</string>", texte):
-                    self.assertTrue(chemin_utilisateur.startswith(("__HOME__/PMZilla-Lab/", "__HOME__/Library/Logs/")), chemin_utilisateur)
+                for chemin_utilisateur in re.findall(r"<string>((?:__HOME__|__LAB__)[^<]*)</string>", texte):
+                    self.assertTrue(chemin_utilisateur.startswith(("__LAB__/", "__HOME__/Library/Logs/")), chemin_utilisateur)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@
 #     bash tools/doctor.sh
 set -u
 export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
-# Le script se lance par son lien du dossier du labo (~/PMZilla-Lab/<script>) : on résout le lien pour trouver le dossier de code
+# Le script se lance par son lien du dossier du labo (<dossier du lab>/<script>) : on résout le lien pour trouver le dossier de code
 # (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
 SOI="$0"
 while [ -L "$SOI" ]; do
@@ -19,11 +19,10 @@ while [ -L "$SOI" ]; do
   case "$CIBLE_LIEN" in /*) SOI="$CIBLE_LIEN" ;; *) SOI="$(dirname "$SOI")/$CIBLE_LIEN" ;; esac
 done
 RACINE="$(cd "$(dirname "$SOI")/.." && pwd)"
-# Dossier de contenu : le dépôt de développement (défaut), jamais déduit de l'emplacement du code.
-if [ -z "${PMZILLA_LAB_WORKSPACE:-}" ]; then
-  if [ -d "$HOME/PMZilla-Lab/workspace" ]; then PMZILLA_LAB_WORKSPACE="$HOME/PMZilla-Lab/workspace"; else PMZILLA_LAB_WORKSPACE="$RACINE"; fi
-fi
-export PMZILLA_LAB_WORKSPACE
+# Dossier de contenu : le module partagé tools/lab_paths.sh (variable, sinon dépôt Git du code). Le doctor ne s'arrête jamais (D7) :
+# s'il n'est pas trouvé, la variable reste telle quelle et doctor.py le signale comme un problème de sa propre vérification.
+. "$RACINE/tools/lab_paths.sh"
+if lab_paths_init; then PMZILLA_LAB_WORKSPACE="$LAB_CONTENT_ROOT"; export PMZILLA_LAB_WORKSPACE; fi
 echo "=== $(date '+%Y-%m-%d %H:%M') ==="
 code=0
 DOCTOR_NOTIFIER=1 uv run "$RACINE/tools/doctor.py" --record || code=$?

@@ -12,6 +12,7 @@ bin="$HOME/.local/bin"
 mkdir -p "$ws/tools" "$ws/.claude/commands" "$ws/docs/pmzilla" "$ws/_bmad-output/essais" "$bin"
 journal="$tmp/appels"
 cp "$script" "$ws/tools/evals_auto.sh"
+cp "$(dirname "$script")/lab_paths.sh" "$ws/tools/lab_paths.sh"   # module partagé : le dépôt de développement est trouvé par Git (R-77)
 printf -- '---\ndescription: test\n---\nMets à jour le README. Précision : $ARGUMENTS\n' > "$ws/.claude/commands/update-readme.md"
 echo readme > "$ws/README.md"; echo install > "$ws/docs/pmzilla/installation.md"
 
@@ -53,11 +54,20 @@ verifie "sans option : aucune session claude" $(appele "claude:"; [ $? -ne 0 ]; 
 verifie "sans option : aucun push" $(dit "Push impossible"; [ $? -ne 0 ]; echo $?)
 verifie "sans option : le verrou est libéré" $([ ! -d "$HOME/.pmzilla-lab/essais/en-cours.lock" ]; echo $?)
 
+# fix/sorties-et-masquage (point 4) : aucune session ne pousse ; le commit README reste local, la fin de l'auteur pousse. Un distant nu
+# temporaire (copie, sans push) suivi par la branche courante, et un commit local d'avance : après --readme, le distant est inchangé.
+branche=$(git symbolic-ref --short HEAD)
+git clone -q --bare "$ws" "$tmp/distant.git"
+git remote add origin "$tmp/distant.git" && git fetch -q origin && git branch -q -u "origin/$branche"
+echo avance > avance.txt; git add avance.txt; git commit -q -m avance --no-verify
+distant_avant=$(git --git-dir="$tmp/distant.git" rev-parse "$branche")
 lance --readme
 verifie "--readme : le jeu d'essai est rejoué" $(appele "posture_evals.py"; echo $?)
 verifie "--readme : la session claude -p est lancée avec le bilan" $(appele "claude: -p .*mode automatique après le jeu d'essai (32/32"; echo $?)
 verifie "--readme : la consigne de /update-readme est reprise sans son en-tête" $(appele "Mets à jour le README"; [ $? -eq 0 ] && ! appele "description: test"; echo $?)
-verifie "--readme : le push est tenté" $(dit "Push impossible"; echo $?)
+verifie "--readme : aucun push, le distant est inchangé" $([ "$(git --git-dir="$tmp/distant.git" rev-parse "$branche")" = "$distant_avant" ] && ! dit "Push impossible"; echo $?)
+verifie "--readme : le script ne contient aucun git push (hors commentaires)" $(grep -v '^[[:space:]]*#' "$ws/tools/evals_auto.sh" | grep -q 'git push'; [ $? -ne 0 ]; echo $?)
+verifie "--readme : la sortie dit que le commit reste local" $(dit "reste local"; echo $?)
 
 echo "modif en cours" >> README.md
 lance --readme

@@ -16,6 +16,7 @@ Typed link columns: 2 (1 types)
 Links by type:
   Blocks                            50  dependency (outward = blocks)
 Decomposition links (Epic to another level): 1, counted separately
+Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 Links with excluded project BUG: 1 (waits for the export), counted separately
 Links with excluded project BUG: 1 (awaited by the export), counted separately
 Links with excluded project BUG: 1 (internal), counted separately
@@ -24,7 +25,6 @@ Projects of linked tickets missing from the export (terminal only):
   ZZZ              8  8 the export waits for it
 More than 30% of the links point outside the export: widen the JQL query to the linked projects, otherwise the team on the other side stays unknown.
 States that are neither finished, "in progress" nor "to do" (1 tickets): Weird
-Warning: 1000 tickets, a round number. The export has probably hit the Jira limit and tickets are missing: narrow the query.
 Tickets without a team: 1
 
 === rich diagnose scope ===
@@ -46,6 +46,7 @@ Links by type:
   Blocks                            50  dependency (outward = blocks)
 Decomposition links (Epic to another level): 1, counted separately
 Scope: AAA, BBB (25 tickets; the others are used to locate the other side of the links)
+Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 Links with excluded project BUG: 1 (waits for the export), counted separately
 Links with excluded project BUG: 1 (awaited by the export), counted separately
 Mode: oriented · distinct dependencies: 16 · to a ticket missing from the export: 6
@@ -53,7 +54,6 @@ Projects of linked tickets missing from the export (terminal only):
   ZZZ              6  6 the export waits for it
 More than 30% of the links point outside the export: widen the JQL query to the linked projects, otherwise the team on the other side stays unknown.
 States that are neither finished, "in progress" nor "to do" (1 tickets): Weird
-Warning: 1000 tickets, a round number. The export has probably hit the Jira limit and tickets are missing: narrow the query.
 Tickets without a team: 0
 
 === rich compute ===
@@ -63,11 +63,11 @@ Report: <WS>/Flux-Lab/rapports/dependances-riche-<DATE>.md
 [report dependances-riche-<DATE>.md]
 # Dependencies: riche, <DATE>
 
-Export: riche.csv · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
-
-> **Export probably truncated**: riche.csv (1000) tickets, a round number that matches a Jira export limit. Tickets are missing (the oldest ones if the query sorts by descending date): do not read this map, split the query into smaller batches.
+Export: database · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
 
 > Decomposition links (Epic linked to a ticket of another level): 1, left out of the map (setting portfolio_types). Links between two tickets of this level stay in the map.
+
+> Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 
 > Links with excluded project BUG: 1 (waits for the export), left out of the map (setting excluded_projects).
 
@@ -209,11 +209,11 @@ Current blockages (terminal only, nothing is written):
 [report dependances-cles-<DATE>.md]
 # Dependencies: cles, <DATE>
 
-Export: riche.csv · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
-
-> **Export probably truncated**: riche.csv (1000) tickets, a round number that matches a Jira export limit. Tickets are missing (the oldest ones if the query sorts by descending date): do not read this map, split the query into smaller batches.
+Export: database · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
 
 > Decomposition links (Epic linked to a ticket of another level): 1, left out of the map (setting portfolio_types). Links between two tickets of this level stay in the map.
+
+> Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 
 > Links with excluded project BUG: 1 (waits for the export), left out of the map (setting excluded_projects).
 
@@ -331,11 +331,11 @@ Report: <WS>/Flux-Lab/rapports/dependances-projets-projets-<DATE>.md
 [report dependances-projets-projets-<DATE>.md]
 # Dependencies: projets, <DATE>
 
-Export: riche.csv · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
-
-> **Export probably truncated**: riche.csv (1000) tickets, a round number that matches a Jira export limit. Tickets are missing (the oldest ones if the query sorts by descending date): do not read this map, split the query into smaller batches.
+Export: database · 1000 tickets · 25 distinct dependencies (blocking links, oriented) · 8 to a ticket missing from the export.
 
 > Decomposition links (Epic linked to a ticket of another level): 1, left out of the map (setting portfolio_types). Links between two tickets of this level stay in the map.
+
+> Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 
 > Links with excluded project BUG: 1 (waits for the export), left out of the map (setting excluded_projects).
 
@@ -469,6 +469,7 @@ Recognized columns:
 Untyped link columns: Linked Issues
 Links by type:
   (no type)                          5  no type
+Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 Mode: not oriented · distinct dependencies: 3 · to a ticket missing from the export: 0
 Tickets without a team: 0
 
@@ -479,9 +480,11 @@ Report: <WS>/Flux-Lab/rapports/dependances-sans-<DATE>.md
 [report dependances-sans-<DATE>.md]
 # Dependencies: sans, <DATE>
 
-Export: sans-type.csv · 5 tickets · 3 distinct dependencies (untyped links, not oriented) · 0 to a ticket missing from the export.
+Export: database · 5 tickets · 3 distinct dependencies (untyped links, not oriented) · 0 to a ticket missing from the export.
 
 > The links have no type: it is impossible to tell a blockage from a simple relation, or who waits for whom. The figures count links, not blockages. For blockages, typed link columns are needed ("Inward/Outward issue link (Blocks)").
+
+> Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 
 ## In brief
 
@@ -523,7 +526,9 @@ Report: <WS>/Flux-Lab/rapports/dependances-vide-<DATE>.md
 [report dependances-vide-<DATE>.md]
 # Dependencies: vide, <DATE>
 
-Export: vide.csv · 2 tickets · 0 distinct dependencies (blocking links, oriented) · 0 to a ticket missing from the export.
+Export: database · 2 tickets · 0 distinct dependencies (blocking links, oriented) · 0 to a ticket missing from the export.
+
+> Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 
 ## In brief
 
@@ -552,7 +557,6 @@ No type has enough items on both sides to compare (with/without: none).
 
 === two exports diagnose ===
 [console]
-Merged exports: 2
 Tickets read: 3
 Recognized columns:
   key     -> Issue key
@@ -571,14 +575,11 @@ Links by type:
   (no type)                          1  no type
   Blocks                             1  dependency (outward = blocks)
   Relates                            1  ignored
+Projects excluded from the map: 1 (source: setting excluded_projects, shared with the flow report)
 Mode: oriented · distinct dependencies: 1 · to a ticket missing from the export: 0
 States that are neither finished, "in progress" nor "to do" (1 tickets): Weird
   Add the "Status Category" column to the Jira view: it classifies the states of all workflows.
 Tickets without a team: 0
-
-=== missing key ===
-[console]
-Column missing from the export: ticket key (Issue key). Without the key, a ticket cannot be linked to the ones it cites in its links. This script reads the CSV files of export_jira_api.py (uv run tools/export_jira_api.py export), whose headers are in English; a manual Jira export is no longer read. Another column name: add it to <WS>/Flux-Lab/flux.yaml (columns: key).
 
 === no link columns diagnose ===
 [console]

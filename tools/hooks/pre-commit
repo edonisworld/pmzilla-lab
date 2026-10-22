@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Garde-fou : refuse un commit dont un fichier indexé contient un nom listé dans
-Flux-Lab/noms-sensibles.txt (un nom par ligne, hors Git ; lignes vides et lignes commençant par # ignorées). Affiche le fichier et la
+la liste des noms sensibles (par défaut Flux-Lab/noms-sensibles.txt sous la racine de contenu, résolue par lab_paths.local_file ; un nom
+par ligne, hors Git ; lignes vides et lignes commençant par # ignorées). Les noms distinctifs de l'extrait des équipes voisin de la liste
+(equipes-lisibles.yaml, lu par sensitive_names.extract_names) s'y ajoutent ; absent ou illisible, il ne change rien. Affiche le fichier et la
 ligne, jamais le nom. Tous les fichiers indexés sont examinés, quelle que soit leur
 extension, sauf les binaires (octet nul) et les fichiers de plus de 1 Mo, signalés sans
 bloquer. Sans ce fichier, le hook refuse le commit en le disant (jamais de passage silencieux,
-cas d'un worktree) ; si la liste est vide, il avertit que le garde-fou est inactif sans bloquer.
+cas d'un worktree) ; si la liste est vide, il avertit que le garde-fou est inactif sans bloquer. Il avertit aussi, sans jamais bloquer ni imprimer
+l'entrée, de chaque ligne de la liste qui est un mot courant (règle de tools/sensitive_names.py) : « la ligne N de la liste des noms sensibles est un mot courant ».
 
 Chaque nom est échappé, puis délimité comme mot entier par des lookarounds
 (pas \\b, qui ne délimite pas un nom commençant ou finissant par un symbole
@@ -19,18 +22,42 @@ Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP
 Il ne saute que ce garde-fou : celui des noms s'applique toujours.
 
 Premier garde-fou, avant tous les autres (change run-worktree, D6) : le commit est refusé quand le sommet du dépôt est le dossier
-d'exécution (PMZILLA_LAB_RUN, sinon ~/PMZilla-Lab/run), quelle que soit la branche, l'empreinte ou PMZILLA_SKIP_GREEN_CHECK. Phrase clé :
-« pre-commit : commit refusé dans le dossier d'exécution ». Le dépôt de développement et les worktrees de branche de travail ne sont pas visés."""
+d'exécution (PMZILLA_LAB_RUN, sinon le dossier run du dossier du lab, par tools/lab_paths.py), quelle que soit la branche, l'empreinte ou PMZILLA_SKIP_GREEN_CHECK. Phrase clé :
+« pre-commit : commit refusé dans le dossier d'exécution ». Le dépôt de développement et les worktrees de branche de travail ne sont pas visés.
+
+Gel pendant une fin de branche (change multi-session-piloting, D7), tout premier contrôle : le commit est refusé quand le verrou de fin de
+branche (dossier pmzilla-fin-en-cours du dossier Git commun, lu par tools/finish_lock.py) est tenu par un processus vivant et que le jeton de
+l'appelant (FINISH_LOCK_TOKEN) est absent ou différent du sien. Phrase clé : « pre-commit : fin de branche en cours (<branche>), commit refusé ».
+Ni PMZILLA_SKIP_GREEN_CHECK ni aucune autre variable ne lève ce refus. Un jeton égal (la fin elle-même) ou un verrou périmé laisse passer les
+autres contrôles ; le hook ne crée, ne retire ni ne modifie jamais le verrou.
+
+Garde-fou des secrets (change pre-commit-secret-scan, D2 à D8), après les trois premiers contrôles et avant la liste des noms, jamais sauté :
+tools/secret_scan.py est importé (échec : « recherche de secrets impossible (<type d'erreur>) », commit refusé, aucune variable ne lève ce
+refus, PMZILLA_SKIP_GREEN_CHECK non plus) ; sous CLAUDECODE, un changement indexé de la liste des exemples déclarés
+(tools/secret_scan_exemples.txt) est refusé ; la liste est lue dans l'index (mal formée : refus, le garde-fou échoue fermé). Puis une seule
+passe sur les fichiers indexés (ajoutés, copiés, modifiés) : chaque blob est lu une fois ; binaire (octet nul) : ignoré ; sinon les secrets
+sont cherchés quelle que soit la taille (« secret possible dans <fichier>, ligne <n> (<famille>) », jamais la valeur ni la ligne ; un exemple
+déclaré, chemin et empreinte, est accepté et dit), puis les noms quand la liste est chargée et le fichier sous 1 Mo. La liste des noms absente
+refuse toujours, après l'impression des secrets ; la liste vide avertit sans sauter la recherche de secrets."""
 import os
 import subprocess
 import sys
 
 TAILLE_MAX = 1_000_000
+MESSAGE_SECRETS = "Commit refusé : retire ce secret du fichier (et révoque-le s'il est réel) ; aucune valeur n'est affichée."
 
 # Les règles de la liste (lecture, lignes « # » ignorées, correspondance) vivent dans tools/sensitive_names.py, partagées avec le
 # module des cas. Le hook est installé en lien relatif (tools/install_hooks.sh) : le dossier tools/ se retrouve par realpath.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), ""))
+OUTILS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(OUTILS, ""))
+import finish_lock  # noqa: E402
+import lab_paths  # noqa: E402
 import sensitive_names  # noqa: E402
+
+
+def dossiers_du_lab():
+    """Dossiers du lab par le module partagé (R-77) : variable PMZILLA_LAB_WORKSPACE, sinon le dépôt Git du code de ce hook ; échec : code 78."""
+    return lab_paths.resolve_or_exit(file=os.path.join(OUTILS, "lab_paths.py"))
 
 
 def git(*args):
@@ -39,7 +66,14 @@ def git(*args):
 
 def charger(chemin):
     with open(chemin, encoding="utf-8-sig") as f:
-        noms = sensitive_names.parse_names(f.read())
+        texte = f.read()
+    # Avertissement jamais bloquant (change names-and-team-review, D3) : le numéro de ligne d'une entrée qui est un mot courant, jamais l'entrée.
+    for numero in sensitive_names.common_word_lines(texte):
+        print(f"pre-commit : la ligne {numero} de la liste des noms sensibles est un mot courant : la retirer ou la rendre plus distinctive",
+              file=sys.stderr)
+    # Change team-names-readable (D8) : les noms distinctifs de l'extrait voisin de la liste s'ajoutent, avant le test de la liste vide
+    # (une liste vide avec un extrait non vide garde les noms de l'extrait) ; absent ou illisible : rien ne change.
+    noms = sensitive_names.parse_names(texte) + sensitive_names.extract_names(os.path.join(os.path.dirname(chemin), sensitive_names.NOM_EXTRAIT))
     if not noms:
         return None
     return sensitive_names.patterns(noms)
@@ -74,12 +108,32 @@ def verifie_lancement_vert():
 
 
 def est_le_dossier_d_execution(racine):
-    """True si le sommet du dépôt est le dossier d'exécution : PMZILLA_LAB_RUN, sinon ~/PMZilla-Lab/run (chemins résolus, liens suivis)."""
-    dossier = os.environ.get("PMZILLA_LAB_RUN") or os.path.join(os.path.expanduser("~"), "PMZilla-Lab", "run")
+    """True si le sommet du dépôt est le dossier d'exécution : PMZILLA_LAB_RUN, sinon le dossier run du dossier du lab (chemins résolus, liens suivis)."""
+    dossier = dossiers_du_lab()["run_tree"]
     return os.path.realpath(racine) == os.path.realpath(dossier)
 
 
+def fin_de_branche_en_cours():
+    """Le verrou vivant d'une autre fin de branche (dictionnaire), ou None ; un verrou périmé est dit sur la sortie d'erreur."""
+    try:
+        commun = git("rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
+    except subprocess.CalledProcessError:
+        return None
+    verrou = finish_lock.read_lock(commun)
+    if verrou is None:
+        return None
+    if verrou["stale"]:
+        print("pre-commit : verrou de fin périmé, ignoré", file=sys.stderr)
+        return None
+    return finish_lock.blocking(commun, os.environ.get("FINISH_LOCK_TOKEN", ""))
+
+
 def main():
+    verrou = fin_de_branche_en_cours()
+    if verrou is not None:
+        print(f"pre-commit : fin de branche en cours ({verrou['branch']}), commit refusé : une fin de branche tient le verrou, "
+              "les tests et les commits sont gelés jusqu'à sa fin (uv run tools/pilot.py freeze --wait 60 attend sa fin).", file=sys.stderr)
+        return 1
     try:
         sommet = git("rev-parse", "--show-toplevel").decode().strip()
     except subprocess.CalledProcessError:
@@ -95,35 +149,79 @@ def main():
         else:
             print("pre-commit : lance d'abord bash tests/run_all.sh (après git add) : l'index n'a pas de lancement complet réussi.", file=sys.stderr)
         return 1
-    racine = git("rev-parse", "--show-toplevel").decode().strip()
-    chemin = os.environ.get("PMZILLA_NOMS") or os.path.join(racine, "Flux-Lab", "noms-sensibles.txt")
-    if not os.path.isfile(chemin):
-        print("pre-commit : garde-fou des noms impossible : liste absente. Commit refusé : le garde-fou ne laisse pas passer sans liste "
-              "(worktree : Flux-Lab/ n'y est pas ; indique la liste avec PMZILLA_NOMS=<chemin>).", file=sys.stderr)
+    # Garde-fou des secrets (D2, D5) : le module est importé ici, pour qu'un échec refuse le commit avec la phrase de D8.
+    try:
+        import secret_scan
+    except Exception as erreur:   # noqa: BLE001 : un échec d'importation refuse (le garde-fou échoue fermé)
+        return secrets_impossibles(erreur)
+    indexes = [f for f in git("diff", "--cached", "--name-only", "-z").decode().split("\0") if f]
+    if os.environ.get(secret_scan.VARIABLE_CLAUDE_CODE) and secret_scan.LISTE_EXEMPLES in indexes:
+        print("pre-commit : liste des exemples déclarés modifiée depuis une session ; commit refusé", file=sys.stderr)
         return 1
-    motifs = charger(chemin)
-    if motifs is None:
-        print("pre-commit : garde-fou des noms inactif : liste vide", file=sys.stderr)
-        return 0
+    try:
+        declares = exemples_declares(secret_scan)
+    except Exception as erreur:   # noqa: BLE001 : liste mal formée ou illisible
+        return secrets_impossibles(erreur)
 
-    fichiers = git("diff", "--cached", "--name-only", "--diff-filter=ACM", "-z").decode().split("\0")
-    echec = False
+    chemin = lab_paths.local_file("sensitive_names", dossiers_du_lab()["content_root"])   # lu en place, depuis le dépôt principal aussi
+    liste_absente = not os.path.isfile(chemin)
+    motifs = None if liste_absente else charger(chemin)
+    if not liste_absente and motifs is None:
+        print("pre-commit : garde-fou des noms inactif : liste vide", file=sys.stderr)
+
+    # sans détection des renommages : un fichier renommé apparaît ajouté (A) et son contenu est examiné (relecture 4.1 du 2026-10-20)
+    fichiers = git("diff", "--cached", "--name-only", "--no-renames", "--diff-filter=ACM", "-z").decode().split("\0")
+    secret_trouve = False
+    nom_trouve = False
     for f in filter(None, fichiers):
-        if int(git("cat-file", "-s", f":{f}")) > TAILLE_MAX:
-            print(f"pre-commit : {f} dépasse 1 Mo, non examiné", file=sys.stderr)
-            continue
-        octets = git("show", f":{f}")
+        octets = git("show", f":{f}")   # le blob, lu une seule fois (D2)
         if b"\0" in octets:  # binaire détecté par son contenu, pas par l'extension
             continue
         contenu = octets.decode("utf-8", errors="ignore")
+        try:
+            refusees, acceptees = secret_scan.check(f, contenu, declares)   # quelle que soit la taille (D3)
+        except Exception as erreur:   # noqa: BLE001 : un échec de la recherche refuse (D5)
+            return secrets_impossibles(erreur)
+        for t in acceptees:
+            print(f"pre-commit : exemple déclaré accepté : {f}, ligne {t.line} ({secret_scan.label(t.family)})", file=sys.stderr)
+        for t in refusees:
+            print(f"pre-commit : secret possible dans {f}, ligne {t.line} ({secret_scan.label(t.family)})", file=sys.stderr)
+            secret_trouve = True
+        if motifs is None:
+            continue
+        if len(octets) > TAILLE_MAX:
+            print(f"pre-commit : {f} dépasse 1 Mo, non examiné", file=sys.stderr)
+            continue
         for numero, ligne in enumerate(contenu.splitlines(), 1):
             if sensitive_names.line_matches(motifs, ligne):
                 print(f"pre-commit : nom sensible dans {f}, ligne {numero}", file=sys.stderr)
-                echec = True
-    if echec:
+                nom_trouve = True
+    if secret_trouve:
+        print(MESSAGE_SECRETS, file=sys.stderr)
+    if liste_absente:
+        print("pre-commit : garde-fou des noms impossible : liste absente. Commit refusé : le garde-fou ne laisse pas passer sans liste "
+              "(worktree : Flux-Lab/ n'y est pas ; indique la liste avec PMZILLA_NOMS=<chemin>).", file=sys.stderr)
+    if nom_trouve:
         print("Commit refusé : remplace ces noms par une désignation générique (voir CLAUDE.md, Confidentialité).", file=sys.stderr)
-        return 1
-    return 0
+    return 1 if (secret_trouve or liste_absente or nom_trouve) else 0
+
+
+def secrets_impossibles(erreur):
+    """D5 : le module des secrets absent ou en échec refuse le commit ; seul le type de l'erreur est dit, jamais son texte."""
+    print(f"pre-commit : recherche de secrets impossible ({type(erreur).__name__}), commit refusé", file=sys.stderr)
+    return 1
+
+
+def exemples_declares(secret_scan):
+    """La liste des exemples déclarés lue dans l'index (ce qui sera commité) ; absente de l'index : vide ; mal formée : ListeInvalide."""
+    fait = subprocess.run(["git", "show", f":{secret_scan.LISTE_EXEMPLES}"], capture_output=True)
+    if fait.returncode != 0:
+        return set()
+    try:
+        texte = fait.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        raise secret_scan.ListeInvalide("liste illisible") from None
+    return secret_scan.parse_declared(texte)
 
 
 if __name__ == "__main__":

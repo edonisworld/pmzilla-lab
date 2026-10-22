@@ -21,7 +21,7 @@ You work from the FILE NAMES the user gives. You never open the books.
    1. conversion, dry run: `uv run tools/convert_books.py ~/Downloads/"Livres - Ressources" "Bibliotheque-MD/Livres - Ressources" --dry-run` (it must show "sans Markdown : 0" and "erreurs : 0" apart from the new books);
    2. conversion of each new book: `uv run tools/convert_books.py … --convert-book "<Folder>/<Name>.epub" --to "<Folder>/<Name>.md"`; read `_rapport_livre.txt`;
    3. sort by domain: `uv run tools/sort_by_domain.py Bibliotheque-MD Bibliotheque-Lab`;
-   4. indexing, written directly into the database: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab`;
+   4. indexing, written directly into the database: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py index Bibliotheque-Lab Watch-Lab` (the organisation context notes stay unchanged without the option `--context <context folder>`, which the daily run passes: add it only to refresh the notes too);
    5. BM25 probe: `uv run ~/PMZilla-Lab/pmzilla_lab_library.py probe` (expected: `BM25 index readable`).
 6. **Say** that the daily watch run indexes directly into the database: a change to the book catalogue therefore reaches the database at the next daily run, even if the user does not run step 5.4 now.
 7. **Documentation.** If a book fills a topic of the gaps document, say so and update that file; CHANGELOG.md is frozen: add no entry. Do not commit.

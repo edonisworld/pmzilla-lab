@@ -95,9 +95,13 @@ CATALOGS = {
                                 "actifs que le hasard n'en produit. Dans la population, {outside} passage(s) tombent un week-end, "
                                 "un jour férié ou hors période : le modèle ne les connaît pas.",
         # arrêts
-        "resolved_column_missing": "Colonne « Resolved » absente de l'export : ajoutez-la (voir flux_jira.py statuses).",
-        "key_column_missing": "L'export n'a pas de colonne de clé, impossible de relier les tickets à leur historique.",
-        "scope_no_ticket": "--scope : aucun ticket des projets demandés dans l'export.",
+        "resolved_column_missing": "Colonne « Resolved » absente des réglages de colonnes (voir flux_jira.py statuses).",
+        "key_column_missing": "Aucune colonne de clé dans les réglages, impossible de relier les tickets à leur historique.",
+        "scope_no_ticket": "--scope : aucun ticket des projets demandés dans la base.",
+        "session_refused": "Refusé dans une session Claude Code",
+        "export_files_retired": "les fichiers d'export ne sont plus lus : la base est la seule source",
+        "history_path_retired": "--history ne prend aucun fichier : l'historique est lu dans la base",
+        "no_history_in_db": "aucun historique dans la base : lancez d'abord la collecte de l'historique",
         "segment_not_computed": "--segment : « {segment} » n'est pas un segment calculé ({segments}).",
         "batch_threshold_invalid": "--exclude-batch-closures : batch_closure_threshold (flux.yaml) : un nombre entier d'au moins 2.",
         "starts_states_outside": "--starts : état(s) hors du segment « {segment} » : {states}.",
@@ -184,9 +188,13 @@ CATALOGS = {
                                 "observed number is strictly below the 5th percentile of the draws, that is, fewer active days than "
                                 "chance produces. In the population, {outside} move(s) fall on a weekend, a public holiday or "
                                 "outside the period: the model does not know them.",
-        "resolved_column_missing": "Column \"Resolved\" missing from the export: add it (see flux_jira.py statuses).",
-        "key_column_missing": "The export has no key column, so tickets cannot be linked to their history.",
-        "scope_no_ticket": "--scope: no ticket of the requested projects in the export.",
+        "resolved_column_missing": "Column \"Resolved\" missing from the column settings (see flux_jira.py statuses).",
+        "key_column_missing": "No key column in the settings, so tickets cannot be linked to their history.",
+        "scope_no_ticket": "--scope: no ticket of the requested projects in the database.",
+        "session_refused": "Refused inside a Claude Code session",
+        "export_files_retired": "export files are no longer read: the database is the only source",
+        "history_path_retired": "--history takes no file: the history is read from the database",
+        "no_history_in_db": "no history in the database: run the history collection first",
         "segment_not_computed": "--segment: \"{segment}\" is not a computed segment ({segments}).",
         "batch_threshold_invalid": "--exclude-batch-closures: batch_closure_threshold (flux.yaml): an integer of at least 2.",
         "starts_states_outside": "--starts: status(es) outside the segment \"{segment}\": {states}.",

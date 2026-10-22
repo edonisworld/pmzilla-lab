@@ -46,10 +46,9 @@ class Source(unittest.TestCase):
 class Execution(Labo):
     def test_suite_complete_sans_appel_interdit_ni_sentinelle(self):
         self.ajouter_branche("fix/finie", fusionnee=True)
-        self.ouvrir_parite("identique")
         self.fermer_base()
         for args in ((), ("--json",), ("--quiet", "--language", "en"), ("--record",)):
-            p = self.lancer(*args)
+            p = self.lancer(*args, reel=True)
             self.assertNotIn(SENTINELLE, p.stdout + p.stderr)
         self.assertEqual([a for a in self.appels() if a.split(" ")[0] in ("INTERDIT", "security", "psql", "docker", "pg_dump", "curl")], [])
         self.assertEqual(set(self.ollama.requetes) - {("GET", "/api/tags")}, set())

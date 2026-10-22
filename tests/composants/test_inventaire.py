@@ -9,8 +9,8 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aide_composants import (RACINE, AvecDepot, ConnexionInterdite, SansReseau, composants, entete, lancer,  # noqa: E402
-                             verrou)
+from aide_composants import (DIGEST_BASE_CI, DIGEST_UV_CI, RACINE, AvecDepot, ConnexionInterdite, SansReseau,  # noqa: E402
+                             composants, entete, lancer, verrou)
 
 
 class Garde(SansReseau):
@@ -284,6 +284,109 @@ class Image(AvecDepot):
         self.assertIn(self.PHRASE, sortie)
 
 
+class ImageCI(AvecDepot):
+    """Image de la CI locale (local-ci-container D4, spec tooling-components) : chaque élément épinglé de ci/Dockerfile a son
+    entrée ; la version reste dans ci/Dockerfile (jamais recopiée dans l'inventaire), épinglée par empreinte ou version exacte."""
+
+    A_REMPLIR = "Valeur à remplir par l'auteur dans ci/Dockerfile"
+    NON_EPINGLEE = "Épinglage manquant dans ci/Dockerfile"
+
+    def setUp(self):
+        super().setUp()
+        self.depot.ajouter_ci()
+
+    def verifier(self) -> tuple[int, str]:
+        code, sortie, erreurs = self.inventaire("--verify")
+        return code, sortie + erreurs
+
+    def test_entrees_coherentes(self):
+        code, sortie = self.verifier()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("Inventaire à jour : 24 composant(s)", sortie)
+
+    def test_versions_lues_dans_le_dockerfile(self):
+        code, sortie, _ = self.inventaire()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("library/node · docker-image · 26-slim · CI Dockerfile", sortie)
+        self.assertIn("ghcr.io/astral-sh/uv · docker-image · 0.13.0 · CI Dockerfile", sortie)
+        self.assertIn("@fission-ai/openspec · tool · 1.0.0 · CI Dockerfile", sortie)
+
+    def test_entree_manquante(self):
+        self.depot.modifier_inventaire(lambda e: e.pop())
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn("Composant à ajouter à l'inventaire : @fission-ai/openspec (déclaré dans ci/Dockerfile)", sortie)
+
+    def test_dockerfile_absent(self):
+        (self.depot.racine / "ci/Dockerfile").unlink()
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        for nom in ("library/node", "ghcr.io/astral-sh/uv", "@fission-ai/openspec"):
+            self.assertIn(f"Composant à retirer de l'inventaire : {nom}", sortie)
+
+    def test_base_par_etiquette_sans_empreinte(self):
+        self.depot.changer_dockerfile(f"node:26-slim@{DIGEST_BASE_CI}", "node:26-slim")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.NON_EPINGLEE} : library/node (empreinte sha256 absente)", sortie)
+
+    def test_empreinte_mal_formee(self):
+        self.depot.changer_dockerfile(DIGEST_UV_CI, "sha256:abc")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.NON_EPINGLEE} : ghcr.io/astral-sh/uv (empreinte sha256 absente)", sortie)
+
+    def test_etiquette_latest_ou_absente(self):
+        for nouveau in (f"node:latest@{DIGEST_BASE_CI}", f"node@{DIGEST_BASE_CI}"):
+            with self.subTest(nouveau=nouveau):
+                self.depot.ajouter_ci()
+                self.depot.changer_dockerfile(f"node:26-slim@{DIGEST_BASE_CI}", nouveau)
+                code, sortie = self.verifier()
+                self.assertEqual(code, 1)
+                self.assertIn(f"{self.NON_EPINGLEE} : library/node (étiquette absente ou latest)", sortie)
+
+    def test_valeurs_a_remplir_signalees(self):
+        self.depot.changer_dockerfile(DIGEST_BASE_CI, "sha256:A_REMPLIR_PAR_L_AUTEUR")
+        self.depot.changer_dockerfile(DIGEST_UV_CI, "sha256:A_REMPLIR_PAR_L_AUTEUR")
+        self.depot.changer_dockerfile("openspec@1.0.0", "openspec@A_REMPLIR_PAR_L_AUTEUR")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.A_REMPLIR} : library/node (empreinte)", sortie)
+        self.assertIn(f"{self.A_REMPLIR} : ghcr.io/astral-sh/uv (empreinte)", sortie)
+        self.assertIn(f"{self.A_REMPLIR} : @fission-ai/openspec (version)", sortie)
+
+    def test_cli_openspec_sans_version_exacte(self):
+        for nouveau in ("openspec", "openspec@latest", "openspec@^1.0.0", "openspec@1"):
+            with self.subTest(nouveau=nouveau):
+                self.depot.ajouter_ci()
+                self.depot.changer_dockerfile("openspec@1.0.0", nouveau)
+                code, sortie = self.verifier()
+                self.assertEqual(code, 1)
+                self.assertIn(f"{self.NON_EPINGLEE} : @fission-ai/openspec (version exacte absente)", sortie)
+
+    def test_python_autre_que_python_version(self):
+        self.depot.changer_dockerfile("RUN uv python install\n", "RUN uv python install 3.13\n")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn("Python de ci/Dockerfile différent de .python-version", sortie)
+
+    def test_python_version_non_copiee(self):
+        self.depot.changer_dockerfile("COPY .python-version ./\n", "")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn("Python de ci/Dockerfile différent de .python-version", sortie)
+
+    def test_etape_nommee_n_est_pas_une_image(self):
+        self.depot.changer_dockerfile(f"FROM node:26-slim@{DIGEST_BASE_CI}\n",
+                                      f"FROM node:26-slim@{DIGEST_BASE_CI} AS base\nFROM base\n")
+        code, sortie = self.verifier()
+        self.assertEqual(code, 0, sortie)
+
+    def test_aucune_empreinte_dans_l_inventaire(self):
+        texte = (self.depot.racine / "docs/pmzilla/composants.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("sha256", texte)
+
+
 class DepotReel(SansReseau):
     """Le dépôt lui-même : l'inventaire suivi est cohérent avec ses sources, sans réseau (spec « Real repository »)."""
 
@@ -299,6 +402,23 @@ class DepotReel(SansReseau):
     def test_aucune_adresse_dans_l_inventaire(self):
         texte = (RACINE / "docs/pmzilla/composants.yaml").read_text(encoding="utf-8")
         self.assertNotRegex(texte, r"https?://|www\.")
+
+    def test_image_ci_inventoriee(self):
+        """local-ci-container D4 : base Node 26 slim, uv et CLI OpenSpec épinglés dans ci/Dockerfile, chacun avec son entrée."""
+        self.assertTrue((RACINE / "ci/Dockerfile").is_file())
+        code, sortie, _ = lancer(["inventory", "--root", str(RACINE)])
+        lignes = {l.split(" · ")[0]: l for l in sortie.splitlines() if " · " in l}
+        for nom in ("library/node", "ghcr.io/astral-sh/uv", "@fission-ai/openspec"):
+            self.assertIn(nom, lignes)
+            self.assertTrue(lignes[nom].endswith(" · CI Dockerfile"), lignes[nom])
+        self.assertIn("library/node · docker-image · 26.12.0-slim", lignes["library/node"])   # version exacte, égale à celle de mothra/.node-version (mothra-node-lts D4)
+
+    def test_dockerfile_ci_sans_secret_ni_telechargement(self):
+        """local-ci-container D4 : aucun secret, aucun ARG qui en porte un, aucun ADD depuis une adresse."""
+        texte = (RACINE / "ci/Dockerfile").read_text(encoding="utf-8")
+        self.assertNotRegex(texte, r"(?im)^\s*ADD\s+[^\n]*https?://")
+        self.assertNotRegex(texte, r"(?im)^\s*(ARG|ENV)\s+\S*(TOKEN|SECRET|PASSWORD|PASSWD|KEY)\b")
+        self.assertNotRegex(texte, r"(?im)^\s*(ARG|ENV)\s+PMZILLA_LAB_DB_")
 
 
 class Fonctions(unittest.TestCase):

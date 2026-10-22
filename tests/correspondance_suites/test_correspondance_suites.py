@@ -46,6 +46,7 @@ SUITES_TRANSVERSALES = {
     "hooks": "hooks Git de tools/hooks/ (pre-commit, post-commit, commit-msg, pre-push)",
     "installation": "liens et hooks de l'installation (install_links.sh, install_hooks.sh)",
     "library_backend": "choix de la voie de la bibliothèque et tools/knowledge_library.py",
+    "mothra_consignes": "consignes de session mothra/CLAUDE.md écrites par l'auteur, pas un outil (mothra-session-guards, D7)",
     "parity": "tools/library_parity.py (nom court) et le jeu figé de requêtes",
     "postures_skills": "skills de posture traduits en anglais, pas un outil",
     "private_guards": "réglages réels de la veille suivis (watch/sources.yaml, watch/tri.yaml)",
@@ -59,7 +60,10 @@ SUITES_TRANSVERSALES = {
     "workflow_commands": "commandes de travail de .claude/commands/",
 }
 
-EXCEPTIONS_OUTILS = {}
+EXCEPTIONS_OUTILS = {
+    "db_rehearsal": "testé par tests/db_scripts/test_db_rehearsal.sh, suite transversale db_scripts (R-86)",
+    "db_container_common": "fonctions communes de db_restore_test.sh et db_rehearsal.sh, testées par la suite transversale db_scripts (R-86)",
+}
 
 MOTIF_TEST = re.compile(r"^tests/([^/]+)/(?:.+/)?test_[^/]*\.(?:py|sh)$")
 MOTIF_OUTIL = re.compile(r"^tools/([^/]+)\.(?:py|sh)$")

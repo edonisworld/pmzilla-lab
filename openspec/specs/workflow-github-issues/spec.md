@@ -429,3 +429,222 @@ The system SHALL, when a feature's Status is set to `In progress` and its block 
 - **THEN** its start date is still the first one
 
 Source: tests/gh_issue/test_gh_issue.py (Features: test_status_en_cours_ecrit_started_on_une_fois)
+
+### Requirement: An idea's text can come from a file
+The system SHALL let `new-idea` read the idea's text from `--body-file` instead of `--body`, with exactly one of the two required, and SHALL read the file as UTF-8 text. The file's text SHALL pass the guard like `--body`. A missing path, a path that is not a regular file, an unreadable or non-UTF-8 file, or a whitespace-only file SHALL exit 2 with `usage:`. The system SHALL NOT accept both options together, and SHALL NOT send a write after any of these refusals.
+
+#### Scenario: Idea created from a file
+- **WHEN** `new-idea --title "Une idée" --body-file idee.md` runs and `idee.md` holds two lines of text
+- **THEN** one issue is created whose body is the idea marker, a blank line and the two lines, and the tool prints `created idea une-idee (#<number>)` and exits 0
+
+#### Scenario: Both options given
+- **WHEN** `new-idea --title "Une idée" --body "Texte." --body-file idee.md` runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Neither option given
+- **WHEN** `new-idea --title "Une idée"` runs without `--body` or `--body-file`
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: File missing, blank or a folder
+- **WHEN** `--body-file` names a path that does not exist, a file that holds only spaces and blank lines, or a folder
+- **THEN** the tool exits 2 with `usage:` each time and sends no write
+
+#### Scenario: Name in the file
+- **WHEN** the file holds a name of the sensitive-names list or a made-up ticket key
+- **THEN** the tool exits 3, names the body field, sends no write, and its output does not hold the name or the key
+
+Source: tests/gh_issue/test_gh_issue_body_file.py (NewIdeaBodyFile); the UTF-8 reading and the refusal of an unreadable or non-UTF-8 file are read in tools/gh_issue.py (untested)
+
+### Requirement: edit-idea replaces an idea's body from a file
+The system SHALL let `edit-idea` replace the body of an issue labelled `type:idea` with the text of `--body-file`, read and checked as for `new-idea`. It SHALL keep the idea marker at the top of the body and send the change in the same request as a `--value` or `--milestone` change. It SHALL NOT accept `--body`. It SHALL NOT edit an issue without `type:idea` (exit 7), and SHALL send nothing on a file refusal (exit 2) or a guard finding (exit 3).
+
+#### Scenario: Body replaced
+- **WHEN** `edit-idea #1 --body-file idee.md` runs on an idea and `idee.md` holds `Nouveau texte.`
+- **THEN** the idea's body is its marker, a blank line and `Nouveau texte.`, one write is sent, and the tool prints `edited idea #1`
+
+#### Scenario: Combined with a value
+- **WHEN** `edit-idea 1 --value 2 --body-file idee.md` runs
+- **THEN** one PATCH request carries both the new body and the `value:2` label
+
+#### Scenario: Inline body refused
+- **WHEN** `edit-idea 1 --body "Texte."` runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Not an idea
+- **WHEN** `edit-idea 2 --body-file idee.md` names a feature issue
+- **THEN** the tool exits 7 and sends no write
+
+#### Scenario: Name in the file
+- **WHEN** the file holds a name of the sensitive-names list or a made-up ticket key
+- **THEN** the tool exits 3, sends no write, and the idea keeps its previous body
+
+Source: tests/gh_issue/test_gh_issue_body_file.py (EditIdeaBodyFile)
+
+### Requirement: edit renames a feature
+The system SHALL let `edit` take `--title` with the title text without its key, and add the prefix `R-<n> · ` itself. It SHALL refuse an empty or blank title, and a title that already starts with an `R-<n> · ` prefix, with exit code 2 and `usage:`, and print `nothing to do` for an identical title. It SHALL NOT change the identifier and SHALL NOT send a write after a refusal.
+
+#### Scenario: Feature renamed
+- **WHEN** `edit R-1 --title "Titre neuf"` runs on the feature R-1
+- **THEN** its title becomes `R-1 · Titre neuf`
+
+#### Scenario: Title already prefixed
+- **WHEN** `edit R-1 --title "R-1 · Titre neuf"` runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Empty title
+- **WHEN** `edit R-1 --title ""` or a title of spaces runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Identical title
+- **WHEN** `edit R-1 --title "Stable"` runs a second time on a feature already titled `R-1 · Stable`
+- **THEN** the tool prints `nothing to do` and sends no write
+
+#### Scenario: Name in the title
+- **WHEN** the title holds a name of the sensitive-names list
+- **THEN** the tool exits 3 naming the title field, sends no write, and its output does not hold the name
+
+Source: tests/gh_issue/test_gh_issue_title.py (EditTitreFeature)
+
+### Requirement: edit-idea renames an idea
+The system SHALL let `edit-idea` take `--title`, refuse an empty or blank title with exit code 2 and `usage:`, keep the idea marker in the body, and print `nothing to do` for an identical title. The new title SHALL pass the guard before any request. It SHALL NOT change the marker and SHALL NOT send a write after a refusal.
+
+#### Scenario: Idea renamed
+- **WHEN** `edit-idea 1 --title "Idée renommée"` runs
+- **THEN** the idea's title changes and its body, marker included, is unchanged
+
+#### Scenario: Empty title
+- **WHEN** `edit-idea 1 --title "  "` runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Identical title
+- **WHEN** `edit-idea 1 --title` names the idea's current title
+- **THEN** the tool prints `nothing to do` and sends no write
+
+#### Scenario: Name in the title
+- **WHEN** the title holds a name of the sensitive-names list
+- **THEN** the tool exits 3 naming the title field, sends no write and keeps the previous title
+
+Source: tests/gh_issue/test_gh_issue_title.py (EditTitreIdee)
+
+### Requirement: A feature or an idea is created with a product label
+The system SHALL let `new-feature` and `new-idea` take `--product` with a value of the closed list of products (today `mothra`) and add the label `product:<value>`. An item with no `product:` label SHALL belong to PMZilla, and the tool SHALL NOT add a label for it. A value outside the list SHALL exit 2 with `usage:` and send no write. The label and the title SHALL pass the guard before any request.
+
+#### Scenario: Feature created for the product
+- **WHEN** `new-feature --product mothra` runs
+- **THEN** the feature carries `product:mothra` besides `type:feature` and its theme label, and the label exists in the repository
+
+#### Scenario: Feature created without option
+- **WHEN** `new-feature` runs without `--product`
+- **THEN** the feature carries no `product:` label
+
+#### Scenario: Idea created for the product
+- **WHEN** `new-idea --product mothra --value 2` runs
+- **THEN** the idea carries `type:idea`, `value:2` and `product:mothra`
+
+#### Scenario: Unknown product
+- **WHEN** `--product autre` is given to `new-feature` or `new-idea`
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+#### Scenario: Name in the title with a product
+- **WHEN** `new-feature --product mothra` is given a title that holds a name of the sensitive-names list
+- **THEN** the tool exits 3 and sends no write
+
+Source: tests/gh_issue/test_gh_issue_product.py (Creation; EtiquettesEtSync: test_garde_sur_le_titre_inchange_avec_le_produit)
+
+### Requirement: edit and edit-idea set or remove the product label
+The system SHALL let `edit` and `edit-idea` take `--product` with a value of the closed list or `none`: a value sets `product:<value>` in place of any other `product:` label, `none` removes it, and the other labels stay. An unknown value SHALL exit 2 with `usage:` and send no write; a label state already in place SHALL print `nothing to do` and send no write. The tool SHALL NOT relabel an existing item unless asked. For `edit-idea`, `--product` alone SHALL be a valid command.
+
+#### Scenario: Label set then removed
+- **WHEN** `edit R-1 --product mothra` runs, then again, then `edit R-1 --product none`, then again
+- **THEN** the first and third runs write, the second and fourth say `nothing to do`, and the feature ends with its theme and type labels only
+
+#### Scenario: Theme changed on a feature of the product
+- **WHEN** `edit R-1 --set theme=veille` runs on a feature carrying `product:mothra`
+- **THEN** the feature keeps `product:mothra` and takes the new theme label
+
+#### Scenario: Idea relabelled
+- **WHEN** `edit-idea 1 --product mothra`, then `edit-idea 1 --value 3`, then `edit-idea 1 --product none` run on an idea with `value:1`
+- **THEN** the idea carries `product:mothra` after the first, keeps it with `value:3` after the second, and holds `type:idea` and `value:3` only after the third
+
+#### Scenario: Unknown product
+- **WHEN** `edit R-1 --product autre` or `edit-idea 1 --product autre` runs
+- **THEN** the tool exits 2 with `usage:` and sends no write
+
+Source: tests/gh_issue/test_gh_issue_product.py (Edition)
+
+### Requirement: The label command creates the product label
+The system SHALL include the label `product:mothra` in the labels that the write tool's label command creates, with a colour and a description saying that an item without a `product:` label belongs to PMZilla. It SHALL NOT give a description to the other labels it creates, and SHALL NOT change or remove an existing label.
+
+#### Scenario: Label created
+- **WHEN** the label command runs on a repository without `product:mothra`
+- **THEN** the label is created with a colour and a description, and `type:feature` is created without description
+
+Source: tests/gh_issue/test_gh_issue_product.py (EtiquettesEtSync: test_ensure_labels_cree_le_label_avec_couleur_et_description)
+
+### Requirement: The task sync copies the product label of the feature
+The system SHALL, when the task sync creates sub-issues for a feature that carries a `product:` label, give each new sub-issue that label besides its type, model or user-step labels, after the guard. It SHALL NOT add a `product:` label to a sub-issue of a feature that has none, and SHALL NOT relabel a sub-issue that already exists.
+
+#### Scenario: Feature of the product
+- **WHEN** `sync-tasks` runs on a feature carrying `product:mothra` and creates group sub-issues and a user-task sub-issue
+- **THEN** each of them carries `product:mothra`, and a group sub-issue holds exactly its model label, `product:mothra` and `type:task`
+
+#### Scenario: Feature without product
+- **WHEN** `sync-tasks` runs on a feature without a `product:` label
+- **THEN** no sub-issue carries a `product:` label
+
+#### Scenario: Existing sub-issue
+- **WHEN** a feature receives `product:mothra` after its sub-issues were created and `sync-tasks` runs
+- **THEN** the existing sub-issues keep their labels
+
+Source: tests/gh_issue/test_gh_issue_product.py (EtiquettesEtSync: test_sync_tasks_recopie_le_label_sur_les_taches, test_sync_tasks_sans_produit_ne_pose_rien); that existing sub-issues are not relabelled is read in tools/gh_issue.py (untested)
+
+### Requirement: new-task files a standalone user task
+The system SHALL let `new-task R-<n> --title T --body-file F [--milestone M]` create, without any `tasks.md`, a sub-issue of the feature R-<n> labelled `type:task` and `owner:user`, plus the feature's `product:` label when it has one. Its key SHALL be `R-<n>/u<k>`, with `k` the next free number among the standalone tasks of that feature, so that it never collides with a group key or a task key of the sync. Its title SHALL be the text of `--title` with the prefix `R-<n> · ` added by the tool, and its body SHALL hold the identity marker and the text of the file. Its milestone SHALL be the feature's unless `--milestone` names another existing milestone. The title and the body SHALL pass the guard before any request. An empty title, a title already prefixed, a missing option, or a file that is absent, empty or not a regular file SHALL exit 2 with `usage:`; an unknown feature or an unknown milestone SHALL exit 7; none of them SHALL send a write. A second run with the same title for the same feature SHALL create nothing and print `already exists`. `close-step` SHALL accept the key `R-<n>/u<k>` and close the task without a reason, and `sync-tasks` SHALL neither close nor reopen it.
+
+#### Scenario: Task created
+- **WHEN** `new-task R-1 --title "Valider le brouillon" --body-file F` runs on a feature R-1 of an existing milestone
+- **THEN** a sub-issue `R-1/u1` titled `R-1 · Valider le brouillon` exists with `type:task` and `owner:user`, linked to R-1 and in the milestone of R-1
+
+#### Scenario: Next free number
+- **WHEN** R-1 already has the sub-issues `R-1/g1`, `R-1/t2.2` and `R-1/u1` and `new-task` runs with another title
+- **THEN** the new task is `R-1/u2`
+
+#### Scenario: Explicit milestone
+- **WHEN** `new-task` runs with `--milestone` naming an existing milestone, or an unknown one
+- **THEN** the task is in the named milestone, or the tool exits 7 and sends no write
+
+#### Scenario: Same title twice
+- **WHEN** `new-task` runs a second time with the same feature and title
+- **THEN** the tool prints `already exists` and creates no issue
+
+#### Scenario: Name in the title or the body
+- **WHEN** the title or the file holds a name of the sensitive-names list
+- **THEN** the tool exits 3, sends no write, and its output does not hold the name
+
+#### Scenario: Closing
+- **WHEN** `close-step R-1/u1` runs without a reason, then runs again
+- **THEN** the task is closed, then the tool prints `nothing to do`
+
+Source: tests/gh_issue/test_gh_issue_user_task.py
+
+### Requirement: Issue writes refuse the distinctive team names of the extract
+The system SHALL refuse, before sending anything to GitHub, an issue write whose title or body contains a distinctive team name of the team-names extract, with its existing refusal for sensitive names, which never prints the name (design D8). A missing or unreadable extract SHALL leave the check of the sensitive-names list unchanged. The write tool SHALL NOT print, send or store a team name. Untested until implemented.
+
+#### Scenario: Body holding an extract name
+- **WHEN** an issue body contains a distinctive team name of the extract
+- **THEN** the write tool refuses with its sensitive-name refusal, sends nothing, and its output contains no team name
+
+#### Scenario: No extract
+- **WHEN** the extract does not exist
+- **THEN** the write tool checks the sensitive-names list only, as before
+
+### Requirement: Issue writes skip the names of the author's generic-names list
+The system SHALL let an issue write hold an extract team name that the author's generic-names list excludes, through the same reading of the extract as the pre-commit hook (extract-name-exclusions design D2). It SHALL keep refusing a name of the sensitive-names list, even when the generic-names list holds it.
+
+#### Scenario: Listed generic name in a body
+- **WHEN** an issue body contains an extract name that the generic-names list holds
+- **THEN** the write tool does not refuse it for that name
+
+#### Scenario: Sensitive name also listed as generic
+- **WHEN** an issue body contains a name that is in both lists
+- **THEN** the write tool refuses with its sensitive-name refusal and sends nothing

@@ -43,7 +43,8 @@ Error: classic token refused: use a scoped token
 
 ```
 Tickets read: 1; discarded (portfolio types, excluded projects): 0.
-Already cached and finished (not queried again): 0; to query: 1.
+Already collected and finished (not queried again): 0; to query: 1.
+Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Error: classic token refused: use a scoped token
 ```
@@ -124,96 +125,111 @@ access fields: OK
 token expiry date not set
 ```
 
+## collect, empty database (exit 1)
+
+```
+Error: no ticket in the database: run the export and the import first
+```
+
 ## collect, bulk mode (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
-Already cached and finished (not queried again): 0; to query: 5.
+Already collected and finished (not queried again): 0; to query: 5.
+Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
+history written: 10 transitions added, 0 periods written
 ```
 
-## collect, everything cached (exit 0)
+## collect, everything already collected (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
-Already cached and finished (not queried again): 4; to query: 1.
+Already collected and finished (not queried again): 4; to query: 1.
+Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+history written: 0 transitions added, 0 periods written
 ```
 
 ## collect, --refresh (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
-Cache ignored (--refresh): to query: 5.
+Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
+history written: 0 transitions added, 0 periods written
 ```
 
 ## collect, --team (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0; outside the requested team: 2.
-Already cached and finished (not queried again): 2; to query: 1.
+Already collected and finished (not queried again): 2; to query: 1.
+Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+history written: 0 transitions added, 0 periods written
 ```
 
 ## collect, unknown team (exit 1)
 
 ```
-Error: --team: no ticket in the export matches.
+Error: --team: no ticket in the database matches.
 ```
 
 ## collect, tickets past retention (exit 0)
 
 ```
-Tickets read: 2; discarded (portfolio types, excluded projects): 0.
-Already cached and finished (not queried again): 0; to query: 1.
+Tickets read: 5; discarded (portfolio types, excluded projects): 0.
+Everything is queried again (--refresh): to query: 4.
 tickets past retention, skipped: 1
-Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+Mode: bulk. Tickets processed: 4; status transitions: 8; errors: 0.
+history written: 0 transitions added, 0 periods written
 ```
 
 ## collect, ticket by ticket with one error (exit 0)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
-Cache ignored (--refresh): to query: 5.
+Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
-Mode: ticket by ticket. Tickets processed: 4; status transitions: 8; errors: 1 (HTTP 404: 1).
+Mode: ticket by ticket. Tickets processed: 4; status transitions: 8; errors: 0.
+tickets not found in Jira: 1
+history written: 0 transitions added, 0 periods written
 ```
 
 ## collect, access denied (exit 1)
 
 ```
 Tickets read: 5; discarded (portfolio types, excluded projects): 0.
-Cache ignored (--refresh): to query: 5.
+Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
 Mode: ticket by ticket. Tickets processed: 0; status transitions: 0; errors: 0.
-Stopped: HTTP 401 (access denied: check the token and its permissions). The cache keeps what was collected.
+Stopped: HTTP 401 (access denied: check the token and its permissions). Nothing is written to the database.
 ```
 
-## collect, no key column (exit 1)
+## collect, export file refused (exit 2)
 
 ```
-Error: key column not found in the export (see the column names in flux.yaml). Only the CSV files of export_jira_api.py are read (uv run tools/export_jira_api.py export).
+Error: export files are no longer read: the database is the only source
 ```
 
-## collect, --team without a team column (exit 1)
+## collect, --team without a team in the database (exit 1)
 
 ```
-Error: --team: no team column in the export.
+Error: --team: no team in the database.
 ```
 
 ## check (exit 0)
 
 ```
-Export tickets kept: 6; missing from the cache: 1.
-Last state in the history equal to the export state: consistent 3; inconsistent 1; not comparable (no transition) 1.
+Database tickets kept: 6; without history: 1.
+Last state in the history equal to the stored state: consistent 3; inconsistent 1; not comparable (no transition) 1.
 Transitions per ticket: 0: 1; 1: 2; 2-4: 2; 5-9: 0; 10 or more: 0.
 Delivered tickets (resolution date): 4; delivered with no transition at all: 1.
-Unreadable transition dates: 1 (the flux_jira.py computation cannot place these transitions).
 
 Delivered tickets (4): reading of the history.
   Starting state of the first known transition: Open 2; Implementation 1.
@@ -225,11 +241,10 @@ Delivered tickets (4): reading of the history.
 ## check, --team (exit 0)
 
 ```
-Export tickets kept: 6; missing from the cache: 1.
-Last state in the history equal to the export state: consistent 3; inconsistent 1; not comparable (no transition) 1.
+Database tickets kept: 6; without history: 1.
+Last state in the history equal to the stored state: consistent 3; inconsistent 1; not comparable (no transition) 1.
 Transitions per ticket: 0: 1; 1: 2; 2-4: 2; 5-9: 0; 10 or more: 0.
 Delivered tickets (resolution date): 4; delivered with no transition at all: 1.
-Unreadable transition dates: 1 (the flux_jira.py computation cannot place these transitions).
 
 Delivered tickets (4): reading of the history.
   Starting state of the first known transition: Open 2; Implementation 1.
@@ -247,33 +262,33 @@ Error: --dormants (dormant tickets CSV export) no longer exists: dormant items a
 ## check, --key (exit 0)
 
 ```
-abc-2: 2 status transition(s) in the cache.
+abc-2: 2 status transition(s) in the database.
   start             Implementation
-  2026-03-01 10:00:00+0200  Implementation  ->  Verification
-  2026-03-02 10:00:00+0200  Verification  ->  Done
-  export status: Done
+  2026-03-01 09:00:00+0100  Implementation  ->  Verification
+  2026-03-02 09:00:00+0100  Verification  ->  Done
+  stored status: Done
 ```
 
 ## check, unknown --key (exit 1)
 
 ```
-Error: ticket not in the cache.
+Error: ticket not in the database.
 ```
 
-## check, no export (exit 1)
+## check, export file refused (exit 2)
 
 ```
-Error: check: give at least one export (or --key).
+Error: export files are no longer read: the database is the only source
 ```
 
-## check, no status column (exit 1)
+## check, inside a Claude Code session (exit 3)
 
 ```
-Error: no status column (Status) in the export.
+Refused inside a Claude Code session
 ```
 
-## check, unreadable cache (exit 1)
+## check, no history in the database (exit 1)
 
 ```
-Error: the history cache is unreadable: move it aside before running again.
+Error: no history in the database: run the history collection first
 ```

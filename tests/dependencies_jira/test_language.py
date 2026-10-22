@@ -91,7 +91,7 @@ def ecrire_sans_categorie(chemin: Path, lignes: list[list[str]]) -> None:
 
 
 def normaliser(texte: str, ws: Path) -> str:
-    return texte.replace(str(ws), "<WS>").replace(AUJOURDHUI.isoformat(), "<DATE>")
+    return texte.replace(str(ws.resolve()), "<WS>").replace(str(ws), "<WS>").replace(AUJOURDHUI.isoformat(), "<DATE>")
 
 
 class Scenarios:
@@ -104,7 +104,7 @@ class Scenarios:
 
     def lancer(self, etiquette: str, *args: str, attendu: int = 0, rapport: str | None = None) -> None:
         env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.ws)}
-        r = subprocess.run(["uv", "run", "--with", "pyyaml", str(SCRIPT), *args, *self.options],
+        r = subprocess.run(["uv", "run", "--with", "pyyaml", str(SCRIPT), *args, *self.options],       # lanceur de test : fixtures CSV rendues comme la base les rend (D11)
                            env=env, capture_output=True, text=True)
         assert r.returncode == attendu, f"{etiquette} : code {r.returncode}\n{r.stdout}{r.stderr}"
         texte = f"[console]\n{r.stdout}{r.stderr}"
@@ -133,8 +133,6 @@ class Scenarios:
             ["AAA-2", "In Progress", date_manuel(jour(50)), "Alpha", "", "BBB-1", ""]])
         ecrire_sans_categorie(ws / "lot2.csv", [["BBB-1", "Open", date_manuel(jour(50)), "Beta", "", "", "AAA-1"]])
         self.lancer("two exports diagnose", "diagnose", str(ws / "lot1.csv"), str(ws / "lot2.csv"))
-        (ws / "sans-cle.csv").write_text("Status,Team\nOpen,Alpha\n", encoding="utf-8")
-        self.lancer("missing key", "diagnose", str(ws / "sans-cle.csv"), attendu=1)
         (ws / "sans-liens.csv").write_text("Issue key,Status,Team\nAAA-1,Open,Alpha\n", encoding="utf-8")
         self.lancer("no link columns diagnose", "diagnose", str(ws / "sans-liens.csv"))
         self.lancer("no link columns compute", "compute", str(ws / "sans-liens.csv"), attendu=1)

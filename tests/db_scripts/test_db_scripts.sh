@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test de tools/db_up.sh, tools/db_backup.sh et (fichier voisin) tools/db_restore_test.sh : faux security, faux docker et faux colima en tête du PATH.
+# Test de tools/db_up.sh, tools/db_backup.sh et (fichiers voisins) tools/db_restore_test.sh, tools/db_rehearsal.sh et leurs fonctions communes tools/db_container_common.sh : faux security, faux docker et faux colima en tête du PATH.
 # Aucun appel au vrai Trousseau, à Docker ni au réseau. Lancement à la main : bash tests/db_scripts/test_db_scripts.sh
 set -u
 racine="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -44,9 +44,18 @@ case "$args" in
     for s in $FAUX_ABSENTS; do case "$args" in *"nspname = '$s'"*) exit 0 ;; esac; done
     echo 1; exit 0 ;;
   *pg_dump*)
-    schema="${args##*-n }"; schema="${schema%% *}"
     echo "MARQ $(cat "${PMZILLA_LAB_DATA:-/inexistant}/sauvegarde.encours/pid" 2>/dev/null) PPID=$PPID" >> "$FAUX_LOG"
-    echo "DUMP $schema"; exit 0 ;;
+    # Fausse base de quality ($FAUX_DB, un fichier par table, avec des sentinelles) : le faux pg_dump ne rend que ce qu'on lui demande.
+    if [[ "$args" == *" -t "* ]]; then
+      echo "DUMP quality-sans-texte"
+      for t in $(printf '%s\n' "$args" | grep -o -- '-t quality\.[a-z_]*' | sed 's/^-t quality\.//'); do cat "$FAUX_DB/$t" 2>/dev/null; done
+    elif [[ "$args" == *"-n quality"* ]]; then
+      echo "DUMP quality"; cat "$FAUX_DB"/* 2>/dev/null
+    else
+      schema="${args##*-n }"; schema="${schema%% *}"
+      echo "DUMP $schema"
+    fi
+    exit 0 ;;
 esac
 exit 0
 SCRIPT
@@ -61,6 +70,12 @@ unset DB_BACKUP_NOTIFIER DB_BACKUP_GARDER
 export FAUX_LOG="$tmp/log"; : > "$FAUX_LOG"
 export FAUX_COMPOSE="$racine/docker-compose.yml"
 export FAUX_ABSENTS=""
+export FAUX_DB="$tmp/fauxdb"; mkdir -p "$FAUX_DB"
+printf 'ZZ-CLE-SENTINELLE-1\n' > "$FAUX_DB/items"; printf 'zz texte de story sentinelle\n' > "$FAUX_DB/contents"
+printf 'zz retour de coaching sentinelle\n' > "$FAUX_DB/coaching_feedback"; printf 'ZZ-CLE-SENTINELLE-1|equipe-x\n' > "$FAUX_DB/item_teams"
+printf 'zz verdict sentinelle\n' > "$FAUX_DB/assessments"
+printf 'equipe-a|t\n' > "$FAUX_DB/team_attributes"; printf '1|equipe-a|5\n' > "$FAUX_DB/team_reviews"; printf 'ov|1|empreinte\n' > "$FAUX_DB/overlay_versions"
+SENTINELLES='ZZ-CLE-SENTINELLE|zz texte de story|zz retour de coaching|zz verdict'
 export PATH="$bin:$PATH"
 export HOME="$tmp/home"; mkdir -p "$HOME"
 unset PMZILLA_LAB_DB_PASSWORD POSTGRES_PASSWORD
@@ -106,10 +121,20 @@ export DB_BACKUP_SAUVEGARDES="$sauv" DB_BACKUP_DATE="2026-10-08"
 bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : code 0" "$code"
 verifie "db_backup : dossier db-2026-10-08 créé" "$([ -d "$sauv/db-2026-10-08" ]; echo $?)"
-verifie "db_backup : un fichier par schéma" "$([ -s "$sauv/db-2026-10-08/knowledge.dump" ] && [ -s "$sauv/db-2026-10-08/cases.dump" ] && [ -s "$sauv/db-2026-10-08/flow.dump" ] && [ "$(ls "$sauv/db-2026-10-08" | wc -l | tr -d ' ')" = 3 ]; echo $?)"
+verifie "db_backup : un fichier par schéma, plus le dump partiel quality-sans-texte" "$([ -s "$sauv/db-2026-10-08/knowledge.dump" ] && [ -s "$sauv/db-2026-10-08/cases.dump" ] && [ -s "$sauv/db-2026-10-08/flow.dump" ] && [ -s "$sauv/db-2026-10-08/quality-sans-texte.dump" ] && [ "$(ls "$sauv/db-2026-10-08" | wc -l | tr -d ' ')" = 4 ]; echo $?)"
 verifie "db_backup : chaque fichier contient le dump de son schéma" "$([ "$(cat "$sauv/db-2026-10-08/cases.dump")" = "DUMP cases" ]; echo $?)"
 verifie "db_backup : aucun mot de passe demandé ni lu (pas de security, PW vide)" "$(! grep -q '^security' "$FAUX_LOG" && ! grep 'pg_dump' "$FAUX_LOG" | grep -q 'PW=.'; echo $?)"
 verifie "db_backup : la sortie ne contient que chemins et tailles" "$(grep -q "$MDP" "$tmp/s"; [ $? -ne 0 ]; echo $?)"
+# Schéma quality (R-78, design D10) : le contenu des stories ne vit que dans la base, jamais dans une sauvegarde.
+verifie "db_backup : quatre pg_dump (knowledge, cases, flow et le dump partiel), aucun ne vise le schéma quality entier" "$([ "$(grep -c 'pg_dump' "$FAUX_LOG")" = 4 ] && ! grep 'pg_dump' "$FAUX_LOG" | grep -Eq -- '-n quality|-n \"?quality'; echo $?)"
+verifie "db_backup : une seule commande vise des tables, les trois de quality nommées une à une, données seulement, dans un seul fichier" "$([ "$(grep 'pg_dump' "$FAUX_LOG" | grep -c -- ' -t ')" = 1 ] && l="$(grep 'pg_dump' "$FAUX_LOG" | grep -- ' -t ')" && [ "$(printf '%s' "$l" | grep -o -- '-t [a-z_.]*' | tr '\n' ' ')" = '-t quality.team_attributes -t quality.team_reviews -t quality.overlay_versions ' ] && printf '%s' "$l" | grep -q -- '--data-only'; echo $?)"
+verifie "db_backup : aucune commande ne vise items, contenus, verdicts, retours de coaching ni éléments d'équipe" "$(grep 'pg_dump' "$FAUX_LOG" | grep -Eq 'quality\.(items|item_teams|contents|assessments|coaching_feedback)'; [ $? -ne 0 ]; echo $?)"
+verifie "db_backup : seul le fichier quality-sans-texte.dump porte le nom quality" "$([ "$(ls "$sauv/db-2026-10-08" | grep -c quality)" = 1 ] && [ -s "$sauv/db-2026-10-08/quality-sans-texte.dump" ]; echo $?)"
+verifie "db_backup : le dump partiel porte les trois tables (attributs, relectures, versions)" "$(grep -q 'equipe-a|t' "$sauv/db-2026-10-08/quality-sans-texte.dump" && grep -q '1|equipe-a|5' "$sauv/db-2026-10-08/quality-sans-texte.dump" && grep -q 'ov|1|empreinte' "$sauv/db-2026-10-08/quality-sans-texte.dump"; echo $?)"
+verifie "db_backup : aucune sentinelle (clé, texte, retour de coaching, verdict) dans aucun fichier du dossier daté ni dans la sortie" "$(grep -rEq "$SENTINELLES" "$sauv/db-2026-10-08" "$tmp/s"; [ $? -ne 0 ]; echo $?)"
+verifie "db_backup : le dump partiel est en 600" "$([ "$(stat -f %Lp "$sauv/db-2026-10-08/quality-sans-texte.dump")" = 600 ]; echo $?)"
+verifie "db_backup : la liste par défaut des schémas du script ne cite pas quality" "$(grep -E '^SCHEMAS=' "$racine/tools/db_backup.sh" | grep -q quality; [ $? -ne 0 ]; echo $?)"
+verifie "db_backup : la liste par défaut des schémas du script de restauration ne cite pas quality" "$(grep -E '^SCHEMAS=' "$racine/tools/db_restore_test.sh" | grep -q quality; [ $? -ne 0 ]; echo $?)"
 
 bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : le dossier du jour n'est jamais écrasé, second passage en succès (code 0)" "$([ $code -eq 0 ] && grep -q 'existe déjà' "$tmp/s" && [ "$(cat "$sauv/db-2026-10-08/cases.dump")" = "DUMP cases" ]; echo $?)"
@@ -124,6 +149,14 @@ verifie "db_backup : dossiers en 700 et dumps en 600" "$([ "$(stat -f %Lp "$sauv
 (umask 000; DB_BACKUP_SAUVEGARDES="$tmp/large" DB_BACKUP_DATE="2026-10-08" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1)
 verifie "db_backup : umask 000 du lanceur, dossiers toujours en 700 et dumps en 600" "$([ "$(stat -f %Lp "$tmp/large")" = 700 ] && [ "$(stat -f %Lp "$tmp/large/db-2026-10-08")" = 700 ] && [ "$(stat -f %Lp "$tmp/large/db-2026-10-08/cases.dump")" = 600 ]; echo $?)"
 
+# Dossier des sauvegardes : celui du module partagé (lab_paths), pas un défaut fixe sous le HOME.
+deplace="$tmp/deplace"
+env -u DB_BACKUP_SAUVEGARDES PMZILLA_LAB_DATA="$deplace" DB_BACKUP_DATE="2026-10-08" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : sans DB_BACKUP_SAUVEGARDES, la sauvegarde va sous le dossier de données du labo (PMZILLA_LAB_DATA/sauvegardes), pas sous HOME" "$([ $code -eq 0 ] && [ -s "$deplace/sauvegardes/db-2026-10-08/cases.dump" ] && [ ! -e "$HOME/.pmzilla-lab/sauvegardes" ]; echo $?)"
+explicite="$tmp/explicite"
+DB_BACKUP_SAUVEGARDES="$explicite" PMZILLA_LAB_DATA="$deplace" DB_BACKUP_DATE="2026-10-09" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : DB_BACKUP_SAUVEGARDES l'emporte sur le dossier de données du labo" "$([ $code -eq 0 ] && [ -s "$explicite/db-2026-10-09/cases.dump" ] && [ ! -e "$deplace/sauvegardes/db-2026-10-09" ]; echo $?)"
+
 # Rotation par défaut : 14 dossiers gardés ; réglage invalide refusé sans rien supprimer.
 export DB_BACKUP_GARDER=6
 for j in 01 02 03 04 05 06 07; do DB_BACKUP_DATE="2026-09-$j" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; done
@@ -136,6 +169,9 @@ verifie "db_backup : un dossier avec étiquette (db-AAAA-MM-JJ-matin) n'est ni c
 
 FAUX_ABSENTS="flow" DB_BACKUP_DATE="2026-10-09" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : schéma absent signalé, code non nul, les autres sauvegardés" "$([ $code -ne 0 ] && grep -q 'Schéma absent, non sauvegardé : flow' "$tmp/s" && [ -s "$sauv/db-2026-10-09/knowledge.dump" ] && [ ! -e "$sauv/db-2026-10-09/flow.dump" ]; echo $?)"
+
+FAUX_ABSENTS="quality" DB_BACKUP_DATE="2026-10-09-sansq" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : schéma quality absent, dump partiel non fait, code 1, les trois autres dumps sauvegardés" "$([ $code -eq 1 ] && grep -q 'Schéma absent, non sauvegardé : quality' "$tmp/s" && [ -s "$sauv/db-2026-10-09-sansq/flow.dump" ] && [ ! -e "$sauv/db-2026-10-09-sansq/quality-sans-texte.dump" ]; echo $?)"
 
 FAUX_CONTENEUR=0 DB_BACKUP_DATE="2026-10-10" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : conteneur arrêté, message dédié, aucun dossier créé" "$([ $code -ne 0 ] && grep -q 'conteneur de la base est arrêté' "$tmp/s" && grep -q 'db_up.sh' "$tmp/s" && [ ! -e "$sauv/db-2026-10-10" ]; echo $?)"
@@ -248,7 +284,7 @@ fi
 # Schémas par défaut : seuls knowledge, cases et flow sont sauvegardés, jamais public (donc pas public.schema_migrations,
 # que le test de restauration recrée en appliquant les migrations).
 verifie "db_backup : le dossier ne contient aucun dump de public ni de suivi des migrations" "$(ls "$sauv/db-2026-10-08" | grep -Eq 'public|migration'; [ $? -ne 0 ]; echo $?)"
-verifie "db_backup : pg_dump n'est lancé que pour knowledge, cases et flow (-n), jamais pour public" "$([ "$(grep 'pg_dump' "$FAUX_LOG" | sed -E 's/.*-n ([a-z_]+).*/\1/' | sort -u | tr '\n' ' ')" = "cases flow knowledge " ] && ! grep 'pg_dump' "$FAUX_LOG" | grep -Eq -- '-n public|schema_migrations|-t '; echo $?)"
+verifie "db_backup : pg_dump n'est lancé que pour knowledge, cases et flow (-n), jamais pour public" "$([ "$(grep 'pg_dump' "$FAUX_LOG" | grep -- ' -n ' | sed -E 's/.*-n ([a-z_]+).*/\1/' | sort -u | tr '\n' ' ')" = "cases flow knowledge " ] && ! grep 'pg_dump' "$FAUX_LOG" | grep -Eq -- '-n public|schema_migrations'; echo $?)"
 
 DB_BACKUP_DATE="demain" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : date invalide refusée (code 2)" "$([ $code -eq 2 ]; echo $?)"
@@ -257,6 +293,11 @@ verifie "db_backup : date invalide refusée (code 2)" "$([ $code -eq 2 ]; echo $
 bash "$racine/tests/db_scripts/test_db_restore_test.sh" > "$tmp/restore" 2>&1; code=$?
 grep -v '^[0-9]* réussis' "$tmp/restore"
 verifie "db_restore_test : suite voisine tests/db_scripts/test_db_restore_test.sh ($(grep -E '^[0-9]+ réussis' "$tmp/restore" | head -1))" "$code"
+
+# --- db_rehearsal.sh : suite voisine, avec son propre faux docker (copie de répétition simulée)
+bash "$racine/tests/db_scripts/test_db_rehearsal.sh" > "$tmp/rehearsal" 2>&1; code=$?
+grep -v '^[0-9]* réussis' "$tmp/rehearsal"
+verifie "db_rehearsal : suite voisine tests/db_scripts/test_db_rehearsal.sh ($(grep -E '^[0-9]+ réussis' "$tmp/rehearsal" | head -1))" "$code"
 
 echo "$ok réussis, $ko échec(s)"
 [ "$ko" -eq 0 ]

@@ -28,6 +28,9 @@ from cases_store import CasesError  # noqa: E402
 from journal_lab_messages import CATALOGS  # noqa: E402
 
 AUTEUR = "agile-lead-test"
+# Les vrais processus du journal ne touchent ni le vrai Trousseau (commande qui échoue) ni la vraie base (port fermé).
+ISOLATION_BASE = {"PMZILLA_LAB_DB_SECURITY_BIN": "/usr/bin/false", "PMZILLA_LAB_DB_PORT": "1"}
+FAUX_MOT_DE_PASSE = "mot-de-passe-" + "invente"   # fabriqué à l'exécution : aucun littéral pour la garde des secrets
 BROUILLON = "problem: Les actions de rétro restent vagues.\ncontext:\n  team_type: équipe produit\nsuccess_criterion: Deux actions sur trois terminées.\n"
 
 
@@ -463,14 +466,33 @@ class SessionHookProcessusReel(unittest.TestCase):
     def test_base_absente_ou_refusee(self):
         racine = Path(__file__).resolve().parents[2]
         env = dict(os.environ, PMZILLA_LAB_CASES_AUTHOR=AUTEUR, PMZILLA_LAB_CASES_DBNAME="pmzilla_eval_absent",
-                   PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO="mot-de-passe-invente")
+                   PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO=FAUX_MOT_DE_PASSE, **ISOLATION_BASE)
+        env.pop("PMZILLA_LAB_DB_URL", None)
         import subprocess
         fait = subprocess.run([sys.executable, "-W", "ignore", str(racine / "tools" / "journal_lab.py"), "experiment", "due", "--session-hook"],
                               capture_output=True, text=True, env=env, cwd=str(racine), timeout=60)
         self.assertEqual(fait.returncode, 0, fait.stderr)
         self.assertLessEqual(len((fait.stdout + fait.stderr).strip().splitlines()), 1, fait.stdout + fait.stderr)
         self.assertNotIn("Traceback", fait.stdout + fait.stderr)
-        self.assertNotIn("mot-de-passe-invente", fait.stdout + fait.stderr)
+        self.assertNotIn(FAUX_MOT_DE_PASSE, fait.stdout + fait.stderr)
+
+    def test_ne_touche_ni_le_vrai_trousseau_ni_la_vraie_base(self):
+        """Un faux `security` journalisant, en tête du PATH, n'est jamais appelé ; la commande de secours échoue et le port est fermé."""
+        racine = Path(__file__).resolve().parents[2]
+        import subprocess
+        with tempfile.TemporaryDirectory() as espace:
+            journal = Path(espace) / "appels"
+            faux = Path(espace) / "security"
+            faux.write_text(f'#!/bin/sh\necho "$@" >> "{journal}"\nexit 1\n')
+            faux.chmod(0o755)
+            env = dict(os.environ, PMZILLA_LAB_CASES_AUTHOR=AUTEUR, PMZILLA_LAB_CASES_DBNAME="pmzilla_eval_absent",
+                       PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO=FAUX_MOT_DE_PASSE, PATH=f"{espace}{os.pathsep}{os.environ['PATH']}",
+                       **ISOLATION_BASE)
+            env.pop("PMZILLA_LAB_DB_URL", None)
+            fait = subprocess.run([sys.executable, "-W", "ignore", str(racine / "tools" / "journal_lab.py"), "experiment", "due", "--session-hook"],
+                                  capture_output=True, text=True, env=env, cwd=str(racine), timeout=60)
+            self.assertEqual(fait.returncode, 0, fait.stderr)
+            self.assertFalse(journal.exists(), journal.read_text() if journal.exists() else "")
 
 
 class SessionHookSeanceEvaluation(unittest.TestCase):
@@ -481,7 +503,8 @@ class SessionHookSeanceEvaluation(unittest.TestCase):
         import subprocess
         with tempfile.TemporaryDirectory() as espace:     # espace de travail vide : pas de .pmzilla/cases.yaml
             env = dict(os.environ, PMZILLA_LAB_CASES_AUTHOR="", PMZILLA_LAB_CASES_DBNAME="pmzilla_eval_absent",
-                       PMZILLA_LAB_WORKSPACE=espace)
+                       PMZILLA_LAB_WORKSPACE=espace, **ISOLATION_BASE)
+            env.pop("PMZILLA_LAB_DB_URL", None)
             fait = subprocess.run([sys.executable, "-W", "ignore", str(racine / "tools" / "journal_lab.py"), "experiment", "due", "--session-hook"],
                                   capture_output=True, text=True, env=env, cwd=str(racine), timeout=60)
         self.assertEqual((fait.returncode, fait.stdout, fait.stderr), (0, "", ""))

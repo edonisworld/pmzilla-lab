@@ -1,4 +1,5 @@
-"""Contrôles launchd, watch, backup, offsite et parity (tâche 3.3) : gabarits du dépôt, heures dues, noms et nombres de fichiers seulement."""
+"""Contrôles launchd, watch, backup, et offsite (tâche 3.3) : gabarits du dépôt, heures dues, noms et nombres de fichiers seulement."""
+import datetime
 import json
 import os
 import sys
@@ -10,6 +11,8 @@ from aide_doctor import SCHEMAS, SENTINELLE, TOOLS, Labo, gabarits_launchd  # no
 
 
 class Launchd(Labo):
+    TACHES = "toutes"
+
     def test_toutes_installees_et_chargees(self):
         niveau, _, _ = self.niveau("launchd")
         self.assertEqual(niveau, "ok")
@@ -190,7 +193,7 @@ class Veille(Labo):
 class Sauvegarde(Labo):
     def test_sauvegarde_complete(self):
         niveau, entree, _ = self.niveau("backup")
-        self.assertEqual((niveau, entree["reason"]["counts"]), ("ok", {"found": 3}))
+        self.assertEqual((niveau, entree["reason"]["counts"]), ("ok", {"found": 4}))
 
     def test_dossier_absent_apres_l_heure_due(self):
         import shutil
@@ -210,10 +213,27 @@ class Sauvegarde(Labo):
         shutil.rmtree(self.donnees / "sauvegardes")
         self.ecrire_sauvegarde("2026-10-14", SCHEMAS[:2])
         niveau, entree, _ = self.niveau("backup")
-        self.assertEqual((niveau, entree["reason"]["key"], entree["reason"]["counts"]), ("problem", "short", {"found": 2, "expected": 3}))
+        self.assertEqual((niveau, entree["reason"]["key"], entree["reason"]["counts"]), ("problem", "short", {"found": 2, "expected": 4}))
         sortie = self.lancer().stdout + self.lancer("--language", "en").stdout
         for schema in SCHEMAS:
             self.assertNotIn(f"{schema}.dump", sortie)
+
+    def test_trois_schemas_sans_le_dump_partiel_de_quality_est_courte(self):
+        import shutil
+        shutil.rmtree(self.donnees / "sauvegardes")
+        self.ecrire_sauvegarde("2026-10-14", SCHEMAS[:3])
+        niveau, entree, _ = self.niveau("backup")
+        self.assertEqual((niveau, entree["reason"]["key"], entree["reason"]["counts"]), ("problem", "short", {"found": 3, "expected": 4}))
+
+    def test_statique_les_attendus_sont_ce_qu_ecrit_db_backup(self):
+        # schémas par défaut identiques, et un seul dump à nom fixe dans db_backup.sh (le dump partiel de quality) : le « + 1 » de doctor
+        import re
+        sauvegarde = (TOOLS / "db_backup.sh").read_text(encoding="utf-8")
+        doctor = (TOOLS / "doctor.py").read_text(encoding="utf-8")
+        schemas = re.search(r'^SCHEMAS="\$\{DB_BACKUP_SCHEMAS:-(.*)\}"$', sauvegarde, re.M).group(1)
+        self.assertIn(f'.get("DOCTOR_SCHEMAS") or "{schemas}").split()) + 1', doctor)
+        fixes = set(re.findall(r'^\s*fichier="\$CIBLE/([A-Za-z0-9_-]+)\.dump"', sauvegarde, re.M))
+        self.assertEqual(fixes, {"quality-sans-texte"})
 
     def test_seuls_les_dumps_comptent(self):
         import shutil
@@ -285,48 +305,57 @@ class HorsDuMac(Labo):
         self.lancer()
         self.assertEqual([a for a in self.appels() if "offsite_backup" in a or "diskutil" in a or a.startswith("mount")], [])
 
+    def test_deux_jours_sans_copie_reussie_avertissement(self):
+        """#255 point 2 : au-delà d'un jour sans copie réussie, avertissement (et non plus « ok » à 2 jours)."""
+        self.ecrire_hors_mac(derniere_reussite="2026-10-12")
+        niveau, entree, _ = self.niveau("offsite")
+        self.assertEqual((niveau, entree["reason"]["key"], entree["reason"]["counts"]), ("warning", "warn_old", {"days": 2}))
 
-class Parite(Labo):
-    def test_sans_marqueur_aucune_ligne(self):
-        p, donnees = self.resultat_json()
-        self.assertNotIn("parity", [c["id"] for c in donnees["checks"]])
-        self.assertNotIn("parity", self.lancer().stdout)
+    def ecrire_journal_copie(self, lignes, jour="2026-10-14"):
+        """Faux journal de la copie hors du Mac, dans le faux dossier personnel ; sa date de dernière écriture est `jour`."""
+        chemin = self.journaux / "pmzilla-offsite-copy.log"
+        chemin.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+        heure = datetime.datetime.fromisoformat(jour + "T12:00:00").timestamp()
+        os.utime(chemin, (heure, heure))
 
-    def test_fenetre_ouverte_identique(self):
-        self.ouvrir_parite("identique")
-        niveau, _, _ = self.niveau("parity")
-        self.assertEqual(niveau, "ok")
-
-    def test_fenetre_ouverte_ecart(self):
-        self.ouvrir_parite("écart")
-        niveau, entree, p = self.niveau("parity")
-        self.assertEqual((niveau, entree["reason"]["key"]), ("problem", "divergence"))
+    def test_operation_not_permitted_est_un_probleme_meme_avec_une_copie_recente(self):
+        self.ecrire_hors_mac(derniere_reussite="2026-10-13")
+        self.ecrire_journal_copie(["copie faite", "find: .: Operation not permitted", "copie incomplète : db-2026-10-14 " + SENTINELLE])
+        niveau, entree, p = self.niveau("offsite")
+        self.assertEqual((niveau, entree["reason"]["key"]), ("problem", "not_permitted"))
         self.assertEqual(p.returncode, 1)
+        for args in ((), ("--json",), ("--language", "en")):
+            sortie = self.lancer(*args)
+            self.assertNotIn(SENTINELLE, sortie.stdout + sortie.stderr)
+            self.assertNotIn(str(self.maison), sortie.stdout + sortie.stderr)
 
-    def test_aucun_verdict_aujourd_hui_apres_l_heure_due(self):
-        self.ouvrir_parite("identique", jour="2026-10-13")
-        niveau, entree, p = self.niveau("parity")
-        self.assertEqual((niveau, entree["reason"]["key"]), ("warning", "no_verdict"))
-        self.assertEqual(p.returncode, 0)
+    def test_copie_incomplete_dans_le_journal_est_un_probleme(self):
+        self.ecrire_hors_mac(derniere_reussite="2026-10-13")
+        self.ecrire_journal_copie(["copie incomplète : db-2026-10-14 " + SENTINELLE])
+        niveau, entree, _ = self.niveau("offsite")
+        self.assertEqual((niveau, entree["reason"]["key"]), ("problem", "incomplete"))
 
-    def test_aucun_journal_de_verdict(self):
-        self.ouvrir_parite(None)
-        self.assertEqual(self.niveau("parity")[1]["reason"]["key"], "no_verdict")
+    def test_journal_sain_ou_absent_ne_change_rien(self):
+        self.ecrire_hors_mac(derniere_reussite="2026-10-14")
+        self.assertEqual(self.niveau("offsite")[0], "ok")
+        self.ecrire_journal_copie(["copie faite : db-2026-10-14", "copie faite : bmad-memory-2026-10-14"])
+        self.assertEqual(self.niveau("offsite")[0], "ok")
 
-    def test_avant_l_heure_due_pas_d_avertissement(self):
-        self.ouvrir_parite("identique", jour="2026-10-13")
-        self.assertEqual(self.niveau("parity", env={"PMZILLA_LAB_NOW": "06:00"})[0], "ok")
+    def test_un_echec_ancien_suivi_d_un_succes_n_est_plus_signale(self):
+        """Copie à la main réussie après l'échec planifié : le journal n'a pas été écrit après la dernière réussite."""
+        self.ecrire_hors_mac(derniere_reussite="2026-10-14")
+        self.ecrire_journal_copie(["find: .: Operation not permitted", "copie faite"], jour="2026-10-14")
+        self.assertEqual(self.niveau("offsite")[0], "ok")
 
-    def test_une_seule_ligne_pour_l_unique_fenetre(self):
-        self.ouvrir_parite("identique")
-        p, donnees = self.resultat_json()
-        self.assertEqual([c["id"] for c in donnees["checks"]].count("parity"), 1)
-        self.assertEqual(self.lancer().stdout.count("parity"), 1)
+    def test_seule_la_fin_du_journal_est_lue(self):
+        self.ecrire_hors_mac(derniere_reussite="2026-10-13")
+        self.ecrire_journal_copie(["find: .: Operation not permitted"] + ["copie faite"] * 60)
+        self.assertEqual(self.niveau("offsite")[0], "ok")
 
-    def test_la_comparaison_n_est_jamais_lancee(self):
-        self.ouvrir_parite("identique")
-        self.lancer()
-        self.assertEqual([a for a in self.appels() if "knowledge_import" in a or "parity" in a], [])
+    def test_journal_non_configure_ignore(self):
+        self.ecrire_hors_mac(configure=False)
+        self.ecrire_journal_copie(["find: .: Operation not permitted"])
+        self.assertEqual(self.niveau("offsite")[0], "skipped")
 
 
 if __name__ == "__main__":

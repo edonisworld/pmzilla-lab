@@ -49,7 +49,7 @@ TOP = {
     "types_bloquants": "blocking_link_types",
     "types_attente": "waiting_link_types",
 }
-# réglages supprimés : l'export de l'API a un format de date fixe (history_common.FORMAT_DATE). Les deux noms sont refusés.
+# réglages supprimés : les dates viennent de la base, sans format réglable. Les deux noms sont refusés.
 REGLAGES_IGNORES = {"format_date", "date_format"}
 # noms français de colonnes qui étaient dans les listes par défaut (export manuel de Jira), supprimés avec l'export
 # manuel : refusés, comparés sans casse, quand flux.yaml les redonne dans `columns`. Tout autre nom de colonne donné dans
@@ -65,7 +65,13 @@ INCHANGEES = {"jira_site", "jira_email", "jql_export", "jql_exports", "export_po
               "flow_views_min_cell",
               # R-58 : identifiant cloud, échéance du jeton, étiquettes déclarées, cycles, patches, Discovery Workflow, conservation
               "jira_cloud_id", "jira_token_expires", "jira_token_warning_days", "declared_labels", "cycles", "patches",
-              "discovery_workflow", "retention", "epic_types"}
+              "discovery_workflow", "retention", "epic_types",
+              # R-72 : projets exclus de la carte des dépendances seule (le rapport de flux ne le lit pas)
+              "dependency_excluded_projects",
+              # database-only D15 : passages consécutifs en 404 après lesquels la collecte de l'historique ne réinterroge plus un ticket
+              "history_not_found_limit",
+              # story-quality-audit D16 : bloc de la qualité des stories (lu strictement, `_valider_story_quality`)
+              "story_quality"}
 # réglage refusé dans tous les lecteurs (le PO responsable n'est pas stocké, conception D3) : le message porte la phrase clé
 # de la conception D19 dans les deux langues (ErreurConfig n'a pas de langue)
 REGLAGE_REFUSE = "export_po_field"
@@ -329,10 +335,13 @@ def migrate_file(chemin: Path, dry_run: bool = False) -> list[str]:
 
 CLE_CYCLE = re.compile(r"^(?P<annee>\d{4})-(?:C(?P<n>[1-6])|(?P<eoy>EOY))$")
 CLE_PATCH = re.compile(r"^(?P<annee>\d{4})-Q[1-4]$")
-ROLES_ETIQUETTES = ("up_merge", "cycle", "epic_review")
+ROLES_ETIQUETTES = ("up_merge", "cycle", "epic_review", "pilot_domain", "ready", "confirmation")
+SOUS_CLES_ROLE = {"cycle": ("cycle_keys",), "confirmation": ("meanings",)}      # clés propres à un rôle, en plus de prefix et labels
+SENS_CONFIRMATION = ("taken_in", "not_taken_in")
 CHAMPS_CYCLE = {"fix_version", "start", "end", "up_merge_provision", "base_version"}
-CHAMPS_DISCOVERY = {"columns", "start_column", "review_passed_columns", "validated_on"}
-# réglage de conservation -> (défaut, minimum)
+CHAMPS_DISCOVERY = {"columns", "start_column", "review_passed_columns", "validated_on", "ready_column", "active_columns"}
+# réglage de conservation -> (défaut, minimum). max_file_age_days garde son nom (change database-only, Q4) : il ne s'applique plus
+# qu'aux fichiers de points ; les fichiers laissés par la voie CSV sont hors règle quel que soit leur âge.
 CHAMPS_RETENTION = {"period_days": (365, 1), "max_file_age_days": (365, 0), "labelled_backup_days": (30, 1),
                     "offsite_flow_age_days": (35, 1)}
 ETIQUETTE_SAUVEGARDE = re.compile(r"[a-z0-9]+")
@@ -370,7 +379,7 @@ def _entier(valeur, minimum: int) -> bool:
 
 
 def _valider_nouveaux_blocs(interne: dict, source: str, lignes: dict) -> None:
-    """Valide les réglages R-58 présents (rien n'est lu pour un bloc absent) ; lève `ErreurConfig` (chemin et ligne)."""
+    """Valide les réglages R-58 et R-72 présents (rien n'est lu pour un bloc absent) ; lève `ErreurConfig` (chemin et ligne)."""
     if "jira_cloud_id" in interne and not (isinstance(interne["jira_cloud_id"], str) and interne["jira_cloud_id"].strip()):
         raise _refus_reglage(source, interne_lignes(lignes), "jira_cloud_id", "jira_cloud_id", "doit être une chaîne non vide")
     if "jira_token_expires" in interne and _date(interne["jira_token_expires"]) is None:
@@ -379,8 +388,11 @@ def _valider_nouveaux_blocs(interne: dict, source: str, lignes: dict) -> None:
     if "jira_token_warning_days" in interne and not _entier(interne["jira_token_warning_days"], 1):
         raise _refus_reglage(source, interne_lignes(lignes), "jira_token_warning_days", "jira_token_warning_days",
                              "doit être un entier supérieur à zéro")
+    if "history_not_found_limit" in interne and not _entier(interne["history_not_found_limit"], 1):
+        raise _refus_reglage(source, interne_lignes(lignes), "history_not_found_limit", "history_not_found_limit",
+                             "doit être un entier supérieur à zéro")
     if "declared_labels" in interne:
-        _valider_etiquettes(interne["declared_labels"], source, lignes)
+        _valider_etiquettes(interne["declared_labels"], source, lignes, interne.get("cycles"))
     if "cycles" in interne:
         _valider_cycles(interne["cycles"], source, lignes)
     if "patches" in interne:
@@ -389,11 +401,20 @@ def _valider_nouveaux_blocs(interne: dict, source: str, lignes: dict) -> None:
         _valider_discovery(interne["discovery_workflow"], source, lignes)
     if "retention" in interne:
         _valider_retention(interne["retention"], source, lignes)
+    if "dependency_excluded_projects" in interne:
+        valeur = interne["dependency_excluded_projects"]
+        if not (isinstance(valeur, list) and all(isinstance(p, str) and p.strip() for p in valeur)):
+            # message bilingue sur une ligne (ErreurConfig n'a pas de langue) ; jamais la valeur (conception D5)
+            raise ErreurConfig(f"{source} : {_ligne(interne_lignes(lignes), 'dependency_excluded_projects')}"
+                               "réglage invalide : dependency_excluded_projects, liste de clés de projet attendue "
+                               "/ invalid setting: dependency_excluded_projects, list of project keys expected")
     if "epic_types" in interne:
         valeur = interne["epic_types"]
         if not (isinstance(valeur, list) and valeur and all(isinstance(t, str) and t.strip() for t in valeur)):
             raise _refus_reglage(source, interne_lignes(lignes), "epic_types", "epic_types",
                                  "doit être une liste non vide de types de tickets (chaînes)")
+    if "story_quality" in interne:
+        _valider_story_quality(interne["story_quality"], source, lignes)
 
 
 def interne_lignes(lignes: dict):
@@ -411,20 +432,30 @@ def _bloc_dict(valeur, source: str, parent_lignes: dict, cle: str, chemin: str):
     return valeur
 
 
-def _valider_etiquettes(bloc, source: str, lignes: dict) -> None:
+def _valider_etiquettes(bloc, source: str, lignes: dict, cycles_bloc=None) -> None:
     """declared_labels : rôle -> {prefix, labels}. up_merge : exactement deux étiquettes (la première est le légal, la
-    seconde le hotfix). Chaque étiquette commence par le préfixe de son rôle ; aucune n'est déclarée deux fois."""
+    seconde le hotfix). Chaque étiquette commence par le préfixe de son rôle ; aucune n'est déclarée deux fois.
+    Rôles de epic-flow-report (conception D4b) : pilot_domain (exactement une étiquette), ready (au plus une ; valeur vide ou absente =
+    non configurée, sans message), confirmation (chaque étiquette a son sens dans `meanings` : taken_in ou not_taken_in) ; une étiquette
+    de cycle peut nommer dans `cycle_keys` la clé du bloc `cycles` qu'elle planifie. Jamais une valeur dans un message."""
     bloc = _bloc_dict(bloc, source, lignes, "declared_labels", "declared_labels")
     deja: dict[str, str] = {}
     for role, contenu in bloc.items():
         chemin = f"declared_labels.{role}"
         if role not in ROLES_ETIQUETTES:
-            raise _refus_reglage(source, bloc, role, chemin, "n'est pas un rôle connu (up_merge, cycle, epic_review)")
+            raise _refus_reglage(source, bloc, role, chemin, "n'est pas un rôle connu (" + ", ".join(ROLES_ETIQUETTES) + ")")
+        if role == "ready" and contenu is None:
+            continue
         contenu = _bloc_dict(contenu, source, bloc.lignes if hasattr(bloc, "lignes") else {}, role, chemin)
+        permises = ("prefix", "labels") + SOUS_CLES_ROLE.get(role, ())
         for sous in contenu:
-            if sous not in ("prefix", "labels"):
-                raise _refus_reglage(source, contenu, sous, f"{chemin}.{sous}", "n'existe pas (clés : prefix, labels)")
+            if sous not in permises:
+                raise _refus_reglage(source, contenu, sous, f"{chemin}.{sous}", f"n'existe pas (clés : {', '.join(permises)})")
         prefixe, etiquettes = contenu.get("prefix"), contenu.get("labels")
+        if role == "ready" and etiquettes in (None, []):          # étiquette Ready pas encore choisie : non configurée, pas une erreur
+            if prefixe is not None and not (isinstance(prefixe, str) and prefixe):
+                raise _refus_reglage(source, bloc, role, f"{chemin}.prefix", "doit être une chaîne non vide")
+            continue
         if not (isinstance(prefixe, str) and prefixe):
             raise _refus_reglage(source, bloc, role, f"{chemin}.prefix", "doit être une chaîne non vide")
         if not (isinstance(etiquettes, list) and etiquettes and all(isinstance(e, str) and e for e in etiquettes)):
@@ -432,6 +463,14 @@ def _valider_etiquettes(bloc, source: str, lignes: dict) -> None:
         if role == "up_merge" and len(etiquettes) != 2:
             raise _refus_reglage(source, contenu, "labels", f"{chemin}.labels",
                                  "doit déclarer exactement deux étiquettes (le légal puis le hotfix)")
+        if role == "pilot_domain" and len(etiquettes) != 1:
+            raise _refus_reglage(source, contenu, "labels", f"{chemin}.labels", "doit déclarer exactement une étiquette (le domaine)")
+        if role == "ready" and len(etiquettes) > 1:
+            raise _refus_reglage(source, contenu, "labels", f"{chemin}.labels", "doit déclarer au plus une étiquette (Ready)")
+        if role == "confirmation":
+            _valider_sens(contenu, etiquettes, source, bloc, role, chemin)
+        if role == "cycle" and "cycle_keys" in contenu:
+            _valider_cles_de_cycle(contenu, etiquettes, cycles_bloc, source, bloc, role, chemin)
         for e in etiquettes:
             if not e.startswith(prefixe):
                 raise _refus_reglage(source, contenu, "labels", f"{chemin}.labels",
@@ -440,6 +479,25 @@ def _valider_etiquettes(bloc, source: str, lignes: dict) -> None:
                 raise _refus_reglage(source, contenu, "labels", f"{chemin}.labels",
                                      f"déclare une étiquette déjà déclarée ({deja[e]})")
             deja[e] = f"{chemin}.labels"
+
+
+def _valider_sens(contenu, etiquettes: list, source: str, bloc, role: str, chemin: str) -> None:
+    """Rôle confirmation : `meanings` donne à chaque étiquette déclarée son sens (taken_in ou not_taken_in), et à elles seules."""
+    sens = contenu.get("meanings")
+    if not isinstance(sens, dict) or any(e not in sens for e in etiquettes) or any(e not in etiquettes for e in sens) \
+            or any(v not in SENS_CONFIRMATION for v in sens.values()):
+        raise _refus_reglage(source, bloc, role, f"{chemin}.meanings",
+                             f"doit donner à chaque étiquette de confirmation son sens ({', '.join(SENS_CONFIRMATION)})")
+
+
+def _valider_cles_de_cycle(contenu, etiquettes: list, cycles_bloc, source: str, bloc, role: str, chemin: str) -> None:
+    """Rôle cycle : `cycle_keys` associe une étiquette déclarée à une clé du bloc `cycles` ; la clé n'est jamais déduite du texte."""
+    cles = contenu.get("cycle_keys")
+    declarees = cycles_bloc if isinstance(cycles_bloc, dict) else {}
+    if not isinstance(cles, dict) or any(e not in etiquettes for e in cles) or any(not isinstance(v, str) or v not in declarees
+                                                                                    for v in cles.values()):
+        raise _refus_reglage(source, bloc, role, f"{chemin}.cycle_keys",
+                             "doit associer des étiquettes de ce rôle à des clés du bloc cycles")
 
 
 def _valider_cycles(bloc, source: str, lignes: dict) -> None:
@@ -564,6 +622,20 @@ def _valider_discovery(bloc, source: str, lignes: dict) -> None:
                              "contient une colonne qui n'est pas déclarée dans columns")
     if "validated_on" in bloc and _date(bloc["validated_on"]) is None:
         raise _refus_reglage(source, bloc, "validated_on", "discovery_workflow.validated_on", "doit être une date AAAA-MM-JJ")
+    # epic-flow-report (conception D4) : colonne Ready et colonnes actives, facultatives, jamais la valeur dans un message
+    prete = bloc.get("ready_column")
+    if prete is not None and (not isinstance(prete, str) or prete not in colonnes):
+        raise _refus_reglage(source, bloc, "ready_column", "discovery_workflow.ready_column",
+                             "n'est pas une colonne déclarée dans columns")
+    actives = bloc.get("active_columns", [])
+    if not isinstance(actives, list) or not all(isinstance(a, str) for a in actives):
+        raise _refus_reglage(source, bloc, "active_columns", "discovery_workflow.active_columns", "doit être une liste de colonnes")
+    if any(a not in colonnes for a in actives):
+        raise _refus_reglage(source, bloc, "active_columns", "discovery_workflow.active_columns",
+                             "contient une colonne qui n'est pas déclarée dans columns")
+    if prete is not None and prete in actives:
+        raise _refus_reglage(source, bloc, "active_columns", "discovery_workflow.active_columns",
+                             "contient la colonne Ready (ready_column)")
 
 
 def _valider_retention(bloc, source: str, lignes: dict) -> None:
@@ -584,6 +656,117 @@ def _valider_retention(bloc, source: str, lignes: dict) -> None:
     if "max_file_age_days" in bloc and bloc["max_file_age_days"] > bloc.get("period_days", CHAMPS_RETENTION["period_days"][0]):
         raise _refus_reglage(source, bloc, "max_file_age_days", "retention.max_file_age_days",
                              "dépasse la durée de conservation (period_days)")
+
+
+# --- bloc story_quality (change story-quality-audit, design D16) ---------------------------------------------------------------
+# Lecture stricte : une clé inconnue est refusée en nommant la clé, jamais la valeur. Aucune clé ne nomme le chemin de la surcouche de
+# l'organisation (il se déduit du dossier de contexte, design D17) : une telle clé est inconnue comme les autres.
+
+CHAMPS_STORY_QUALITY = ("queries", "issue_types", "acceptance_criteria_field", "engine", "review_sample_size", "grid_twin",
+                        "recurrence_threshold")
+OBLIGATOIRES_STORY_QUALITY = ("queries", "issue_types", "engine")
+CHAMPS_MOTEUR = ("model", "keychain_service", "timeout_seconds", "feedback_max_chars", "input_price_per_token",
+                 "output_price_per_token", "currency", "cap_per_launch")
+OBLIGATOIRES_MOTEUR = ("model", "keychain_service", "input_price_per_token", "output_price_per_token")   # le plafond : ErreurPlafond
+MOTEUR_DEFAUTS = {"timeout_seconds": 60, "feedback_max_chars": 600, "currency": "USD"}
+RETOUR_MAX_CARACTERES = 2000          # borne de la colonne feedback de quality.coaching_feedback (migration 0010)
+GENRES_STORY_QUALITY = ("story", "epic")
+NOM_REQUETE_STORY_QUALITY = re.compile(r"[A-Za-z0-9_-]+")
+IDENTIFIANT_CHAMP_JIRA = re.compile(r"[A-Za-z0-9_]+")
+
+
+class ErreurPlafond(ErreurConfig):
+    """Plafond par lancement absent ou invalide (design D5) : l'outil de qualité des stories le traduit en code 3 et en phrase de D14."""
+
+
+def _nombre(valeur) -> bool:
+    return isinstance(valeur, (int, float)) and not isinstance(valeur, bool)
+
+
+def _texte_non_vide(valeur) -> bool:
+    return isinstance(valeur, str) and bool(valeur.strip())
+
+
+def _cles_permises(bloc, permises, obligatoires, source: str, chemin: str, parent, cle_parent: str) -> None:
+    for sous in bloc:
+        if sous not in permises:
+            raise _refus_reglage(source, bloc, sous, f"{chemin}.{sous}", f"n'existe pas (clés : {', '.join(permises)})")
+    for sous in obligatoires:
+        if sous not in bloc:
+            raise _refus_reglage(source, parent, cle_parent, f"{chemin}.{sous}", "est obligatoire")
+
+
+def _valider_story_quality(bloc, source: str, lignes: dict) -> None:
+    """story_quality : requêtes nommées, types de tickets, champ des critères d'acceptation, moteur (plafond obligatoire), taille de
+    l'échantillon pilote, jumeau de la grille, seuil de récurrence. Lève `ErreurConfig` (`ErreurPlafond` pour le plafond)."""
+    racine = interne_lignes(lignes)
+    bloc = _bloc_dict(bloc, source, lignes, "story_quality", "story_quality")
+    _cles_permises(bloc, CHAMPS_STORY_QUALITY, OBLIGATOIRES_STORY_QUALITY, source, "story_quality", racine, "story_quality")
+    lignes_bloc = getattr(bloc, "lignes", {})
+    requetes = _bloc_dict(bloc["queries"], source, lignes_bloc, "queries", "story_quality.queries")
+    if not requetes:
+        raise _refus_reglage(source, bloc, "queries", "story_quality.queries", "doit nommer au moins une requête")
+    for nom, jql in requetes.items():
+        if not NOM_REQUETE_STORY_QUALITY.fullmatch(str(nom)):
+            raise _refus_reglage(source, bloc, "queries", "story_quality.queries",
+                                 "contient un nom de requête qui n'est pas fait de lettres, chiffres, - ou _")
+        if not _texte_non_vide(jql):
+            raise _refus_reglage(source, requetes, nom, f"story_quality.queries.{nom}", "doit être une requête JQL non vide")
+    types = _bloc_dict(bloc["issue_types"], source, lignes_bloc, "issue_types", "story_quality.issue_types")
+    if not types:
+        raise _refus_reglage(source, bloc, "issue_types", "story_quality.issue_types", "doit associer des types à story ou epic")
+    vus: dict[str, str] = {}
+    for genre, noms in types.items():
+        if genre not in GENRES_STORY_QUALITY:
+            raise _refus_reglage(source, types, genre, f"story_quality.issue_types.{genre}",
+                                 f"n'existe pas (clés : {', '.join(GENRES_STORY_QUALITY)})")
+        if not (isinstance(noms, list) and noms and all(_texte_non_vide(n) for n in noms)):
+            raise _refus_reglage(source, types, genre, f"story_quality.issue_types.{genre}",
+                                 "doit être une liste non vide de types de tickets (chaînes)")
+        for n in noms:
+            if n.strip() in vus and vus[n.strip()] != genre:
+                raise _refus_reglage(source, bloc, "issue_types", "story_quality.issue_types",
+                                     "associe un même type de ticket à story et à epic")
+            vus[n.strip()] = genre
+    if "acceptance_criteria_field" in bloc:
+        champ = bloc["acceptance_criteria_field"]
+        if not (isinstance(champ, str) and IDENTIFIANT_CHAMP_JIRA.fullmatch(champ.strip())):
+            raise _refus_reglage(source, bloc, "acceptance_criteria_field", "story_quality.acceptance_criteria_field",
+                                 "doit être un identifiant de champ Jira (lettres, chiffres, _)")
+    _valider_moteur(bloc, source)
+    if "review_sample_size" in bloc and not _entier(bloc["review_sample_size"], 1):
+        raise _refus_reglage(source, bloc, "review_sample_size", "story_quality.review_sample_size",
+                             "doit être un entier supérieur à zéro")
+    if "grid_twin" in bloc and not _texte_non_vide(bloc["grid_twin"]):
+        raise _refus_reglage(source, bloc, "grid_twin", "story_quality.grid_twin", "doit être un chemin non vide")
+    if "recurrence_threshold" in bloc:
+        seuil = bloc["recurrence_threshold"]
+        if not (_nombre(seuil) and 0 < seuil <= 1):
+            raise _refus_reglage(source, bloc, "recurrence_threshold", "story_quality.recurrence_threshold",
+                                 "doit être une part, supérieure à 0 et au plus 1")
+
+
+def _valider_moteur(bloc, source: str) -> None:
+    moteur = _bloc_dict(bloc["engine"], source, getattr(bloc, "lignes", {}), "engine", "story_quality.engine")
+    chemin = "story_quality.engine"
+    _cles_permises(moteur, CHAMPS_MOTEUR, OBLIGATOIRES_MOTEUR, source, chemin, bloc, "engine")
+    for cle in ("model", "keychain_service", "currency"):
+        if cle in moteur and not _texte_non_vide(moteur[cle]):
+            raise _refus_reglage(source, moteur, cle, f"{chemin}.{cle}", "doit être une chaîne non vide")
+    for cle in ("input_price_per_token", "output_price_per_token"):
+        if not (_nombre(moteur[cle]) and moteur[cle] >= 0):
+            raise _refus_reglage(source, moteur, cle, f"{chemin}.{cle}", "doit être un nombre positif ou nul")
+    if "timeout_seconds" in moteur and not _entier(moteur["timeout_seconds"], 1):
+        raise _refus_reglage(source, moteur, "timeout_seconds", f"{chemin}.timeout_seconds", "doit être un entier supérieur à zéro")
+    if "feedback_max_chars" in moteur and not (_entier(moteur["feedback_max_chars"], 1)
+                                               and moteur["feedback_max_chars"] <= RETOUR_MAX_CARACTERES):
+        raise _refus_reglage(source, moteur, "feedback_max_chars", f"{chemin}.feedback_max_chars",
+                             f"doit être un entier de 1 à {RETOUR_MAX_CARACTERES}")
+    if "cap_per_launch" not in moteur or not _entier(moteur["cap_per_launch"], 1):
+        cle = "cap_per_launch" if "cap_per_launch" in moteur else "engine"
+        cible = moteur if "cap_per_launch" in moteur else bloc
+        raise ErreurPlafond(f"{source} : {_ligne(cible, cle)}« {chemin}.cap_per_launch » est obligatoire et doit être un entier "
+                            "supérieur à zéro")
 
 
 # --- lecteurs normalisés : reçoivent le dictionnaire rendu par to_internal (déjà validé) ---
@@ -610,13 +793,29 @@ def token_expiry(interne: dict) -> tuple[datetime.date | None, int]:
     return _date(interne.get("jira_token_expires")), interne.get("jira_token_warning_days", 30)
 
 
+HISTORY_NOT_FOUND_RUNS_DEFAUT = 3
+
+
+def history_not_found_limit(interne: dict) -> int:
+    """Nombre de passages consécutifs de la collecte de l'historique où Jira répond 404 pour un ticket, après lesquels il est marqué
+    disparu et n'est plus interrogé (3 par défaut)."""
+    return interne.get("history_not_found_limit", HISTORY_NOT_FOUND_RUNS_DEFAUT)
+
+
 def declared_labels(interne: dict) -> dict | None:
     """Étiquettes déclarées : rôle -> {prefix, labels} ; None sans bloc. Pour up_merge, la première étiquette est le légal
     et la seconde le hotfix."""
     bloc = interne.get("declared_labels")
     if bloc is None:
         return None
-    return {role: {"prefix": c["prefix"], "labels": list(c["labels"])} for role, c in bloc.items()}
+    sortie = {}
+    for role, c in (bloc or {}).items():
+        c = c or {}
+        sortie[role] = {"prefix": c.get("prefix"), "labels": list(c.get("labels") or [])}
+        for cle in SOUS_CLES_ROLE.get(role, ()):          # cycle_keys (cycle), meanings (confirmation) : seulement quand écrits
+            if cle in c:
+                sortie[role][cle] = dict(c[cle])
+    return sortie
 
 
 def cycles(interne: dict) -> list[Cycle]:
@@ -640,7 +839,8 @@ def discovery_workflow(interne: dict) -> dict | None:
     validee = _date(bloc.get("validated_on"))
     return {"columns": {n: list(s) for n, s in bloc["columns"].items()}, "start_column": bloc.get("start_column"),
             "review_passed_columns": list(bloc.get("review_passed_columns", [])), "validated_on": validee,
-            "validated": validee is not None}
+            "validated": validee is not None, "ready_column": bloc.get("ready_column"),
+            "active_columns": list(bloc.get("active_columns", []))}
 
 
 def epic_types(interne: dict) -> list[str]:
@@ -656,6 +856,23 @@ def retention(interne: dict) -> dict:
     if "max_file_age_days" not in bloc:
         sortie["max_file_age_days"] = min(sortie["max_file_age_days"], sortie["period_days"])
     return sortie
+
+
+def story_quality(interne: dict) -> dict | None:
+    """Bloc story_quality normalisé (déjà validé par to_internal), ou None sans bloc : `queries` [(nom, JQL)] dans l'ordre du fichier,
+    `kinds` {type de ticket: "story" | "epic"}, `acceptance_criteria_field` (None sans réglage), `engine` (défauts appliqués),
+    `review_sample_size`, `grid_twin` et `recurrence_threshold` (None sans réglage)."""
+    bloc = interne.get("story_quality")
+    if bloc is None:
+        return None
+    champ = bloc.get("acceptance_criteria_field")
+    return {"queries": [(str(nom), str(jql).strip()) for nom, jql in bloc["queries"].items()],
+            "kinds": {n.strip(): genre for genre, noms in bloc["issue_types"].items() for n in noms},
+            "acceptance_criteria_field": champ.strip() if isinstance(champ, str) else None,
+            "engine": {**MOTEUR_DEFAUTS, **dict(bloc["engine"])},
+            "review_sample_size": bloc.get("review_sample_size"),
+            "grid_twin": bloc.get("grid_twin"),
+            "recurrence_threshold": bloc.get("recurrence_threshold")}
 
 
 def retention_days(interne: dict) -> int:

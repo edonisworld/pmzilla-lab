@@ -11,15 +11,17 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
+sys.path.append(str(RACINE / "tests" / "flux_jira"))
+import chargeur_csv as chargeur  # noqa: E402  (chargeur de fixtures, réservé aux tests : D11)
 import epic_statuses as outil  # noqa: E402
 import epic_statuses_messages  # noqa: E402
-import flow_export_reader  # noqa: E402
 import messages  # noqa: E402
 
 CLE = "ZQXKEY"                     # préfixe de clé distinctif
@@ -61,11 +63,37 @@ class Decor(unittest.TestCase):
     def ecrire_reglages(self, texte):
         (self.flux / "flux.yaml").write_text(texte, encoding="utf-8")
 
-    def lancer(self, *argv, env=None):
+    def faux_store(self, csv_donnes):
+        """Faux flow_store : les tickets des fixtures CSV (ceux de la ligne, sinon l'export du décor) et le cache d'historique du
+        décor, rendus comme la base les rend. Sans cache : aucun historique."""
+        chemins = csv_donnes or [str(self.export)]
+        faux = types.ModuleType("flow_store")
+        faux.lire_tickets_flux = lambda settings: chargeur.lire_tickets_flux(settings, [c for c in chemins if Path(c).exists()])
+        faux.lire_historique = lambda settings: (chargeur.lire_historique(settings, str(self.cache))
+                                                 if self.cache.exists() else {})
+        return faux
+
+    def lancer(self, *argv, env=None, brut=False):
+        """Lance l'outil dans le processus. Par défaut, les chemins .csv et la valeur de --history sont retirés de la ligne (la base
+        est remplacée par les fixtures) ; avec brut=True, la ligne est donnée telle quelle (tests de refus)."""
+        argv, csv_donnes = list(argv), []
+        if not brut:
+            ligne, i = [], 0
+            while i < len(argv):
+                if argv[i].endswith(".csv"):
+                    csv_donnes.append(argv[i])
+                elif argv[i] == "--history" and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                    i += 1
+                    ligne.append("--history")
+                else:
+                    ligne.append(argv[i])
+                i += 1
+            argv = ligne
         sortie = io.StringIO()
-        with contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(sortie):
+        with contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(sortie), \
+                mock.patch.dict(sys.modules, {"flow_store": self.faux_store(csv_donnes)}):
             try:
-                code = outil.main(list(argv), self.env if env is None else env)
+                code = outil.main(argv, self.env if env is None else env)
             except SystemExit as e:
                 code = e.code if isinstance(e.code, int) else 1
         return code, sortie.getvalue()
@@ -109,7 +137,8 @@ class TestRapport(Decor):
         self.assertEqual(lignes["Done"][0], "7")
         self.assertEqual(lignes["Draft"][1], "6")                 # arrivées en Draft : 6 épics
         self.assertIn("Review : 6", lignes["Draft"][2])
-        self.assertIn("Ready : <5", lignes["Draft"][2])
+        self.assertIn("Ready : masqué", lignes["Draft"][2])
+        self.assertIn("Tout compte inférieur à cinq est écrit « masqué ».", texte)    # le seuil reste dans l'introduction
         self.assertNotIn("Zzstory", texte)                         # la story n'est pas un épic
         for marque in DISTINCTIVES:
             self.assertNotIn(marque, texte)
@@ -123,7 +152,7 @@ class TestRapport(Decor):
         self.jeu_standard()
         self.lancer(str(self.export))
         review = next(l for l in self.rapport().splitlines() if l.startswith("| Review "))
-        self.assertEqual(review.split("|")[2].strip(), "<5")      # 2 épics actuellement
+        self.assertEqual(review.split("|")[2].strip(), "masqué")  # 2 épics actuellement
 
     def test_aucun_epic(self):
         self.ecrire_export([(f"{CLE}-1", "Story", "Draft")])
@@ -142,44 +171,60 @@ class TestRapport(Decor):
     def test_types_d_epics_du_reglage(self):
         self.ecrire_reglages("epic_types: [Initiative]\n")
         self.ecrire_export([(f"{CLE}-{i}", "Initiative", "Draft") for i in range(1, 7)] + [(f"{CLE}-99", "Epic", "Zzepic")])
+        self.ecrire_cache({f"{CLE}-1": [("Open", "Draft")]})
         code, _ = self.lancer(str(self.export))
         self.assertEqual(code, 0)
         texte = self.rapport()
         self.assertIn("| Draft | 6 |", texte)
         self.assertNotIn("Zzepic", texte)
 
-    def test_sans_historique(self):
+    def test_aucun_historique_dans_la_base(self):
         self.ecrire_export([(f"{CLE}-{i}", "Epic", "Draft") for i in range(1, 7)])
-        code, _ = self.lancer(str(self.export))
-        self.assertEqual(code, 0)
-        self.assertIn("Historique absent", self.rapport())
+        code, console = self.lancer()
+        self.assertEqual(code, 1)
+        self.assertIn("aucun historique dans la base : lancez d'abord la collecte de l'historique", console)
+        self.aucun_rapport()
 
-    def test_history_option(self):
+    def test_aucun_historique_dans_la_base_anglais(self):
+        self.ecrire_export([(f"{CLE}-{i}", "Epic", "Draft") for i in range(1, 7)])
+        code, console = self.lancer("--language", "en")
+        self.assertEqual(code, 1)
+        self.assertIn("no history in the database: run the history collection first", console)
+
+    def test_history_sans_valeur_accepte(self):
         self.jeu_standard()
-        autre = self.racine / "autre.json"
-        autre.write_text(self.cache.read_text(encoding="utf-8"), encoding="utf-8")
-        self.cache.unlink()
-        code, _ = self.lancer(str(self.export), "--history", str(autre))
+        code, _ = self.lancer("--history")
         self.assertEqual(code, 0)
         self.assertIn("Review : 6", self.rapport())
 
-    def test_cache_illisible_ne_dit_pas_le_nom(self):
+    def test_chemin_donne_a_history_refuse(self):
         self.jeu_standard()
-        self.cache.write_text("pas du json", encoding="utf-8")
-        code, console = self.lancer(str(self.export))
-        self.assertEqual(code, 1)
-        self.assertNotIn("transitions.json", console)
+        autre = self.racine / "autre.json"
+        autre.write_text(self.cache.read_text(encoding="utf-8"), encoding="utf-8")
+        code, console = self.lancer("--history", str(autre), brut=True)
+        self.assertEqual(code, 2)
+        self.assertIn("--history ne prend aucun fichier : l'historique est lu dans la base", console)
+        self.assertNotIn("autre.json", console)
         self.aucun_rapport()
 
-    def test_export_illisible_ne_dit_pas_le_nom(self):
-        code, console = self.lancer(str(self.flux / "exports" / f"{NOM_FICHIER}-absent.csv"))
-        self.assertEqual(code, 1)
+    def test_fichier_d_export_refuse(self):
+        self.jeu_standard()
+        code, console = self.lancer(str(self.export), brut=True)
+        self.assertEqual(code, 2)
+        self.assertIn("les fichiers d'export ne sont plus lus : la base est la seule source", console)
         self.assertNotIn(NOM_FICHIER, console)
+        self.aucun_rapport()
+
+    def test_refus_en_anglais_des_fichiers(self):
+        code, console = self.lancer(str(self.export), "--language", "en", brut=True)
+        self.assertEqual(code, 2)
+        self.assertIn("export files are no longer read: the database is the only source", console)
 
     def test_plusieurs_exports(self):
         self.ecrire_export([(f"{CLE}-{i}", "Epic", "Draft") for i in range(1, 4)])
         deuxieme = self.flux / "exports" / f"{NOM_FICHIER}-2.csv"
         self.ecrire_export([(f"{CLE}-{i}", "Epic", "Draft") for i in range(4, 8)], deuxieme)
+        self.ecrire_cache({f"{CLE}-1": [("Open", "Draft")]})
         self.lancer(str(self.export), str(deuxieme))
         self.assertIn("| Draft | 7 |", self.rapport())
 
@@ -224,9 +269,9 @@ class TestConsole(Decor):
 class TestSession(Decor):
     def test_refus_dans_une_session_sans_lire_de_fichier(self):
         self.jeu_standard()
-        with mock.patch.object(flow_export_reader, "lire_exports", side_effect=AssertionError("fichier lu")), \
-                mock.patch.object(outil.commun, "lire_cache", side_effect=AssertionError("fichier lu")), \
-                mock.patch.object(outil, "reglages", side_effect=AssertionError("fichier lu")):
+        with mock.patch.object(outil, "reglages", side_effect=AssertionError("réglage lu")), \
+                mock.patch.object(chargeur, "lire_tickets_flux", side_effect=AssertionError("base lue")), \
+                mock.patch.object(chargeur, "lire_historique", side_effect=AssertionError("base lue")):
             code, console = self.lancer(str(self.export), env={**self.env, "CLAUDECODE": "1"})
         self.assertEqual(code, 3)
         self.assertIn("Refusé dans une session Claude Code", console)
@@ -330,6 +375,23 @@ class TestDiscoveryWorkflow(Decor):
 class TestMessages(unittest.TestCase):
     def test_catalogues_coherents(self):
         self.assertEqual(messages.check_catalogs(epic_statuses_messages.CATALOGS), [])
+
+
+class TestCompteMasque(unittest.TestCase):
+    """masking-mutation-tests 6.2 : la limite du masquage de `compte` (SEUIL ±1, comparaison inversée, négation, retour None)."""
+
+    def test_limite_du_seuil(self):
+        fr = messages.Messages(epic_statuses_messages.CATALOGS, "fr")
+        self.assertEqual(outil.SEUIL, 5)
+        self.assertEqual(outil.compte(0, fr), "masqué")                 # idée #417 : le mot, jamais « <5 »
+        self.assertEqual(outil.compte(4, fr), "masqué")
+        self.assertEqual(outil.compte(5, fr), "5")
+        self.assertEqual(outil.compte(12, fr), "12")
+
+    def test_le_mot_suit_la_langue(self):
+        en = messages.Messages(epic_statuses_messages.CATALOGS, "en")
+        self.assertEqual(outil.compte(4, en), "masked")
+        self.assertEqual(outil.compte(5, en), "5")
 
 
 if __name__ == "__main__":

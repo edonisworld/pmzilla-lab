@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent.parent / "tools" / "flux_jira.py"
+SCRIPT = Path(__file__).resolve().parent / "lancer_flux_jira.py"          # database-only D11 : chargeur de test des fixtures CSV
 ENTETE = ["Issue key", "Issue Type", "Status", "Status Category", "Created", "Resolved", "Resolution"]
 AUJOURDHUI = "2026-10-04"
 

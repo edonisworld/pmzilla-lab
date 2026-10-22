@@ -1,6 +1,6 @@
 # Capabilities
 
-Four actions; each produces a structuring deliverable that the `pmzilla-critic` subagent examines before it is handed back.
+Five actions; each produces a structuring deliverable that the `pmzilla-critic` subagent examines before it is handed back.
 
 ## Built-in
 
@@ -10,6 +10,7 @@ Four actions; each produces a structuring deliverable that the `pmzilla-critic` 
 | ME | Choose and read metrics | Metrics suited to the question (flow, DORA), reading pitfalls, alert thresholds | `references/choose-and-read-metrics.md` |
 | RI | Review a Scrum or Kanban ritual | Intent of the ritual, observed drift, proposed adjustment | `references/review-ritual.md` |
 | QI | Work on built-in quality | Where quality is lost in the flow, XP or DevOps practices suited to the context | `references/built-in-quality.md` |
+| SQ | Audit a pasted story (or an epic's readiness and splitting) | One verdict per criterion of the effective grid with its reason and source, rewrite suggestions for the PO; nothing written unless the user asks to keep | `references/audit-pasted-story.md` |
 
 If the user asks to keep the deliverable, save it as Markdown in `<project-root>/_bmad-output/pmzilla/` under `YYYY-MM-DD-subject.md`, with the posture, the request and the library sources used at the top. The wake script prints `Project root:` and `Sanctum:` right after the MODE line: `<project-root>` and `<sanctum>` stand for those paths.
 

@@ -2,7 +2,7 @@
 description: Implements an OpenSpec change task by task on its own branch (tests first, one commit per group, no push, no merge)
 argument-hint: "<change name>"
 model: sonnet
-allowed-tools: Read, Grep, Glob, Edit, Write, Agent, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git checkout -b:*), Bash(git add:*), Bash(ls:*), Bash(openspec list:*), Bash(bash tests/run_all.sh:*), Bash(uv run tools/identifiants_personnels.py:*)
+allowed-tools: Read, Grep, Glob, Edit, Write, Agent, Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(ls:*), Bash(openspec list:*), Bash(bash tests/run_all.sh:*), Bash(uv run tools/identifiants_personnels.py:*)
 ---
 
 Implement the OpenSpec change: $ARGUMENTS
@@ -14,7 +14,8 @@ Language: this command is written in English, but serve the user in THEIR langua
 ## Start
 
 1. Read `openspec/changes/<change>/` (proposal, design, tasks, delta specs). If the folder does not exist, or the change is archived (it sits under `openspec/changes/archive/`), say so, name the change and write nothing.
-2. If the current branch is `main`, create and switch to a branch whose last name segment is the change name (for example `feat/<change>`) BEFORE writing anything. Never write or commit on `main`.
+   Review point: check that the proposal has the section "What Mothra will consume" and that the design leaves no business logic only in the formatting of a command's output. If not, say so to the user before the first commit; do not invent the section.
+2. If the current branch is `main` in the workspace, refuse (finish-under-lock D18): write nothing and change no Status; print, labelled as the user's commands, `bash tools/worktree.sh feat/<change>` (a branch whose last name segment is the change name), then `cd <worktree folder printed by the script> && claude` and `/implement <change>` in that new session; then stop. Never write or commit on `main`.
 3. Follow `tasks.md` in order. Its section "Order, commits and parallel work" decides the commits and what may run in parallel: launch agents in ONE message and only for work on distinct files; edit shared files (installation guide, the shell list of the runner, the settings file) yourself, one group at a time.
 
 ## Permanent rules

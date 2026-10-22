@@ -21,6 +21,8 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "tools"))
+sys.path.insert(0, str(HERE))
+import fake_gh_core  # noqa: E402
 import gh_issue as g  # noqa: E402
 import roadmap_model as rm  # noqa: E402
 
@@ -72,7 +74,7 @@ class Base(unittest.TestCase):
         self.st = new_state()
         self.save()
         env = {"PMZILLA_GH": str(HERE / "fake_gh"), "FAKE_GH_STATE": str(self.state_path), "FAKE_GH_LOG": str(self.log_path),
-               "PMZILLA_LAB_SENSITIVE_NAMES": str(self.names), "PMZILLA_GH_PAUSE": "0", "ROADMAP_TODAY": "2026-10-12"}
+               "PMZILLA_LAB_SENSITIVE_NAMES": str(self.names), "PMZILLA_LAB_WORKSPACE": str(self.root), "PMZILLA_GH_PAUSE": "0", "ROADMAP_TODAY": "2026-10-12"}
         p = mock.patch.dict(os.environ, env)
         p.start()
         self.addCleanup(p.stop)
@@ -89,6 +91,31 @@ class Base(unittest.TestCase):
         self.addCleanup(q.stop)
         self.head = ("chore/r65-fixes", "abc1234")      # (branche ou None en tête détachée, commit court)
         q = mock.patch.object(g, "git_head", lambda: self.head)
+        q.start()
+        self.addCleanup(q.stop)
+        if not self.REEL:
+            self.faux_gh_dans_le_processus()
+
+    REEL = False        # True : le faux gh tourne toujours dans un vrai processus (tests du lancement)
+
+    def faux_gh_dans_le_processus(self):
+        """Remplace le lanceur de processus pour l'exécutable du faux gh : l'appel va au cœur du faux gh, dans le processus.
+        Un mode de blocage (hang_*) garde le vrai processus : seul lui montre qu'un enfant bloqué est tué par la limite."""
+        vrai = subprocess.run
+        faux = str(HERE / "fake_gh")
+
+        def lance(cmd, *args, **kwargs):
+            if cmd[0] != faux:
+                return vrai(cmd, *args, **kwargs)
+            mode = json.loads(self.state_path.read_text(encoding="utf-8")).get("mode", {})
+            if mode.get("hang_reads") or mode.get("hang_writes_after") is not None:
+                return vrai(cmd, *args, **kwargs)
+            stdin = kwargs["input"] if "input" in kwargs else ""
+            devnull = kwargs.get("stdin") is subprocess.DEVNULL
+            code, out, err = fake_gh_core.handle(cmd[1:], stdin, kwargs["env"], devnull)
+            return subprocess.CompletedProcess(cmd, code, out, err)
+
+        q = mock.patch.object(g.subprocess, "run", lance)
         q.start()
         self.addCleanup(q.stop)
 
@@ -342,19 +369,6 @@ class Depot(Base):
         self.assertEqual(code, 2)
         self.assertIn("origin", err)
         self.assertEqual(self.calls(), [])
-
-    def test_gh_tourne_dans_la_racine_du_depot(self):
-        with mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
-            self.run_cli("ensure-labels")
-        self.assertTrue(run.call_args_list)
-        for c in run.call_args_list:
-            self.assertEqual(c.kwargs.get("cwd"), self.root)
-
-    def test_variable_d_environnement_respectee(self):
-        with mock.patch.dict(os.environ, {"PMZILLA_GH": str(Path(self.tmp.name) / "absent")}):
-            code, _, err = self.run_cli("ensure-labels")
-        self.assertEqual(code, 5)
-        self.assertIn("gh not found", err)
 
     def test_texte_de_l_outil_sans_suppression(self):
         import io as _io
@@ -724,7 +738,7 @@ class Fermeture(Base):
 class Idempotence(Base):
     def test_etiquettes_et_jalons_deja_la(self):
         code, out, _ = self.run_cli("ensure-labels")
-        self.assertIn("created 17 label(s)", out)
+        self.assertIn("created 18 label(s)", out)
         n = len(self.calls(writes_only=True))
         self.assertIn("nothing to do", self.run_cli("ensure-labels")[1])
         self.assertEqual(len(self.calls(writes_only=True)), n)
@@ -847,6 +861,59 @@ class Idees(Base):
     def test_ensure_labels_cree_l_etiquette_des_idees(self):
         self.run_cli("ensure-labels")
         self.assertIn("type:idea", {l["name"] for l in self.load()["labels"]})
+
+
+# --- Valeur et jalon des idées (#184) -----------------------------------------------------------------------------
+
+class ValeurEtJalonDesIdees(Base):
+    def idea(self, title="Une idée à suivre", body="Résumé court."):
+        return self.run_cli("new-idea", "--title", title, "--body", body)
+
+    def ideas(self):
+        return [i for i in self.load()["issues"] if "<!-- roadmap-idea:" in i["body"]]
+
+    def labels_of(self, n):
+        return [l["name"] for l in self.load()["issues"][n - 1]["labels"]]
+
+    def test_new_idea_avec_jalon_et_valeur(self):
+        code, out, err = self.run_cli("new-idea", "--title", "Idée chiffrée", "--body", "Résumé.", "--milestone", "Hydra", "--value", "2")
+        self.assertEqual(code, 0, err)
+        (issue,) = self.ideas()
+        self.assertEqual(issue["milestone"]["title"], "Hydra")
+        self.assertEqual(sorted(l["name"] for l in issue["labels"]), ["type:idea", "value:2"])
+        self.assertIn("value:2", {l["name"] for l in self.load()["labels"]})
+
+    def test_new_idea_jalon_inconnu_ou_valeur_invalide(self):
+        code, _, err = self.run_cli("new-idea", "--title", "A", "--body", "x", "--milestone", "Inconnu")
+        self.assertEqual(code, 7)
+        self.assertIn("unknown milestone", err)
+        code, _, err = self.run_cli("new-idea", "--title", "A", "--body", "x", "--value", "4")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.calls(writes_only=True), [])
+
+    def test_edit_idea_change_jalon_et_valeur(self):
+        self.idea()
+        code, out, err = self.run_cli("edit-idea", "1", "--milestone", "Namazu", "--value", "1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.load()["issues"][0]["milestone"]["title"], "Namazu")
+        self.assertEqual(sorted(self.labels_of(1)), ["type:idea", "value:1"])
+        code, out, err = self.run_cli("edit-idea", "#1", "--value", "3")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(self.labels_of(1)), ["type:idea", "value:3"])
+        n = len(self.calls(writes_only=True))
+        code, out, _ = self.run_cli("edit-idea", "1", "--value", "3", "--milestone", "Namazu")
+        self.assertIn("nothing to do", out)
+        self.assertEqual(len(self.calls(writes_only=True)), n)
+
+    def test_edit_idea_sans_option_ou_jalon_inconnu(self):
+        self.idea()
+        self.assertEqual(self.run_cli("edit-idea", "1")[0], 2)
+        self.assertEqual(self.run_cli("edit-idea", "1", "--milestone", "Inconnu")[0], 7)
+
+    def test_edit_idea_refuse_une_feature(self):
+        self.add_feature(5)
+        self.assertEqual(self.run_cli("edit-idea", "1", "--value", "1")[0], 7)
+        self.assertEqual(self.calls(writes_only=True), [])
 
 
 # --- Hors ligne, scope, refus de GitHub ---------------------------------------------------------------------------
@@ -1048,31 +1115,6 @@ class Bornes(Base):
         self.assertIn("state unknown: GitHub unreachable after 1 confirmed write(s); "
                       f"check with {self.SHOW} R-1, then run the same command again", err)
         self.assertNotIn("nothing was sent", out + err)
-
-    def test_entree_standard_fermee_et_invites_desactivees(self):
-        with mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
-            code, _, err = self.run_cli("ensure-labels")
-        self.assertEqual(code, 0, err)
-        reads = [c for c in run.call_args_list if "input" not in c.kwargs]
-        sends = [c for c in run.call_args_list if "input" in c.kwargs]
-        self.assertTrue(reads and sends)
-        for c in reads:
-            self.assertIs(c.kwargs["stdin"], subprocess.DEVNULL)
-        for c in run.call_args_list:
-            self.assertEqual(c.kwargs["env"]["GH_PROMPT_DISABLED"], "1")
-            self.assertEqual(c.kwargs["timeout"], 1.0)
-        for c in self.calls():
-            self.assertEqual(c["prompt_disabled"], "1")
-            if not c["write"]:
-                self.assertTrue(c["stdin_devnull"])
-                self.assertEqual(c["stdin"], "")
-
-    def test_delai_par_defaut(self):
-        with mock.patch.dict(os.environ):
-            os.environ.pop("PMZILLA_GH_TIMEOUT")
-            with mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
-                self.run_cli("ensure-milestone", "Hydra")
-        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 60.0)
 
     # --- classement sans en-têtes
 
@@ -1628,6 +1670,76 @@ class EtiquetteEditionPublique(Base):
         self.assertEqual(self.calls(writes_only=True), [])
         self.assertNotIn(self.ETIQUETTE, self.etiquettes("R-1"))
         self.no_leak(out, err)
+
+
+# --- Le faux gh : dans le processus par défaut, en vrai processus pour ce qui vise le lancement -------------------------
+
+class FauxGhDansLeProcessus(Base):
+    def test_aucun_processus_pour_une_commande_ordinaire(self):
+        with mock.patch.object(fake_gh_core, "handle", wraps=fake_gh_core.handle) as handle:
+            code, _, err = self.run_cli("ensure-labels")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(handle.call_args_list)
+        self.assertTrue(self.calls())
+
+    def test_un_blocage_reste_en_vrai_processus(self):
+        self.st["mode"] = {"hang_reads": True}
+        self.save()
+        with mock.patch.object(fake_gh_core, "handle", wraps=fake_gh_core.handle) as handle:
+            with mock.patch.dict(os.environ, {"PMZILLA_GH_TIMEOUT": "0.5"}):
+                code, _, err = self.run_cli("ensure-labels")
+        self.assertEqual(code, 5)
+        self.assertEqual(handle.call_args_list, [])
+
+
+class ProcessusReel(Base):
+    """Les tests qui visent le lancement lui-même : le faux gh tourne dans un vrai processus (REEL)."""
+    REEL = True
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.dict(os.environ, {"PMZILLA_GH_TIMEOUT": "1"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_entree_standard_fermee_et_invites_desactivees(self):
+        with mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
+            code, _, err = self.run_cli("ensure-labels")
+        self.assertEqual(code, 0, err)
+        reads = [c for c in run.call_args_list if "input" not in c.kwargs]
+        sends = [c for c in run.call_args_list if "input" in c.kwargs]
+        self.assertTrue(reads and sends)
+        for c in reads:
+            self.assertIs(c.kwargs["stdin"], subprocess.DEVNULL)
+        for c in run.call_args_list:
+            self.assertEqual(c.kwargs["env"]["GH_PROMPT_DISABLED"], "1")
+            self.assertEqual(c.kwargs["timeout"], 1.0)
+        for c in self.calls():
+            self.assertEqual(c["prompt_disabled"], "1")
+            if not c["write"]:
+                self.assertTrue(c["stdin_devnull"])
+                self.assertEqual(c["stdin"], "")
+
+    def test_delai_par_defaut(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PMZILLA_GH_TIMEOUT")
+            with mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
+                self.run_cli("ensure-milestone", "Hydra")
+        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 60.0)
+
+    def test_gh_tourne_dans_la_racine_du_depot(self):
+        with mock.patch.dict(os.environ, {"PMZILLA_GH_TIMEOUT": "60"}), mock.patch.object(g.subprocess, "run", wraps=g.subprocess.run) as run:
+            self.run_cli("ensure-labels")
+        self.assertTrue(run.call_args_list)
+        for c in run.call_args_list:
+            self.assertEqual(c.kwargs.get("cwd"), self.root)
+            self.assertEqual(c.kwargs["timeout"], 60.0)   # la limite d'origine de ce test (classe Depot), pas la seconde de la classe
+
+    def test_variable_d_environnement_respectee(self):
+        with mock.patch.dict(os.environ, {"PMZILLA_GH": str(Path(self.tmp.name) / "absent"), "PMZILLA_GH_TIMEOUT": "60"}):
+            code, _, err = self.run_cli("ensure-labels")
+        self.assertEqual(code, 5)
+        self.assertIn("gh not found", err)
 
 
 if __name__ == "__main__":

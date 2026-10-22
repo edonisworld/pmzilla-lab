@@ -49,8 +49,8 @@ Codes de sortie des commandes qui lisent ou écrivent l'état : 4 si la base ne 
 lecture de flux, de page ou d'export et avant toute écriture de fichier.
 
 Variables d'environnement (toutes facultatives) :
-    VEILLE_LAB_DIR       dossier des articles      (défaut ~/PMZilla-Lab/workspace/Watch-Lab)
-    VEILLE_LAB_SOURCES   fichier des sources       (défaut ~/PMZilla-Lab/workspace/watch/sources.yaml)
+    VEILLE_LAB_DIR       dossier des articles      (défaut <dossier de contenu>/Watch-Lab)
+    VEILLE_LAB_SOURCES   fichier des sources       (défaut <dossier de contenu>/watch/sources.yaml)
     PMZILLA_LAB_KNOWLEDGE_DBNAME   autre base de l'instance (essais, tests)
 """
 from __future__ import annotations
@@ -72,12 +72,13 @@ import httpx
 import yaml
 from yaml_strict import ErreurConfig, charger
 
+import lab_paths
 import watch_paths
 import watch_store
 
 # Les dossiers de contenu vivent dans le dépôt, mais leur contenu est exclu par .gitignore
 # Noms de dossiers : watch_paths donne le nom actuel et refuse un dossier resté à l'ancien nom
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 WATCH_DIR = Path(os.environ.get("VEILLE_LAB_DIR") or watch_paths.lab_dir(WORKSPACE)).expanduser()
 ARTICLES_DIR = WATCH_DIR / watch_paths.collection_name(WATCH_DIR)   # le nom du dossier devient le nom de la collection
 

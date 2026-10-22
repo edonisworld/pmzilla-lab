@@ -93,11 +93,6 @@ class Base(unittest.TestCase):
         return code, sortie.getvalue(), erreur.getvalue()
 
     def appels(self):
-        if not self.journal.exists():
-            return []
-        return [json.loads(l) for l in self.journal.read_text(encoding="utf-8").splitlines() if l]
-
-    def appels(self):
         return [json.loads(l) for l in self.journal.read_text(encoding="utf-8").splitlines()] if self.journal.exists() else []
 
     def cache(self):
@@ -246,6 +241,15 @@ class TestCheck(Base):
             self.assertTrue(any(f"R-1/g{g} :" in l for l in lignes), g)
         for g in (1, 2):
             self.assertFalse(any(f"R-1/g{g} :" in l for l in lignes), g)
+
+    def test_tache_utilisateur_autonome_cle_u(self):
+        """Une tâche R-<n>/u<k> (gh_issue new-task) est une sous-issue valide : type:task + owner:user, parent feature."""
+        tache = sous_issue(1, 1, 101, labels=[rm.LABEL_TASK, rm.LABEL_USER], number=601)
+        tache["title"] = rm.feature_title(1, "Valider le brouillon")
+        tache["body"] = rm.marker(rm.user_task_key(1, 1)) + "\n\nTexte."
+        self.depot(feature(1), tache)
+        code, sortie, _ = self.lance("check")
+        self.assertEqual(code, 0, sortie)
 
     def test_sous_issue_dont_le_parent_n_est_pas_une_feature(self):
         self.depot(feature(1), sous_issue(1, 1, 101, number=601), sous_issue(1, 2, 601, number=602))

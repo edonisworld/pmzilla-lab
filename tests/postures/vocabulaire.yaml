@@ -34,6 +34,8 @@ fr:
   hypothesis: "Hypothèse"
   case_citation: "Cas n°{number}, soumis par {author}, {date}, résultat : {outcome}"
   critic_final_title: "Ma lecture de cette critique"
+  context_note_citation: "Note de contexte « {title} », {date}, {nature}, source : {source}"
+  stale_context_note: "possiblement périmée (à revoir depuis le {review})"
   critic_plain_start:
     - 'Ce que Critic (conteste|a relevé|relève)'
     - 'Objections de Critic'
@@ -58,6 +60,8 @@ en:
   hypothesis: "Hypothesis"
   case_citation: "Case no. {number}, submitted by {author}, {date}, outcome: {outcome}"
   critic_final_title: "My reading of this critique"
+  context_note_citation: 'Context note "{title}", {date}, {nature}, source: {source}'
+  stale_context_note: "possibly out of date (review due since {review})"
   critic_plain_start:
     - 'What Critic (challenges|raised|flags)'
     - "Critic['’]s objections"

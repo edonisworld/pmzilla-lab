@@ -29,6 +29,7 @@ RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_settings_deny import motif_en_regex  # noqa: E402
 from test_settings_deny_offsite_backup import glob_en_regex  # noqa: E402
+from test_settings_deny_read_absolu import REGLES_COMPLEMENT  # noqa: E402
 
 REGLAGES = RACINE / ".claude" / "settings.json"
 
@@ -113,9 +114,7 @@ COMMANDES_PERMISES = (
     "grep -n Epic Flux-Lab/rapports/statuts-epics-2026-10-13.md", "cat Flux-Lab/rapports/cycles-serie-a-2026-10-13.md",
     "ls Flux-Lab/rapports", "cat Flux-Lab/flux.yaml", "head Flux-Lab/flux.yaml", "grep -n cycles Flux-Lab/flux.yaml",
     "cat /Users/quelquun/PMZilla-Lab/workspace/Flux-Lab/flux.yaml", "cat ~/PMZilla-Lab/workspace/Flux-Lab/flux.yaml",
-    "uv run tools/flux_jira.py compute exports.csv", "uv run tools/flux_jira.py compute exports.csv --name serie-a --source csv",
-    "uv run --with numpy tools/flux_jira.py compute exports.csv --name cycles --scope PROJ", "python3 tools/flux_jira.py compute cycles.csv",
-    "uv run tools/flux_jira.py statuses exports.csv", "uv run tools/flux_jira.py compare --name serie-a", "cat tools/flux_jira.py",
+    "uv run tools/flux_jira.py compare --name serie-a", "python3 tools/flux_jira.py config migrate --dry-run", "cat tools/flux_jira.py",
     "grep -n cycles tools/flux_jira.py", "uv run tools/flow_views.py list",
 )
 COMMANDES_PERMISES_TERMINAL = tuple(c for c in COMMANDES_PERMISES if not c.startswith("Read:"))
@@ -233,7 +232,7 @@ class ReglesExistantes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         deny = json.loads(REGLAGES.read_text(encoding="utf-8"))["permissions"]["deny"]
-        cls.moteur = Moteur([r for r in deny if r not in REGLES_D18])
+        cls.moteur = Moteur([r for r in deny if r not in REGLES_D18 and r not in REGLES_COMPLEMENT])
 
     def test_commandes_permises_non_refusees_par_les_regles_d_avant(self):
         refusees = {c for c in COMMANDES_PERMISES_TERMINAL if self.moteur.interdite(c)}
@@ -259,12 +258,12 @@ class DansLeFichierDeReglages(unittest.TestCase):
 
     def test_les_regles_sont_dans_settings_json(self):
         if not self.presentes:
-            self.skipTest("étape 15.9 : l'utilisateur n'a pas encore ajouté les règles")
+            self.fail("étape 15.9 : l'utilisateur n'a pas encore ajouté les règles")
         self.assertEqual(self.manquantes, [], f"{len(self.manquantes)} règle(s) de REGLES_D18 absente(s) de .claude/settings.json")
 
     def test_la_matrice_des_formes_contre_les_regles_reelles(self):
         if not self.presentes:
-            self.skipTest("étape 15.9 : l'utilisateur n'a pas encore ajouté les règles")
+            self.fail("étape 15.9 : l'utilisateur n'a pas encore ajouté les règles")
         if self.manquantes:
             self.skipTest("règles partielles : voir test_les_regles_sont_dans_settings_json")
         matrice = type("MatriceReelle", (Matrice, unittest.TestCase), {"moteur": Moteur(self.deny)})("verifier_formes_refusees")

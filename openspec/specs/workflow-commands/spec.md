@@ -62,7 +62,7 @@ The system SHALL make `/implement` and `/close` tick a task only when the suite 
 Source: .claude/commands/implement.md, .claude/commands/close.md; untested
 
 ### Requirement: /close closes a change and hands the merge to the user
-The system SHALL provide a `/close <change>` command that, in order, ticks tasks under the tick rule, updates the application document's status line, syncs the sub-issues of the feature naming this change through the write tool, archives the change, closes that feature, commits after a targeted green run and prints the finishing command. It SHALL NOT add a CHANGELOG entry, touch an evolutions document, run the finishing script, push or merge. Untested until implemented.
+The system SHALL provide a `/close <change>` command that, in order, ticks tasks under the tick rule, updates the application document's status line, syncs the sub-issues of the feature naming this change through the write tool, archives the change, closes that feature, commits after a targeted green run and prints the finishing command. It SHALL NOT add a CHANGELOG entry, touch an evolutions document, run the finishing script, push or merge.
 
 #### Scenario: All tasks covered
 - **WHEN** every task's suite passes, no user-step sub-issue is open and the user confirms
@@ -107,7 +107,7 @@ The system SHALL make `/add-books` state that the daily watch run imports into t
 Source: .claude/commands/add-books.md; the body naming the conversion, sort and indexing scripts: tests/workflow_commands/test_workflow_commands.py
 
 ### Requirement: Workflow command files state and respect their limits
-The system SHALL keep the workflow command files under the commands folder, written in English and serving the user in the user's language, and SHALL include a test that checks, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the file exists, that its header has a description, that its header pre-approves none of the forbidden launches (real Jira subcommands, flow import and compare, knowledge import's import, verify and status, database scripts and clients, database-sourced calculations, book conversion, sorting and indexing, the branch-finishing script, the owner bypass variable, push, merge, hook bypass, the evaluation set, the roadmap import tool), that its header pre-approves no launcher without a restriction (a bare shell, Python or uv launcher, or the shell tool without a pattern), that its body names the forbidden actions, and that its body says it serves the user in the user's language. The test SHALL also check that `/next` pre-approves only the queue reader's next command, and that no command header pre-approves the GitHub write tool or any `gh` command. The command files SHALL NOT contain a person's, team's or project's name. Untested until implemented.
+The system SHALL keep the workflow command files under the commands folder, written in English and serving the user in the user's language, and SHALL include a test that checks, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the file exists, that its header has a description, that its header pre-approves none of the forbidden launches (real Jira subcommands, flow import and compare, knowledge import's import, verify and status, database scripts and clients, database-sourced calculations, book conversion, sorting and indexing, the branch-finishing script, the owner bypass variable, push, merge, hook bypass, the evaluation set, the roadmap import tool), that its header pre-approves no launcher without a restriction (a bare shell, Python or uv launcher, or the shell tool without a pattern), that its body names the forbidden actions, and that its body says it serves the user in the user's language. The test SHALL also check that `/next` pre-approves only the queue reader's next command, and that no command header pre-approves the GitHub write tool or any `gh` command. The command files SHALL NOT contain a person's, team's or project's name.
 
 #### Scenario: Forbidden pre-approval
 - **WHEN** a workflow command header pre-approves the knowledge import
@@ -126,7 +126,7 @@ The system SHALL keep the workflow command files under the commands folder, writ
 - **THEN** the test passes
 
 ### Requirement: /start launches one job of the work queue
-The system SHALL provide a `/start <id>` command that runs the queue reader's check and show commands first, and SHALL refuse, saying why and writing nothing, a feature that is unknown, has an open blocker, is before its not-before date, or whose Status is not `Ready` outside the resume case. It SHALL ask the user to confirm non-empty conditions, and to switch model when the feature's differs, before any write. Untested until implemented.
+The system SHALL provide a `/start <id>` command that runs the queue reader's check and show commands first, and SHALL refuse, saying why and writing nothing, a feature that is unknown, has an open blocker, is before its not-before date, or whose Status is not `Ready` outside the resume case. It SHALL ask the user to confirm non-empty conditions, and to switch model when the feature's differs, before any write.
 
 #### Scenario: Job not startable
 - **WHEN** the user starts a feature that is `Todo`, closed, blocked by an open feature or before its not-before date
@@ -210,7 +210,7 @@ The system SHALL make every workflow command file, and the session instructions 
 - **THEN** the commit is a bare `git commit` and the name guard of the pre-commit hook finds the workspace's list through the session's environment
 
 ### Requirement: The CHANGELOG is frozen
-The system SHALL keep `CHANGELOG.md` as a frozen history ending on 2026-10-13, whose introduction says the history continues in the GitHub releases (design D1). It SHALL include a test that fails, naming the heading, when a dated heading later than that date appears or the introduction loses that sentence. No command, agent, skill or session instruction SHALL tell to add, rewrite or remove an entry. Untested until implemented.
+The system SHALL keep `CHANGELOG.md` as a frozen history ending on 2026-10-13, whose introduction says the history continues in the GitHub releases (design D1). It SHALL include a test that fails, naming the heading, when a dated heading later than that date appears or the introduction loses that sentence. No command, agent, skill or session instruction SHALL tell to add, rewrite or remove an entry.
 
 #### Scenario: New dated entry
 - **WHEN** a `## 2026-10-14` heading is added to the CHANGELOG
@@ -225,7 +225,7 @@ The system SHALL keep `CHANGELOG.md` as a frozen history ending on 2026-10-13, w
 - **THEN** every entry dated up to 2026-10-13 is unchanged, byte for byte
 
 ### Requirement: Every mention of the CHANGELOG says it is frozen
-The system SHALL include a test that reads the command, agent and skill files and the session instructions, and fails, naming file and line, when a line names the CHANGELOG without the word `frozen` (design D2). The test SHALL also fail when a changelog update command or skill exists. The system SHALL NOT provide a command, skill or hook that writes changelog entries. Untested until implemented.
+The system SHALL include a test that reads the command, agent and skill files and the session instructions, and fails, naming file and line, when a line names the CHANGELOG without the word `frozen` (design D2). The test SHALL also fail when a changelog update command or skill exists. The system SHALL NOT provide a command, skill or hook that writes changelog entries.
 
 #### Scenario: Leftover instruction
 - **WHEN** a command file still asks for "its CHANGELOG line" in the commit
@@ -240,7 +240,7 @@ The system SHALL include a test that reads the command, agent and skill files an
 - **THEN** the test passes
 
 ### Requirement: /close archives and closes the feature only when complete
-The system SHALL make `/close` sync the sub-issues before the archive, archive only when every unticked task carries a reason and the user confirms, and close the feature only when none of its sub-issues is open, listing the features it unblocks; otherwise the feature stays `In progress` and its open user steps are named. It SHALL NOT invent a feature when none names the change, nor write to GitHub other than through the write tool. Untested until implemented.
+The system SHALL make `/close` sync the sub-issues before the archive, archive only when every unticked task carries a reason and the user confirms, and close the feature only when none of its sub-issues is open, listing the features it unblocks; otherwise the feature stays `In progress` and its open user steps are named. It SHALL NOT invent a feature when none names the change, nor write to GitHub other than through the write tool.
 
 #### Scenario: Sync before the archive
 - **WHEN** `/close` runs on a change named by a feature
@@ -291,14 +291,14 @@ The system SHALL make `/start` do a direct-prompt job from its description, foll
 - **THEN** the spec-writer agent writes the change, it is validated, and the command stops for the user's review before any implementation
 
 ### Requirement: /start closes the feature and hands over
-The system SHALL make `/start`, when the work is committed and green, close the feature through the write tool, name the features this unblocks and print `bash tools/finish_branch.sh` for the user. It SHALL NOT push, merge, run a finishing script, change a rank, an estimate, a model or a dependency, write to GitHub other than through the write tool, pre-approve the write tool, or fix a model in its header. Untested until implemented.
+The system SHALL make `/start`, when the work is committed and green, close the feature through the write tool, name the features this unblocks and print `bash tools/finish_branch.sh` for the user. It SHALL NOT push, merge, run a finishing script, change a rank, an estimate, a model or a dependency, write to GitHub other than through the write tool, pre-approve the write tool, or fix a model in its header.
 
 #### Scenario: Work committed and green
 - **WHEN** the job's work is committed and the targeted run is green
 - **THEN** the feature is closed through the write tool, the unblocked features are named, and the finishing command is printed, not run
 
 ### Requirement: /start resumes a feature started by a batch
-The system SHALL make `/start` accept an `In progress` feature when the session is on the branch a batch names for it (design D4, D5). It SHALL then check blockers, the not-before date, conditions and model as for a `Ready` feature, and SHALL NOT create a branch nor set the Status again. On resume it SHALL print the worktree-finishing command of design D12 instead of the branch-finishing one, and SHALL NOT run either. Untested until implemented.
+The system SHALL make `/start` accept an `In progress` feature when the session is on the branch a batch names for it (design D4, D5). It SHALL then check blockers, the not-before date, conditions and model as for a `Ready` feature, and SHALL NOT create a branch nor set the Status again. On resume it SHALL print the worktree-finishing command of design D12 instead of the branch-finishing one, and SHALL NOT run either.
 
 #### Scenario: Session opened from a batch
 - **WHEN** the user runs `/start` on an `In progress` direct-prompt feature in the worktree a batch created, on the branch it named
@@ -335,14 +335,14 @@ The system SHALL make `/batch` ask for a milestone and run nothing when none is 
 - **THEN** `/batch` reports it and proposes nothing
 
 ### Requirement: /batch prepares one worktree per kept feature
-The system SHALL make `/batch`, after the yes, take the kept features in rank order and, for each, run the worktree script with the branch the reader named, then set its Status `In progress` through the write tool and report the tool's line about the current release (design D4, D7). It SHALL NOT create two worktrees for one feature. Untested until implemented.
+The system SHALL make `/batch`, after the yes, take the kept features in rank order and, for each, run the worktree script with the branch the reader named, then set its Status `In progress` through the write tool and report the tool's line about the current release (design D4, D7). It SHALL NOT create two worktrees for one feature.
 
 #### Scenario: Feature of an older milestone
 - **WHEN** a kept feature sits in a milestone other than the current release
 - **THEN** after its worktree is created, the Status write moves it and its sub-issues into the current release and `/batch` reports the `moved` line
 
 ### Requirement: /batch hands over one launch per feature
-The system SHALL make `/batch` end with one block per started feature: its folder, branch, launch model, the launch command and prompt of design D5, and the worktree-finishing command of design D12, for the user to run from the workspace once that session has ended. It SHALL NOT launch a session, `claude` or a finishing script, nor open a Terminal. Untested until implemented.
+The system SHALL make `/batch` end with one block per started feature: its folder, branch, launch model, the launch command and prompt of design D5, and the worktree-finishing command of design D12, for the user to run from the workspace once that session has ended. It SHALL NOT launch a session, `claude` or a finishing script, nor open a Terminal.
 
 #### Scenario: Framing and execution in one batch
 - **WHEN** a batch starts an OpenSpec feature without change and an OpenSpec feature with a change
@@ -360,21 +360,21 @@ The system SHALL make `/batch` set a feature aside with no GitHub write when the
 - **THEN** `/batch` stops, reports the tool's line, and names the worktree already created for that feature
 
 ### Requirement: /batch stops on an unknown GitHub state
-The system SHALL make `/batch`, when the write tool exits with code 8, stop the whole batch, show the check command the tool printed, and send no further GitHub write until the user has checked. It SHALL NOT report that write as not sent, nor run it again before the check. Untested until implemented.
+The system SHALL make `/batch`, when the write tool exits with code 8, stop the whole batch, show the check command the tool printed, and send no further GitHub write until the user has checked. It SHALL NOT report that write as not sent, nor run it again before the check.
 
 #### Scenario: Write without an answer
 - **WHEN** the Status write of the first kept feature exits 8
 - **THEN** `/batch` shows the check command, prepares no other feature and runs no other write-tool command
 
 ### Requirement: /batch never merges, pushes or reshapes the queue
-The system SHALL NOT let `/batch` merge, push, run the branch- or worktree-finishing script, remove a worktree or branch, write to GitHub other than through the write tool or with a `gh` command, set a Status other than `In progress`, change a rank, estimate, model, dependency, condition or milestone otherwise, or edit the current-release setting (design D9). Untested until implemented.
+The system SHALL NOT let `/batch` merge, push, run the branch- or worktree-finishing script, remove a worktree or branch, write to GitHub other than through the write tool or with a `gh` command, set a Status other than `In progress`, change a rank, estimate, model, dependency, condition or milestone otherwise, or edit the current-release setting (design D9).
 
 #### Scenario: Command file
 - **WHEN** the `/batch` command file is read
 - **THEN** its body names each forbidden action of design D9, both finishing scripts among them, exit code 8 with the stop before any further write, and the launches reserved to the user
 
 ### Requirement: /batch is a checked command file
-The system SHALL include `/batch` in the command files checked by the workflow command test, with the same header and body rules, and SHALL check that its header pre-approves only the reader's check and batch commands, the worktree script and Git's status and rev-parse (design D11), never the write tool nor a `gh` command. Untested until implemented.
+The system SHALL include `/batch` in the command files checked by the workflow command test, with the same header and body rules, and SHALL check that its header pre-approves only the reader's check and batch commands, the worktree script and Git's status and rev-parse (design D11), never the write tool nor a `gh` command.
 
 #### Scenario: Write tool pre-approved
 - **WHEN** the `/batch` header pre-approves the GitHub write tool or a `gh` command
@@ -385,7 +385,7 @@ The system SHALL include `/batch` in the command files checked by the workflow c
 - **THEN** the test passes
 
 ### Requirement: /close and /start check whether the branch changes the edition
-The system SHALL make `/close` and `/start`, before they close the feature, list the paths changed on the branch since its merge base with `main` and check them against the include and template rules of the edition manifest (design D19 of `edition-publish-tooling`). When no changed path enters the edition, they SHALL say so and pass no label option. Untested until implemented.
+The system SHALL make `/close` and `/start`, before they close the feature, list the paths changed on the branch since its merge base with `main` and check them against the include and template rules of the edition manifest (design D19 of `edition-publish-tooling`). When no changed path enters the edition, they SHALL say so and pass no label option.
 
 #### Scenario: Private change only
 - **WHEN** every changed path is excluded by the manifest
@@ -396,14 +396,14 @@ The system SHALL make `/close` and `/start`, before they close the feature, list
 - **THEN** `/start` names the path and proposes the label before `close-feature`, as `/close` does
 
 ### Requirement: /close and /start propose the public-edition label
-When at least one changed path enters the edition, the system SHALL make `/close` and `/start` name those paths, propose the label `edition:public`, and pass the write tool's public-edition option only after the user's yes. They SHALL NOT add the label through any other command. Untested until implemented.
+When at least one changed path enters the edition, the system SHALL make `/close` and `/start` name those paths, propose the label `edition:public`, and pass the write tool's public-edition option only after the user's yes. They SHALL NOT add the label through any other command.
 
 #### Scenario: Edition changed
 - **WHEN** the branch changes a path that the manifest includes
 - **THEN** `/close` names the path, proposes the label and closes the feature with the option only after the user's yes
 
 ### Requirement: /doctor runs the diagnostic and explains it
-The system SHALL provide a `/doctor` slash command that runs the doctor script without the record option, then explains each check not ok with the next step and the commands for the user to run, in the user's language. It SHALL NOT run a repair, start or load a service, delete a branch or worktree, or run the doctor's scheduled wrapper. Untested until implemented.
+The system SHALL provide a `/doctor` slash command that runs the doctor script without the record option, then explains each check not ok with the next step and the commands for the user to run, in the user's language. It SHALL NOT run a repair, start or load a service, delete a branch or worktree, or run the doctor's scheduled wrapper.
 
 #### Scenario: Problem found
 - **WHEN** the doctor reports Ollama down
@@ -414,7 +414,7 @@ The system SHALL provide a `/doctor` slash command that runs the doctor script w
 - **THEN** `/doctor` says so in one line and runs nothing else
 
 ### Requirement: /doctor is a checked command file
-The system SHALL include `/doctor` in the command files checked by the workflow command test, with the same header and body rules, and SHALL check that its header pre-approves only the doctor script launch, without the record option, and never the scheduled wrapper. Untested until implemented.
+The system SHALL include `/doctor` in the command files checked by the workflow command test, with the same header and body rules, and SHALL check that its header pre-approves only the doctor script launch, without the record option, and never the scheduled wrapper.
 
 #### Scenario: Wrapper pre-approved
 - **WHEN** the `/doctor` header pre-approves the doctor's scheduled wrapper or the record option
@@ -425,7 +425,7 @@ The system SHALL include `/doctor` in the command files checked by the workflow 
 - **THEN** the test passes
 
 ### Requirement: /audit checks the run tree for the night
-The system SHALL make `/audit` report, in its state for the night, the run tree's state read through the run-tree script's status subcommand, as a finding when the run tree is missing, behind `main`, on a branch, off the history of `main` or holding local changes. It SHALL NOT report the development checkout's branch as a risk for the night, and SHALL NOT create or update the run tree. Untested until implemented.
+The system SHALL make `/audit` report, in its state for the night, the run tree's state read through the run-tree script's status subcommand, as a finding when the run tree is missing, behind `main`, on a branch, off the history of `main` or holding local changes. It SHALL NOT report the development checkout's branch as a risk for the night, and SHALL NOT create or update the run tree.
 
 #### Scenario: Run tree behind main
 - **WHEN** the status reports the run tree behind `main`
@@ -438,3 +438,49 @@ The system SHALL make `/audit` report, in its state for the night, the run tree'
 #### Scenario: Command header
 - **WHEN** the `/audit` command file is read by the workflow command test
 - **THEN** its header pre-approves the status subcommand only, and neither create nor update
+
+### Requirement: /next passes a product filter only for a known product
+The system SHALL make `/next` add the reader's product option only when the user names `mothra` or `pmzilla` after the duration, and run the reader over the whole queue otherwise. For any other product it SHALL say the product is unknown, ask again and run nothing. It SHALL NOT drop a blocked feature from the reader's answer nor add one back, and its header SHALL pre-approve only the reader's next command.
+
+#### Scenario: Product named
+- **WHEN** the user types `/next 90min pmzilla`
+- **THEN** the command runs the reader's next command with the duration and `--product pmzilla`
+
+#### Scenario: No product named
+- **WHEN** the user types `/next 2h`
+- **THEN** the command runs the reader's next command with the duration only
+
+#### Scenario: Unknown product
+- **WHEN** the user types `/next 2h autre`
+- **THEN** the command says the product is unknown, asks again and runs nothing
+
+#### Scenario: Reader refuses the product
+- **WHEN** the reader exits 2 on a product
+- **THEN** the command says so and asks again
+
+Source: .claude/commands/next.md; the header check: tests/workflow_commands/test_workflow_commands.py (test_next_ne_pre_approuve_que_la_sous_commande_next_du_lecteur); the argument handling is untested
+
+### Requirement: /start creates the job's worktree and hands over to a session there
+The system SHALL make `/start`, started from the workspace on `main` once the checks of its first step pass, create the job's branch through the worktree script, set the feature `In progress` through the write tool, print the commands that open a session in the new folder and resume with `/start <id>`, labelled as the user's, and stop (finish-under-lock design D7). It SHALL NOT use `git checkout -b`, write or commit in the workspace, or work in the worktree from the workspace session.
+
+#### Scenario: Started from the workspace
+- **WHEN** the header and body of the command file are read
+- **THEN** the header pre-approves `bash tools/worktree.sh` and not `git checkout -b`, and the body says to stop after the worktree creation and to resume with `/start <id>` in a session opened in the new folder
+
+#### Scenario: Worktree script refuses
+- **WHEN** the body is read for the case of a refusal of the worktree script
+- **THEN** it says to report the refusal line and stop without changing the Status
+
+### Requirement: /start always hands over the worktree finish
+The system SHALL make every final hand-over of `/start` print the worktree-finishing command for the branch, to run from the workspace once the session has ended. It SHALL NOT run a finishing script nor print the direct finishing command as the one to use.
+
+#### Scenario: Hand-over
+- **WHEN** the body's hand-over section is read
+- **THEN** it prints `bash tools/finish_worktree.sh <branch>` for every job
+
+### Requirement: /implement refuses to start in the workspace on main
+The system SHALL make `/implement`, started from the workspace on `main`, refuse with the same hand-over as `/start` (create the worktree with `bash tools/worktree.sh <branch>` and resume in a session opened there), write nothing and change no Status (finish-under-lock design D18).
+
+#### Scenario: Started from the workspace
+- **WHEN** the body of the `/implement` command file is read
+- **THEN** it says to refuse in the workspace on `main`, names `bash tools/worktree.sh <branch>`, and says to stop without writing

@@ -15,7 +15,7 @@ If the exit code is 0 and no check is a warning, say so in one line and run noth
 
 ## 2. Explain each check that is not ok
 
-Levels: `ok`, `warning`, `problem`, `skipped` (with its reason). The 12 checks are `db`, `ollama`, `models`, `launchd`, `watch`, `backup`, `offsite`, `parity` (only while a parity window is open), `disk`, `jira`, `branches`, `run-worktree`. For each check that is a problem or a warning (and each skipped one that matters), give: what it means, the consequence, and the next step as a command for the user to run in the Terminal, never run by you. Problems first.
+Levels: `ok`, `warning`, `problem`, `skipped` (with its reason). The 11 checks are `db`, `ollama`, `models`, `launchd`, `watch`, `backup`, `offsite`, `disk`, `jira`, `branches`, `run-worktree`. For each check that is a problem or a warning (and each skipped one that matters), give: what it means, the consequence, and the next step as a command for the user to run in the Terminal, never run by you. Problems first.
 
 - `db`: the database is not reachable. Next step: `bash tools/db_up.sh`.
 - `ollama`: Ollama does not answer. Next step: `ollama serve`.
@@ -24,7 +24,6 @@ Levels: `ok`, `warning`, `problem`, `skipped` (with its reason). The 12 checks a
 - `watch`: the watch did not run when due. Next step: run the watch again (the user's usual watch command), then look at its log.
 - `backup`: the database backup is late or missing. Next step: the user's usual backup command.
 - `offsite`: the off-site copy is old. Next step: `bash tools/offsite_backup.sh copy`.
-- `parity`: the parity window is open and a check is missing. Next step: the parity run named in the line.
 - `disk`: free space is low. Next step: free space (old backups, models, build caches) after the user has looked at what is large.
 - `jira`: the Jira token expires soon or has expired. Next step: the user renews it themselves; you never read or ask for the token.
 - `branches`: branches are merged or stale. Next step: the user reviews them and deletes the ones they choose.

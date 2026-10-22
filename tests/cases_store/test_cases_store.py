@@ -125,7 +125,7 @@ class Import(unittest.TestCase):
         code = ("import sys; sys.path.insert(0, %r); import cases_store; "
                 "lourds = [m for m in ('numpy', 'httpx', 'yaml', 'psycopg', 'db', 'pmzilla_lab_library') if m in sys.modules]; "
                 "assert not lourds, lourds") % str(RACINE / "tools")
-        fait = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+        fait = subprocess.run([sys.executable, "-I", "-B", "-c", code], capture_output=True, text=True)
         self.assertEqual(fait.returncode, 0, fait.stderr)
 
     def test_constantes(self):
@@ -375,11 +375,29 @@ class Auteur(AvecDossier):
         self.fichier("author: [illisible\n")
         self.assertIsNone(cs.resolve_author(self.dossier, {}))
 
+    def test_le_fichier_passe_par_le_registre_de_lab_paths(self):
+        # Décision du 2026-10-21, point 8 (A9) : le chemin vient de lab_paths.LOCAL_FILES["cases_author"], jamais d'un calcul local.
+        (self.dossier / "ailleurs").mkdir()
+        (self.dossier / "ailleurs" / "auteur.yaml").write_text("author: agile-lead-registre\n", encoding="utf-8")
+        with mock.patch.dict(cs.lab_paths.LOCAL_FILES, {"cases_author": (("ailleurs", "auteur.yaml"), ())}):
+            self.assertEqual(cs.resolve_author(self.dossier, {}), "agile-lead-registre")
+            with mock.patch.object(cs, "default_workspace", return_value=self.dossier):
+                self.assertEqual(cs.resolve_author(None, {}), "agile-lead-registre")
+
     def test_refus_qui_nomme_le_fichier(self):
         with self.assertRaises(cs.CasesError) as e:
             cs.require_author(self.dossier, {})
         self.assertIn(".pmzilla/cases.yaml", str(e.exception))
         self.assertEqual(e.exception.code, "author_missing")
+
+    def test_refus_nomme_le_fichier_du_registre(self):
+        # revue du 2026-10-21 : le nom du fichier dans le refus vient du registre de lab_paths, jamais d'une constante qui le double
+        with mock.patch.dict(cs.lab_paths.LOCAL_FILES, {"cases_author": (("ailleurs", "auteur.yaml"), ())}):
+            with self.assertRaises(cs.CasesError) as e:
+                cs.require_author(self.dossier, {})
+        self.assertIn("ailleurs/auteur.yaml", str(e.exception))
+        self.assertEqual(e.exception.field, "ailleurs/auteur.yaml")
+        self.assertFalse(hasattr(cs, "AUTHOR_FILE"))
         self.fichier("author: agile-lead-fichier\n")
         self.assertEqual(cs.require_author(self.dossier, {}), "agile-lead-fichier")
 

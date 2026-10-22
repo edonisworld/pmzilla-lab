@@ -405,7 +405,7 @@ Window: from 19.0 to 28.0 d (P40 to P60); 10 candidates.
 
 ````
 [stderr]
---scope: no ticket of the requested projects in the export.
+--scope: no ticket of the requested projects in the database.
 ````
 
 ## --starts outside the segment (exit 1)
@@ -691,14 +691,14 @@ No ticket left the segment during the period: nothing to sample.
 
 ````
 [stderr]
-Column "Resolved" missing from the export: add it (see flux_jira.py statuses).
+Column "Resolved" missing from the column settings (see flux_jira.py statuses).
 ````
 
 ## export without a key column (exit 1)
 
 ````
 [stderr]
-The export has no key column, so tickets cannot be linked to their history.
+No key column in the settings, so tickets cannot be linked to their history.
 ````
 
 ## --starts by project (exit 0)

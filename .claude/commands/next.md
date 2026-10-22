@@ -1,6 +1,6 @@
 ---
 description: Proposes the jobs of the work queue that fit the time you have (reads the GitHub features through the queue reader, edits nothing)
-argument-hint: "<duration, e.g. 2h, 1h30, 45min>"
+argument-hint: "<duration, e.g. 2h, 1h30, 45min> [mothra|pmzilla]"
 model: sonnet
 allowed-tools: Bash(uv run --with pyyaml python tools/roadmap.py next:*)
 ---
@@ -11,12 +11,12 @@ Language: this command is written in English, but serve the user in THEIR langua
 
 ## What you do
 
-1. Run `uv run --with pyyaml python tools/roadmap.py next --budget <the duration given>`. The reader reads the features from GitHub (Status `Ready`, blockers, `rank`); a closed blocker counts as done. This is the only command you run. The duration uses the same syntax as an estimate (`45min`, `2h`, `1h30`). Without a duration, ask for one and run nothing.
+1. Run `uv run --with pyyaml python tools/roadmap.py next --budget <the duration given>`, followed by `--product mothra` or `--product pmzilla` when the user names a product (`mothra`: the features labelled `product:mothra`; `pmzilla`: the features without a `product:` label; no product named: the whole queue, as before; any other value: say it is unknown and ask again, run nothing). Blockers are still computed over the whole queue, so a Mothra feature blocked by a PMZilla feature stays blocked. The reader reads the features from GitHub (Status `Ready`, blockers, `rank`); a closed blocker counts as done. This is the only command you run. The duration uses the same syntax as an estimate (`45min`, `2h`, `1h30`). Without a duration, ask for one and run nothing.
 2. Present the result in the user's language and translate the enumerated values for display: `Ready` is "prêt", `In progress` is "en cours", `Done` is "fait", `direct-prompt` and `openspec` stay as they are. For each proposed job give the identifier, the title, the estimate, the method, the model, the conditions the user must confirm and the due date when there is one, then the total of the time used.
 3. List the jobs too long for the remaining time, and, apart, the jobs without an estimate (they are never counted in the budget).
 4. Ask the user which job to start. Starting it is the user's decision, in a new request.
 
-Exit codes of the reader: 1 means the queue is invalid (report each problem line as printed and propose nothing); 2 means a malformed duration (say so and ask again).
+Exit codes of the reader: 1 means the queue is invalid (report each problem line as printed and propose nothing); 2 means a malformed duration or an unknown product (say so and ask again).
 
 ## What you never do
 

@@ -6,7 +6,7 @@
 PMZilla Lab : tableau de bord.
 
 Une seule page HTML autonome (CSS et courbes SVG en ligne, aucun JavaScript, aucun appel réseau),
-écrite dans ~/PMZilla-Lab/tableau-de-bord.html. Elle ne reprend que des comptes, des dates, des
+écrite dans <dossier du lab>/tableau-de-bord.html. Elle ne reprend que des comptes, des dates, des
 noms de sources, des titres de livres et des textes écrits par l'utilisateur (journal, miroir) : jamais
 le contenu d'un article ou d'un livre, jamais un titre d'article.
 
@@ -48,15 +48,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config
+import lab_paths
 import watch_paths
 from dashboard_messages import CATALOGS
 from messages import Messages, add_language_option
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()   # dossier de contenu
+LAB = lab_paths.resolve_or_exit()   # module partagé : variable, sinon dépôt Git du code, sinon code 78
+WORKSPACE = LAB["content_root"]   # dossier de contenu
 CODE_ROOT = Path(__file__).resolve().parent.parent   # dossier de code : réglages suivis et scripts, liens suivis
 DATA = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser()
 LOGS = Path(os.environ.get("PMZILLA_LAB_LOGS", "~/Library/Logs")).expanduser()
-OUT = Path(os.environ.get("PMZILLA_LAB_OUTPUT", "~/PMZilla-Lab/tableau-de-bord.html")).expanduser()
+OUT = Path(os.environ.get("PMZILLA_LAB_OUTPUT") or LAB["lab_folder"] / "tableau-de-bord.html").expanduser()
 DOMAINES = ["produit", "flow", "organisation", "facilitation", "tech"]
 PASSAGES_VEILLE = 14
 PREMIER_MIROIR = dt.date(2026, 11, 1)   # tant qu'aucun miroir n'existe, le premier est prévu début novembre
@@ -587,7 +589,7 @@ def titres_absents(lines: list[str]) -> list[str]:
 def absents_block() -> str:
     path = CODE_ROOT / "tools" / "mapping_lab.py"
     if not path.is_file():
-        path = Path("~/PMZilla-Lab/mapping_lab.py").expanduser()
+        path = LAB["lab_folder"] / "mapping_lab.py"
     titres = titres_absents(read_text(path).splitlines())
     if not titres:
         raise PasDeDonnees
@@ -872,7 +874,7 @@ def build(language: str = "fr") -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tableau de bord de PMZilla Lab (une page HTML autonome)")
     parser.add_argument("--open", dest="ouvrir", action="store_true", help="ouvrir la page dans le navigateur")
-    parser.add_argument("--output", dest="sortie", help="fichier de sortie (défaut : ~/PMZilla-Lab/tableau-de-bord.html)")
+    parser.add_argument("--output", dest="sortie", help="fichier de sortie (défaut : <dossier du lab>/tableau-de-bord.html)")
     add_language_option(parser)
     args = parser.parse_args(flux_config.refuse_old_options(sys.argv[1:] if argv is None else argv, flux_config.OPTIONS_COMMUNES))
     set_language(args.language)

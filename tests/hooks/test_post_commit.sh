@@ -24,7 +24,7 @@ commit() { # fichier : un commit qui touche ce fichier
 }
 lance() { # variables d'environnement en arguments ; attend un éventuel lancement en arrière-plan
   rm -f "$appels"
-  env "$@" zsh "$hook" > "$tmp/sortie" 2>&1
+  env PMZILLA_LAB_WORKSPACE="$ws" "$@" zsh "$hook" > "$tmp/sortie" 2>&1   # le dossier de contenu du module partagé est le faux dépôt
   i=0; while [ ! -f "$appels" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i+1)); done
   sleep 0.2
 }

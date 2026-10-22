@@ -9,56 +9,57 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aide_flow_monthly import Decor, REQUETE_1, REQUETE_2, aujourdhui, hier  # noqa: E402
+from aide_flow_monthly import Decor, aujourdhui, hier  # noqa: E402
 
 
 class LigneFinale(Decor):
     def test_run_complet(self):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertIn("Monthly run complete: 12 of 12 steps, 0 skipped", r.sortie)
+        self.assertIn("Monthly run complete: 9 of 9 steps, 0 skipped", r.sortie)
 
-    def test_run_repris_quatre_sur_douze(self):
-        # plan de douze appels (deux séries) ; la reprise à compare-reports joue les quatre derniers et saute les huit premiers
-        r = self.lancer_en("--from", "compare-reports")
+    def test_run_repris_quatre_sur_neuf(self):
+        # plan de neuf étapes (deux séries) ; la reprise à dependencies joue les quatre dernières et saute les cinq premières
+        r = self.lancer_en("--from", "dependencies", "--date", aujourdhui())
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertIn("Monthly run complete: 4 of 12 steps, 8 skipped", r.sortie)
-        self.assertNotIn("12 of 12", r.sortie)
+        self.assertIn("Monthly run complete: 4 of 9 steps, 5 skipped", r.sortie)
+        self.assertNotIn("9 of 9", r.sortie)
         self.assertEqual(self.outils_appeles()[-1], "flow_retention")
 
-    def test_reprise_a_compare_data(self):
-        r = self.lancer_en("--from", "compare-data")
-        self.assertIn("Monthly run complete: 5 of 12 steps, 7 skipped", r.sortie)
+    def test_reprise_a_flow(self):
+        r = self.lancer_en("--from", "flow", "--date", aujourdhui())
+        self.assertIn("Monthly run complete: 6 of 9 steps, 3 skipped", r.sortie)
 
     def test_progression_numerotee_a_partir_de_un(self):
-        r = self.lancer_en("--from", "compare-reports")
-        for ligne in ("Step 1/4: compare-reports (series 1)", "Step 2/4: compare-reports (series 2)", "Step 3/4: dashboard",
+        r = self.lancer_en("--from", "dependencies", "--date", aujourdhui())
+        for ligne in ("Step 1/4: dependencies (series 1)", "Step 2/4: dependencies (series 2)", "Step 3/4: dashboard",
                       "Step 4/4: retention"):
             self.assertIn(ligne, r.sortie)
         self.assertNotIn("Step 9/", r.sortie)
 
     def test_run_francais_repris(self):
-        r = self.lancer("--from", "compare-reports")
-        self.assertIn("Suivi mensuel terminé : 4 étapes sur 12, 8 sautées", r.sortie)
+        r = self.lancer("--from", "dependencies", "--date", aujourdhui())
+        self.assertIn("Suivi mensuel terminé : 4 étapes sur 9, 5 sautées", r.sortie)
         self.assertNotIn("Monthly run", r.sortie)
 
     def test_requete_unique_et_serie_unique(self):
         self.ecrire_reglages("jql_export: project = AAA\nmonthly_run:\n  series:\n    - name: seulezz\n      dependencies: none\n")
         r = self.lancer_en()
-        self.assertIn("Monthly run complete: 8 of 8 steps, 0 skipped", r.sortie)
+        self.assertIn("Monthly run complete: 6 of 6 steps, 0 skipped", r.sortie)
 
 
 class StatutSkipped(Decor):
     def test_reprise_sans_resume_anterieur(self):
-        r = self.lancer_en("--from", "compare-data")
+        r = self.lancer_en("--from", "dashboard", "--date", aujourdhui())
         self.assertEqual(r.code, 0, r.sortie)
         texte = self.resume()
-        for etape, rang in (("export", "-"), ("history", "-"), ("import", "-"), ("flow", "1"), ("flow", "2"),
+        for etape, rang in (("export", "-"), ("import", "-"), ("history", "-"), ("flow", "1"), ("flow", "2"),
                             ("dependencies", "1"), ("dependencies", "2")):
             self.assertRegex(texte, rf"\| {etape} \| {rang} \| skipped \| - \| - \|")
-        for etape in ("compare-data", "compare-reports", "dashboard", "retention"):
+        for etape in ("dashboard", "retention"):
             self.assertRegex(texte, rf"\| {etape} \| (-|\d) \| passed \| 0 \|")
         self.assertNotIn("not run", texte)
+        self.assertNotIn("compare", texte)
         self.assertIn("- final status: complete", texte)
 
     def test_reprise_apres_un_arret_garde_passed_et_ne_saute_rien(self):
@@ -72,19 +73,32 @@ class StatutSkipped(Decor):
         self.assertRegex(texte, r"\| export \| - \| passed \| 0 \|")
         self.assertRegex(texte, r"\| history \| - \| passed \| 0 \|")
         self.assertIn("- final status: complete", texte)
-        self.assertIn("Monthly run complete: 10 of 12 steps, 2 skipped", r.sortie)    # le compte suit --from, pas le résumé
+        self.assertIn("Monthly run complete: 8 of 9 steps, 1 skipped", r.sortie)    # le compte suit --from, pas le résumé
 
     def test_arret_apres_une_reprise_laisse_les_etapes_suivantes_not_run(self):
-        self.codes(flow_compare__data=1)
-        self.lancer_en("--from", "compare-data")
+        self.codes(flow_board=1)
+        self.lancer_en("--from", "dashboard", "--date", aujourdhui())
         texte = self.resume()
         self.assertRegex(texte, r"\| import \| - \| skipped \|")
-        self.assertRegex(texte, r"\| compare-data \| - \| gap \| 1 \|")
+        self.assertRegex(texte, r"\| dashboard \| - \| failed \| 1 \|")
         self.assertRegex(texte, r"\| retention \| - \| not run \|")
-        self.assertIn("- final status: stopped at compare-data", texte)
+        self.assertIn("- final status: stopped at dashboard", texte)
+
+    def test_un_resume_ancien_avec_des_etapes_retirees_est_ignore(self):
+        """Un résumé du même jour qui liste compare-data : la reprise à dashboard ne le lit pas, le nouveau résumé ne le liste pas."""
+        self.resume_ecrit(aujourdhui(), "stopped at compare-data",
+                          "| export | - | passed | 0 | 1 |\n| import | - | passed | 0 | 1 |\n| history | - | passed | 0 | 1 |\n"
+                          "| compare-data | - | gap | 1 | 1 |\n| compare-reports | 1 | not run | - | - |\n")
+        r = self.lancer_en("--from", "dashboard", "--date", aujourdhui())
+        self.assertEqual(r.code, 0, r.sortie)
+        texte = self.resume()
+        self.assertNotIn("compare", texte)
+        self.assertRegex(texte, r"\| export \| - \| passed \| 0 \| 1 \|")             # repris du résumé du jour
+        self.assertRegex(texte, r"\| flow \| 1 \| skipped \| - \| - \|")
+        self.assertIn("- final status: complete", texte)
 
     def test_le_mois_deja_fait_voit_un_resume_complet_avec_skipped(self):
-        self.lancer_en("--from", "compare-data")                      # résumé complet qui contient des étapes skipped
+        self.lancer_en("--from", "dashboard", "--date", aujourdhui())                      # résumé complet qui contient des étapes skipped
         self.appels_vides()
         r = self.lancer_en()
         self.assertEqual(r.code, 5, r.sortie)
@@ -97,20 +111,15 @@ class StatutSkipped(Decor):
 
 
 class MarquageDeLImport(Decor):
-    def test_import_avec_option_et_les_deux_exports_du_jour(self):
+    def test_import_avec_option_et_sans_aucun_fichier(self):
         self.lancer_en()
         imports = [a["args"] for a in self.appels() if a["outil"] == "flow_import"]
-        self.assertEqual(len(imports), 1)
-        self.assertIn("--mark-absent", imports[0])
-        self.assertIn(f"Flux-Lab/exports/api-{REQUETE_1}-{aujourdhui()}.csv", imports[0])
-        self.assertIn(f"Flux-Lab/exports/api-{REQUETE_2}-{aujourdhui()}.csv", imports[0])
+        self.assertEqual(imports, [["--mark-absent", "--language", "en"]])
 
-    def test_reprise_a_une_autre_date_les_exports_de_cette_date(self):
+    def test_reprise_a_une_autre_date_toujours_sans_fichier(self):
         self.lancer_en("--from", "import", "--date", hier())
         args = next(a["args"] for a in self.appels() if a["outil"] == "flow_import")
-        self.assertIn("--mark-absent", args)
-        self.assertEqual([x for x in args if x.endswith(".csv")],
-                         [f"Flux-Lab/exports/api-{REQUETE_1}-{hier()}.csv", f"Flux-Lab/exports/api-{REQUETE_2}-{hier()}.csv"])
+        self.assertEqual(args, ["--mark-absent", "--language", "en"])
 
     def test_seul_l_import_recoit_l_option(self):
         self.lancer_en()
@@ -134,6 +143,25 @@ class EtapeRetention(Decor):
         lignes = self.lancer_en().sortie.splitlines()
         i = next(n for n, l in enumerate(lignes) if l.startswith("Step retention passed"))
         self.assertEqual(lignes[i + 1], "retention dry run: 7 items out of rule")
+
+    def test_le_total_inclut_le_magasin_du_contenu_des_stories(self):
+        """R-78 (1.9) : l'outil de conservation imprime une ligne « story content » PUIS le total, qui l'inclut. L'étape lit le total
+        seul : ni la ligne du magasin, ni son compte ne sont repris, et l'étape ne change pas."""
+        self.sortie_retention("database, tickets past the rule: 2\nstory content: 3 items out of rule\n"
+                              "retention check: 5 items out of rule\ndry run: nothing deleted\n")
+        r = self.lancer_en()
+        self.assertEqual(r.code, 0, r.sortie)
+        self.assertIn("retention dry run: 5 items out of rule", r.sortie)
+        self.assertIn("- retention dry run: 5 items out of rule", self.resume())
+        self.assertNotIn("3 items", r.sortie + self.resume())
+        self.assertNotIn("story content", r.sortie + self.resume())
+
+    def test_le_total_inclut_le_magasin_du_contenu_des_stories_en_francais(self):
+        self.sortie_retention("contenu des stories : 3 éléments hors règle\ncontrôle de conservation : 5 éléments hors règle\n"
+                              "essai : rien n'est supprimé\n")
+        en_francais = self.lancer()
+        self.assertIn("essai de purge : 5 éléments hors règle", en_francais.sortie)
+        self.assertNotIn("contenu des stories", en_francais.sortie + self.resume())
 
     def test_rien_hors_regle(self):
         r = self.lancer_en()                                            # sortie par défaut du faux outil : nothing out of rule
@@ -201,10 +229,10 @@ class EtapeRetention(Decor):
         self.assertIn("essai de purge : 0 éléments hors règle", r.sortie)
 
     def test_reprise_a_retention(self):
-        r = self.lancer_en("--from", "retention")
+        r = self.lancer_en("--from", "retention", "--date", aujourdhui())
         self.assertEqual(r.code, 0, r.sortie)
         self.assertEqual(self.outils_appeles(), ["flow_retention"])
-        self.assertIn("Monthly run complete: 1 of 12 steps, 11 skipped", r.sortie)
+        self.assertIn("Monthly run complete: 1 of 9 steps, 8 skipped", r.sortie)
 
     def test_passage_a_blanc_inclut_l_etape(self):
         r = self.lancer_en("--dry-run")
@@ -213,7 +241,7 @@ class EtapeRetention(Decor):
         self.assertEqual(self.appels(), [])
 
     def test_passage_a_blanc_francais(self):
-        r = self.lancer("--dry-run", "--from", "retention")
+        r = self.lancer("--dry-run", "--from", "retention", "--date", aujourdhui())
         self.assertEqual(r.sortie.strip(), "essai : lancerait uv run tools/flow_retention.py purge --language fr")
 
 

@@ -1,8 +1,8 @@
 """PMZilla Lab : lecture des transcriptions de séance Claude Code pour tools/book_usage.py (R-52).
 
 Ce module est le SEUL endroit qui connaît la structure des transcriptions. Elle est lue d'après le format JSON Lines documenté
-de Claude Code, pas relevée sur de vraies transcriptions (tâche 1.2 du change posture-book-usage : le relevé des seuls noms de
-clés reste à faire par l'utilisateur) ; si Claude Code change de format, seul ce fichier change. Hypothèses prises :
+de Claude Code et confirmée le 2026-10-17 par un relevé des noms de clés sur de vraies transcriptions (tâche 1.2 du change
+posture-book-usage, design.md, question ouverte 1) ; si Claude Code change de format, seul ce fichier change. Hypothèses prises :
 
   - un enregistrement par ligne, objet JSON ; `type` vaut `user` ou `assistant`, les autres types sont ignorés ;
   - `message.content` est une chaîne, ou une liste de blocs : `text` (champ `text`), `tool_use` (`id`, `name`, `input`),
@@ -14,9 +14,14 @@ clés reste à faire par l'utilisateur) ; si Claude Code change de format, seul 
     dans l'ordre des `timestamp` (ordre du fichier à égalité) ;
   - le sous-agent Critic est lancé par un bloc `tool_use` de nom `Agent` ou `Task` dont `input.subagent_type` vaut
     `pmzilla-critic` ; faute de pouvoir relier un enregistrement de sous-agent à son lancement, les enregistrements de
-    sous-agent d'un tour comptent pour Critic quand le tour n'a lancé que Critic, et ne comptent nulle part sinon ;
-  - le serveur de la bibliothèque s'appelle `mcp__pmzilla-library__<outil>` ; le résultat de `search_library` est une liste
-    d'objets (un bloc `text` JSON par objet, ou un seul bloc JSON portant la liste), celui de `read_passage` un objet.
+    sous-agent d'un tour comptent pour Critic quand le tour n'a lancé que Critic, et ne comptent nulle part sinon ; la
+    réponse de Critic est le texte du `tool_result` de cet appel de lancement (dans le fil principal, relié par `tool_use_id`),
+    car le dernier texte des enregistrements du sous-agent est presque toujours vide ; faute de `tool_result`, repli sur le
+    dernier texte non vide du sous-agent ;
+  - le serveur de la bibliothèque s'appelle `mcp__pmzilla-library__<outil>` ; le résultat de `search_library` (forme relevée le 2026-10-17) est un
+    texte JSON, en chaîne ou en liste d'un bloc `text`, dont l'objet de tête n'a que la clé `result`, valeur : la liste des
+    passages ; `_objects` déballe cette enveloppe (et lit encore une liste d'objets, un bloc `text` JSON par objet, ou un seul
+    bloc portant la liste) ; celui de `read_passage` est un objet portant directement `book`, `file` et `passages`.
 
 Rien n'est conservé : le module renvoie des structures en mémoire que book_usage.py réduit à des comptes.
 """
@@ -49,6 +54,7 @@ class Record:
     texts: list = field(default_factory=list)
     calls: list = field(default_factory=list)        # (id, name, input) des blocs tool_use
     results: dict = field(default_factory=dict)      # tool_use_id -> objets JSON du bloc tool_result
+    result_texts: dict = field(default_factory=dict)  # tool_use_id -> texte du bloc tool_result (blocs text joints)
 
 
 @dataclass
@@ -60,6 +66,7 @@ class Turn:
     main_calls: list = field(default_factory=list)
     side_calls: list = field(default_factory=list)
     side_texts: list = field(default_factory=list)
+    critic_results: list = field(default_factory=list)   # textes des tool_result des appels de lancement de Critic (fil principal)
     critic_launched: bool = False
     other_launched: bool = False
 
@@ -90,6 +97,8 @@ def _objects(content) -> list:
             value = json.loads(text)
         except ValueError:
             continue
+        if isinstance(value, dict) and list(value) == ["result"] and isinstance(value["result"], list):
+            value = value["result"]         # enveloppe de search_library : seule clé `result`, valeur = liste des passages
         found.extend(value if isinstance(value, list) else [value])
     return [o for o in found if isinstance(o, dict)]
 
@@ -116,6 +125,8 @@ def normalise(raw, fallback_session: str = "") -> Record | None:
         elif kind == "tool_result":
             has_result = True
             record.results[str(block.get("tool_use_id"))] = _objects(block.get("content"))
+            record.result_texts[str(block.get("tool_use_id"))] = "\n".join(
+                b["text"] for b in _blocks(block.get("content")) if isinstance(b.get("text"), str))
     record.prompt = (role == "user" and not record.sidechain and not raw.get("isMeta") and not has_result
                      and any(t.strip() for t in record.texts))
     return record
@@ -136,8 +147,10 @@ def turns_of(records: list[Record]) -> list[Turn]:
         keyed.append((last, position, record))
     ordered = [r for _, _, r in sorted(keyed, key=lambda k: (k[0], k[1]))]
     results: dict = {}
+    result_texts: dict = {}
     for record in ordered:
         results.update(record.results)
+        result_texts.update(record.result_texts)
     turns: list[Turn] = []
     for record in ordered:
         if record.prompt:
@@ -153,10 +166,12 @@ def turns_of(records: list[Record]) -> list[Turn]:
             continue
         turn.main_texts.extend(record.texts)
         turn.main_calls.extend(library)
-        for _, name, tool_input in record.calls:
+        for identifier, name, tool_input in record.calls:
             kind = _launch_kind(name, tool_input)
             if kind == "critic":
                 turn.critic_launched = True
+                if result_texts.get(identifier, "").strip():
+                    turn.critic_results.append(result_texts[identifier])
             elif kind == "other":
                 turn.other_launched = True
     return turns

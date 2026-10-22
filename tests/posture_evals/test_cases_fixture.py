@@ -151,6 +151,46 @@ class EnvironnementDesSeances(AvecFixtures):
                 self.assertEqual(env[cases_store.AUTHOR_VARIABLE], auteur)
                 self.assertEqual(env[cases_store.DBNAME_VARIABLE], base_attendue)
 
+    def test_le_dossier_de_contexte_est_un_dossier_vide_de_la_copie(self):
+        # la surcouche de la grille (overlay_path) ne remonte jamais au vrai dossier de contexte
+        import story_quality_overlay
+        vus = []
+
+        def faux_run(commande, **options):
+            env = options.get("env")
+            dossier = Path(env["PMZILLA_LAB_CONTEXT"])
+            vus.append((dossier, dossier.is_dir() and not any(dossier.iterdir())))
+            return self.termine("")
+
+        self.assertEqual(essai.CONTEXT_VARIABLE, story_quality_overlay.CONTEXT_VARIABLE)
+        reste = self.tmp / essai.EMPTY_CONTEXT_FOLDER
+        reste.mkdir()
+        (reste / "surcouche.yaml").write_text("laissé par une séance précédente", encoding="utf-8")
+        for env in (essai.cases_environment(BASE_JETABLE), essai.cases_environment(None), None,
+                    {"PMZILLA_LAB_CONTEXT": "/vrai/contexte"}):
+            with self.subTest(env=env), mock.patch.object(essai.subprocess, "run", faux_run):
+                essai.run_session("Q ?", self.tmp, self.tmp / "mcp.json", None, self.tmp / "t.jsonl", False, env=env)
+                dossier, vide = vus[-1]
+                self.assertEqual(dossier, self.tmp / essai.EMPTY_CONTEXT_FOLDER)
+                self.assertIn(self.tmp.resolve(), dossier.resolve().parents)
+                self.assertTrue(vide)
+                surcouche = story_quality_overlay.overlay_path({"PMZILLA_LAB_CONTEXT": str(dossier)})
+                self.assertIn(dossier, surcouche.parents)
+                self.assertFalse(surcouche.exists())
+
+
+class ListeDesOutilsPermis(unittest.TestCase):
+    """La séance peut lancer `story_quality.py grid` (R-94), jamais collect, review, analyse ni coach."""
+
+    def test_grid_permis_et_seul(self):
+        entrees = [e for e in essai.ALLOWED_TOOLS if "story_quality" in e]
+        self.assertEqual(entrees, ["Bash(uv run tools/story_quality.py grid)", "Bash(uv run tools/story_quality.py grid *)"])
+        for interdit in ("collect", "review", "analyse", "coach"):
+            with self.subTest(interdit=interdit):
+                self.assertFalse(any(interdit in e for e in essai.ALLOWED_TOOLS))
+        self.assertNotIn("Bash(uv run tools/story_quality.py *)", essai.ALLOWED_TOOLS)
+        self.assertFalse(any(e.startswith("Bash(uv run tools/story_quality.py *") for e in essai.ALLOWED_TOOLS))
+
 
 class MessageDeBaseIndisponible(unittest.TestCase):
     """Base jetable impossible à créer : le message de l'erreur de connexion (déjà sans secret) est affiché, pas seulement son type."""

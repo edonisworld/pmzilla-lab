@@ -7,6 +7,7 @@
 set -u
 racine="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$racine/tools/offsite_backup.sh"
+etat_depot_avant="$(cd "$racine" && git status --porcelain -- Flux-Lab _bmad-output 2>/dev/null)"     # état de départ : une fusion peut déjà apporter un fichier suivi
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 bin="$tmp/bin"; mkdir -p "$bin"
@@ -17,6 +18,8 @@ verifie() { # description  code (0 = vrai)
 absent() { ! grep -q -- "$1" "$2"; echo $?; }     # 0 si le motif est absent du fichier
 present() { grep -q -- "$1" "$2"; echo $?; }       # 0 si le motif est présent
 mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+# Préfixe daté de chaque ligne de la sous-commande copy (change morning-guard, D8) : les cas qui comparaient une ligne entière l'attendent.
+DATEE='[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}'
 
 SENT="sentinelle-factice-4d2b"
 NOMDISQUE="NOMDISQUE-sentinelle-8e1"
@@ -82,6 +85,18 @@ echo "Lignes par table (restaurée / vraie base) :"
 printf '  %-34s %10s / %-10s OK\n' knowledge.books 12 12
 printf '  %-34s %10s / %-10s OK\n' flow.issues 40 40
 echo "  valeur-de-table $SENT"
+if [ "\${FAUX_RESTORE_MANQUE:-0}" = "1" ]; then
+  printf '  %-34s %10s / %-10s MANQUE dans la base restaurée\n' flow.table_ajoutee_0007 - 5
+  printf '  %-34s %10s / %-10s MANQUE dans la base restaurée\n' knowledge.table_ajoutee_0008 - 7
+  echo "Empreinte des migrations (sha256 des numéros, noms et empreintes, 12 premiers caractères) :"
+  echo "  ÉCHEC : l'empreinte des migrations diffère. Migrations en désaccord (numéro et nom seulement) :"
+  echo "    7|0007_veille.sql (présente dans : FV)"
+  echo "    8|0008_pretri.sql (présente dans : FV)"
+  echo "    F = fichiers, R = base restaurée, V = vraie base. valeur-de-table $SENT"
+  echo "Bilan :"
+  echo "  ÉCHEC : restauration en échec, table manquante ou empreinte des migrations différente (voir ci-dessus). Une sauvegarde qui ne se restaure pas n'en est pas une."
+  exit \${FAUX_RESTORE_CODE:-1}
+fi
 case " \$* " in *" --detail "*)
   echo "Restauration :"
   echo "  ÉCHEC knowledge : pg_restore a échoué (détail masqué)"
@@ -95,6 +110,9 @@ SCRIPT
 chmod +x "$bin/diskutil" "$bin/osascript" "$bin/docker" "$bin/mount" "$bin/cp" "$tmp/restore_stub.sh"
 
 export HOME="$tmp/home"; mkdir -p "$HOME"
+# Journal de la copie (morning-guard D9) : un fichier du dossier temporaire, jamais le vrai journal sous ~/Library/Logs. Ajouté à
+# l'isolement existant ; sans lui, chaque lancement manuel des cas ci-dessous dirait « journal de la copie impossible à écrire ».
+export OFFSITE_COPY_LOG="$tmp/journal-copie.log"
 export PATH="$bin:$PATH"
 export OFFSITE_DONNEES="$tmp/lab" OFFSITE_SAUVEGARDES="$tmp/lab/sauvegardes" OFFSITE_RESTORE_SCRIPT="$tmp/restore_stub.sh"
 export OFFSITE_MOUNT_CMD="$bin/mount" OFFSITE_DATE="2026-10-11"
@@ -123,6 +141,7 @@ for jour in 09 10 11; do
   mkdir -p "$SAUV/db-2026-10-$jour"
   for s in knowledge cases flow; do echo "$SENT $jour $s" > "$SAUV/db-2026-10-$jour/$s.dump"; done
 done
+echo "$SENT 11 quality-sans-texte" > "$SAUV/db-2026-10-11/quality-sans-texte.dump"   # dump partiel de quality (change story-quality-audit, D10)
 mkdir -p "$SAUV/db-2026-10-11-matin"; echo "$SENT etiquetee" > "$SAUV/db-2026-10-11-matin/flow.dump"
 mkdir -p "$SAUV/bmad-memory-2026-10-07/sous"; echo "$SENT protegee" > "$SAUV/bmad-memory-2026-10-07/sous/$NOMFICHIER.md"
 mkdir -p "$SAUV/bmad-memory-2026-10-10/sous dossier"
@@ -219,7 +238,8 @@ verifie "copy nominale : code 0" "$code"
 verifie "copy : la dernière sauvegarde ordinaire de la base est copiée avec son manifeste" "$([ -f "$V/ENC/pmzilla-offsite/db/db-2026-10-11/knowledge.dump" ] && [ -f "$V/ENC/pmzilla-offsite/db/db-2026-10-11/MANIFESTE.sha256" ]; echo $?)"
 verifie "copy : la sauvegarde étiquetée n'est pas copiée, ni les anciennes, ni les autres dossiers" "$([ ! -e "$V/ENC/pmzilla-offsite/db/db-2026-10-11-matin" ] && [ ! -e "$V/ENC/pmzilla-offsite/db/db-2026-10-10" ] && [ ! -e "$V/ENC/pmzilla-offsite/divers-migration-veille" ]; echo $?)"
 verifie "copy : le sanctum ordinaire le plus récent est copié, pas la sauvegarde protégée" "$([ -f "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-10/MANIFESTE.sha256" ] && [ ! -e "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-07" ]; echo $?)"
-verifie "copy : « copie créée » pour chaque série, avec les nombres de fichiers" "$(grep -q 'copie créée : db-2026-10-11 (3 fichiers' "$tmp/s" && grep -q 'copie créée : bmad-memory-2026-10-10 (2 fichiers' "$tmp/s"; echo $?)"
+verifie "copy : « copie créée » pour chaque série, avec les nombres de fichiers" "$(grep -q 'copie créée : db-2026-10-11 (4 fichiers' "$tmp/s" && grep -q 'copie créée : bmad-memory-2026-10-10 (2 fichiers' "$tmp/s"; echo $?)"
+verifie "copy : le dump partiel quality-sans-texte part avec le dossier daté, listé au manifeste, en 600" "$(c="$V/ENC/pmzilla-offsite/db/db-2026-10-11"; [ "$(cat "$c/quality-sans-texte.dump")" = "$SENT 11 quality-sans-texte" ] && grep -Eq '	quality-sans-texte.dump$' "$c/MANIFESTE.sha256" && [ "$(stat -f %Lp "$c/quality-sans-texte.dump")" = 600 ]; echo $?)"
 verifie "copy : dossiers en 700 et fichiers en 600, quel que soit l'umask" "$([ -z "$(find "$V/ENC/pmzilla-offsite" -type d ! -perm 700)" ] && [ -z "$(find "$V/ENC/pmzilla-offsite" -type f ! -perm 600)" ]; echo $?)"
 verifie "copy : le manifeste liste somme, taille et chemin de chaque fichier (sous-dossiers compris)" "$([ "$(wc -l < "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-10/MANIFESTE.sha256" | tr -d ' ')" = 2 ] && grep -Eq "^[0-9a-f]{64}	[0-9]+	sous dossier/autre " "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-10/MANIFESTE.sha256"; echo $?)"
 verifie "copy : les sauvegardes locales ne sont pas modifiées" "$([ "$avant_sauvegardes" = "$(arbre "$SAUV")" ]; echo $?)"
@@ -261,7 +281,7 @@ serie="$V/ENC/pmzilla-offsite/db"
 for d in 2026-08-05 2026-08-20 2026-09-03 2026-09-15 2026-10-01 2026-10-02; do mkdir -p "$serie/db-$d"; echo x > "$serie/db-$d/f"; done
 mkdir -p "$serie/db-2026-07-01-etiquette" "$serie/autre-dossier"; echo x > "$serie/autre-dossier/f"
 OFFSITE_GARDER_RECENTES=2 OFFSITE_GARDER_MOIS=2 lance copy
-verifie "rotation : les copies hors rétention sont supprimées, une ligne chacune" "$([ $code -eq 0 ] && grep -qx 'copie supprimée : db-2026-10-01' "$tmp/s" && grep -qx 'copie supprimée : db-2026-09-03' "$tmp/s" && grep -qx 'copie supprimée : db-2026-08-20' "$tmp/s" && grep -qx 'copie supprimée : db-2026-08-05' "$tmp/s"; echo $?)"
+verifie "rotation : les copies hors rétention sont supprimées, une ligne chacune" "$([ $code -eq 0 ] && grep -Eqx "$DATEE copie supprimée : db-2026-10-01" "$tmp/s" && grep -Eqx "$DATEE copie supprimée : db-2026-09-03" "$tmp/s" && grep -Eqx "$DATEE copie supprimée : db-2026-08-20" "$tmp/s" && grep -Eqx "$DATEE copie supprimée : db-2026-08-05" "$tmp/s"; echo $?)"
 verifie "rotation : sont gardées les 2 récentes (10-11, 10-02) et la dernière de chacun des 2 derniers mois (octobre : 10-11, septembre : 09-15)" "$([ -d "$serie/db-2026-10-11" ] && [ -d "$serie/db-2026-10-02" ] && [ -d "$serie/db-2026-09-15" ] && [ ! -e "$serie/db-2026-10-01" ] && [ ! -e "$serie/db-2026-09-03" ] && [ ! -e "$serie/db-2026-08-20" ] && [ ! -e "$serie/db-2026-08-05" ]; echo $?)"
 verifie "rotation : un dossier étranger ou étiqueté n'est ni compté, ni supprimé, ni cité" "$([ -d "$serie/db-2026-07-01-etiquette" ] && [ -d "$serie/autre-dossier" ] && ! grep -q -e 'autre-dossier' -e 'etiquette' "$tmp/s"; echo $?)"
 verifie "rotation : la copie la plus récente n'est jamais supprimée" "$([ -f "$serie/db-2026-10-11/MANIFESTE.sha256" ]; echo $?)"
@@ -283,7 +303,7 @@ lance copy --include-protected
 verifie "--include-protected : seconde fois « déjà présente »" "$([ $code -eq 0 ] && grep -q 'déjà présente : bmad-memory-2026-10-07' "$tmp/s"; echo $?)"
 mkdir -p "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-09-01"; echo x > "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-09-01/f"
 OFFSITE_GARDER_RECENTES=1 OFFSITE_GARDER_MOIS=1 lance copy --include-protected
-verifie "rotation du sanctum : la sauvegarde protégée n'est jamais supprimée, l'ancienne l'est" "$([ -d "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-07" ] && [ ! -e "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-09-01" ] && grep -qx 'copie supprimée : bmad-memory-2026-09-01' "$tmp/s"; echo $?)"
+verifie "rotation du sanctum : la sauvegarde protégée n'est jamais supprimée, l'ancienne l'est" "$([ -d "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-10-07" ] && [ ! -e "$V/ENC/pmzilla-offsite/sanctum/bmad-memory-2026-09-01" ] && grep -Eqx "$DATEE copie supprimée : bmad-memory-2026-09-01" "$tmp/s"; echo $?)"
 
 # ===========================================================================================================================
 # Disque absent ou verrouillé, autre disque de même nom
@@ -410,6 +430,17 @@ FAUX_RESTORE_CODE=1 OFFSITE_NOTIFIER=1 lance restore-test --force
 verifie "échec du script de restauration : code 1 et « test de restauration hors du Mac : échec (code 1) »" "$([ $code -eq 1 ] && grep -q 'test de restauration hors du Mac : échec (code 1)' "$tmp/s"; echo $?)"
 verifie "échec du test sous le planificateur : une notification, avec le code" "$([ "$(wc -l < "$OSA_LOG" | tr -d ' ')" = 1 ] && grep -q 'test de restauration hors du Mac : échec (code 1)' "$OSA_LOG"; echo $?)"
 
+# #206 : tables MANQUE, ligne d'échec et sauvegarde antérieure à la dernière migration, à l'écran et dans le rapport (noms seulement)
+FAUX_RESTORE_MANQUE=1 lance restore-test --force
+RAP="$ETAT/rapports/restore-2026-10.txt"
+verifie "tables manquantes : les lignes MANQUE (noms de tables) sont affichées" "$([ $code -eq 1 ] && grep -q 'flow.table_ajoutee_0007.*MANQUE' "$tmp/s" && grep -q 'knowledge.table_ajoutee_0008.*MANQUE' "$tmp/s"; echo $?)"
+verifie "tables manquantes : les lignes MANQUE sont dans le rapport" "$(grep -q 'flow.table_ajoutee_0007.*MANQUE' "$RAP" && grep -q 'knowledge.table_ajoutee_0008.*MANQUE' "$RAP"; echo $?)"
+verifie "tables manquantes : la ligne d'échec du bilan est dans le rapport" "$(grep -q 'ÉCHEC : restauration en échec, table manquante' "$RAP"; echo $?)"
+verifie "sauvegarde antérieure : message explicite avec les migrations absentes de la copie, à l'écran et dans le rapport" "$(grep -q 'sauvegarde antérieure à la dernière migration appliquée : migrations absentes de la copie : 7, 8' "$tmp/s" && grep -q 'sauvegarde antérieure à la dernière migration appliquée : migrations absentes de la copie : 7, 8' "$RAP"; echo $?)"
+verifie "tables manquantes : aucune sentinelle ni valeur dans l'écran, le rapport et l'état" "$(! grep -q "$SENT" "$tmp/s" "$RAP" "$ETAT/statut"; echo $?)"
+lance restore-test --force
+verifie "restore-test sans écart : aucun message de sauvegarde antérieure" "$([ $code -eq 0 ] && ! grep -q 'sauvegarde antérieure' "$tmp/s" "$RAP"; echo $?)"
+
 # Disque absent ou verrouillé
 mv "$FX/volumes/enc.plist" "$FX/debranches/enc.plist"
 : > "$FAUX_LOG"
@@ -532,11 +563,11 @@ verifie "repère : réglage invalide (code 2) : aucun repère laissé" "$([ $cod
 ( : ) & mort=$!; wait "$mort" 2>/dev/null
 mkdir "$RC"; echo "$mort" > "$RC/pid"; date +%s > "$RC/debut"
 PMZILLA_LAB_DATA="$M" lance2 copy
-verifie "repère copie périmé (processus mort) : repris et journalisé, aucun repère laissé" "$([ $code -eq 3 ] && grep -q '^Repère de passage périmé, repris$' "$tmp/s" && [ ! -e "$RC" ]; echo $?)"
+verifie "repère copie périmé (processus mort) : repris et journalisé, aucun repère laissé" "$([ $code -eq 3 ] && grep -Eqx "$DATEE Repère de passage périmé, repris" "$tmp/s" && [ ! -e "$RC" ]; echo $?)"
 
 mkdir "$RC"; echo "$$" > "$RC/pid"; date +%s > "$RC/debut"
 PMZILLA_LAB_DATA="$M" lance2 copy
-verifie "repère copie tenu par un processus vivant : passage sans repère propre, ligne journalisée, dossier intact" "$([ $code -eq 3 ] && grep -q '^Repère de passage déjà tenu : passage sans repère propre$' "$tmp/s" && [ "$(cat "$RC/pid")" = "$$" ]; echo $?)"
+verifie "repère copie tenu par un processus vivant : passage sans repère propre, ligne journalisée, dossier intact" "$([ $code -eq 3 ] && grep -Eqx "$DATEE Repère de passage déjà tenu : passage sans repère propre" "$tmp/s" && [ "$(cat "$RC/pid")" = "$$" ]; echo $?)"
 
 # un repère par sous-commande : la restauration pose et retire le sien, celui de la copie (tenu) reste intact
 mv "$FX/debranches/enc2.plist" "$FX/volumes/enc2.plist"; : > "$FAUX_LOG"
@@ -562,7 +593,7 @@ if [ "$(id -u)" != 0 ]; then
   RO="$tmp/donnees-ro"; mkdir -p "$RO"; chmod 500 "$RO"
   mv "$FX/volumes/enc2.plist" "$FX/debranches/enc2.plist"
   PMZILLA_LAB_DATA="$RO" lance2 copy
-  verifie "repère : dossier de données non inscriptible : ligne journalisée, code inchangé (3, disque absent)" "$([ $code -eq 3 ] && grep -q '^Repère de passage impossible à écrire$' "$tmp/s"; echo $?)"
+  verifie "repère : dossier de données non inscriptible : ligne journalisée, code inchangé (3, disque absent)" "$([ $code -eq 3 ] && grep -Eqx "$DATEE Repère de passage impossible à écrire" "$tmp/s"; echo $?)"
   mv "$FX/debranches/enc2.plist" "$FX/volumes/enc2.plist"; chmod 700 "$RO"
 else
   echo "saut : lancé en administrateur, dossier non inscriptible non simulable"
@@ -575,6 +606,112 @@ verifie "âge maximal du repère : la constante par défaut de offsite_backup.sh
 verifie "âge maximal du repère : la constante de offsite_backup.sh est celle de run_worktree.sh" "$([ -n "$defaut_offsite" ] && [ "$defaut_offsite" = "$defaut_run" ]; echo $?)"
 
 # ===========================================================================================================================
+# Journal de la copie : lignes datées, lancement manuel ou planifié, report déclaré (change morning-guard, D8 à D10)
+# Décor propre : dossier de données, sauvegardes et disque à part (le décor du fichier ne sert plus à ce stade).
+# ===========================================================================================================================
+SAUVE_DONNEES="$OFFSITE_DONNEES"; SAUVE_SAUV="$OFFSITE_SAUVEGARDES"; SAUVE_JOURNAL="$OFFSITE_COPY_LOG"
+L3="$tmp/lab3"; S3="$L3/sauvegardes"; ID3="AAAAAAAA-3333-4333-8333-ENCRYPTED03"; ETAT3="$L3/offsite"
+mkdir -p "$V/ENC3" "$S3/db-2026-10-20" "$S3/bmad-memory-2026-10-19"
+for s in knowledge cases flow; do echo "$SENT 20 $s" > "$S3/db-2026-10-20/$s.dump"; done
+echo "$SENT sanctum" > "$S3/bmad-memory-2026-10-19/note.md"
+faire_volume "$FX/volumes/enc3.plist" "$ID3" "Disque trois" "$V/ENC3" true false false false
+export OFFSITE_DONNEES="$L3" OFFSITE_SAUVEGARDES="$S3" OFFSITE_DATE="2026-10-20"
+ENTREE="y" lance setup "$V/ENC3"
+MAINTENANT="2026-10-20 08:15:03"; J3="$tmp/journal3.log"; rm -f "$J3"
+lance_n() { # journal horodatage arguments : lancement à la main, sortie dans $tmp/s (pas dans le journal)
+  local journal=$1 now=$2; shift 2
+  OFFSITE_COPY_LOG="$journal" OFFSITE_NOW="$now" bash "$SCRIPT" "$@" > "$tmp/s" 2>&1 < /dev/null; code=$?
+  cat "$tmp/s" >> "$ALL"
+}
+
+# --- D8 : lignes datées, première ligne = lancement
+lance_n "$J3" "$MAINTENANT" copy
+verifie "journal : copie manuelle nominale, code 0" "$code"
+verifie "journal : la première ligne dit la date, l'heure et « lancement manuel »" "$([ "$(head -1 "$tmp/s")" = "$MAINTENANT copie hors du Mac : lancement manuel" ]; echo $?)"
+verifie "journal : toutes les lignes commencent par la date et l'heure" "$([ "$(grep -vc "^$MAINTENANT " "$tmp/s")" = 0 ]; echo $?)"
+verifie "journal : « copie créée » est daté, son message est inchangé" "$(grep -q "^$MAINTENANT copie créée : db-2026-10-20 (3 fichiers" "$tmp/s"; echo $?)"
+verifie "journal : aucun chemin, aucun nom de volume, aucun nom de fichier dans les lignes" "$(! grep -q -e "$tmp" -e "Disque trois" -e "$ID3" -e "$NOMFICHIER" -e "$SENT" "$tmp/s"; echo $?)"
+# --- D9 : le lancement manuel écrit les mêmes lignes dans le journal, une fois chacune
+verifie "journal : un lancement manuel ajoute au journal exactement les lignes affichées" "$(cmp -s "$J3" "$tmp/s"; echo $?)"
+cp "$tmp/s" "$tmp/s-premier"
+lance_n "$J3" "2026-10-20 09:00:00" copy
+verifie "journal : second lancement manuel, code 0, « déjà présente » daté" "$([ $code -eq 0 ] && grep -q '^2026-10-20 09:00:00 déjà présente : db-2026-10-20' "$tmp/s"; echo $?)"
+verifie "journal : le journal garde le premier passage et ajoute le second, sans doublon ni troncature" "$(cat "$tmp/s-premier" "$tmp/s" | cmp -s - "$J3"; echo $?)"
+# Lancement planifié : la sortie est déjà le journal
+JP="$tmp/planifie.log"; rm -f "$JP"
+OFFSITE_COPY_LOG="$JP" OFFSITE_NOW="$MAINTENANT" bash "$SCRIPT" copy > "$JP" 2>&1 < /dev/null; code=$?
+verifie "journal : lancement planifié (sortie redirigée vers le journal), code 0" "$code"
+verifie "journal : la première ligne dit « lancement planifié »" "$([ "$(head -1 "$JP")" = "$MAINTENANT copie hors du Mac : lancement planifié" ]; echo $?)"
+verifie "journal : chaque ligne du lancement planifié n'apparaît qu'une fois (rien n'est ajouté par le script)" "$(sed '1s/planifié/manuel/' "$JP" | sed "s/^$MAINTENANT/2026-10-20 09:00:00/" | cmp -s - "$tmp/s"; echo $?)"
+cat "$JP" >> "$ALL"
+# Sortie vers un autre fichier que le journal : lancement manuel, le journal reçoit les lignes
+JA="$tmp/autre.log"; JM="$tmp/manuel.log"; rm -f "$JA" "$JM"
+OFFSITE_COPY_LOG="$JM" OFFSITE_NOW="$MAINTENANT" bash "$SCRIPT" copy > "$JA" 2>&1 < /dev/null; code=$?
+verifie "journal : sortie vers un autre fichier : lancement manuel, le journal reçoit les mêmes lignes" "$([ $code -eq 0 ] && cmp -s "$JA" "$JM" && head -1 "$JA" | grep -q 'lancement manuel$'; echo $?)"
+cat "$JA" >> "$ALL"
+# Journal impossible à écrire : la ligne le dit, le code de la copie est inchangé
+lance_n "$tmp" "$MAINTENANT" copy
+verifie "journal impossible à écrire : la ligne datée le dit, code de la copie inchangé (0)" "$([ $code -eq 0 ] && grep -qx "$MAINTENANT journal de la copie impossible à écrire" "$tmp/s" && grep -q ' déjà présente : db-2026-10-20' "$tmp/s"; echo $?)"
+# Disque absent : la ligne de report est datée et garde sa phrase
+mv "$FX/volumes/enc3.plist" "$FX/debranches/enc3.plist"
+lance_n "$J3" "2026-10-20 10:00:00" copy
+verifie "journal : disque absent, code 3, la ligne de report est datée et garde sa phrase" "$([ $code -eq 3 ] && grep -qx '2026-10-20 10:00:00 disque absent ou verrouillé : copie reportée' "$tmp/s" && grep -qx '2026-10-20 10:00:00 disque absent ou verrouillé : copie reportée' "$J3"; echo $?)"
+mv "$FX/debranches/enc3.plist" "$FX/volumes/enc3.plist"
+lance_n "$J3" "$MAINTENANT" copy --bidon
+verifie "journal : erreur d'usage de copy, code 2, ligne d'usage datée" "$([ $code -eq 2 ] && [ "$(grep -vc "^$MAINTENANT " "$tmp/s")" = 0 ] && grep -q "^$MAINTENANT Usage : bash tools/offsite_backup.sh copy" "$tmp/s"; echo $?)"
+lance status
+verifie "journal : les autres sous-commandes ne sont pas datées (status)" "$([ $code -eq 0 ] && ! grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}' "$tmp/s"; echo $?)"
+# Le journal par défaut est la sortie du modèle launchd de la copie
+sortie_modele="$(sed -n '/<key>StandardOutPath<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$racine/tools/com.pmzilla.offsite-copy.plist")"
+erreur_modele="$(sed -n '/<key>StandardErrorPath<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$racine/tools/com.pmzilla.offsite-copy.plist")"
+defaut_journal="$(sed -n 's/^JOURNAL_COPIE="\${OFFSITE_COPY_LOG:-\$HOME\/\(.*\)}"$/\1/p' "$SCRIPT" | head -1)"
+verifie "statique : le journal par défaut du script est la sortie du modèle launchd de la copie" "$([ -n "$defaut_journal" ] && [ "__HOME__/$defaut_journal" = "$sortie_modele" ] && [ "$sortie_modele" = "$erreur_modele" ]; echo $?)"
+
+# --- D10 : report déclaré
+JR="$tmp/report.log"; rm -f "$JR"; : > "$OSA_LOG"; : > "$FAUX_LOG"
+JOUR21="2026-10-21 08:20:00"
+avant_postpone="$(arbre "$L3")|$(arbre "$V/ENC3")"
+OFFSITE_DATE="2026-10-21" OFFSITE_NOTIFIER=1 lance_n "$JR" "$JOUR21" postpone --reason "disque chez un tiers"
+verifie "postpone : cause valide, code 0 et phrase" "$([ $code -eq 0 ] && grep -qx 'copie hors du Mac du jour reportée : déclaration écrite' "$tmp/s"; echo $?)"
+verifie "postpone : le journal reçoit une seule ligne datée, avec la sauvegarde du jour et la cause" "$([ "$(cat "$JR")" = "$JOUR21 copie reportée déclarée : db-2026-10-21 : disque chez un tiers" ]; echo $?)"
+verifie "postpone : ni disque, ni état, ni copie, ni sauvegarde, ni repère n'ont bougé ; aucun appel à l'utilitaire de disque ni notification" "$([ "$avant_postpone" = "$(arbre "$L3")|$(arbre "$V/ENC3")" ] && [ ! -s "$FAUX_LOG" ] && [ ! -s "$OSA_LOG" ] && [ ! -e "$L3/horsmac-copie.encours" ]; echo $?)"
+verifie "postpone : le module de l'état du matin lit cette ligne comme un report du jour" "$(secondes=$(date -j -f '%Y-%m-%d %H:%M:%S' "$JOUR21" +%s 2>/dev/null || date -d "$JOUR21" +%s); [ "$( . "$racine/tools/morning_state.sh"; OFFSITE_COPY_LOG="$JR" PMZILLA_RUN_NOW="$secondes" morning_copy_state)" = reportee ]; echo $?)"
+for essai in "" " " "deux
+lignes" "tabulation	ici"; do
+  avant_journal="$(cat "$JR")"
+  OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason "$essai"
+  verifie "postpone : cause « $(printf '%s' "$essai" | tr '\n\t' '  ' | cut -c1-12) » refusée : code 2, phrase, journal inchangé" "$([ "$code" -eq 2 ] && grep -q 'raison du report requise (une ligne, au plus 200 caractères)' "$tmp/s" && [ "$avant_journal" = "$(cat "$JR")" ]; echo $?)"
+done
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone
+verifie "postpone : sans --reason : code 2, phrase, journal inchangé" "$([ $code -eq 2 ] && grep -q 'raison du report requise (une ligne, au plus 200 caractères)' "$tmp/s" && [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ]; echo $?)"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason
+verifie "postpone : --reason sans valeur : code 2" "$([ $code -eq 2 ] && [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ]; echo $?)"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason "x" --date 2026-10-22
+verifie "postpone : aucune option de date : code 2, journal inchangé" "$([ $code -eq 2 ] && [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ]; echo $?)"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --raison "x"
+verifie "postpone : option inconnue : code 2, journal inchangé" "$([ $code -eq 2 ] && [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ]; echo $?)"
+long200="$(printf 'x%.0s' $(seq 1 200))"; long201="${long200}y"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason "$long201"
+verifie "postpone : 201 caractères : code 2, journal inchangé" "$([ $code -eq 2 ] && [ "$(wc -l < "$JR" | tr -d ' ')" = 1 ]; echo $?)"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason "$long200"
+verifie "postpone : 200 caractères acceptés : code 0, une ligne de plus" "$([ $code -eq 0 ] && [ "$(wc -l < "$JR" | tr -d ' ')" = 2 ] && tail -1 "$JR" | grep -q " : $long200\$"; echo $?)"
+OFFSITE_DATE="2026-10-21" lance_n "$JR" "$JOUR21" postpone --reason "disque chez un tiers, déjà dit é à ç"
+verifie "postpone : une cause accentuée est acceptée" "$([ $code -eq 0 ]; echo $?)"
+# Copie du jour déjà prouvée : rien n'est déclaré
+avant_prouvee="$(cat "$J3")"
+OFFSITE_DATE="2026-10-20" lance_n "$J3" "2026-10-20 11:00:00" postpone --reason "inutile"
+verifie "postpone : copie du jour déjà prouvée au journal : code 0, phrase, journal inchangé" "$([ $code -eq 0 ] && grep -qx "copie hors du Mac du jour déjà prouvée : rien n'est déclaré" "$tmp/s" && [ "$avant_prouvee" = "$(cat "$J3")" ]; echo $?)"
+printf 'serie-db derniere_copie=db-2026-10-20\n' > "$ETAT3/statut"
+rm -f "$JR"
+OFFSITE_DATE="2026-10-20" lance_n "$JR" "2026-10-20 11:00:00" postpone --reason "inutile"
+verifie "postpone : copie du jour prouvée par le fichier d'état : rien n'est déclaré, journal non créé" "$([ $code -eq 0 ] && grep -q 'déjà prouvée' "$tmp/s" && [ ! -s "$JR" ]; echo $?)"
+# Journal impossible à écrire
+OFFSITE_DATE="2026-10-21" lance_n "$tmp" "$JOUR21" postpone --reason "cause"
+verifie "postpone : journal impossible à écrire : code 1 et phrase" "$([ $code -eq 1 ] && grep -q 'journal de la copie impossible à écrire' "$tmp/s"; echo $?)"
+export OFFSITE_DONNEES="$SAUVE_DONNEES" OFFSITE_SAUVEGARDES="$SAUVE_SAUV" OFFSITE_DATE="2026-10-11" OFFSITE_COPY_LOG="$SAUVE_JOURNAL"
+unset ENTREE
+
+# ===========================================================================================================================
 # Garanties transversales
 # ===========================================================================================================================
 code_script="$(grep -v '^[[:space:]]*#' "$SCRIPT")"
@@ -585,7 +722,7 @@ verifie "le script n'utilise pas set -x" "$(! printf '%s\n' "$code_script" | gre
 verifie "le script applique umask 077" "$(printf '%s\n' "$code_script" | grep -q '^umask 077'; echo $?)"
 verifie "aucune sentinelle, aucun nom de fichier d'une copie, ni nom ni identifiant du volume dans toutes les sorties" "$(! grep -q -e "$SENT" -e "$NOMFICHIER" -e "$NOMDISQUE" -e "$ID" "$ALL"; echo $?)"
 verifie "aucune sentinelle ni nom de volume dans les notifications, les rapports et l'état" "$(! grep -rq -e "$SENT" -e "$NOMFICHIER" -e "$NOMDISQUE" -e "$ID" "$OSA_LOG" "$ETAT/rapports" "$ETAT/statut" "$ETAT/notification-absence"; echo $?)"
-verifie "rien n'est écrit dans le dépôt par ces essais (aucun rapport ni état sous le dépôt)" "$([ -z "$(cd "$racine" && git status --porcelain -- Flux-Lab _bmad-output 2>/dev/null)" ]; echo $?)"
+verifie "rien n'est écrit dans le dépôt par ces essais : l'état de Flux-Lab et de _bmad-output n'a pas changé" "$([ "$(cd "$racine" && git status --porcelain -- Flux-Lab _bmad-output 2>/dev/null)" = "$etat_depot_avant" ]; echo $?)"
 
 echo "$ok réussis, $ko échec(s)"
 [ "$ko" -eq 0 ]

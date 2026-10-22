@@ -28,8 +28,9 @@ import segment_sample as es
 
 ICI = Path(__file__).resolve().parent
 OUTILS = ICI.parent.parent / "tools"
-SCRIPT = OUTILS / "segment_sample.py"
-FLUX = OUTILS / "flux_jira.py"
+# les outils lisent la base seule : les tests passent par les lanceurs (faux flow_store rendant les fixtures CSV, change database-only D11)
+SCRIPT = ICI.parent / "flux_jira" / "lancer_segment_sample.py"
+FLUX = ICI.parent / "flux_jira" / "lancer_flux_jira.py"
 FMT = "%d/%b/%Y %H:%M"
 AUJOURDHUI = "2026-10-06"          # période : 2026-04-06 au 2026-10-04
 D = dt.date.fromisoformat
@@ -339,8 +340,24 @@ class TestEchantillon(unittest.TestCase):
         self.assertIn("n'est pas un segment calculé", r.stdout + r.stderr)
         (self.atelier.ws / "Flux-Lab" / "historique" / "transitions.json").unlink()
         r = subprocess.run(["uv", "run", str(SCRIPT), self.export], env=env, capture_output=True, text=True)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("cache introuvable", r.stdout + r.stderr)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("aucun historique dans la base : lancez d'abord la collecte de l'historique", r.stdout + r.stderr)
+
+    def test_refus_d_usage(self):
+        """Database-only : un fichier d'export et un chemin donné à --history sont refusés (code 2), sans les nommer."""
+        env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.atelier.ws), "LANCEUR_BRUT": "1"}
+        for args, phrase in (((self.export,), "les fichiers d'export ne sont plus lus : la base est la seule source"),
+                             (("--history", "ailleurs-secret.json"), "--history ne prend aucun fichier")):
+            r = subprocess.run(["uv", "run", str(SCRIPT), *args], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn(phrase, r.stdout + r.stderr)
+            self.assertNotIn("ailleurs-secret", r.stdout + r.stderr)
+
+    def test_session_claude_code_refusee(self):
+        env = {**os.environ, "PMZILLA_LAB_WORKSPACE": str(self.atelier.ws), "LANCEUR_GARDE_CLAUDECODE": "1", "CLAUDECODE": "1"}
+        r = subprocess.run(["uv", "run", str(SCRIPT), self.export], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("Refusé dans une session Claude Code", r.stdout + r.stderr)
 
 
 class TestParEtat(unittest.TestCase):

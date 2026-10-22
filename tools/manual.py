@@ -71,6 +71,7 @@ TABLE: dict[str, str] = {
     "tools/flux_jira.py": "Flux et Jira",
     "tools/history_jira.py": "Flux et Jira",
     "tools/segment_sample.py": "Flux et Jira",
+    "tools/story_quality.py": "Flux et Jira",
     "/dependencies": "Flux et Jira",
     "/monthly-flow": "Flux et Jira",
     # Base
@@ -85,6 +86,8 @@ TABLE: dict[str, str] = {
     "tools/sorting_exclusions.py": "Bibliothèque",
     "tools/caption_diagnostic.py": "Bibliothèque",
     "tools/outside_library.py": "Bibliothèque",
+    "tools/context_lab.py": "Bibliothèque",
+    "/context": "Bibliothèque",
     "tools/book_usage.py": "Bibliothèque",
     "tools/library_parity.py": "Bibliothèque",
     "/add-books": "Bibliothèque",
@@ -112,23 +115,38 @@ TABLE: dict[str, str] = {
     # Branches et worktrees
     "tools/finish_branch.sh": "Branches et worktrees",
     "tools/finish_worktree.sh": "Branches et worktrees",
+    "tools/finish_env.sh": "Branches et worktrees",
+    "tools/finish_lock.sh": "Branches et worktrees",
+    "tools/finish_merge.sh": "Branches et worktrees",
+    "tools/branch_sync.sh": "Branches et worktrees",
+    "tools/light_finish.sh": "Branches et worktrees",
+    "tools/light_validate.py": "Branches et worktrees",
     "tools/worktree.sh": "Branches et worktrees",
     "tools/run_worktree.sh": "Branches et worktrees",
+    "tools/morning_state.sh": "Branches et worktrees",
+    "tools/pilot.py": "Branches et worktrees",
+    "/pilot": "Branches et worktrees",
+    "tools/pipe_guard.py": "Branches et worktrees",
     # Sauvegardes
     "tools/db_backup.sh": "Sauvegardes",
     "tools/db_restore_test.sh": "Sauvegardes",
+    "tools/db_rehearsal.sh": "Sauvegardes",
+    "tools/db_container_common.sh": "Sauvegardes",
     "tools/offsite_backup.sh": "Sauvegardes",
     "tools/sauvegarde_sanctum.sh": "Sauvegardes",
     # Diagnostic (doctor)
     "tools/doctor.py": "Diagnostic (doctor)",
     "tools/doctor.sh": "Diagnostic (doctor)",
     "/doctor": "Diagnostic (doctor)",
+    "tools/lab_paths.py": "Diagnostic (doctor)",
+    "tools/lab_paths.sh": "Diagnostic (doctor)",
     # Édition
     "tools/build_edition.py": "Édition",
     "tools/publish_edition.py": "Édition",
     "/update-readme": "Édition",
     # Évaluation des postures et tableau de bord
     "tools/posture_evals.py": "Évaluation des postures et tableau de bord",
+    "tools/posture_eval_fingerprint.py": "Évaluation des postures et tableau de bord",
     "tools/evals_auto.sh": "Évaluation des postures et tableau de bord",
     "tools/dashboard.py": "Évaluation des postures et tableau de bord",
     "tools/final_messages_check.py": "Évaluation des postures et tableau de bord",
@@ -137,9 +155,13 @@ TABLE: dict[str, str] = {
     # Tests et contrôles
     "tests/run_all.sh": "Tests et contrôles",
     "tools/identifiants_personnels.py": "Tests et contrôles",
+    "tools/secret_scan.py": "Tests et contrôles",
+    "tools/commit_names_scan.py": "Tests et contrôles",
     "tools/select_suites.py": "Tests et contrôles",
+    "tools/ci_local.sh": "Tests et contrôles",
     "tools/manual.py": "Tests et contrôles",
     "tools/dbtest.sh": "Tests et contrôles",
+    "tools/mutation_masking.py": "Tests et contrôles",
     "/audit": "Tests et contrôles",
 }
 
@@ -149,12 +171,13 @@ TABLE: dict[str, str] = {
 # disque externe). Clé : (nom du script, sous-commande) ; la sous-commande None vaut pour le script et toutes ses sous-commandes.
 # Valeur : la raison. Le libellé est toujours « Terminal seulement ». Un test du dépôt réel échoue si l'un de ces scripts sort autrement.
 DEROGATIONS: dict[tuple[str, str | None], str] = {
-    ("dependencies_jira.py", None): "le CSV lit Flux-Lab/exports/ (lecture interdite à la session) et --source db est réservé à l'utilisateur",
-    ("flux_jira.py", None): "--source db est réservé à l'utilisateur, le CSV lit Flux-Lab/exports/",
+    ("dependencies_jira.py", None): "diagnose et compute lisent la base (schéma flow), réservée à l'utilisateur",
+    ("flux_jira.py", None): "statuses, compute, cycles et epics lisent la base (schéma flow), réservée à l'utilisateur",
     ("export_jira_api.py", None): "vraie API Jira, lancée par l'utilisateur seul",
     ("history_jira.py", None): "vraie API Jira et historique des statuts, lancés par l'utilisateur seul",
     ("db.py", None): "scripts de base de données, réservés à l'utilisateur",
     ("pmzilla_lab_library.py", None): "l'indexeur écrit dans la base et lit les livres ; réservé à l'utilisateur",
+    ("db_rehearsal.sh", None): "copie de répétition de la base, lancée par l'utilisateur seul (règle deny à poser, tâche 8.0)",
     ("offsite_backup.sh", None): "disque externe chiffré des sauvegardes, réservé à l'utilisateur",
     ("convert_books.py", None): "conversion des livres, réservée à l'utilisateur",
     ("sort_by_domain.py", None): "tri des livres par domaine, réservé à l'utilisateur",
@@ -164,7 +187,10 @@ DEROGATIONS: dict[tuple[str, str | None], str] = {
     ("watch_triage.py", None): "lit les articles de Watch-Lab/watch/ et écrit dans Watch-Lab",
     ("watch.sh", None): "enchaîne la collecte, le pré-tri et l'indexation sur Watch-Lab, sous launchd",
     ("composants.py", "check"): "interroge le réseau (sources des versions) ; lancé par la veille ou par l'utilisateur (fiche C18 de R-41)",
-    ("segment_sample.py", None): "lit les exports CSV et le cache d'historique de Flux-Lab (lecture interdite à la session)",
+    ("segment_sample.py", None): "lit les tickets et l'historique dans la base (schéma flow), réservée à l'utilisateur",
+    ("secret_scan.py", None): "declare écrit la liste des exemples déclarés, réservée à l'auteur ; refusé en session (code 3)",
+    ("commit_names_scan.py", None): "lit la vraie liste des noms sensibles ; le passage sur les commits non poussés est lancé par l'auteur "
+                                    "(les crochets commit-msg et pre-push l'appellent d'eux-mêmes)",
 }
 
 

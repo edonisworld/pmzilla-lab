@@ -5,7 +5,9 @@
 Building and maintaining the library index from Markdown collections, written directly into the knowledge schema of the database: incremental indexing, passage splitting, figure passages, forced recomputation, collection renaming, the BM25 probe and status counts, and the caption diagnostic.
 
 Source of truth: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py`, `tests/pmzilla_lab_library/test_figures.py`, `tests/pmzilla_lab_library/test_serve_wrapper.py` (catalogue), `tests/pmzilla_lab_library/test_caption_diagnostic.py`, `tests/convert_books/test_noms_options.py`, `tools/pmzilla_lab_library.py`, `tools/caption_diagnostic.py`.
+
 ## Requirements
+
 ### Requirement: Index collection folders incrementally
 The system SHALL index every Markdown file found under the collection folders (the folder name being the collection), SHALL skip files whose name starts with an underscore, SHALL stop with an error when a given folder does not exist, and SHALL report how many books were indexed and how many were unchanged.
 
@@ -317,6 +319,79 @@ The system SHALL provide a status command that prints, under the read-only role,
 #### Scenario: Status
 - **WHEN** the status command runs on a database with five books
 - **THEN** one line gives five books and the passage, figure and collection counts, and no title appears
+
+### Requirement: Index the context notes into the private context collection
+The system SHALL accept a context option naming the context folder, SHALL index the notes of its notes folder into the context collection only, and SHALL store each note's date, nature, source, review date and map mark, with no author built (design D4). It SHALL refuse, before the database is touched, an ordinary collections folder that is the context folder or holds an originals folder. It SHALL NOT read the originals folder.
+
+#### Scenario: Notes indexed
+- **WHEN** the fixture context folder is indexed with the context option, beside a library folder
+- **THEN** the notes are stored in the context collection with their header fields and no author, and the books keep their collections
+
+#### Scenario: Context folder given as a collections folder
+- **WHEN** the context folder is passed as an ordinary collections folder
+- **THEN** the command prints "context folder given as a collections folder, refused: use --context", exits with code 1, makes no embedding call and leaves the database unchanged
+
+### Requirement: Refuse a note with an invalid header or a borrowed name
+The system SHALL leave out of the index a note whose header breaks a rule of design D2, or whose file name is that of a book or article of another folder, SHALL name it with "not indexed:" and the reason, and SHALL exit with code 1 after indexing the other books. It SHALL NOT merge a note with a book of the same file name.
+
+#### Scenario: Header without review date
+- **WHEN** one note has no review date
+- **THEN** it is absent from the database, the output names it, the other notes and books are stored, and the exit code is 1
+
+#### Scenario: Name of a book
+- **WHEN** a note has the file name of a library fixture book
+- **THEN** the note is not indexed, the reason says the name is already used by another collection, and the book keeps its single collection
+
+### Requirement: Keep the context notes when the context option is absent
+The system SHALL remove a note from the database only on a run given the context option, when its file is gone from the notes folder. A run without the option SHALL keep every book of the context collection unchanged, print "context notes kept unchanged (no --context)", and leave them out of the empty-scan guard. It SHALL NOT delete a note on a run without the option.
+
+#### Scenario: Run without the option
+- **WHEN** the database holds notes and the indexer runs on the library and watch folders only
+- **THEN** the notes are still stored, the output holds the kept line, and no note is named as removed
+
+#### Scenario: Note deleted
+- **WHEN** a note file is deleted and the indexer runs with the context option
+- **THEN** that note leaves the database and the output names it
+
+### Requirement: Embed a private collection on the local machine only
+The system SHALL check, before any embedding call of a run that has a private-collection note to embed, that the embedding service's host is a loopback address, and otherwise SHALL stop the whole run with exit code 1 and "private collection: embedding service not local, nothing indexed" (design D11). It SHALL NOT send any text of the run to that service.
+
+#### Scenario: Remote embedding address
+- **WHEN** the embedding address names a host that is not loopback and a new note is to be indexed
+- **THEN** the run exits with code 1, prints the key phrase, makes no embedding call and leaves the database unchanged
+
+#### Scenario: Local address
+- **WHEN** the embedding address is the local service
+- **THEN** the notes are embedded and stored as usual
+
+### Requirement: The indexer checks the confidentiality of every note
+The system SHALL apply, on a run given the context option, the context tool's confidentiality check to every note of the notes folder, unchanged notes included, before the database is touched, and SHALL leave out a note with a finding, printing "not indexed:", the file and the line number (design D1). It SHALL NOT embed such a note nor print the matched value or a body line. Untested until implemented.
+
+#### Scenario: Listed name in a new note
+- **WHEN** a note holds a name of the fake sensitive-names list on line 6 of its file (lines counted from the top of the file, header included, as `check` counts them)
+- **THEN** it is not indexed, the output holds "sensitive name in line 6", no embedding call is made for it, and the output holds neither the name nor the line text
+
+#### Scenario: Name listed after indexing
+- **WHEN** a stored note, unchanged on disk, holds a name added to the list since its indexing
+- **THEN** the note is refused on the next run with the context option
+
+### Requirement: A refused note leaves the database
+The system SHALL remove from the database, on a run given the context option, a stored note whose file is present but refused for any rule of the scan, naming it with "removed:" (design D2). It SHALL NOT keep a former indexed version of a refused note, nor remove a note on a run without the option. Untested until implemented.
+
+#### Scenario: Stored note now refused
+- **WHEN** a stored note now holds a listed name and the indexer runs with the context option
+- **THEN** the note is no longer in the database and the output names it as removed
+
+#### Scenario: Run without the option
+- **WHEN** the same note is present and the indexer runs without the context option
+- **THEN** the note is kept unchanged
+
+### Requirement: No note is indexed without the sensitive-names list
+The system SHALL, on a run given the context option with the sensitive-names list missing, unreadable or empty, print "sensitive-names list unavailable: context notes not indexed" once, embed, update and remove no note, index the books normally and exit with code 1 at the end (design D3). The extract alone SHALL NOT make the list available. Untested until implemented.
+
+#### Scenario: List missing
+- **WHEN** the list is absent and the indexer runs with the context option on notes and books
+- **THEN** the books are indexed, no note is embedded or removed, the phrase is printed once and the exit code is 1
 
 ## Note on the BM25 index
 

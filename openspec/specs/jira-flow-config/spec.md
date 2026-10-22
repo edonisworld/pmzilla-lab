@@ -138,13 +138,17 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestCycles, TestPatches, TestD
 - **THEN** they are read without warning and the mapping is marked validated
 
 ### Requirement: Retention settings added by the GDPR alignment
-The system SHALL accept in the flow settings, read with the strict loader and validated before any call to Jira, any database connection and any file write, the `retention` block: retention period, maximum file age of CSV and points files, labelled-backup lifetime, pre-purge label, off-site flow age.
+The system SHALL accept in the flow settings, read with the strict loader and validated before any call to Jira, any database connection and any file write, the `retention` block: retention period, maximum file age of the ageing-points files, labelled-backup lifetime, pre-purge label, off-site flow age. The maximum file age SHALL keep its setting name; it SHALL NOT apply to the files left from the CSV route, which are out of rule whatever their age (jira-flow-retention).
 
-Source: tests/flux_config/test_nouveaux_blocs.py (TestRetention)
+Source: tests/flux_config/test_nouveaux_blocs.py (TestRetention, test_le_nom_du_reglage_de_l_age_maximal_est_inchange)
 
 #### Scenario: Defaults and given values
 - **WHEN** the block is absent, or holds every key
 - **THEN** defaults apply, respectively the given values are read
+
+#### Scenario: Unchanged setting name
+- **WHEN** a settings file written before this change holds the maximum file age
+- **THEN** it is read without any message and applies to the ageing-points files only
 
 ### Requirement: Invalid new settings refused
 The system SHALL stop the reading tool on an invalid value of the settings added by the GDPR alignment, with exit code 1 (exit code 3 in the retention tool), naming the key path and line and never the value.
@@ -189,6 +193,55 @@ Source: tests/flux_config/test_nouveaux_blocs.py; tests/flow_organisation/test_f
 #### Scenario: Duplicate in the cycles block
 - **WHEN** a cycle key is written twice
 - **THEN** each new reader refuses it with "written twice" and both line numbers, without the value
+
+### Requirement: Dependency-map exclusion setting accepted
+The system SHALL accept the top-level key `dependency_excluded_projects`, validated by every reader of the flow settings before any call to Jira, database connection or file write. A value that is not a list of non-empty strings SHALL stop the reader with exit code 1 and the message of design D5, naming the key and its line. The system SHALL NOT echo the value nor ignore it with a warning.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (task 4.1)
+
+#### Scenario: Valid list
+- **WHEN** the key holds a list of project keys
+- **THEN** every reader reads the file without any message
+
+#### Scenario: Invalid value
+- **WHEN** the key holds a single string instead of a list
+- **THEN** each reader stops with exit code 1, the output holds "invalid setting: dependency_excluded_projects" with its line, and the value does not appear
+
+#### Scenario: Written twice
+- **WHEN** the key is written on two lines
+- **THEN** each reader refuses it with "written twice" and both line numbers
+
+### Requirement: One export time-zone rule
+The system SHALL compute the export time zone with one shared rule for the export tool, the import reader, the database readers and the flow report (the configured zone, else the default, daylight saving respected). An unknown zone SHALL keep each tool's current message and exit code. The shared rule SHALL NOT print anything itself, and no tool SHALL keep its own copy of the rule. Untested until implemented.
+
+#### Scenario: Same zone everywhere
+- **WHEN** a zone other than the default is configured
+- **THEN** the four tools convert a summer and a winter date with the same offsets
+
+#### Scenario: Unknown zone
+- **WHEN** the configured zone is unknown
+- **THEN** the export tool still exits with code 1 naming the setting before any Jira call, and each other tool keeps its current error
+
+#### Scenario: Reports unchanged
+- **WHEN** the flow and dependency reports of one export day are computed before and after the factoring, with the same day of calculation
+- **THEN** the comparison tool reports no difference for each pair, on both data sources
+
+### Requirement: Not-found limit of the history collection
+The system SHALL accept the top-level key `history_not_found_limit` (design D15 of the database-only change): a whole number of at least 1, default 3, validated by the strict loader before any Jira call. An invalid value SHALL stop the reader with exit code 1, naming the key and its line. It SHALL NOT echo the value or accept 0, a negative number, a decimal or a text.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (task 14.4)
+
+#### Scenario: Default
+- **WHEN** the key is absent
+- **THEN** the limit is 3
+
+#### Scenario: Given value
+- **WHEN** the key holds 5
+- **THEN** the limit is 5 and no message is printed
+
+#### Scenario: Invalid value
+- **WHEN** the key holds 0 or a text
+- **THEN** the reader stops with exit code 1, the output holds "invalid setting: history_not_found_limit" with its line, the value does not appear, and Jira is not called
 
 ## Open questions
 

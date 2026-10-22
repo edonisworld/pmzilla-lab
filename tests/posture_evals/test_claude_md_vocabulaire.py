@@ -32,7 +32,7 @@ def table_des_formules() -> dict[str, list[str]]:
 class TableDesFormules(unittest.TestCase):
     def test_la_table_reprend_le_vocabulaire(self):
         table = table_des_formules()
-        self.assertEqual(len(table), 7, list(table))
+        self.assertEqual(len(table), 9, list(table))
         lignes = list(table.values())
         for langue, colonne in ((l, c - 1) for l, c in COLONNES.items()):
             vocabulaire = VOCABULAIRE[langue]
@@ -44,6 +44,8 @@ class TableDesFormules(unittest.TestCase):
                 vocabulaire["critic_final_title"],
                 vocabulaire["source_separation"][2],
                 vocabulaire["case_citation"],
+                vocabulaire["context_note_citation"],
+                vocabulaire["stale_context_note"],
             ]
             obtenu = [ligne[colonne] for ligne in lignes]
             self.assertEqual(obtenu, attendu, langue)

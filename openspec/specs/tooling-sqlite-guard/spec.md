@@ -1,7 +1,7 @@
 # tooling-sqlite-guard Specification
 
 ## Purpose
-TBD - created by archiving change remove-sqlite. Update Purpose after archive.
+The system SHALL guarantee that no tool reads or writes a SQLite file and that no test builds a SQLite fixture, now that PostgreSQL is the only store.
 
 ## Requirements
 

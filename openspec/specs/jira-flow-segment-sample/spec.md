@@ -11,12 +11,12 @@ Source of truth: `tests/segment_sample/test_segment_sample.py`, `tests/segment_s
 ## Requirements
 
 ### Requirement: Use the same population and calculation as the flow report
-The system SHALL sample tickets that left the chosen segment during the analysed complete weeks, with time summed over all their finished visits to the segment, SHALL use the same exports, history cache, settings, excluded projects and types and calculation functions as the flow report, so that the displayed P50 equals the report's, and SHALL show the states that make up the segment, the number of tickets without history and the number set aside.
+The system SHALL sample tickets that left the chosen segment during the analysed complete weeks, with time summed over all their finished visits to the segment, SHALL read the tickets and the history from the database under the read-only role, through the readers of the flow report, and SHALL use the same settings, excluded projects and types and calculation functions as the flow report, so that the displayed P50 equals the report's, and SHALL show the states that make up the segment, the number of tickets without history and the number set aside.
 
-Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_etats_du_segment_et_population, test_meme_population_que_flux_jira)
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_etats_du_segment_et_population, test_meme_population_que_flux_jira, through the fake reader of tests/flux_jira/lanceur_csv.py)
 
 #### Scenario: Same figures as the report
-- **WHEN** the sample and the flow report are computed on the same export and date
+- **WHEN** the sample and the flow report are computed on the same data and date
 - **THEN** the population size, P50, P85, mean and the count of tickets still in the segment are those of the report
 
 #### Scenario: Segment states
@@ -63,7 +63,7 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_sort
 - **THEN** no title appears and the set of files in the workspace is unchanged
 
 ### Requirement: Refuse an unknown segment and a missing history cache
-The system SHALL stop with a non-zero code when the segment is not a computed segment, saying so, and when the export has no history cache, saying the cache was not found. A segment SHALL be accepted by its internal name and by its English name with identical output.
+The system SHALL stop with a non-zero code when the segment is not a computed segment, saying so, and SHALL stop with exit code 1 and the no-history key phrase of design D6 when the database holds no history. A segment SHALL be accepted by its internal name and by its English name with identical output.
 
 Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_segment_inconnu_et_export_sans_historique, test_segment_sous_son_nom_anglais)
 
@@ -72,8 +72,8 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_segm
 - **THEN** the run fails with a message that it is not a computed segment
 
 #### Scenario: Missing cache
-- **WHEN** the history cache is removed
-- **THEN** the run fails with a "cache not found" message
+- **WHEN** no transition is stored
+- **THEN** the run fails with "no history in the database: run the history collection first" and exit code 1
 
 #### Scenario: English segment name
 - **WHEN** the segment is given by its English name
@@ -183,6 +183,19 @@ Source: `tests/segment_sample/test_segment_sample.py` (test_anciennes_options_re
 #### Scenario: Former option names
 - **WHEN** the former option name for date, longest, seed or language is used
 - **THEN** the run fails (exit code 2 for the language option), stderr says the option no longer exists and names the current one, and stdout is empty
+
+### Requirement: Segment sample refused inside a Claude Code session and on files
+The system SHALL refuse to start, with the exit code and the session key phrase of design D6, when the variable that Claude Code sets in its shells is present, before reading any setting (design D12). It SHALL refuse an export file given as argument and a path given to the history option, each with exit code 2 and its key phrase of design D6, before any connection.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_refus_d_usage, test_session_claude_code_refusee)
+
+#### Scenario: Started from a session
+- **WHEN** the sample starts with the variable present
+- **THEN** the output holds "Refused inside a Claude Code session" and nothing is read
+
+#### Scenario: Export file
+- **WHEN** an export file is given
+- **THEN** the output holds "export files are no longer read: the database is the only source" and the exit code is 2
 
 ## Open questions
 

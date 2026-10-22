@@ -6,11 +6,13 @@ Tests de tools/bmad_remplacements.py : les remplacements imposés aux skills ins
 Racine factice dans un dossier temporaire, textes génériques ; aucun appel réseau.
 """
 import io
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
@@ -28,6 +30,10 @@ class TestRemplacements(unittest.TestCase):
         self.skill.write_text(f"Exemples : `{ANCIEN}`, `{ANCIEN}` et `autre.md`.\n", encoding="utf-8")
         self.regles = self.racine / ".pmzilla" / "remplacements-bmad.tsv"
         self.regles.parent.mkdir()
+        # racine sans Git : le dossier de contenu du module partagé est donné par la variable (R-77)
+        variable = mock.patch.dict(os.environ, {"PMZILLA_LAB_WORKSPACE": str(self.racine)})
+        variable.start()
+        self.addCleanup(variable.stop)
         self.regles.write_text(f"# commentaire\n\n.claude/skills/bmad-x/SKILL.md\t{ANCIEN}\t{NOUVEAU}\n", encoding="utf-8")
 
     def tearDown(self):

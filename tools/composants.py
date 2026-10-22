@@ -11,10 +11,15 @@ PMZilla Lab : veille des composants (change components-watch, R-41).
 `inventory` lit l'inventaire docs/pmzilla/composants.yaml, résout la version utilisée de chaque composant là où elle est fixée
 (verrous des scripts, .python-version, docker-compose.yml, manifeste BMAD, fichier de version de tools/vendor, constante de l'outil
 de bibliothèque, configuration par défaut du pré-tri) et affiche une ligne par composant : nom · genre · version · où elle est fixée.
-Aucun réseau, aucune écriture. `--verify` reconstitue en plus la liste des composants utilisés depuis les sources du dépôt (en-têtes
+Le Node de Mothra (genre node-runtime) est lu dans mothra/.node-version : trois segments numériques, sinon « version de Node de
+Mothra invalide » (code 1). Aucun réseau, aucune écriture. `--verify` reconstitue en plus la liste des composants utilisés depuis les sources du dépôt (en-têtes
 PEP 723 et verrous de tools/, .python-version, docker-compose.yml, modèles Ollama, prérequis d'installation, manifeste BMAD,
-configuration OpenSpec, tools/vendor/, dépendances du lanceur de tests) et nomme ce qu'il faut ajouter ou retirer ; il contrôle aussi
-que l'étiquette de l'image et l'empreinte notée en commentaire vont ensemble. Les dépendances d'un outil privé ne comptent que si
+configuration OpenSpec, tools/vendor/, dépendances du lanceur de tests, images et CLI OpenSpec de ci/Dockerfile) et nomme ce qu'il
+faut ajouter ou retirer ; il contrôle aussi que l'étiquette de l'image et l'empreinte notée en commentaire vont ensemble, et que
+ci/Dockerfile épingle chaque image par étiquette et empreinte sha256, la CLI OpenSpec à version exacte et le Python de .python-version
+(une valeur marquée A_REMPLIR est nommée « Valeur à remplir par l'auteur dans ci/Dockerfile »), et que l'étiquette de la base Node
+de ci/Dockerfile est égale, exactement, à la version de mothra/.node-version (contrôle sauté, avec sa raison, sans l'un des deux
+fichiers). Les dépendances d'un outil privé ne comptent que si
 l'outil est présent ; quand l'un manque (édition publique), un paquet de l'inventaire qu'aucune source ne déclare n'est pas signalé.
 
 `check` compare chaque composant à la dernière version publiée (PyPI, registre npm, API de Homebrew, publications GitHub, étiquettes
@@ -72,6 +77,11 @@ INVENTAIRE = "docs/pmzilla/composants.yaml"
 GUIDE = "docs/pmzilla/installation.md"
 COMPOSE = "docker-compose.yml"
 PYTHON_VERSION = ".python-version"
+NODE_MOTHRA = "mothra/.node-version"                  # Node de Mothra, une version exacte (change mothra-node-lts)
+NOM_NODE_MOTHRA = "node-mothra"
+MOTIF_NODE_MOTHRA = re.compile(r"^\d+\.\d+\.\d+$")
+APERCU_NODE_MOTHRA = 40                               # caractères cités d'un fichier de version invalide
+IMAGE_NODE = "library/node"                           # base Node de ci/Dockerfile, nom rendu par _nom_image
 MANIFESTE_BMAD = "_bmad/_config/manifest.yaml"
 CONFIG_OPENSPEC = "openspec/config.yaml"
 VENDOR = "tools/vendor"
@@ -80,15 +90,20 @@ INSTALL_SH = "tools/install_lab.sh"
 INSTALL_PREREQS = "tools/install_lab_prereqs.py"
 OUTIL_BIBLIOTHEQUE = "tools/pmzilla_lab_library.py"   # constante EMBED_MODEL (modèle d'embedding)
 OUTIL_TRI = "tools/watch_triage.py"                   # DEFAULT_CONFIG, clé model (modèle du pré-tri)
+DOCKERFILE_CI = "ci/Dockerfile"                       # image de la CI locale (local-ci-container D4)
+LIEU_CI = "CI Dockerfile"
+PAQUET_OPENSPEC = "@fission-ai/openspec"              # CLI OpenSpec installée dans l'image de la CI à version exacte
+A_REMPLIR = "A_REMPLIR"                               # valeur laissée à l'auteur (empreinte ou version lue hors session)
+DEPOTS_GITHUB = {"ghcr.io/astral-sh/uv": "astral-sh/uv"}   # image publiée au rythme des publications GitHub de son outil
 
 # Outils du dépôt privé seulement (le manifeste de l'édition les exclut) : leurs dépendances ne comptent que s'ils sont là.
 PRIVES = {"build_edition", "publish_edition", "migrate_watch"}
 
 CHAMPS = ("name", "kind", "pinned_in", "channel", "upstream", "procedure", "flags")
 OBLIGATOIRES = ("name", "kind", "pinned_in", "upstream", "procedure")
-GENRES = ("python-package", "python-runtime", "tool", "docker-image", "ollama-model", "bmad-module", "vendored")
-LIEUX = ("lock files", ".python-version", "docker-compose.yml", "BMAD manifest", "vendor version file", "library tool constant",
-         "sorting configuration", "not pinned")
+GENRES = ("python-package", "python-runtime", "node-runtime", "tool", "docker-image", "ollama-model", "bmad-module", "vendored")
+LIEUX = ("lock files", ".python-version", NODE_MOTHRA, "docker-compose.yml", "BMAD manifest", "vendor version file",
+         "library tool constant", "sorting configuration", LIEU_CI, "not pinned")
 CANAUX = ("Homebrew formula", "Homebrew cask", "official installer", "npm registry", "Xcode Command Line Tools", "fnm")
 SOURCES = ("PyPI", "uv Python list", "npm registry", "Homebrew API", "GitHub releases", "Docker Hub tags", "Ollama registry",
            "Node.js releases", "local version only")
@@ -191,6 +206,24 @@ def separer_modele(reference: str) -> tuple[str, str]:
     return nom, etiquette or "latest"
 
 
+def node_mothra(racine: Path) -> tuple[str | None, str | None]:
+    """(version, problème) du fichier de version de Node de Mothra : (None, None) s'il est absent, (version, None) s'il est valide,
+    (None, phrase) sinon. Trois segments numériques, sans préfixe v, borne ni alias (design.md D2). La phrase ne cite que la première
+    ligne du contenu, coupée à APERCU_NODE_MOTHRA caractères, suivie de « … » quand il en reste : un fichier invalide n'est jamais
+    affiché en entier."""
+    texte = lire(racine, NODE_MOTHRA)
+    if texte is None:
+        return None, None
+    texte = texte.strip()
+    if MOTIF_NODE_MOTHRA.match(texte):
+        return texte, None
+    premiere = texte.splitlines()[0].strip() if texte else ""
+    apercu = premiere[:APERCU_NODE_MOTHRA]
+    if apercu != texte:
+        apercu += " …"
+    return None, f"version de Node de Mothra invalide : {apercu} (attendu MAJEUR.MINEUR.CORRECTIF)"
+
+
 def images_compose(racine: Path) -> list[tuple[str, str | None]]:
     """[(image sans étiquette, étiquette ou None)] des lignes `image:` du fichier compose."""
     texte = lire(racine, COMPOSE) or ""
@@ -210,6 +243,53 @@ def empreinte_notee(racine: Path) -> tuple[list[str], str | None]:
     etiquettes = re.findall(r"^#\s*Version\s+([^\s,]+)", texte, re.M)
     digest = re.search(r"^#\s*Digest\b.*?(sha256:[0-9a-f]{64})\b", texte, re.M)
     return etiquettes, digest.group(1) if digest else None
+
+
+def _nom_image(reference: str) -> tuple[str, str | None, str]:
+    """(nom amont, étiquette ou None, empreinte ou '') d'une référence d'image ; le registre Docker Hub (« docker.io/ » ou
+    « index.docker.io/ ») est retiré et une image officielle prend « library/ »."""
+    reference, _, empreinte = reference.partition("@")
+    nom, deux_points, etiquette = reference.rpartition(":")
+    if not deux_points or "/" in etiquette:
+        nom, etiquette = reference, None
+    nom = nom.removeprefix("index.docker.io/").removeprefix("docker.io/")
+    if "/" not in nom:
+        nom = f"library/{nom}"
+    return nom, etiquette, empreinte
+
+
+def lignes_ci(racine: Path) -> list[str] | None:
+    """Instructions de ci/Dockerfile, sans commentaires ni lignes vides ; None sans fichier."""
+    texte = lire(racine, DOCKERFILE_CI)
+    if texte is None:
+        return None
+    return [l.strip() for l in texte.splitlines() if l.strip() and not l.strip().startswith("#")]
+
+
+def images_ci(racine: Path) -> list[tuple[str, str | None, str]]:
+    """[(nom, étiquette, empreinte)] des images de ci/Dockerfile (FROM et COPY --from), étapes nommées exclues."""
+    etapes, images = set(), []
+    for ligne in lignes_ci(racine) or []:
+        m = re.match(r"(?i)^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", ligne)
+        reference = None
+        if m:
+            reference = m.group(1)
+            if m.group(2):
+                etapes.add(m.group(2).lower())
+        elif re.match(r"(?i)^COPY\b", ligne) and (m := re.search(r"--from=(\S+)", ligne)):
+            reference = m.group(1)
+        if reference and reference.lower() not in etapes and not reference.isdigit():
+            images.append(_nom_image(reference))
+    return images
+
+
+def openspec_ci(racine: Path) -> str | None:
+    """Version de la CLI OpenSpec installée par ci/Dockerfile ('' sans version) ; None si elle n'y est pas."""
+    for ligne in lignes_ci(racine) or []:
+        m = re.search(re.escape(PAQUET_OPENSPEC) + r"(?:@(\S+))?", ligne)
+        if m:
+            return m.group(1) or ""
+    return None
 
 
 def manifeste_bmad(racine: Path) -> dict | None:
@@ -272,6 +352,8 @@ def sources_utilisees(racine: Path) -> dict[str, tuple[str, str]]:
         ajouter(paquet, "python-package", LANCEUR)
     if (racine / PYTHON_VERSION).is_file():
         ajouter("python", "python-runtime", PYTHON_VERSION)
+    if (racine / NODE_MOTHRA).is_file():
+        ajouter(NOM_NODE_MOTHRA, "node-runtime", NODE_MOTHRA)
     for nom, _ in images_compose(racine):
         ajouter(nom, "docker-image", COMPOSE)
     if modele := modele_bibliotheque(racine):
@@ -294,6 +376,10 @@ def sources_utilisees(racine: Path) -> dict[str, tuple[str, str]]:
     if (racine / VENDOR).is_dir():
         for fichier in sorted((racine / VENDOR).glob("*.version")):
             ajouter(fichier.stem, "vendored", f"{VENDOR}/{fichier.name}")
+    for nom, _, _ in images_ci(racine):
+        ajouter(nom, "docker-image", DOCKERFILE_CI)
+    if openspec_ci(racine) is not None:
+        ajouter(PAQUET_OPENSPEC, "tool", DOCKERFILE_CI)
     return utilises
 
 
@@ -404,6 +490,8 @@ class Resolveur:
         if c.pinned_in == ".python-version":
             texte = lire(self.racine, PYTHON_VERSION)
             return texte.strip() if texte else None
+        if c.pinned_in == NODE_MOTHRA:
+            return node_mothra(self.racine)[0]
         if c.pinned_in == "docker-compose.yml":
             return next((etiquette for nom, etiquette in images_compose(self.racine) if nom == c.name), None)
         if c.pinned_in == "BMAD manifest":
@@ -419,6 +507,11 @@ class Resolveur:
             modele = modele_bibliotheque(self.racine) if c.pinned_in == "library tool constant" else modele_tri(self.racine)
             if modele and separer_modele(modele)[0] == c.name:
                 return separer_modele(modele)[1]
+        if c.pinned_in == LIEU_CI:
+            if c.kind == "docker-image":
+                return next((etiquette for nom, etiquette, _ in images_ci(self.racine) if nom == c.name), None)
+            if c.name == PAQUET_OPENSPEC:
+                return openspec_ci(self.racine) or None
         return None
 
     def affichage(self, c: Composant) -> str:
@@ -450,7 +543,56 @@ def differences(racine: Path, composants: list[Composant]) -> list[str]:
             continue          # un outil privé absent peut le déclarer (édition publique)
         lignes.append(f"Composant à retirer de l'inventaire : {c.name}")
     lignes += controle_image(racine)
+    lignes += controle_ci(racine)
+    lignes += controle_node_image(racine)[0]
     return lignes
+
+
+def controle_node_image(racine: Path) -> tuple[list[str], list[str]]:
+    """(écarts, sauts) du contrôle « même Node dans l'image de la CI et dans mothra/.node-version » (mothra-node-lts, design.md D4).
+    L'étiquette de la base library/node de ci/Dockerfile, lue par images_ci (préfixes du registre retirés par _nom_image), sans son
+    suffixe de variante (-slim), doit être égale, exactement, à la version du fichier. L'empreinte sha256, qui fixe l'image, est
+    contrôlée par controle_ci et change avec l'étiquette (procédure « Update the Node of Mothra »). Aucun registre interrogé."""
+    absent = DOCKERFILE_CI if lire(racine, DOCKERFILE_CI) is None else NODE_MOTHRA if not (racine / NODE_MOTHRA).is_file() else None
+    if absent:
+        return [], [f"contrôle Node de l'image sauté : {absent} absent"]
+    version, _ = node_mothra(racine)
+    if version is None:
+        return [], []                      # contenu invalide : déjà signalé par la lecture du fichier
+    etiquette = next((e for nom, e, _ in images_ci(racine) if nom == IMAGE_NODE), None)
+    image = etiquette.split("-")[0] if etiquette else "introuvable"
+    if image != version:
+        return [f"Node de l'image de CI différent du Node de Mothra : {image} contre {version}"], []
+    return [], []
+
+
+def controle_ci(racine: Path) -> list[str]:
+    """ci/Dockerfile épingle chaque image par étiquette et empreinte sha256, la CLI OpenSpec à version exacte, et installe le Python
+    de .python-version (local-ci-container D4). Une valeur marquée A_REMPLIR est nommée à part : l'auteur la lit hors session."""
+    lignes = lignes_ci(racine)
+    if lignes is None:
+        return []
+    manque, a_remplir = "Épinglage manquant dans ci/Dockerfile", "Valeur à remplir par l'auteur dans ci/Dockerfile"
+    sortie = []
+    for nom, etiquette, empreinte in images_ci(racine):
+        if not etiquette or etiquette == "latest":
+            sortie.append(f"{manque} : {nom} (étiquette absente ou latest)")
+        if A_REMPLIR in empreinte:
+            sortie.append(f"{a_remplir} : {nom} (empreinte)")
+        elif not re.fullmatch(r"sha256:[0-9a-f]{64}", empreinte):
+            sortie.append(f"{manque} : {nom} (empreinte sha256 absente)")
+    version = openspec_ci(racine)
+    if version is not None:
+        if A_REMPLIR in version:
+            sortie.append(f"{a_remplir} : {PAQUET_OPENSPEC} (version)")
+        elif not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
+            sortie.append(f"{manque} : {PAQUET_OPENSPEC} (version exacte absente)")
+    copie = any(re.match(r"(?i)^COPY\b", l) and PYTHON_VERSION in l.split() for l in lignes)
+    autre = any(re.search(r"\buv\s+python\s+install\s+(?!-)\S", l) or re.search(r"\bUV_PYTHON=", l) for l in lignes)
+    installe = any(re.search(r"\buv\s+python\s+install\b", l) for l in lignes)
+    if not copie or autre or not installe:
+        sortie.append(f"Python de {DOCKERFILE_CI} différent de {PYTHON_VERSION} (copier le fichier, puis « uv python install » sans version)")
+    return sortie
 
 
 def controle_image(racine: Path) -> list[str]:
@@ -690,8 +832,21 @@ def candidates_node(lecteur: Lecteur) -> list[tuple[str, bool]]:
     return [(str(p.get("version", "")).removeprefix("v"), False) for p in publications if isinstance(p, dict)]
 
 
-def candidates_github(lecteur: Lecteur) -> list[tuple[str, bool]]:
-    publications = lecteur.json("github", f"/repos/{DEPOT_HOMEBREW}/releases")
+def candidates_node_lts(lecteur: Lecteur, utilisee: str) -> list[tuple[str, bool]]:
+    """Publications de Node.js retenues pour Node de Mothra : celles de sa ligne, et celles des lignes plus récentes dont une
+    publication au moins porte le marqueur LTS ; une ligne « Current » n'est jamais retenue (design.md D3). Une liste sans le
+    marqueur LTS est inexploitable."""
+    publications = lecteur.json("node", "/index.json")
+    if not isinstance(publications, list) or not any(isinstance(p, dict) and "lts" in p for p in publications):
+        raise SourceInjoignable("UnexpectedBody")
+    lues = [(str(p.get("version", "")).removeprefix("v"), bool(p.get("lts"))) for p in publications if isinstance(p, dict)]
+    lignes_lts = {v.split(".")[0] for v, lts in lues if lts}
+    ligne = utilisee.split(".")[0]
+    return [(v, False) for v, _ in lues if v.split(".")[0] == ligne or v.split(".")[0] in lignes_lts]
+
+
+def candidates_github(lecteur: Lecteur, depot: str = DEPOT_HOMEBREW) -> list[tuple[str, bool]]:
+    publications = lecteur.json("github", f"/repos/{depot}/releases")
     if not isinstance(publications, list):
         raise SourceInjoignable("UnexpectedBody")
     return [(str(p.get("tag_name", "")), bool(p.get("prerelease"))) for p in publications if isinstance(p, dict) and not p.get("draft")]
@@ -871,6 +1026,18 @@ def verifier_composant(c: Composant, racine: Path, resolveur: Resolveur, lecteur
             r.nouveautes = classer("pep440", utilisee, candidates_pypi(lecteur, c.name))
         elif c.kind == "python-runtime":
             r.nouveautes = classer("python", utilisee, versions_python_uv(secondes))
+        elif c.kind == "node-runtime":
+            r.nouveautes = classer("semver", utilisee, candidates_node_lts(lecteur, utilisee))
+        elif c.kind == "docker-image" and c.pinned_in == LIEU_CI and c.upstream == "GitHub releases":
+            r.nouveautes = classer("semver", utilisee, candidates_github(lecteur, DEPOTS_GITHUB.get(c.name, c.name)))
+        elif c.kind == "docker-image" and c.pinned_in == LIEU_CI:
+            etiquettes = etiquettes_docker(lecteur, c.name)
+            r.nouveautes = classer("docker", utilisee, [(e, False) for e in etiquettes])
+            notee = next((e for nom, _, e in images_ci(racine) if nom == c.name), "")
+            publiee = empreinte_docker(lecteur, c.name, utilisee)
+            if notee and publiee and publiee != notee:
+                r.nouveautes.append(Nouveaute("republished", f"{utilisee}@{notee.removeprefix('sha256:')[:12]}",
+                                              f"{utilisee}@{publiee.removeprefix('sha256:')[:12]}"))
         elif c.kind == "docker-image":
             etiquettes = etiquettes_docker(lecteur, c.name)
             r.nouveautes = classer("docker", utilisee, [(e, False) for e in etiquettes])
@@ -1044,7 +1211,14 @@ def commande_inventory(racine: Path, verifier: bool) -> int:
         print(f"{c.name} · {c.kind} · {resolveur.affichage(c)} · {lieu}")
     for p in problemes:
         print(p)
+    invalide = node_mothra(racine)[1]
+    if invalide:
+        print(invalide)
+        problemes = problemes + [invalide]
     ecarts = differences(racine, composants) if verifier else []
+    if verifier:
+        for saut in controle_node_image(racine)[1]:
+            print(saut)
     for e in ecarts:
         print(e)
     if problemes or ecarts:

@@ -55,6 +55,7 @@ class HybridSpec:
     date_expr: str | None = None           # AAAA-MM-JJ (texte) ou NULL ; None = aucun bonus de fraîcheur
     collections_expr: str | None = None    # text[] des collections canoniques du document, pour le bonus
     collection_filter: str | None = None   # condition avec %(collections)s (text[]) ; None = pas de filtre par collection
+    collection_exclusion: str | None = None  # condition avec %(excluded)s (text[]) : le livre n'est dans aucune de ces collections (organisation-context) ; None = pas d'exclusion
     kind_expr: str | None = None           # colonne du type de passage, pour le filtre `types`
     unaccent_function: str = "knowledge.immutable_unaccent"
     # Plein texte BM25 (pg_search, migration 0005) : la table qui porte l'index (sans jointure, pour que le classement par score soit poussé dans l'index),
@@ -82,6 +83,8 @@ LIBRARY_SPEC = HybridSpec(
     collections_expr=f"ARRAY({_COLLECTION_NAMES})",
     collection_filter=("EXISTS (SELECT 1 FROM knowledge.book_collections bc JOIN knowledge.collections co ON co.id = bc.collection_id "
                        "WHERE bc.book_id = b.id AND co.name = ANY(%(collections)s::text[]))"),
+    collection_exclusion=("NOT EXISTS (SELECT 1 FROM knowledge.book_collections bc JOIN knowledge.collections co ON co.id = bc.collection_id "
+                          "WHERE bc.book_id = b.id AND co.name = ANY(%(excluded)s::text[]))"),
     kind_expr="c.kind",
     bm25_table_sql="knowledge.chunks c",
     bm25_text_expr="c.fts_text",
@@ -165,7 +168,7 @@ def build_query(spec: HybridSpec, *, query: str, vector, limit: int = 8, collect
                 kinds=None, today: dt.date | None = None, scan: str = DEFAULT_SCAN, fulltext: str = "bm25",
                 bonus: float = FRESHNESS_BONUS, half_life: int = FRESHNESS_HALF_LIFE,
                 rrf_k: int = RRF_K, candidates: int = CANDIDATES, diagnostic: bool = False,
-                rank_norm: int | None = None, component: str = "hybrid") -> tuple[str, dict]:
+                rank_norm: int | None = None, component: str = "hybrid", exclude_collections=None) -> tuple[str, dict]:
     """(SQL, paramètres) de la recherche hybride. Lève ValueError pour un balayage, un plein texte ou une composante inconnus.
     `fulltext` : "bm25" (défaut, index pg_search de la migration 0005) ou "tsvector" (ts_rank_cd, pour comparer).
     `diagnostic=True` ajoute à la sortie les valeurs intermédiaires (rang et score de chaque voie, RRF, bonus) sans changer le classement ;
@@ -190,6 +193,9 @@ def build_query(spec: HybridSpec, *, query: str, vector, limit: int = 8, collect
     if collections and spec.collection_filter:
         book_conditions.append(spec.collection_filter)
         params["collections"] = list(collections)
+    if exclude_collections and spec.collection_exclusion:      # les collections privées, quand la recherche ne les nomme pas
+        book_conditions.append(spec.collection_exclusion)
+        params["excluded"] = list(exclude_collections)
     if since and spec.date_expr:
         book_conditions.append(f"({spec.date_expr} IS NULL OR {spec.date_expr} >= %(since)s)")      # un livre (sans date) est gardé
         params["since"] = since
@@ -301,11 +307,11 @@ LIMIT {int(limit)}
 def hybrid_search(conn, spec: HybridSpec, *, query: str, vector, limit: int = 8, collections=None, since: str | None = None,
                   kinds=None, today: dt.date | None = None, scan: str = DEFAULT_SCAN, ef_search: int = EF_SEARCH,
                   fulltext: str = "bm25", rank_norm: int | None = None,
-                  component: str = "hybrid") -> list[tuple[int, float]]:
+                  component: str = "hybrid", exclude_collections=None) -> list[tuple[int, float]]:
     """[(id, score)] du meilleur au moins bon. La connexion n'est utilisée qu'en lecture ; la transaction est fermée (rollback)."""
     sql, params = build_query(spec, query=query, vector=vector, limit=limit, collections=collections, since=since, kinds=kinds,
                               today=today, scan=scan, fulltext=fulltext, rank_norm=rank_norm,
-                              component=component)
+                              component=component, exclude_collections=exclude_collections)
     if scan == "ann" and not 1 <= int(ef_search) <= 1000:
         raise ValueError(f"ef_search hors de 1 à 1000 : {ef_search!r}")
     try:

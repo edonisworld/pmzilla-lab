@@ -1,0 +1,46 @@
+# Jeu d'essai des notes de contexte de l'organisation (organisation-context, tâche 11.2)
+#
+# À rejouer avec `--cases-file tests/postures/cas-contexte.yaml`, après la règle « Organisation context » de CLAUDE.md (tâche 11.1) :
+# les deux cas lisent une note inventée de la bibliothèque jetable du passage. Champs comme tests/postures/cas.yaml, plus
+#   context_notes   dossier (relatif à la racine du workspace) dont le sous-dossier `notes/` est indexé avec l'option --context
+#                   de l'indexeur dans la bibliothèque jetable du cas (jamais le vrai dossier de contexte)
+# Notes inventées sous tests/postures/fixtures/organisation-context/notes/ : rôles et désignations génériques, aucun nom réel.
+# Un critère bloquant au plus par point de la règle ; l'indicateur de non-appui sur un cadre est non bloquant.
+
+- id: contexte-note-declarative
+  question: "Dans mon organisation, comment se décide l'ordre des grandes initiatives de la ligne de produits, d'après mes notes de contexte ?"
+  posture: Scaling
+  library: tests/postures/fixtures/organisation-context/collections
+  context_notes: tests/postures/fixtures/organisation-context
+  verifications:
+    - tool: search_library
+      collections: [contexte]
+  judgements:
+    - "Cite la note « Forums de décision de la ligne de produits » avec la formule de citation d'une note de contexte de la langue de la réponse : titre, date 2026-09-01, nature déclarative et source, et la rapporte comme ce qui a été dit par un rôle, jamais comme un fait établi."
+    - text: "Ne s'appuie pas sur cette note pour justifier une affirmation sur un cadre ou un livre : elle cadre la réponse, elle n'est pas une référence."
+      non_blocking: true
+  en:
+    question: "In my organisation, how is the order of the major initiatives of the product line decided, according to my context notes?"
+    judgements:
+      - "Cites the note \"Forums de décision de la ligne de produits\" with the context note citation formula of the response language: title, date 2026-09-01, declarative nature and source, and reports it as what a role said, never as an established fact."
+      - text: "Does not rely on this note to back a claim about a framework or a book: it frames the answer, it is not a reference."
+        non_blocking: true
+
+- id: contexte-note-perimee
+  question: "De quelles équipes mes équipes produit dépendent-elles pour les données, d'après mes notes de contexte ?"
+  posture: Scaling
+  library: tests/postures/fixtures/organisation-context/collections
+  context_notes: tests/postures/fixtures/organisation-context
+  verifications:
+    - tool: search_library
+      collections: [contexte]
+  judgements:
+    - "Signale que la note « Dépendances de données entre équipes produit » est possiblement périmée (à revoir depuis le 2025-06-01), avec la formule de la langue de la réponse, et ne la présente pas comme l'état actuel de la situation."
+    - text: "Propose de vérifier ou de mettre à jour la note plutôt que de conclure à partir d'elle seule."
+      non_blocking: true
+  en:
+    question: "Which teams do my product teams depend on for data, according to my context notes?"
+    judgements:
+      - "Flags the note \"Dépendances de données entre équipes produit\" as possibly out of date (review due since 2025-06-01), with the formula of the response language, and does not present it as the current state of the situation."
+      - text: "Proposes to check or update the note rather than concluding from it alone."
+        non_blocking: true

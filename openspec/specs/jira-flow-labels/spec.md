@@ -6,9 +6,9 @@ Describes the declared Jira labels and fix versions: how they are declared in th
 ## Requirements
 
 ### Requirement: Declared labels in the flow settings
-The system SHALL read the declared labels from the `declared_labels` block of the flow settings, organised by role (`up_merge`, `cycle`, `epic_review`), each role giving a prefix and its declared labels, every declared label starting with its role's prefix; the up-merge role SHALL declare exactly the legal and the hotfix label. The block SHALL be read with the strict loader; an unknown role, a label outside its prefix, a label declared twice or an up-merge role without both labels SHALL stop the reading tool with exit code 1, naming the key path and line, never a value. Without the block, the system SHALL read and store no label.
+The system SHALL read the declared labels from the `declared_labels` block of the flow settings, organised by role (`up_merge`, `cycle`, `epic_review`, `pilot_domain`, `ready`, `confirmation`), each role giving a prefix and its declared labels, every declared label starting with its role's prefix; the up-merge role SHALL declare exactly the legal and the hotfix label; the `pilot_domain` role SHALL declare exactly one label; the `ready` role SHALL declare at most one label, an empty or absent value being read as not configured without message; each confirmation label SHALL declare its meaning, taken in or not taken in; each cycle label MAY name the cycle key of the `cycles` block that it plans (design D4b of the epic flow report change). The block SHALL be read with the strict loader; an unknown role, a label outside its prefix, a label declared twice, an up-merge role without both labels, a `pilot_domain` role without exactly one label, a `ready` role with more than one label, a confirmation label without its meaning or a cycle key that the `cycles` block does not declare SHALL stop the reading tool with exit code 1, naming the key path and line, never a value. Without the block, the system SHALL read and store no label. The system SHALL NOT deduce a cycle key from the text of a label.
 
-Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees); tests/export_jira_api/test_referentiel_et_etiquettes.py (test_sans_bloc_aucune_colonne_d_etiquette_meme_si_le_ticket_en_porte)
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees); tests/export_jira_api/test_referentiel_et_etiquettes.py (test_sans_bloc_aucune_colonne_d_etiquette_meme_si_le_ticket_en_porte). New roles untested until implemented.
 
 #### Scenario: Label outside its prefix
 - **WHEN** a cycle label does not start with the cycle prefix
@@ -18,18 +18,30 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees); test
 - **WHEN** the settings have no declared-labels block
 - **THEN** the export requests no label and writes no declared-label column
 
-### Requirement: Only declared labels are stored
-The system SHALL keep, from the labels of a ticket read through the API, only the declared ones: the export SHALL write them in the declared-label columns of design D19, the history collection SHALL keep only add and remove events of declared labels, and the import SHALL store only periods of declared labels. Undeclared labels SHALL be discarded in memory after counting. The system SHALL NOT write all the labels of a ticket to a file, the cache or the database, SHALL NOT write the plain Jira labels header, and SHALL NOT print a label.
+#### Scenario: Ready label not chosen yet
+- **WHEN** the `ready` role holds an empty value
+- **THEN** the block is read without message and the Ready label is not configured
 
-Source: tests/export_jira_api/test_referentiel_et_etiquettes.py; tests/history_jira/test_collecte_etendue.py; tests/flow_import/test_groupe8_base.py (Periodes)
+#### Scenario: Two domain labels
+- **WHEN** the `pilot_domain` role declares two labels
+- **THEN** the tool stops with exit code 1, names the key path and line, and echoes neither label
+
+#### Scenario: Unknown cycle key
+- **WHEN** a cycle label names a cycle key that the `cycles` block does not declare
+- **THEN** the tool stops with exit code 1, names the key path and line, and echoes neither the label nor the key
+
+### Requirement: Only declared labels are stored
+The system SHALL keep, from the labels of a ticket read through the API, only the declared ones: the export SHALL NOT request the labels field (design D5 of the database-only change), the history collection SHALL keep only the add and remove events and the current values of declared labels, and SHALL store only periods of declared labels. Undeclared labels SHALL be discarded in memory after counting. The system SHALL NOT write all the labels of a ticket to a file or the database, and SHALL NOT print a label.
+
+Source: tests/export_jira_api/test_export_jira_api.py (NouveauxComportements.test_champs_demandes_sans_etiquette_ni_version); tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
 
 #### Scenario: Mixed labels
 - **WHEN** a ticket carries one declared cycle label and two undeclared labels
-- **THEN** the CSV row holds the declared label alone, and neither the file nor the console holds the two others
+- **THEN** the export requests no label, the history collection stores a period for the declared label alone, and neither the database nor the console holds the two others
 
 #### Scenario: Cache events
 - **WHEN** the changelog adds an undeclared label and removes a declared one
-- **THEN** the cache entry holds only the removal of the declared label, with its instant
+- **THEN** the stored periods reflect only the removal of the declared label, with its instant
 
 ### Requirement: Look-alike labels counted, never listed
 The system SHALL count, at export, the distinct undeclared labels that start with a declared prefix and the tickets carrying them, and print the look-alike key phrase of design D19 with the count. It SHALL NOT print, write or store those labels.
@@ -54,9 +66,9 @@ Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (JiraSeulement);
 - **THEN** its label section is titled with "Jira labels"
 
 ### Requirement: Fix versions stored with their periods
-The system SHALL read the fix versions of each ticket at export and write them in the fix-version columns of design D19, keep in the history cache the add and remove events of fix versions with their instants, and store in the database the version periods of each ticket. The system SHALL NOT print a version name and SHALL NOT write a version name in a report: reports use the cycle key of the jira-flow-cycles capability.
+The system SHALL read, in the history collection, the add and remove events and the current fix versions of each ticket it queries, and store in the database the version periods of each ticket; the export SHALL NOT request the fix versions (design D5 of the database-only change). The system SHALL NOT print a version name and SHALL NOT write a version name in a report: reports use the cycle key of the jira-flow-cycles capability.
 
-Source: tests/export_jira_api; tests/history_jira; tests/flow_import
+Source: tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
 
 #### Scenario: Version moved
 - **WHEN** a ticket's fix version is changed from one version to another

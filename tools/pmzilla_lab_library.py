@@ -6,7 +6,7 @@
 PMZilla Lab — library server.
 
 Gives Claude Code access to the digital library (Markdown files produced by
-convert_books.py and sorted by ventiler_collections.py) through an MCP server.
+convert_books.py and sorted by sort_by_domain.py) through an MCP server.
 
 Commands:
 
@@ -15,7 +15,7 @@ Commands:
         of the data folder is created, opened or read. Incremental: only new or changed books are re-embedded, a change of
         collections, title or metadata only updates the book, and each book is written in one transaction (an interrupted
         run leaves complete books only). Each <collections_dir> holds one sub-folder per collection, e.g.
-        ~/PMZilla-Lab/workspace/Bibliotheque-Lab ~/PMZilla-Lab/workspace/Watch-Lab. Always pass every folder: a file missing
+        <dossier de contenu>/Bibliotheque-Lab <dossier de contenu>/Watch-Lab. Always pass every folder: a file missing
         from all of them is removed from the database. A folder with the former watch name is stored under the current
         name, with a warning. A book that cannot be written is named and the run exits with code 1 after the others.
         Exit codes: 0 done; 1 folder missing, bad --recompute, embedding failure, wrong vector size, a book not written,
@@ -24,6 +24,24 @@ Commands:
 
     uv run pmzilla_lab_library.py index <collections_dir> [...] --allow-empty
         Same, and accepts folders without any book: every book of the database is then removed, each one named.
+
+    uv run pmzilla_lab_library.py index <collections_dir> [...] --context <context folder>
+        Same, and indexes the notes of `<context folder>/notes` (flat, one note per file) into the private collection of the
+        organisation context, with no other collection. The context folder is never a collections folder: given as one (or a
+        folder holding an `originaux` sub-folder), it is refused before the database is touched, exit 1. The indexer never lists,
+        opens or tests a path inside `originaux`. A note whose header breaks a rule of the change organisation-context (design D2)
+        or whose file name is that of a book or article of another folder is named ("not indexed: <file>: <reason>"), the run
+        goes on and exits 1 at the end. Every note, unchanged ones included, also goes through the context tool's
+        confidentiality check (personal identifiers, sensitive-names list, distinctive team names of the extract next to the list,
+        minus the generic-names list) before the database is touched: a finding gives "not indexed: <file>: sensitive name in
+        line <n>" (or "personal identifier in line <n>", "extract team name in line <n>"), never the value nor a body line. A
+        list that is missing, unreadable or empty prints "sensitive-names list unavailable: context notes not indexed" once:
+        no note is embedded, updated or removed, the books are indexed, exit 1 at the end. Stored per note: note_date, nature,
+        source, review_date and, for the map, kind; no author. A note leaves the database only on a run given this option, when
+        its file is gone from the notes folder or is refused for any reason ("removed: <file>"); a run without it keeps every
+        note unchanged ("context notes kept unchanged (no --context)") and leaves them out of the empty-scan guard. A private collection is embedded on this machine only: before any embedding call of a run that has a note to
+        embed, an embedding address that is not loopback stops the whole run, exit 1, nothing indexed. The option goes before
+        --recompute.
 
     uv run pmzilla_lab_library.py index <collections_dir> [...] --recompute <book> [<book> ...]
         Same, and re-embeds the designated books even when their Markdown is unchanged (e.g. after the
@@ -104,6 +122,7 @@ import httpx
 import numpy as np
 
 from watch_paths import NEW as NEW_NAMES, OLD as OLD_NAMES, OWN_COLLECTION  # noqa: F401  (OWN_COLLECTION: read through this module)
+from private_collections import CONTEXT_COLLECTION, PRIVATE_COLLECTIONS  # noqa: F401  (read through this module by the server)
 
 OLLAMA_URL = os.environ.get("PMZILLA_LAB_OLLAMA", "http://localhost:11434").rstrip("/")
 EMBED_MODEL = os.environ.get("PMZILLA_LAB_MODEL", "bge-m3")
@@ -681,13 +700,91 @@ def collection_of(folder: str, warned: set[str]) -> str:
     return folder
 
 
-def index(collections_dirs: list[Path], force: list[str] | None = None, store=None, allow_empty: bool = False) -> None:
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+CONTEXT_NOT_LOCAL = "private collection: embedding service not local, nothing indexed"
+CONTEXT_COLLECTIONS_REFUSED = "context folder given as a collections folder, refused: use --context"
+CONTEXT_KEPT = "context notes kept unchanged (no --context)"
+CONTEXT_LIST_UNAVAILABLE = "sensitive-names list unavailable: context notes not indexed"
+
+
+def embedding_is_local() -> bool:
+    """True when the embedding service's host is a loopback address (design D11)."""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(OLLAMA_URL).hostname
+    except ValueError:
+        return False
+    return (host or "").lower() in LOOPBACK_HOSTS
+
+
+def refuse_context_as_collections(collections_dir: Path, context: Path | None) -> None:
+    """A collections folder that is the context folder, or that holds a first-level folder named `originaux`, is refused before
+    the database is touched. Only the names of the first level of that folder are read; nothing inside `originaux` is."""
+    same = context is not None and collections_dir == context.expanduser().resolve()
+    if same or any(entry.name == "originaux" for entry in collections_dir.iterdir()):
+        raise SystemExit(CONTEXT_COLLECTIONS_REFUSED)
+
+
+def context_guard():
+    """The confidentiality guard of the context tool (change context-index-name-guard, D1 and D4), built once per run: the sensitive-names
+    list resolved from this code folder through the lab-paths module (its variable first), the extract's distinctive names next to it,
+    the personal identifiers of this code folder."""
+    import context_lab
+    code = context_lab.lab_paths.code_root(__file__)
+    return context_lab.Guard(os.environ, None, list_path=context_lab.lab_paths.local_file_for("sensitive_names", code), code_root=code)
+
+
+def scan_context(context: Path, found: dict[str, dict]) -> tuple[dict[str, dict], list[str], set[str], bool]:
+    """The notes of `<context>/notes` (flat, files starting with `_` skipped): (valid notes by file name, refusal lines, the file names of
+    the valid notes, list unavailable). Only that path is listed. A note is valid when its header follows design D2 of the change
+    organisation-context, its file name is not that of a book or article of another folder, and the context tool's confidentiality check
+    finds nothing in it (change context-index-name-guard, D1): every note is checked on every run, unchanged notes included, and a refusal
+    names the line, never the value. A sensitive-names list that is missing, unreadable or empty (D3) leaves no note valid and returns True:
+    no note is then embedded, updated or removed."""
+    import context_lab
+    notes = context.expanduser().resolve() / "notes"
+    if not notes.is_dir():
+        raise SystemExit("context notes folder not found")
+    files = [p for p in sorted(notes.glob("*.md")) if not p.name.startswith("_") and p.is_file()]
+    guard = context_guard()
+    if guard.unavailable:
+        print(f"{len(files)} context notes found")
+        return {}, [], set(), True
+    valid: dict[str, dict] = {}
+    refused: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        fields, _ = context_lab.parse_header(text)
+        problem = context_lab.header_problem(fields)
+        if problem is None and path.name in found:
+            problem = "name already used by another collection"
+        if problem is None:
+            problem = guard.problem(text)
+        if problem:
+            refused.append(f"not indexed: {path.name}: {problem}")
+            continue
+        valid[path.name] = {"path": path, "collections": {CONTEXT_COLLECTION}, "note": fields}
+    print(f"{len(valid) + len(refused)} context notes found")
+    return valid, refused, set(valid), False
+
+
+def note_meta(fields: dict) -> dict:
+    """The stored metadata of a note: its dates, nature and source, and the map mark; never an author."""
+    meta = {"note_date": fields["date"], "nature": fields["nature"], "source": fields["source"], "review_date": fields["review"]}
+    if fields.get("kind"):
+        meta["kind"] = fields["kind"]
+    return meta
+
+
+def index(collections_dirs: list[Path], force: list[str] | None = None, store=None, allow_empty: bool = False,
+          context: Path | None = None) -> None:
     """Indexes the folders into the knowledge schema of the database (design.md D1): unchanged books are skipped, a book whose
     collections, title or metadata changed is updated without re-embedding, a new or changed book is replaced whole, in one
     transaction. No file of the data folder is created, opened or read. A book that cannot be written is named and the run ends with
     exit code 1 after the other books. Order (design.md D1): folders and --recompute checked, store opened (database down:
     exit 2, before any embedding call), lock taken (another run: exit 1), stored books read, empty-scan guard (folders
-    without any book against a filled database: exit 1 unless `allow_empty`), removals, books, orphan collections."""
+    without any book against a filled database: exit 1 unless `allow_empty`), removals, books, orphan collections.
+    `context`: the context folder (organisation-context, design D4): its notes join the run in the private context collection."""
     if force:   # a reminder only: the indexer never takes a backup and never reads the backup folder (design.md D5)
         print(RESTORE_POINT_REMINDER)
     found: dict[str, dict] = {}
@@ -696,44 +793,87 @@ def index(collections_dirs: list[Path], force: list[str] | None = None, store=No
         collections_dir = collections_dir.expanduser().resolve()
         if not collections_dir.is_dir():
             raise SystemExit(f"Not a folder: {collections_dir}")
+        refuse_context_as_collections(collections_dir, context)
         books = scan(collections_dir)
         print(f"{len(books)} files found in {collections_dir}")
         for file_name, info in books.items():
             entry = found.setdefault(file_name, {"path": info["path"], "collections": set()})
             entry["collections"] |= {collection_of(name, warned) for name in info["collections"]}
+    books_found = len(found)
+    notes: dict[str, dict] = {}
+    refused_notes: list[str] = []
+    present_notes: set[str] | None = None
+    list_unavailable = False
+    if context is not None:
+        notes, refused_notes, present_notes, list_unavailable = scan_context(context, found)
+        found.update(notes)
     forced = select_forced(force, found) if force else set()   # checked before the database is touched
     store = store if store is not None else KnowledgeStore()
     open_store(store, "indexed")
     try:
-        _index_into(store, found, forced, allow_empty)
+        _index_into(store, found, forced, allow_empty, present_notes, books_found, refused_notes, list_unavailable)
     finally:
         store.close()
 
 
-def _index_into(store, found: dict[str, dict], forced: set[str], allow_empty: bool) -> None:
+def _index_into(store, found: dict[str, dict], forced: set[str], allow_empty: bool, present_notes: set[str] | None = None,
+                books_found: int | None = None, refused_notes: list[str] = (), list_unavailable: bool = False) -> None:
+    """`present_notes`: the notes kept on a run given the context option (the valid ones); a stored note outside it is removed, whether
+    its file is gone or refused (change context-index-name-guard, D2). `list_unavailable`: the sensitive-names list is missing, unreadable
+    or empty (D3); every stored note is then kept as it is, the phrase is printed once and the run exits 1 at the end."""
     known = store.stored_books()
-    if not found and known and not allow_empty:
-        raise SystemExit(f"No book found in the folders while the database holds {len(known)}: nothing was removed "
+    private_known = {name for name, book in known.items() if book.collections & PRIVATE_COLLECTIONS}
+    others_known = len(known) - len(private_known)
+    others_found = len(found) if books_found is None else books_found
+    if not others_found and others_known and not allow_empty:
+        raise SystemExit(f"No book found in the folders while the database holds {others_known}: nothing was removed "
                          "(--allow-empty empties the library).")
     catalogue = load_catalogue()
-    for file_name in sorted(set(known) - set(found)):
+    if any(info.get("note") for info in found.values()):      # D11: a private note to embed needs a local embedding service
+        for file_name, info in found.items():
+            if not info.get("note"):
+                continue
+            text = info["path"].read_text(encoding="utf-8", errors="replace")
+            previous = known.get(file_name)
+            unchanged = (previous and previous.sha256 == hashlib.sha256(text.encode()).hexdigest()
+                         and previous.model == EMBED_MODEL and file_name not in forced)
+            if not unchanged and not embedding_is_local():
+                raise SystemExit(CONTEXT_NOT_LOCAL)
+    if present_notes is None:
+        if private_known:
+            print(CONTEXT_KEPT)
+        removable = set(known) - private_known - set(found)
+    else:
+        kept_notes = private_known if list_unavailable else present_notes
+        removable = (set(known) - private_known - set(found)) | (private_known - kept_notes)
+    for file_name in sorted(removable):
         store.delete_book(file_name)
         print(f"  removed: {file_name}")
 
     started = time.time()
     done = skipped = 0
     failed: list[str] = []
+    if list_unavailable:
+        print(f"  {CONTEXT_LIST_UNAVAILABLE}", file=sys.stderr)
+        failed.append("context notes")
+    for line in refused_notes:
+        print(f"  {line}", file=sys.stderr)
+        failed.append(line.split(": ")[1])
     for number, (file_name, info) in enumerate(sorted(found.items()), 1):
         text = info["path"].read_text(encoding="utf-8", errors="replace")
         digest = hashlib.sha256(text.encode()).hexdigest()
         collections = frozenset(info["collections"])
         title, body = read_title(text, Path(file_name).stem)
-        meta = read_meta(text)
-        entry = catalogue.get(unicodedata.normalize("NFC", file_name))
-        if entry:  # the catalogue wins over what the file says
-            title = str(entry.get("titre") or title)
-            meta["author"] = (", ".join(str(a) for a in entry["auteurs"])
-                              if entry.get("auteurs") else "auteur non indiqué")
+        if info.get("note"):    # a note: its header decides the title and the metadata; no author, no catalogue entry
+            title = info["note"]["title"]
+            meta = note_meta(info["note"])
+        else:
+            meta = read_meta(text)
+            entry = catalogue.get(unicodedata.normalize("NFC", file_name))
+            if entry:  # the catalogue wins over what the file says
+                title = str(entry.get("titre") or title)
+                meta["author"] = (", ".join(str(a) for a in entry["auteurs"])
+                                  if entry.get("auteurs") else "auteur non indiqué")
         previous = known.get(file_name)
         if previous and previous.sha256 == digest and previous.model == EMBED_MODEL and file_name not in forced:
             if (previous.collections != collections or canonical_json(previous.meta) != canonical_json(meta)
@@ -909,6 +1049,20 @@ DATABASE_ERROR_HINT = ("If the database is stopped, start it with bash tools/db_
                        'unreadable: see the installation guide, section "Damaged BM25 index".')
 
 
+CONTEXT_DESCRIPTION = (f' The collection "{CONTEXT_COLLECTION}" holds the user\'s organisation context notes; it is searched only when '
+                       "named; each hit carries its date, nature, source, review date and a stale mark, to cite with the note's date "
+                       "and nature.")
+
+
+def described_tool(server):
+    """Registers a tool like `server.tool()`, after completing its description with the sentence on the context collection, which
+    takes the collection name from the code constant (design D3, D5): a docstring cannot hold a constant."""
+    def register(function):
+        function.__doc__ = (function.__doc__ or "") + CONTEXT_DESCRIPTION
+        return server.tool()(function)
+    return register
+
+
 def database_error(error: Exception) -> dict:
     """The error object of a library tool whose database query failed: the error type only, never its message (it may hold
     SQL), with the remedy. The server keeps running."""
@@ -944,7 +1098,7 @@ def serve() -> None:
         hint = " The former name 'veille' is no longer accepted: use 'watch'." if "veille" in unknown else ""
         return {"error": f"Unknown collections: {unknown}. Known: {list(known)}.{hint}"}
 
-    @server.tool()
+    @described_tool(server)
     def search_library(
         query: str, collections: list[str] | None = None, limit: int = 8, since: str | None = None,
         types: list[str] | None = None,
@@ -1066,6 +1220,13 @@ def main(store=None, connect=None) -> None:
         args = sys.argv[2:]
         allow_empty = "--allow-empty" in args
         args = [arg for arg in args if arg != "--allow-empty"]
+        context = None
+        if "--context" in args:
+            position = args.index("--context")
+            if position + 1 >= len(args) or args[position + 1].startswith("--"):
+                sys.exit("--context needs the context folder.")
+            context = Path(args[position + 1])
+            args = args[:position] + args[position + 2:]
         force = None
         if "--recompute" in args:
             position = args.index("--recompute")
@@ -1074,7 +1235,7 @@ def main(store=None, connect=None) -> None:
                 sys.exit("--recompute needs at least one book (or @list.txt).")
         if not args:
             sys.exit("index needs at least one collections folder before --recompute.")
-        index([Path(arg) for arg in args], force, store=store, allow_empty=allow_empty)
+        index([Path(arg) for arg in args], force, store=store, allow_empty=allow_empty, context=context)
     elif len(sys.argv) in (4, 5) and sys.argv[1] == "rename-collection":
         extra = sys.argv[4:]
         if extra not in ([], ["--dry-run"]):

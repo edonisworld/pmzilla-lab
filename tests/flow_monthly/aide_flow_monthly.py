@@ -49,8 +49,8 @@ monthly_run:
 """
 
 # les outils que l'orchestrateur appelle, et ceux qu'il ne doit jamais appeler (ils existent en faux pour que l'appel se voie)
-OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_compare", "flow_board", "flow_retention")
-OUTILS_EXCLUS = ("segment_sample", "db", "flow_views", "knowledge_import")
+OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_board", "flow_retention")
+OUTILS_EXCLUS = ("segment_sample", "db", "flow_views", "knowledge_import", "flow_compare")
 
 FAUX_OUTIL = '''import datetime, json, os, sys
 from pathlib import Path
@@ -60,12 +60,7 @@ args = sys.argv[1:]
 with open(racine / "appels.jsonl", "a", encoding="utf-8") as f:
     f.write(json.dumps({"outil": outil, "args": args}) + "\\n")
 codes = json.loads((racine / "codes.json").read_text(encoding="utf-8")) if (racine / "codes.json").exists() else {}
-cle = outil
-if outil == "flux_jira" and "--source" in args and args[args.index("--source") + 1] == "db":
-    cle = "flux_jira:db"
-if outil == "flow_compare":
-    cle = "flow_compare:" + ("reports" if "reports" in args else "data")
-code = codes.get(cle, codes.get(outil, 0))
+code = codes.get(outil, 0)
 print("SORTIE-OUTIL " + " ".join(args))
 if outil == "flow_retention":
     imposee = racine / "retention-sortie.txt"
@@ -131,8 +126,8 @@ class Decor(unittest.TestCase):
         (self.flux / "flux.yaml").write_text(texte, encoding="utf-8")
 
     def codes(self, **codes) -> None:
-        """Codes de sortie des faux outils : codes(flow_import=1), ou avec « : » via un dictionnaire (voir codes_de)."""
-        self.codes_de({k.replace("__", ":"): v for k, v in codes.items()})
+        """Codes de sortie des faux outils : codes(flow_import=1)."""
+        self.codes_de(dict(codes))
 
     def codes_de(self, codes: dict) -> None:
         (self.racine / "codes.json").write_text(json.dumps(codes), encoding="utf-8")

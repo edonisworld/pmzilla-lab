@@ -22,6 +22,9 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lab_paths  # noqa: E402
+
 REGLES_PAR_DEFAUT = Path(".pmzilla") / "remplacements-bmad.tsv"
 
 
@@ -65,13 +68,13 @@ def appliquer(racine: Path, regles: list[tuple[str, str, str]], ecrire: bool) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Rejoue les remplacements du dépôt dans les skills BMAD installés.")
     parser.add_argument("--racine", default=str(Path(__file__).resolve().parents[1]), help="racine du dépôt")
-    parser.add_argument("--regles", help=f"fichier de règles (défaut : {REGLES_PAR_DEFAUT} sous la racine)")
+    parser.add_argument("--regles", help="fichier de règles (défaut : le fichier local du registre des chemins du lab, lu en place)")
     parser.add_argument("--check", action="store_true", help="n'écrit rien ; code 1 s'il reste un remplacement à faire")
     args = parser.parse_args(argv)
     racine = Path(args.racine).resolve()
-    fichier = Path(args.regles) if args.regles else racine / REGLES_PAR_DEFAUT
-    if not fichier.is_file():
-        print(f"Fichier de règles absent : {fichier}. Rien à rejouer (le créer si le hook des noms sensibles refuse un SKILL.md).")
+    fichier = Path(args.regles) if args.regles else lab_paths.local_file_for("bmad_replacements", racine)
+    if fichier is None or not fichier.is_file():
+        print(f"Fichier de règles absent{f' : {fichier}' if fichier else ''}. Rien à rejouer (le créer si le hook des noms sensibles refuse un SKILL.md).")
         return 0
     regles = lire_regles(fichier)
     faits, absents = appliquer(racine, regles, ecrire=not args.check)

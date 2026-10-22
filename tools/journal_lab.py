@@ -80,12 +80,13 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cases_store
 import flux_config
+import lab_paths
 import sensitive_names
 from cases_store import CasesError, connect_cases
 from journal_lab_messages import CATALOGS
 from messages import Messages, add_language_option
 
-WORKSPACE = Path(os.environ.get("PMZILLA_LAB_WORKSPACE", "~/PMZilla-Lab/workspace")).expanduser()
+WORKSPACE = lab_paths.resolve_or_exit()["content_root"]   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 JOURNAL_DIR = WORKSPACE / "Journal-Lab"
 JOURNAL_FILE = JOURNAL_DIR / "journal.yaml"
 

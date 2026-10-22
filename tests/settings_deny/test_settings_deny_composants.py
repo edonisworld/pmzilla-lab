@@ -99,13 +99,13 @@ class DansLeFichierDeReglages(Verifications, Base):
     def test_les_regles_sont_dans_settings_json(self):
         presentes, manquantes = self.presentes()
         if not presentes:
-            self.skipTest("tâche 8.1 : l'auteur n'a pas encore ajouté les règles de composants.py check")
+            self.fail("tâche 8.1 : l'auteur n'a pas encore ajouté les règles de composants.py check")
         self.assertEqual(manquantes, [], f"{len(manquantes)} règle(s) de REGLES_A_AJOUTER absente(s) de .claude/settings.json")
 
     def test_toute_forme_de_check_est_interdite_par_les_regles_reelles(self):
         presentes, manquantes = self.presentes()
         if not presentes:
-            self.skipTest("tâche 8.1 : l'auteur n'a pas encore ajouté les règles de composants.py check")
+            self.fail("tâche 8.1 : l'auteur n'a pas encore ajouté les règles de composants.py check")
         if manquantes:
             self.fail("règles manquantes : " + " ; ".join(manquantes))
         self.verifier_formes_interdites()

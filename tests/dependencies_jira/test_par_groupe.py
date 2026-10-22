@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import types
@@ -23,6 +24,8 @@ from unittest import mock
 from test_dependencies_jira import AUJOURDHUI, Base, t
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.append(str(Path(__file__).resolve().parents[2] / "tests" / "flux_jira"))      # à la fin : test_language existe aussi là-bas
+import chargeur_csv as chargeur  # noqa: E402
 import dependencies_jira as dj  # noqa: E402
 
 REFERENTIEL = """source_date: 2026-10-01
@@ -112,6 +115,28 @@ class ParGroupe(Base):
         self.assertEqual(r["equipes_tickets"], {"MT-Frobnic": 5, "MT-Plinth": 2, "hors référentiel": 1})
         self.assertNotIn("Eq-Delta", json.dumps(r, ensure_ascii=False))
 
+    def test_identifiant_du_catalogue_qu_aucune_equipe_du_referentiel_ne_liste_regroupe_hors_referentiel(self):
+        """Change team-mapping, tâche 3.3 : un libellé du catalogue est une équipe inconnue du référentiel ; le groupe garde son libellé."""
+        self.referentiel()
+        (self.ws / "Flux-Lab" / "equipes-jira.yaml").write_text(
+            "teams:\n  - name: Libelle-Quimbo\n    jira_team_ids: ['50']\n", encoding="utf-8")
+        tickets = TICKETS + [t("QQQ-1", "Libelle-Quimbo", sortants=["BBB-4"]), t("BBB-4", "Eq-Beta", entrants=["QQQ-1"])]
+        sortie = self.lancer("compute", self.csv(tickets), "--name", "g", "--by", "mission-team")
+        fichier = self.ws / "Flux-Lab" / "rapports" / f"dependances-g-mission-team-{AUJOURDHUI.isoformat()}.json"
+        r = json.loads(fichier.read_text(encoding="utf-8"))
+        self.assertEqual(r["equipes_tickets"], {"MT-Frobnic": 6, "MT-Plinth": 2, "hors référentiel": 2})
+        self.assertNotIn("Libelle-Quimbo", json.dumps(r, ensure_ascii=False))
+        self.assertNotIn("Libelle-Quimbo", sortie)
+
+    def test_identifiant_present_dans_les_deux_fichiers_reste_dans_son_equipe_du_referentiel(self):
+        ref = REFERENTIEL.replace("  - name: Eq-Alpha\n    headcount: 4101\n", "  - name: Eq-Alpha\n    headcount: 4101\n    jira_team_ids: ['1']\n")
+        self.referentiel(ref)
+        (self.ws / "Flux-Lab" / "equipes-jira.yaml").write_text(
+            "teams:\n  - name: Libelle-Partage\n    jira_team_ids: ['1', '52']\n", encoding="utf-8")
+        r, _ = self.calcul_par("mission-team")
+        self.assertEqual(r["equipes_tickets"], {"MT-Frobnic": 5, "MT-Plinth": 2, "hors référentiel": 1})
+        self.assertNotIn("Libelle-Partage", json.dumps(r, ensure_ascii=False))
+
     def test_libelle_hors_referentiel_en_anglais(self):
         self.referentiel()
         export = self.csv(TICKETS)
@@ -183,17 +208,18 @@ class ParGroupe(Base):
             self.assertNotIn(nom, sortie)
 
     def test_voie_base_meme_calcul_que_la_voie_csv(self):
-        """--source db passe par cmd_calcul : avec un faux flow_store qui rend les données du CSV, même rapport."""
+        """Le calcul en direct, avec un faux flow_store qui rend les données du CSV, donne le même rapport que le lanceur de test."""
         self.referentiel()
         r_csv, _ = self.calcul_par("mission-team", nom="csv")
         export = self.csv(TICKETS, nom="base.csv")
-        donnees = dj.read_export(Path(export), dj.config())
+        donnees = chargeur.lire_export_dependances(Path(export), dj.config())
         magasin = types.SimpleNamespace(lire_dependances=lambda settings: dict(donnees))
-        args = ["compute", "--source", "db", "--by", "mission-team", "--name", "db"]
+        args = ["compute", "--by", "mission-team", "--name", "db"]
         racine = self.ws / "Flux-Lab"
-        with mock.patch.dict(sys.modules, {"flow_store": magasin}), \
+        with mock.patch.dict(sys.modules, {"flow_store": magasin}), mock.patch.dict(os.environ), \
                 mock.patch.object(dj, "FLUX_DIR", racine), mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"), \
                 mock.patch.object(dj, "REPORT_DIR", racine / "rapports"), contextlib.redirect_stdout(io.StringIO()):
+            os.environ.pop("CLAUDECODE", None)
             dj.main(args)
         fichier = racine / "rapports" / f"dependances-db-mission-team-{AUJOURDHUI.isoformat()}.json"
         r_db = json.loads(fichier.read_text(encoding="utf-8"))
@@ -205,10 +231,12 @@ class ParGroupe(Base):
         racine = self.ws / "Flux-Lab"
         lecture = mock.Mock(side_effect=AssertionError("la base ne doit pas être lue"))
         with mock.patch.dict(sys.modules, {"flow_store": types.SimpleNamespace(lire_dependances=lecture)}), \
+                mock.patch.dict(os.environ), \
                 mock.patch.object(dj, "FLUX_DIR", racine), mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"), \
                 mock.patch.object(dj, "REPORT_DIR", racine / "rapports"):
+            os.environ.pop("CLAUDECODE", None)
             with self.assertRaises(SystemExit) as sortie:
-                dj.main(["compute", "--source", "db", "--by", "site"])
+                dj.main(["compute", "--by", "site"])
         self.assertIn("organisation.yaml", str(sortie.exception))
         lecture.assert_not_called()
         self.assertEqual(self.rapports(), [])

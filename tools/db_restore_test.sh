@@ -7,7 +7,8 @@
 #     bash tools/db_restore_test.sh --port N             port de l'hôte du conteneur jetable (jamais 5432 ni celui de la vraie base)
 #
 # Ce que fait le script :
-#   1. cherche la dernière sauvegarde dans ~/.pmzilla-lab/sauvegardes/ (dossier db-AAAA-MM-JJ de tools/db_backup.sh) ;
+#   1. cherche la dernière sauvegarde dans le dossier des sauvegardes (« sauvegardes » sous PMZILLA_LAB_DATA, soit
+#      ~/.pmzilla-lab/sauvegardes par défaut, comme tools/db_backup.sh ; dossier db-AAAA-MM-JJ) ;
 #   2. démarre un conteneur JETABLE (même image fixée et même shm_size que docker-compose.yml, nom unique, port 127.0.0.1 choisi par Docker, mot
 #      de passe aléatoire propre au conteneur : le mot de passe de la vraie base n'est ni lu ni utilisé) ;
 #   3. applique les migrations (uv run tools/db.py migrate : rôles, extensions, schémas), car les sauvegardes sont faites par
@@ -15,9 +16,14 @@
 #      chaque schéma avec pg_restore, après l'avoir VIDÉ (DROP SCHEMA IF EXISTS … CASCADE, dans le conteneur jetable seulement) : une
 #      sauvegarde faite avant une migration ne contient pas les tables ajoutées depuis (ex. la 0007, veille et pré-tri), et le DROP SCHEMA
 #      sans CASCADE de pg_restore --clean échouerait (« cannot drop schema … because other objects depend on it ») ;
+#   3 bis. restaure le dump partiel quality-sans-texte.dump (données seulement) dans les trois tables vides de quality (attributs d'équipe,
+#      relectures, versions de surcouche) ; absent ou en échec : code 1 (une sauvegarde antérieure au dump partiel est signalée) ;
 #   4. compare le nombre de lignes par table (knowledge, cases, flow, public.schema_migrations) avec la vraie base, lue en COMPTES
 #      seulement (docker compose exec, socket locale, aucune valeur lue) ;
 #   5. compare l'empreinte des migrations : fichiers de db/migrations/ (sha256, comme tools/db.py), base restaurée, vraie base ;
+#   5 bis. après une restauration réussie, chronomètre un REINDEX INDEX de chacun des trois index BM25 (knowledge.chunks_bm25,
+#      cases.cases_bm25, cases.experiments_bm25) dans le conteneur jetable, et affiche la durée de chacun puis le total, estimation du
+#      REINDEX de la vraie base après une montée de l'image (un index absent est signalé et compté 0, sans échec) ;
 #   6. supprime le conteneur jetable à la fin, même en cas d'erreur ou d'interruption.
 #
 # La vraie base n'est jamais modifiée et aucune sauvegarde n'est faite. Le script n'affiche que des noms de tables et des comptes.
@@ -27,12 +33,16 @@
 # Code de sortie : 0 tout est cohérent ; 1 restauration en échec, table manquante ou empreinte des migrations différente ;
 # 2 prérequis absent ou usage incorrect (rien n'a été restauré).
 #
-# Variables (pour les tests) : DB_BACKUP_SAUVEGARDES (dossier des sauvegardes, comme db_backup.sh), DB_RESTORE_SCHEMAS
+# Variables (pour les tests) : DB_BACKUP_SAUVEGARDES (dossier des sauvegardes, comme db_backup.sh ; défaut : « sauvegardes » sous
+# PMZILLA_LAB_DATA, par tools/lab_paths.sh), PMZILLA_LAB_DATA (dossier de données du labo, défaut ~/.pmzilla-lab), DB_RESTORE_SCHEMAS
 # (défaut : knowledge cases flow), DB_RESTORE_ATTENTE (secondes max d'attente du conteneur, défaut 120).
 set -uo pipefail
 RACINE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$RACINE" || exit 2
-DEST="${DB_BACKUP_SAUVEGARDES:-$HOME/.pmzilla-lab/sauvegardes}"
+# Dossiers du lab : le module partagé tools/lab_paths.sh (comme db_backup.sh) ; sinon code 78, avant tout pas.
+. "$RACINE/tools/lab_paths.sh"
+lab_paths_init || exit $?
+DEST="$LAB_BACKUPS_FOLDER"   # DB_BACKUP_SAUVEGARDES, sinon <dossier de données du labo>/sauvegardes (tools/lab_paths.sh)
 SCHEMAS="${DB_RESTORE_SCHEMAS:-knowledge cases flow}"
 ATTENTE="${DB_RESTORE_ATTENTE:-120}"
 for schema in $SCHEMAS; do
@@ -52,10 +62,16 @@ while [ $# -gt 0 ]; do
 done
 
 # --- Refus de viser la vraie base -------------------------------------------------------------------------------------
+# Une seule règle de port (test-db-guards, D1) : forme décimale simple (chiffres ASCII, sans signe, sans espace, sans zéro en tête, de 1 à
+# 65535), comparée en nombre ; un port configuré de la vraie base défini et illisible est refusé (code 2).
+port_valide() { local LC_ALL=C; [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$((10#$1))" -le 65535 ]; }
 PORT_REEL="${PMZILLA_LAB_DB_PORT:-5432}"
+if ! port_valide "$PORT_REEL"; then
+  echo "Refus : le port configuré de la vraie base est illisible (PMZILLA_LAB_DB_PORT) : corrige-le ou retire-le, puis relance."; exit 2
+fi
 if [ -n "$PORT_DEMANDE" ]; then
-  if ! printf '%s' "$PORT_DEMANDE" | grep -Eq '^[0-9]{2,5}$'; then echo "Port invalide : $PORT_DEMANDE"; exit 2; fi
-  if [ "$PORT_DEMANDE" = "5432" ] || [ "$PORT_DEMANDE" = "$PORT_REEL" ]; then
+  if ! port_valide "$PORT_DEMANDE"; then echo "Port invalide : $PORT_DEMANDE"; exit 2; fi
+  if [ "$((10#$PORT_DEMANDE))" -eq 5432 ] || [ "$((10#$PORT_DEMANDE))" -eq "$((10#$PORT_REEL))" ]; then
     echo "Refus : le port $PORT_DEMANDE est celui de la vraie base. Le test de restauration n'utilise jamais ce port (laisser Docker en choisir un, ou donner un autre --port)."; exit 2
   fi
 fi
@@ -83,14 +99,13 @@ fi
 if ! docker compose exec -T db pg_isready -U postgres -d pmzilla >/dev/null 2>&1; then
   echo "Le conteneur de la vraie base tourne mais PostgreSQL ne répond pas. Voir : docker compose ps, docker compose logs db"; exit 2
 fi
-IMAGE="$(grep -E '^[[:space:]]+image:' docker-compose.yml | head -1 | sed -E 's/^[[:space:]]+image:[[:space:]]*//; s/["[:space:]]//g')"
+. "$RACINE/tools/db_container_common.sh"   # image fixée et shm_size du compose, partagés avec tools/db_rehearsal.sh
+IMAGE="$(db_compose_image docker-compose.yml)"
 case "$IMAGE" in
   */*:[0-9]*) ;;
   *) echo "Image de docker-compose.yml introuvable ou non fixée : « $IMAGE »"; exit 2 ;;
 esac
-# /dev/shm du conteneur jetable : la valeur de shm_size de docker-compose.yml (64 Mo par défaut sinon, trop peu pour l'index BM25), repli 1g.
-SHM="$(grep -E '^[[:space:]]+shm_size:' docker-compose.yml | head -1 | sed -E 's/^[[:space:]]+shm_size:[[:space:]]*//; s/[#].*$//; s/["[:space:]]//g')"
-printf '%s' "$SHM" | grep -Eiq '^[0-9]+[bkmg]b?$' || SHM="1g"
+SHM="$(db_compose_shm docker-compose.yml)"   # 64 Mo par défaut de Docker sinon, trop peu pour l'index BM25 ; repli 1g
 if command -v shasum >/dev/null 2>&1; then SHA() { shasum -a 256 "$1" | cut -d' ' -f1; }
 elif command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$1" | cut -d' ' -f1; }
 else echo "shasum et sha256sum sont introuvables"; exit 2; fi
@@ -131,8 +146,8 @@ else
   echo "Impossible de démarrer le conteneur jetable $NOM (image absente ? réseau ? port pris ?)"; exit 1
 fi
 PORT_JETABLE="$(docker port "$CONTENEUR" 5432/tcp 2>/dev/null | head -1 | sed -E 's/.*:([0-9]+)$/\1/')"
-if ! printf '%s' "$PORT_JETABLE" | grep -Eq '^[0-9]{2,5}$'; then echo "Port du conteneur jetable introuvable"; exit 1; fi
-if [ "$PORT_JETABLE" = "5432" ] || [ "$PORT_JETABLE" = "$PORT_REEL" ]; then
+if ! port_valide "$PORT_JETABLE"; then echo "Port du conteneur jetable introuvable"; exit 1; fi
+if [ "$((10#$PORT_JETABLE))" -eq 5432 ] || [ "$((10#$PORT_JETABLE))" -eq "$((10#$PORT_REEL))" ]; then
   echo "Refus : le conteneur jetable écoute sur le port $PORT_JETABLE, celui de la vraie base. Rien n'a été restauré."; exit 1
 fi
 echo "Conteneur jetable : $CONTENEUR (127.0.0.1:$PORT_JETABLE, jamais le port de la vraie base)"
@@ -176,8 +191,25 @@ for schema in $SCHEMAS; do
   fi
 done
 
+# Dump partiel de quality (change story-quality-audit, D10) : données seulement, dans les trois tables vides recréées par les migrations
+# (aucune clé étrangère vers une table hors du dump : tests/db/test_quality_dump_coherence.py). Jamais le schéma quality entier, jamais de DROP.
+fichier="$SAUVEGARDE/quality-sans-texte.dump"
+if [ "$echec" -ne 0 ]; then
+  echo "  quality-sans-texte non tenté : une restauration de schéma a échoué"
+elif [ ! -s "$fichier" ]; then
+  echo "  ÉCHEC quality-sans-texte : fichier quality-sans-texte.dump absent ou vide"
+  echo "  (la sauvegarde précède probablement le dump partiel de quality : en faire une nouvelle avec bash tools/db_backup.sh)"; echec=1
+elif docker exec -i "$CONTENEUR" pg_restore -U postgres -d pmzilla --data-only --exit-on-error --single-transaction \
+       < "$fichier" > /dev/null 2> "$TMP/restore-quality.err"; then
+  echo "  OK quality-sans-texte"
+else
+  echo "  ÉCHEC quality-sans-texte : pg_restore a échoué (détail masqué, il peut citer des valeurs ; relancer avec --detail)"
+  [ "$DETAIL" -eq 1 ] && sed 's/^/    /' "$TMP/restore-quality.err" | head -10
+  echec=1
+fi
+
 # --- Comptes par table (noms et comptes seulement) ---------------------------------------------------------------------------
-REQUETE_COMPTES="select schemaname || '.' || tablename || '|' || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text from pg_tables where schemaname in ($(printf "'%s'," $SCHEMAS | sed 's/,$//')) or (schemaname = 'public' and tablename = 'schema_migrations') order by 1"
+REQUETE_COMPTES="select schemaname || '.' || tablename || '|' || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text from pg_tables where schemaname in ($(printf "'%s'," $SCHEMAS quality | sed 's/,$//')) or (schemaname = 'public' and tablename = 'schema_migrations') order by 1"
 FILTRE='^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\|[0-9]+$'
 REQUETE_MIGRATIONS="select numero || '|' || nom || '|' || empreinte from public.schema_migrations order by numero"
 docker compose exec -T db psql -U postgres -d pmzilla -At -c "$REQUETE_COMPTES" 2>/dev/null | grep -E "$FILTRE" > "$TMP/reel.txt"
@@ -189,11 +221,19 @@ echo "Lignes par table (restaurée / vraie base) :"
 awk -F'|' -v OFS='|' 'NR==FNR{r[$1]=$2; n[$1]=1; next} {s[$1]=$2; n[$1]=1}
   END{for(k in n){ if(!(k in s)) print k,"MANQUE","-",r[k]; else if(!(k in r)) print k,"EN_PLUS",s[k],"-";
        else if(s[k]==r[k]) print k,"OK",s[k],r[k]; else print k,"ECART",s[k],r[k]}}' "$TMP/reel.txt" "$TMP/restauree.txt" | sort > "$TMP/comparaison.txt"
-manque=0; ecarts=0; vides=0
+manque=0; ecarts=0; vides=0; ecarts_quality=0
 while IFS='|' read -r table etat restauree reelle; do
   case "$etat" in
     OK) printf '  %-34s %10s / %-10s OK\n' "$table" "$restauree" "$reelle" ;;
     ECART)
+      case "$table" in
+        quality.team_attributes|quality.team_reviews|quality.overlay_versions) ;;   # restaurées par le dump partiel : comparées comme toute table
+        quality.*)   # autres tables de quality (R-78, D10) : jamais sauvegardées, recréées vides par les migrations ; l'écart est attendu, jamais un échec
+          diff=$((restauree - reelle)); [ "$diff" -gt 0 ] && diff="+$diff"
+          printf '  %-34s %10s / %-10s écart %s (attendu : cette table de quality n'"'"'est jamais sauvegardée, elle est recréée vide)\n' "$table" "$restauree" "$reelle" "$diff"
+          ecarts_quality=$((ecarts_quality + 1))
+          continue ;;
+      esac
       diff=$((restauree - reelle)); [ "$diff" -gt 0 ] && diff="+$diff"
       printf '  %-34s %10s / %-10s écart %s (attendu possible si la vraie base a changé depuis la sauvegarde)\n' "$table" "$restauree" "$reelle" "$diff"
       ecarts=$((ecarts + 1)); [ "$restauree" -eq 0 ] && vides=$((vides + 1)) ;;
@@ -229,6 +269,33 @@ else
   echo "  OK : même empreinte partout"
 fi
 
+# --- Durée de reconstruction des index BM25 (R-88) ---------------------------------------------------------------------------
+# Après une restauration réussie seulement : un REINDEX INDEX par index BM25, chronométré dans le conteneur jetable (docker exec sur le
+# conteneur créé plus haut, jamais docker compose : la vraie base n'est pas touchée). Le total estime le REINDEX de la vraie base après une
+# montée de l'image. Un index absent (schéma sans données) est signalé et compté 0 ; un REINDEX en échec aussi (détail masqué) : ni l'un ni
+# l'autre ne change le code de sortie.
+if [ "$echec" -eq 0 ]; then
+  case "$CONTENEUR" in "$PREFIXE"-*) ;; *) echo "Refus : le conteneur visé n'est pas un conteneur jetable"; exit 1 ;; esac
+  total_reindex=0
+  for index in knowledge.chunks_bm25 cases.cases_bm25 cases.experiments_bm25; do
+    present="$(docker exec "$CONTENEUR" psql -U postgres -d pmzilla -At -c "select to_regclass('$index') is not null" 2>/dev/null | grep -E '^[tf]$' | head -1)"
+    if [ "$present" != "t" ]; then
+      echo "index BM25 $index : absent de la base restaurée (schéma sans données), compté 0 s"
+      continue
+    fi
+    debut="$(date +%s)"
+    if docker exec "$CONTENEUR" psql -U postgres -d pmzilla -v ON_ERROR_STOP=1 -c "SET max_parallel_maintenance_workers = 0" -c "REINDEX INDEX $index" > /dev/null 2> "$TMP/reindex.err"; then
+      duree=$(( $(date +%s) - debut ))
+      total_reindex=$((total_reindex + duree))
+      echo "durée de reconstruction de l'index BM25 $index : $duree s"
+    else
+      echo "index BM25 $index : REINDEX en échec dans le conteneur jetable (détail masqué, relancer avec --detail), compté 0 s"
+      [ "$DETAIL" -eq 1 ] && sed 's/^/    /' "$TMP/reindex.err" | head -10
+    fi
+  done
+  echo "durée totale de reconstruction des index BM25 : $total_reindex s (estimation du REINDEX de la vraie base)"
+fi
+
 # --- Bilan ---------------------------------------------------------------------------------------------------------------------
 echo "Bilan :"
 if [ "$echec" -ne 0 ]; then
@@ -241,4 +308,5 @@ if [ "$ecarts" -gt 0 ]; then
 else
   echo "  RESTAURATION OK, comptes identiques, empreinte des migrations identique."
 fi
+[ "$ecarts_quality" -gt 0 ] && echo "  Schéma quality : $ecarts_quality table(s) avec un écart de lignes, attendu : ces tables ne sont jamais sauvegardées (le contenu des stories ne vit que dans la base)."
 exit 0

@@ -20,6 +20,9 @@
 # « composants.py check --if-due » (une vérification complète par semaine, le jour réglé ou au premier passage suivant). Code 1 :
 # une notification (nouveautés à examiner) ; autre code que 0 et 1 : une ligne au journal et une notification. Jamais comptée parmi
 # les étapes en échec, jamais de changement du code de sortie. La veille ne nettoie jamais le cache de uv et n'installe rien.
+# Tests de mutation du masquage (masking-mutation-tests D7), après la veille des composants : « mutation_masking.py run --due »
+# (une exécution par semaine, avec rattrapage). Jamais une étape en échec, jamais de notification, code de sortie inchangé ; un échec
+# est nommé dans le journal.
 #
 # Rattrapage (R-44). Options : « --if-due » (lancement planifié du calendrier, déclencheur « calendrier »), « --catch-up » (lancement
 # planifié horaire et au chargement, déclencheur « rattrapage »), aucune (lancement manuel, forcé, déclencheur « manuel »). Autre
@@ -40,7 +43,7 @@
 #
 # Dossiers de code et de contenu (run-worktree D2, D5). Dossier de code : où le lien de ce script se résout (liens suivis) ; les outils
 # (dont composants.py et dashboard.py), watch_paths.py, la version de Python épinglée et le script de réveil du contrôle du cache de uv
-# y sont lus. Dossier de contenu : PMZILLA_LAB_WORKSPACE (par défaut le dépôt de développement), exporté aux outils ; la collecte,
+# y sont lus. Dossier de contenu : PMZILLA_LAB_WORKSPACE (par défaut le dépôt de développement, par Git), exporté aux outils ; la collecte,
 # l'indexation et le tableau de bord y travaillent. Un passage qui a lieu écrit les deux dossiers après l'en-tête (et après la ligne de
 # rattrapage). Si le dossier de contenu est le dossier d'exécution (PMZILLA_LAB_RUN), le passage s'arrête juste après l'écriture du
 # début dans le repère : phrase clé, une notification, repère « echoue » code 1, verrou libéré, sortie 1. Aucun repère propre à ce
@@ -59,20 +62,24 @@ case "${1:-}" in
   *) echo "Option inconnue : $1 (options admises : --if-due, --catch-up, ou aucune)" >&2; exit 2 ;;
 esac
 (( $# <= 1 )) || { echo "Un seul argument admis (--if-due, --catch-up, ou aucun)" >&2; exit 2; }
-TOOLS="$HOME/PMZilla-Lab"   # dossier du laboratoire : les liens des scripts planifiés (dont watch.sh) et, par défaut, le dossier de contenu
 # Dossier de code (run-worktree D2, D5) : là où le lien de ce script se résout (liens suivis), son dossier parent de tools/. Les outils,
 # les réglages suivis, la version de Python épinglée et le script de réveil y sont lus.
 SELF="${${(%):-%x}:A}"
 RACINE_CODE="${SELF:h:h}"
-# Dossier de contenu : PMZILLA_LAB_WORKSPACE, par défaut le dépôt de développement. Bibliotheque-Lab et Watch-Lab y vivent, contenu exclu de Git.
-WORKSPACE="${PMZILLA_LAB_WORKSPACE:-$TOOLS/workspace}"
+# Dossiers du lab par le module partagé tools/lab_paths.sh (R-77) : dossier de contenu (PMZILLA_LAB_WORKSPACE, sinon dépôt Git du code ;
+# Bibliotheque-Lab et Watch-Lab y vivent, contenu exclu de Git), dossier du lab (les liens des scripts planifiés, dont watch.sh),
+# dossier d'exécution. Un échec s'arrête avant tout pas, code 78.
+. "$RACINE_CODE/tools/lab_paths.sh"
+lab_paths_init || exit $?
+TOOLS="$LAB_FOLDER"
+WORKSPACE="$LAB_CONTENT_ROOT"
 export PMZILLA_LAB_WORKSPACE="$WORKSPACE"
 # Dossier de la veille : Watch-Lab, par la même logique que les scripts Python (watch_paths.py) ; sans python3, Watch-Lab.
 # Si seul l'ancien dossier (Veille-Lab) existe, watch_paths.py refuse (message sur stderr : nom actuel et
 # tools/migrate_watch.py) et la veille s'arrête avec le code 1.
 resoudre_watch_lab() {
   if command -v python3 >/dev/null 2>&1; then
-    WATCH_LAB=$(python3 "$RACINE_CODE/tools/watch_paths.py" lab "$WORKSPACE") || { echo "=== Veille arrêtée : dossier de la veille à l'ancien nom ==="; exit 1; }
+    WATCH_LAB=$(python3 -B "$RACINE_CODE/tools/watch_paths.py" lab "$WORKSPACE") || { echo "=== Veille arrêtée : dossier de la veille à l'ancien nom ==="; exit 1; }
   fi
   [[ -n "${WATCH_LAB:-}" ]] || WATCH_LAB="$WORKSPACE/Watch-Lab"
 }
@@ -303,7 +310,10 @@ etapes_du_jour() {
     FAILED+=("collecte")
   fi
 
-  if curl -s --max-time 5 http://localhost:11434/api/tags >/dev/null; then
+  # Adresse d'Ollama : PMZILLA_LAB_OLLAMA, même variable et même défaut que l'indexeur (tools/pmzilla_lab_library.py, OLLAMA_URL).
+  local ollama="${PMZILLA_LAB_OLLAMA:-http://localhost:11434}"
+  ollama="${ollama%/}"
+  if curl -s --max-time 5 "$ollama/api/tags" >/dev/null; then
     # Pré-tri : notes, filtre (en mode « filtre » seulement), partages Bluesky, puis liste à lire classée.
     # En cas d'échec (pas encore de référence, modèle absent), liste simple.
     if uv run "$RACINE_CODE/tools/watch_triage.py" score && uv run "$RACINE_CODE/tools/watch_triage.py" apply \
@@ -316,8 +326,16 @@ etapes_du_jour() {
     fi
     # Toujours les deux dossiers : un fichier absent des deux est retiré de l'index
     # L'indexeur écrit directement dans la base PostgreSQL (code 2 : la base ne répond pas).
+    # Notes de contexte (organisation-context, D6) : l'option --context quand le dossier de contexte (module partagé lab_paths.sh) a un
+    # sous-dossier de notes ; sinon l'étape tourne sans l'option et le journal le dit. Le script ne nomme que le dossier de contexte lui-même.
+    local -a option_contexte=()
+    if [[ -d "$LAB_CONTEXT_FOLDER/notes" ]]; then
+      option_contexte=(--context "$LAB_CONTEXT_FOLDER")
+    else
+      echo "dossier de contexte absent : notes de contexte inchangées"
+    fi
     code_index=0
-    uv run "$RACINE_CODE/tools/pmzilla_lab_library.py" index "$WORKSPACE/Bibliotheque-Lab" "$WATCH_LAB" || code_index=$?
+    uv run "$RACINE_CODE/tools/pmzilla_lab_library.py" index "$WORKSPACE/Bibliotheque-Lab" "$WATCH_LAB" "${option_contexte[@]}" || code_index=$?
     if (( code_index == 2 )); then
       echo "Indexation en erreur : base PostgreSQL injoignable, la bibliothèque n'est pas à jour (bash tools/db_up.sh)"
       FAILED+=("indexation (base injoignable)")
@@ -348,11 +366,29 @@ veiller_composants() {
   return 0
 }
 
-# Refus (D2) : le dossier de contenu est le dossier d'exécution (PMZILLA_LAB_RUN, par défaut $TOOLS/run) ou l'un de ses sous-dossiers.
+# Tests de mutation du masquage, hebdomadaires avec rattrapage (masking-mutation-tests D7) : jamais une étape en échec,
+# jamais de notification, le code de sortie de la veille inchangé ; un échec est nommé dans le journal
+tester_mutation() {
+  local code=0
+  uv run --offline "$RACINE_CODE/tools/mutation_masking.py" run --due || code=$?
+  if (( code == 2 )); then
+    echo "Tests de mutation en échec : lancement impossible (code 2), voir uv run tools/mutation_masking.py report"
+  elif (( code == 3 )); then
+    echo "Tests de mutation en échec : score sous le seuil (code 3), voir uv run tools/mutation_masking.py report"
+  elif (( code != 0 )); then
+    echo "Tests de mutation en échec (code $code)"
+  fi
+  return 0
+}
+
+# Refus (D2) : le dossier de contenu est le dossier d'exécution (PMZILLA_LAB_RUN, par défaut le dossier run du dossier du lab) ou l'un de ses sous-dossiers.
 # Un dossier de contenu égal au dossier de code dans le dépôt de développement est accepté.
 dossier_de_contenu_est_arbre() {
-  local arbre="${${PMZILLA_LAB_RUN:-$TOOLS/run}:A}" contenu="${WORKSPACE:A}"
-  [[ "$contenu" == "$arbre" || "$contenu" == "$arbre"/* ]]
+  local arbre="${LAB_RUN_TREE:A}" contenu="${WORKSPACE:A}"
+  [[ "$contenu" == "$arbre" || "$contenu" == "$arbre"/* ]] && return 0
+  # Un dossier de contenu strictement dans le dossier de code est dans le dossier d'exécution quand le script est lancé par son lien
+  # (le dossier du lab dérivé du contenu ne désigne alors plus le dossier d'exécution).
+  [[ "$contenu" == "${RACINE_CODE:A}"/* ]]
 }
 
 # --- Décision : le passage a-t-il lieu ? ---
@@ -430,6 +466,7 @@ fi
 (( REPORTE )) && echo "Veille du jour reportée : nouvel essai au prochain passage planifié"
 
 veiller_composants
+tester_mutation
 
 # Tableau de bord (page HTML locale) : son échec ne fait jamais échouer la veille
 uv run "$RACINE_CODE/tools/dashboard.py" || echo "Tableau de bord non généré (voir ci-dessus)"

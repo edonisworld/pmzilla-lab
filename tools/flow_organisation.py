@@ -22,6 +22,7 @@ Structure du fichier (le contrat des outils qui le lisent) :
         headcount: 5
         site: ...                    # facultatif
         jira_team_ids: [identifiant, ...]      # facultatif (absent ou vide : pas d'identifiant)
+        single_po: true                        # facultatif, booléen (qualité des stories, attribut d'équipe)
     cross_cutting_teams: [noms d'équipes]      # facultatif
 
 Les refus sont des `ErreurConfig` (code 1) : le message donne le chemin de la clé et le numéro de ligne, jamais une valeur,
@@ -37,6 +38,7 @@ Ce module ne lit un fichier que si on lui donne un chemin (`charger_fichier`, `c
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,7 +59,23 @@ SANS_GROUPE = {
 CLES_RACINE = {"source_date", "sites", "departments", "teams", "cross_cutting_teams"}
 CLES_DEPARTEMENT = {"name", "site", "headcount", "mission_teams", "teams"}
 CLES_MISSION_TEAM = {"name", "discovery_workflow_pilot", "teams"}
-CLES_EQUIPE = {"name", "headcount", "site", "jira_team_ids"}
+CLES_EQUIPE = {"name", "headcount", "site", "jira_team_ids", "type", "single_po"}
+CLES_CATALOGUE_RACINE = {"teams"}
+CLES_ENTREE_CATALOGUE = {"name", "jira_team_ids", "type", "obsolete"}
+# les quatre sous-types de Team d'Assets (change team-mapping, design Q5) : noms génériques, comparés exactement
+TYPES_EQUIPE = ("Development Team", "Verification Team", "Product Management Team", "Other Team")
+
+# phrases du design D11 (refus), par langue ; les chemins suivent les deux points, jamais une valeur
+PHRASE_TYPE = {"fr": "type d'équipe autre que les quatre sous-types de Team : {paths}",
+               "en": "team type other than the four Team sub-types: {paths}"}
+PHRASE_NOMME_COMME = {"fr": "équipe du catalogue nommée comme une équipe du référentiel : {paths}",
+                      "en": "catalogue team named like a referential team: {paths}"}
+
+STRUCTURE_CATALOGUE = """teams:
+  - name: <libellé>
+    jira_team_ids: [<identifiant>, ...]
+    type: <sous-type de Team>        # facultatif
+    obsolete: <true|false>           # facultatif"""
 
 STRUCTURE = """source_date: <date>
 sites: [<site>, ...]
@@ -74,7 +92,33 @@ teams:
     headcount: <entier>
     site: <site déclaré>           # facultatif
     jira_team_ids: [<identifiant>, ...]   # facultatif
+    type: <sous-type de Team>      # facultatif, force le type déduit du catalogue
 cross_cutting_teams: [<équipe>, ...]  # facultatif"""
+
+# mêmes structures pour une sortie en anglais (messages « aucune source d'équipes ») : clés seules, jamais une valeur
+STRUCTURE_EN = """source_date: <date>
+sites: [<site>, ...]
+departments:
+  - name: <name>
+    site: <declared site>
+    headcount: <integer>
+    mission_teams:                 # or teams: [<team>, ...]
+      - name: <name>
+        discovery_workflow_pilot: <true|false>   # optional
+        teams: [<team>, ...]
+teams:
+  - name: <name>
+    headcount: <integer>
+    site: <declared site>          # optional
+    jira_team_ids: [<identifier>, ...]   # optional
+    type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+cross_cutting_teams: [<team>, ...]  # optional"""
+
+STRUCTURE_CATALOGUE_EN = """teams:
+  - name: <label>
+    jira_team_ids: [<identifier>, ...]
+    type: <Team sub-type>            # optional
+    obsolete: <true|false>           # optional"""
 
 
 def outside_label(language: str = "fr") -> str:
@@ -94,6 +138,12 @@ class Equipe:
     effectif: int
     site: str | None
     jira_ids: tuple[str, ...] = ()
+    type: str | None = None          # type forcé (clé facultative du référentiel), jamais écrit par un outil
+    chemin: str = ""                 # « teams[i] » et ligne de sa clé name, pour les messages (jamais le nom)
+    ligne: int = 0
+    chemin_type: str = ""            # chemin et ligne de la clé type (vides sans type forcé)
+    ligne_type: int = 0
+    single_po: bool = False          # story-quality-audit D8 : attribut de l'équipe déclaré par l'utilisateur, aucune donnée de personne
 
 
 @dataclass(frozen=True)
@@ -220,8 +270,10 @@ def _verifier_groupement(by: str) -> None:
 class _Lecteur:
     """Vérifie le document lu par yaml_strict ; chaque refus nomme le chemin de la clé et la ligne, jamais une valeur."""
 
-    def __init__(self, source: str):
+    def __init__(self, source: str, language: str = "fr", sujet: str = "le référentiel"):
         self.source = source
+        self.language = "en" if language == "en" else "fr"
+        self.sujet = sujet
 
     def refuser(self, message: str):
         raise ErreurConfig(f"{self.source} : {message}")
@@ -241,7 +293,7 @@ class _Lecteur:
         for cle in bloc:
             if cle not in permises:
                 self.refuser(f"clé inconnue « {pre}{cle} » (L{bloc.lignes.get(cle, ligne)}) ; "
-                             "le référentiel ne décrit aucune personne et n'accepte que les clés de sa structure.")
+                             f"{self.sujet} ne décrit aucune personne et n'accepte que les clés de sa structure.")
         for cle in sorted(obligatoires - set(bloc)):
             self.refuser(f"clé obligatoire absente : « {pre}{cle} » (bloc commençant L{ligne}).")
 
@@ -315,6 +367,7 @@ class _Lecteur:
     def equipes(self, doc: DictLignes, sites: set[str]) -> dict[str, Equipe]:
         equipes: dict[str, Equipe] = {}
         vues: dict[str, str] = {}
+        types_refuses: list[str] = []
         for i, brut in enumerate(self.liste(doc, "teams", "")):
             chemin = f"teams[{i}]"
             bloc = self.bloc(brut, chemin, doc.lignes["teams"])
@@ -325,8 +378,20 @@ class _Lecteur:
                 self.refuser(f"une équipe est décrite deux fois : « {vues[nom]}.name » et « {chemin}.name » "
                              f"(L{equipes_ligne(doc, vues[nom])} et L{bloc.lignes['name']}).")
             vues[nom] = chemin
+            type_ = None
+            if "type" in bloc:
+                if bloc["type"] in TYPES_EQUIPE:
+                    type_ = bloc["type"]
+                else:
+                    types_refuses.append(f"« {chemin}.type » (L{bloc.lignes['type']})")
+            un_seul_po = bloc.get("single_po", False)
+            if not isinstance(un_seul_po, bool):
+                self.refuser(f"« {chemin}.single_po » (L{bloc.lignes['single_po']}) doit être true ou false.")
             equipes[nom] = Equipe(nom, self.effectif(bloc, chemin), self.site(bloc, chemin, sites, False),
-                                  self.identifiants(bloc, chemin))
+                                  self.identifiants(bloc, chemin), type_, chemin, bloc.lignes["name"],
+                                  f"{chemin}.type" if "type" in bloc else "", bloc.lignes.get("type", 0), un_seul_po)
+        if types_refuses:
+            self.refuser(PHRASE_TYPE[self.language].format(paths=" ; ".join(types_refuses)))
         return equipes
 
     def departements(self, doc: DictLignes, sites: set[str], equipes: dict[str, Equipe]) -> tuple[Departement, ...]:
@@ -391,7 +456,7 @@ def equipes_ligne(doc: DictLignes, chemin: str) -> int:
     return doc["teams"][int(chemin[chemin.index("[") + 1:-1])].lignes["name"]
 
 
-def charger(texte: str, source: str = "organisation.yaml") -> Referentiel:
+def charger(texte: str, source: str = "organisation.yaml", language: str = "fr") -> Referentiel:
     """Référentiel d'un texte YAML : lecture stricte (clé écrite deux fois refusée par yaml_strict), structure vérifiée.
     Une erreur de syntaxe YAML devient une `ErreurConfig` avec la ligne seule (le texte fautif n'est jamais repris)."""
     try:
@@ -400,21 +465,213 @@ def charger(texte: str, source: str = "organisation.yaml") -> Referentiel:
         repere = getattr(erreur, "problem_mark", None)
         ou = f" (L{repere.line + 1})" if repere is not None else ""
         raise ErreurConfig(f"{source} : YAML illisible{ou} ; corriger la syntaxe du fichier.") from None
-    return _Lecteur(source).lire(document)
+    return _Lecteur(source, language).lire(document)
 
 
-def charger_fichier(chemin) -> Referentiel:
+def charger_fichier(chemin, language: str = "fr") -> Referentiel:
     """Référentiel du fichier donné. Fichier absent : `ErreurConfig` (code 1) qui donne la structure attendue, sans valeur."""
     chemin = Path(chemin)
     if not chemin.is_file():
         raise ErreurConfig(f"{chemin.name} : le référentiel d'organisation est absent ; le créer avec cette structure "
                            f"(clés seules) :\n{STRUCTURE}")
-    return charger(chemin.read_text(encoding="utf-8"), chemin.name)
+    return charger(chemin.read_text(encoding="utf-8"), chemin.name, language)
 
 
-def charger_si_present(chemin) -> Referentiel | None:
+def charger_si_present(chemin, language: str = "fr") -> Referentiel | None:
     """Référentiel du fichier donné, ou None s'il n'existe pas (outils qui ne lisent que les étiquettes d'équipe).
     Un fichier présent mais refusé lève toujours `ErreurConfig`."""
     if not Path(chemin).is_file():
         return None
-    return charger_fichier(chemin)
+    return charger_fichier(chemin, language)
+
+
+# ---------------------------------------------------------------------------
+# Catalogue des équipes Jira (change team-mapping, design D1) : Flux-Lab/equipes-jira.yaml, hors Git
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class EntreeCatalogue:
+    """Une entrée du catalogue : libellé, identifiants, type (ou None) et drapeau obsolète ; chemin et ligne pour les messages."""
+    nom: str
+    jira_ids: tuple[str, ...]
+    type: str | None
+    obsolete: bool
+    chemin: str
+    ligne: int
+
+
+@dataclass
+class Catalogue:
+    """Le catalogue lu. Vide quand le fichier est absent. Aucune méthode n'écrit un libellé."""
+    entrees: tuple[EntreeCatalogue, ...] = ()
+    _par_id: dict = field(default_factory=dict, repr=False)
+
+    def __post_init__(self):
+        self._par_id = {i: e for e in self.entrees for i in e.jira_ids}
+
+    def entree_pour(self, identifiant) -> EntreeCatalogue | None:
+        """Entrée qui porte cet identifiant, obsolète ou non, ou None."""
+        return self._par_id.get(str(identifiant))
+
+    def est_obsolete(self, identifiant) -> bool:
+        entree = self.entree_pour(identifiant)
+        return bool(entree and entree.obsolete)
+
+    @property
+    def ids(self) -> set[str]:
+        return set(self._par_id)
+
+
+def charger_catalogue(texte: str, source: str = "equipes-jira.yaml", language: str = "fr") -> Catalogue:
+    """Catalogue d'un texte YAML : lecture stricte, refus (code 1) avec chemin et ligne de clé, jamais une valeur :
+    clé inconnue (`obsolete_to_confirm` comprise), nom vide ou en double, identifiant en double, type hors des quatre noms."""
+    try:
+        document = charger_strict(texte, source)
+    except yaml.YAMLError as erreur:
+        repere = getattr(erreur, "problem_mark", None)
+        ou = f" (L{repere.line + 1})" if repere is not None else ""
+        raise ErreurConfig(f"{source} : YAML illisible{ou} ; corriger la syntaxe du fichier.") from None
+    lecteur = _Lecteur(source, language, "le catalogue")
+    if not isinstance(document, DictLignes):
+        lecteur.refuser("le fichier doit être un bloc de clés (structure attendue : teams).")
+    lecteur.cles(document, "", CLES_CATALOGUE_RACINE, {"teams"}, 1)
+    entrees, noms, ids, types_refuses = [], {}, {}, []
+    brutes = [] if document["teams"] is None else lecteur.liste(document, "teams", "")      # « teams: » vide : aucune entrée
+    for i, brut in enumerate(brutes):
+        chemin = f"teams[{i}]"
+        bloc = lecteur.bloc(brut, chemin, document.lignes["teams"])
+        ligne = lecteur.ligne_du_bloc(bloc, document.lignes["teams"])
+        lecteur.cles(bloc, chemin, CLES_ENTREE_CATALOGUE, {"name", "jira_team_ids"}, ligne)
+        nom = lecteur.texte(bloc["name"], f"{chemin}.name", bloc.lignes["name"])
+        if nom in noms:
+            lecteur.refuser(f"un libellé est décrit deux fois : « {noms[nom][0]}.name » et « {chemin}.name » "
+                            f"(L{noms[nom][1]} et L{bloc.lignes['name']}).")
+        noms[nom] = (chemin, bloc.lignes["name"])
+        identifiants = lecteur.identifiants(bloc, chemin)
+        for identifiant in dict.fromkeys(identifiants):
+            if identifiant in ids:
+                lecteur.refuser("un identifiant d'équipe Jira est listé sous deux entrées : « "
+                                f"{ids[identifiant][0]}.jira_team_ids » (L{ids[identifiant][1]}) et « {chemin}.jira_team_ids » "
+                                f"(L{bloc.lignes['jira_team_ids']}).")
+            ids[identifiant] = (chemin, bloc.lignes["jira_team_ids"])
+        type_ = None
+        if "type" in bloc:
+            if bloc["type"] in TYPES_EQUIPE:
+                type_ = bloc["type"]
+            else:
+                types_refuses.append(f"« {chemin}.type » (L{bloc.lignes['type']})")
+        obsolete = bloc.get("obsolete", False)
+        if not isinstance(obsolete, bool):
+            lecteur.refuser(f"« {chemin}.obsolete » (L{bloc.lignes['obsolete']}) doit être true ou false.")
+        entrees.append(EntreeCatalogue(nom, tuple(dict.fromkeys(identifiants)), type_, obsolete, chemin, bloc.lignes["name"]))
+    if types_refuses:
+        lecteur.refuser(PHRASE_TYPE[lecteur.language].format(paths=" ; ".join(types_refuses)))
+    return Catalogue(tuple(entrees))
+
+
+def charger_catalogue_si_present(chemin, language: str = "fr") -> Catalogue:
+    """Catalogue du fichier donné ; un fichier absent est lu comme un catalogue vide. Un fichier présent mais refusé lève `ErreurConfig`."""
+    chemin = Path(chemin)
+    if not chemin.is_file():
+        return Catalogue()
+    return charger_catalogue(chemin.read_text(encoding="utf-8"), chemin.name, language)
+
+
+# ---------------------------------------------------------------------------
+# Liste de revue des entrées extérieures (change names-and-team-review, design D4) : Flux-Lab/equipes-revues.yaml, hors Git
+# ---------------------------------------------------------------------------
+
+CLES_REVUE_RACINE = {"reviewed_ids"}
+IDENTIFIANT_REVUE = re.compile(r"[0-9A-Za-z_-]+")
+
+
+def charger_revue(texte: str, source: str = "equipes-revues.yaml", language: str = "fr") -> tuple[str, ...]:
+    """Identifiants de la liste de revue d'un texte YAML (`reviewed_ids: [identifiant, ...]`, rien d'autre) : lecture stricte, refus
+    (code 1) avec chemin de clé et ligne, jamais une valeur ni un nom de clé inconnu (un libellé pourrait s'y trouver) : clé inconnue,
+    valeur qui n'est pas un identifiant, identifiant en double."""
+    try:
+        document = charger_strict(texte, source)
+    except yaml.YAMLError as erreur:
+        repere = getattr(erreur, "problem_mark", None)
+        ou = f" (L{repere.line + 1})" if repere is not None else ""
+        raise ErreurConfig(f"{source} : YAML illisible{ou} ; corriger la syntaxe du fichier.") from None
+    lecteur = _Lecteur(source, language, "la liste de revue")
+    if not isinstance(document, DictLignes):
+        lecteur.refuser("le fichier doit être un bloc de clés (structure attendue : reviewed_ids).")
+    for cle in document:
+        if cle not in CLES_REVUE_RACINE:
+            lecteur.refuser(f"clé inconnue (L{document.lignes.get(cle, 1)}) ; la liste de revue n'accepte que la clé « reviewed_ids ».")
+    if "reviewed_ids" not in document:
+        lecteur.refuser("clé obligatoire absente : « reviewed_ids » (bloc commençant L1).")
+    if document["reviewed_ids"] is None:
+        return ()
+    ligne = document.lignes["reviewed_ids"]
+    vus, resultat = set(), []
+    for i, valeur in enumerate(lecteur.liste(document, "reviewed_ids", "")):
+        if (isinstance(valeur, bool) or not isinstance(valeur, (str, int)) or not IDENTIFIANT_REVUE.fullmatch(str(valeur))):
+            lecteur.refuser(f"« reviewed_ids[{i}] » (L{ligne}) doit être un identifiant (texte ou entier sans espace).")
+        identifiant = str(valeur)
+        if identifiant in vus:
+            lecteur.refuser(f"« reviewed_ids[{i}] » (L{ligne}) est un identifiant en double.")
+        vus.add(identifiant)
+        resultat.append(identifiant)
+    return tuple(resultat)
+
+
+def charger_revue_si_present(chemin, language: str = "fr") -> tuple[str, ...]:
+    """Identifiants du fichier donné ; un fichier absent est lu comme une liste vide. Un fichier présent mais refusé lève `ErreurConfig`."""
+    chemin = Path(chemin)
+    if not chemin.is_file():
+        return ()
+    return charger_revue(chemin.read_text(encoding="utf-8"), chemin.name, language)
+
+
+def verifier_sources(referentiel: Referentiel, catalogue: Catalogue, language: str = "fr") -> None:
+    """Règle entre les deux fichiers (design D1) : un identifiant dans les deux est accepté ; une entrée du catalogue nommée comme
+    une équipe du référentiel qui porte un identifiant qu'aucune équipe du référentiel ne liste est refusée (code 1, les deux
+    chemins et lignes, ni nom ni identifiant)."""
+    refus = []
+    for entree in catalogue.entrees:
+        equipe = referentiel.teams.get(entree.nom)
+        if equipe is not None and any(referentiel.team_for_jira_id(i) is None for i in entree.jira_ids):
+            ref = "referential" if language == "en" else "référentiel"
+            refus.append(f"catalogue « {entree.chemin}.name » (L{entree.ligne}) / {ref} « {equipe.chemin}.name » "
+                         f"(L{equipe.ligne})")
+    if refus:
+        raise ErreurConfig(PHRASE_NOMME_COMME["en" if language == "en" else "fr"].format(paths=" ; ".join(refus)))
+
+
+def nom_traduit(identifiant, referentiel: Referentiel | None, catalogue: Catalogue | None) -> str | None:
+    """Nom d'un identifiant : celui de l'équipe du référentiel qui le liste, sinon le libellé du catalogue, sinon None."""
+    if referentiel is not None:
+        nom = referentiel.team_for_jira_id(identifiant)
+        if nom is not None:
+            return nom
+    entree = catalogue.entree_pour(identifiant) if catalogue is not None else None
+    return entree.nom if entree is not None else None
+
+
+# ---------------------------------------------------------------------------
+# Type d'une équipe du référentiel (design Q5, point 2) : forcé, sinon déduit du catalogue, sinon aucun
+# ---------------------------------------------------------------------------
+
+def _types_du_catalogue(equipe: Equipe, catalogue: Catalogue) -> set[str]:
+    """Types que le catalogue donne aux identifiants de l'équipe (une entrée sans type ne dit rien)."""
+    entrees = (catalogue.entree_pour(i) for i in equipe.jira_ids)
+    return {e.type for e in entrees if e is not None and e.type}
+
+
+def type_deduit(equipe: Equipe, catalogue: Catalogue) -> str | None:
+    """Type commun aux identifiants de l'équipe dans le catalogue ; None si aucun n'y est, ou si les types diffèrent."""
+    types = _types_du_catalogue(equipe, catalogue)
+    return next(iter(types)) if len(types) == 1 else None
+
+
+def types_differents(equipe: Equipe, catalogue: Catalogue) -> bool:
+    """Vrai si les identifiants de l'équipe ont au moins deux types différents dans le catalogue."""
+    return len(_types_du_catalogue(equipe, catalogue)) > 1
+
+
+def type_effectif(equipe: Equipe, catalogue: Catalogue) -> str | None:
+    """Type forcé (clé `type` du référentiel), sinon type déduit du catalogue, sinon None. Jamais tiré du nom."""
+    return equipe.type or type_deduit(equipe, catalogue)

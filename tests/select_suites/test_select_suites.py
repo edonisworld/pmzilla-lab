@@ -12,6 +12,7 @@ from pathlib import Path
 SELECTEUR = Path(__file__).resolve().parents[2] / "tools" / "select_suites.py"
 LANCEUR = ('for test in tests/hooks/test_pre_commit.sh:hooks:sh tests/finish_branch/test_finish_branch.sh:finish_branch:bash; do\n'
            '  :\ndone\n')
+GARDES = {"identifiants_personnels", "secret_scan"}   # gardes toujours sélectionnées (secret_scan : pre-commit-secret-scan, D7)
 
 
 class Selecteur(unittest.TestCase):
@@ -25,6 +26,7 @@ class Selecteur(unittest.TestCase):
         self.ecrire("tests/alpha/test_alpha.py", "import outil_a\nCOMMANDE = '.claude/commands/demo.md'\n")   # nomme tools/outil_a.py
         self.ecrire("tests/beta/test_beta.py", "CHEMIN = 'tools/sous/outil_b.py'\n")      # nomme un chemin
         self.ecrire("tests/identifiants_personnels/test_id.py", "pass\n")
+        self.ecrire("tests/secret_scan/test_secrets.py", "pass\n")
         self.ecrire("tests/hooks/test_pre_commit.sh", "echo hooks\n")
         self.ecrire("tests/finish_branch/test_finish_branch.sh", "echo finish\n")
         self.ecrire("tests/gamma/test_gamma.py", "DONNEES = 'cas.yaml'\n")
@@ -56,7 +58,7 @@ class Selecteur(unittest.TestCase):
 
     def test_outil_nomme_par_une_suite(self):
         self.indexer("tools/outil_a.py")
-        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", "manual", *GARDES})
 
     def test_chaque_ligne_donne_la_raison(self):
         self.indexer("tools/outil_a.py")
@@ -66,39 +68,39 @@ class Selecteur(unittest.TestCase):
 
     def test_chemin_complet_nomme(self):
         self.indexer("tools/sous/outil_b.py")
-        self.assertEqual(self.suites(), {"beta", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"beta", *GARDES})
 
     def test_fichier_de_donnees_nomme_par_son_nom(self):
         self.indexer("tests/postures/cas.yaml")
-        self.assertEqual(self.suites(), {"gamma", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"gamma", *GARDES})
 
     def test_chemin_dans_une_suite(self):
         self.indexer("tests/alpha/test_alpha.py")
-        self.assertEqual(self.suites(), {"alpha", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", *GARDES})
 
     def test_script_de_test_shell_liste(self):
         self.indexer("tests/hooks/test_pre_commit.sh")
-        self.assertEqual(self.suites(), {"hooks", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"hooks", *GARDES})
 
     def test_manuel_seul_selectionne_la_suite_du_manuel(self):
         self.indexer("docs/pmzilla/manuel.md")
-        self.assertEqual(self.suites(), {"manual", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"manual", *GARDES})
 
     def test_autre_documentation_ne_selectionne_pas_la_suite_du_manuel(self):
         self.indexer("docs/pmzilla/autre.md", "README.md")
-        self.assertEqual(self.suites(), {"identifiants_personnels"})
+        self.assertEqual(self.suites(), {*GARDES})
 
     def test_script_de_tools_nomme_selectionne_aussi_la_suite_du_manuel(self):
         self.indexer("tools/outil_a.py")
-        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", "manual", *GARDES})
 
     def test_script_shell_de_tools_selectionne_la_suite_du_manuel(self):
         self.indexer("tools/outil_a.sh")
-        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", "manual", *GARDES})
 
     def test_commande_slash_selectionne_la_suite_du_manuel(self):
         self.indexer(".claude/commands/demo.md")
-        self.assertEqual(self.suites(), {"alpha", "manual", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", "manual", *GARDES})
 
     def test_la_raison_de_la_suite_du_manuel_est_donnee(self):
         self.indexer(".claude/commands/demo.md")
@@ -120,11 +122,11 @@ class Selecteur(unittest.TestCase):
 
     def test_un_script_hors_de_tools_ne_selectionne_pas_la_suite_du_manuel(self):
         self.indexer("tools/sous/outil_b.py")
-        self.assertEqual(self.suites(), {"beta", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"beta", *GARDES})
 
     def test_documentation_seule_ne_selectionne_que_les_gardes(self):
         self.indexer("docs/pmzilla/x.md", "openspec/changes/c/tasks.md", "CHANGELOG.md", "README.md", "_bmad-output/pmzilla/a.md")
-        self.assertEqual(self.suites(), {"identifiants_personnels"})
+        self.assertEqual(self.suites(), {*GARDES})
 
     def test_fichier_de_code_inconnu_exige_l_execution_complete(self):
         self.indexer("tools/orphelin.py")
@@ -142,11 +144,28 @@ class Selecteur(unittest.TestCase):
                 self.assertEqual(code, 3, sortie)
                 self.assertIn(chemin, sortie)
 
+    def test_modules_importes_par_le_crochet_exigent_l_execution_complete(self):
+        # pre-commit-secret-scan, D7 : le module des secrets et celui des noms, importés par le crochet pre-commit, comptent comme le crochet
+        # fix/sorties-et-masquage : l'outil des noms des messages, lancé par commit-msg et pre-push, aussi
+        for chemin in ("tools/secret_scan.py", "tools/sensitive_names.py", "tools/commit_names_scan.py"):
+            with self.subTest(chemin=chemin):
+                self.git("reset", "-q")
+                self.indexer(chemin, texte="z\n")
+                code, sortie = self.selection()
+                self.assertEqual(code, 3, sortie)
+                self.assertIn(chemin, sortie)
+
+    def test_garde_des_secrets_toujours_selectionnee_avec_sa_raison(self):
+        self.indexer("docs/pmzilla/x.md")
+        code, sortie = self.selection()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("select_suites : secret_scan : toujours sélectionnée : parcourt tous les fichiers suivis", sortie)
+
     def test_fichier_supprime(self):
         self.indexer("tests/alpha/test_alpha_bis.py", texte="pass\n")
         self.git("commit", "-q", "-m", "bis")
         self.git("rm", "-q", "tests/alpha/test_alpha_bis.py")
-        self.assertEqual(self.suites(), {"alpha", "identifiants_personnels"})
+        self.assertEqual(self.suites(), {"alpha", *GARDES})
 
     def test_suppression_du_dernier_test_d_une_suite_exige_l_execution_complete(self):
         self.git("rm", "-q", "tests/alpha/test_alpha.py")
@@ -173,7 +192,7 @@ class Selecteur(unittest.TestCase):
         self.assertNotIn("alpha", sortie)
 
     def test_index_vide_ne_selectionne_que_les_gardes(self):
-        self.assertEqual(self.suites(), {"identifiants_personnels"})
+        self.assertEqual(self.suites(), {*GARDES})
 
     def test_aucun_fichier_ecrit(self):
         self.indexer("tools/outil_a.py")
@@ -195,6 +214,95 @@ class Selecteur(unittest.TestCase):
         resultat = subprocess.run([sys.executable, str(SELECTEUR), "--inconnue"], capture_output=True, text=True)
         self.assertEqual(resultat.returncode, 2)
         self.assertIn("select_suites : usage", resultat.stderr)
+
+
+class LecteursOpenspec(unittest.TestCase):
+    """Option --openspec-readers (light-spec-finish, D6, question Q10) : la règle (a) et la liste déclarée tests/openspec_readers.txt."""
+    git = Selecteur.git
+    ecrire = Selecteur.ecrire
+    indexer = Selecteur.indexer
+
+    def setUp(self):
+        Selecteur.setUp(self)
+        self.liste_declaree("# lecteurs déclarés\n")
+
+    def liste_declaree(self, texte):
+        self.ecrire("tests/openspec_readers.txt", texte)
+
+    def lecteurs(self, *supplement):
+        return subprocess.run([sys.executable, str(SELECTEUR), "--openspec-readers", "--root", str(self.racine), *supplement],
+                              capture_output=True, text=True)
+
+    def liste(self):
+        resultat = self.lecteurs()
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        return {ligne.split(" : ")[1]: ligne for ligne in resultat.stdout.splitlines()}
+
+    def test_regle_a_garde_toujours_listee(self):
+        self.assertEqual(set(self.liste()), {*GARDES})
+
+    def test_regle_a_donne_sa_raison(self):
+        self.assertEqual(self.liste()["identifiants_personnels"], "select_suites : identifiants_personnels : garde toujours sélectionnée")
+
+    def test_regle_a_garde_des_secrets(self):
+        self.assertEqual(self.liste()["secret_scan"], "select_suites : secret_scan : garde toujours sélectionnée")
+
+    def test_liste_declaree_donne_les_suites_et_la_raison(self):
+        self.liste_declaree("# lecteurs\n\ndelta\nalpha  # lit la configuration\n")
+        liste = self.liste()
+        self.assertEqual(set(liste), {*GARDES, "delta", "alpha"})
+        self.assertEqual(liste["delta"], "select_suites : delta : déclarée (tests/openspec_readers.txt)")
+        self.assertEqual(liste["alpha"], "select_suites : alpha : déclarée (tests/openspec_readers.txt)")
+
+    def test_une_suite_qui_nomme_openspec_sans_etre_declaree_n_est_pas_listee(self):
+        self.indexer("tests/delta/test_delta.py", texte="CHEMIN = 'openspec/changes/x/tasks.md'\n")
+        self.indexer("tools/outil_a.py", texte="DOSSIER = 'openspec'\n")
+        self.indexer("tests/finish_branch/test_finish_branch.sh", texte="mkdir -p openspec/changes\n")
+        self.assertEqual(set(self.liste()), {*GARDES})
+
+    def test_une_exemption_n_est_pas_listee(self):
+        self.liste_declaree("alpha\n!beta : liste les fichiers suivis mais ne garde que tools/\n")
+        self.assertEqual(set(self.liste()), {*GARDES, "alpha"})
+
+    def test_garde_declaree_deux_fois_garde_la_raison_de_la_regle_a(self):
+        self.liste_declaree("identifiants_personnels\n")
+        self.assertEqual(self.liste()["identifiants_personnels"], "select_suites : identifiants_personnels : garde toujours sélectionnée")
+
+    def test_fichier_de_liste_absent_code_2(self):
+        (self.racine / "tests" / "openspec_readers.txt").unlink()
+        resultat = self.lecteurs()
+        self.assertEqual(resultat.returncode, 2)
+        self.assertEqual(resultat.stdout, "")
+        self.assertIn("openspec_readers.txt", resultat.stderr)
+
+    def test_ligne_mal_formee_ou_en_double_code_2(self):
+        for texte in ("alpha extra\n", "!alpha\n", "alpha\nalpha\n", "alpha\n!alpha : raison\n"):
+            self.liste_declaree(texte)
+            resultat = self.lecteurs()
+            self.assertEqual(resultat.returncode, 2, texte)
+            self.assertEqual(resultat.stdout, "", texte)
+
+    def test_ne_lit_pas_l_index_et_ne_sort_jamais_3(self):
+        self.indexer("CLAUDE.md", "tools/inconnu.bin")       # des chemins qui exigeraient l'exécution complète
+        resultat = self.lecteurs()
+        self.assertEqual(resultat.returncode, 0)
+        self.assertNotIn("exécution complète", resultat.stdout)
+
+    def test_aucun_fichier_ecrit(self):
+        etat = self.git("status", "--porcelain")
+        self.lecteurs()
+        self.assertEqual(etat, self.git("status", "--porcelain"))
+
+    def test_hors_depot_git_code_2(self):
+        vide = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, vide, True)
+        resultat = subprocess.run([sys.executable, str(SELECTEUR), "--openspec-readers", "--root", str(vide)], capture_output=True, text=True)
+        self.assertEqual(resultat.returncode, 2)
+
+    def test_usage(self):
+        self.assertEqual(self.lecteurs("extra").returncode, 2)
+        resultat = subprocess.run([sys.executable, str(SELECTEUR), "--openspec-readers", "--root"], capture_output=True, text=True)
+        self.assertEqual(resultat.returncode, 2)
 
 
 if __name__ == "__main__":

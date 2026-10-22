@@ -17,6 +17,8 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import chargeur_csv as chargeur  # noqa: E402
 import flow_store  # noqa: E402
 import flux_jira as fj  # noqa: E402
 import history_common as commun  # noqa: E402
@@ -38,10 +40,11 @@ def jours_en_acceptation(histoire: list) -> int:
 
 
 def histoire_cache(dossier: Path, fuseau=None) -> list:
+    """Le chargeur de test (cache JSON de fixture) ramène chaque date dans le fuseau, comme la base : voir test_la_fixture_*."""
     chemin = dossier / "transitions.json"
     chemin.write_text(json.dumps({"PROJ-1": {"termine": True, "transitions": [
         [t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}+0000", d, a] for _, t, d, a in TRANSITIONS]}}), encoding="utf-8")
-    return fj.charger_historique(chemin, fuseau=fuseau)["PROJ-1"]
+    return chargeur.lire_historique({"export_fuseau": "Europe/Paris"}, str(chemin), fuseau)["PROJ-1"]
 
 
 def histoire_base() -> list:
@@ -56,24 +59,21 @@ class MemesJoursSurLesDeuxVoies(unittest.TestCase):
     def test_la_base_compte_le_jour_de_paris(self):
         self.assertEqual(jours_en_acceptation(histoire_base()), 4)             # 6 mars (Paris) -> 10 mars
 
-    def test_la_voie_csv_compte_les_memes_jours(self):
+    def test_la_fixture_de_test_compte_les_memes_jours(self):
+        """Le chargeur de test (D11) convertit comme la base : les tests de rapport sur fixtures comptent les mêmes jours."""
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(jours_en_acceptation(histoire_cache(Path(d), PARIS)), 4)
 
-    def test_sans_fuseau_le_cache_garde_le_jour_d_origine(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(jours_en_acceptation(histoire_cache(Path(d))), 5)  # comportement des appelants sans réglages
-
-    def test_conversion_identique_a_celle_de_la_base(self):
+    def test_conversion_de_la_fixture_identique_a_celle_de_la_base(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(histoire_cache(Path(d), PARIS), histoire_base())
 
-    def test_source_csv_lit_le_cache_dans_le_fuseau_des_reglages(self):
-        with tempfile.TemporaryDirectory() as d:
-            histoire_cache(Path(d))
-            args = mock.Mock(source="csv", historique=str(Path(d) / "transitions.json"))
-            lu = fj.lire_historique_source(args, {"export_fuseau": "Europe/Paris"})
-            self.assertEqual(jours_en_acceptation(lu["PROJ-1"]), 4)
+    def test_lire_historique_lit_la_base_avec_les_reglages(self):
+        lecture = mock.Mock(return_value={"PROJ-1": histoire_base()})
+        with mock.patch.dict(sys.modules, {"flow_store": mock.Mock(lire_historique=lecture)}):
+            lu = fj.lire_historique({"export_fuseau": "Europe/Paris"})
+        lecture.assert_called_once_with({"export_fuseau": "Europe/Paris"})
+        self.assertEqual(jours_en_acceptation(lu["PROJ-1"]), 4)
 
     def test_date_illisible_gardee_telle_quelle(self):
         self.assertEqual(commun.en_fuseau("pas une date", PARIS), "pas une date")

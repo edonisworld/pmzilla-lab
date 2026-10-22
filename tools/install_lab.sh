@@ -45,7 +45,15 @@ if [[ -n "${INSTALL_LAB_ROOT:-}" ]]; then
 else
   racine="${0:A:h:h}"
 fi
-cible="$HOME/PMZilla-Lab/workspace"
+# Emplacement du clone (R-77) : PMZILLA_LAB_WORKSPACE quand elle est posée (aussi la cible d'un premier clone, dossier encore absent) ;
+# sinon, depuis un clone, le dossier de contenu que donne le module partagé tools/lab_paths.sh (le dépôt principal) ; aucun chemin en dur.
+cible="${PMZILLA_LAB_WORKSPACE:-}"
+case "$cible" in "~") cible="$HOME" ;; "~/"*) cible="$HOME/${cible#\~/}" ;; esac
+if [[ -z "$cible" && -e "$racine/.git" && -f "$racine/tools/lab_paths.sh" ]]; then
+  . "$racine/tools/lab_paths.sh"
+  lab_paths_init || exit $?
+  cible="$LAB_CONTENT_ROOT"
+fi
 
 # --- Homebrew : dans le PATH, sinon environnement du préfixe standard d'Apple Silicon (seule ligne avec un chemin absolu) ---
 charger_brew() {
@@ -74,6 +82,7 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 
 # --- emplacement du clone ---
+[[ -z "$cible" && -e "$racine/.git" ]] && cible="$racine"   # clone sans module partagé (ancien dépôt) : celui où le script se trouve
 cible_resolue="${cible:A}"
 if [[ -e "$racine/.git" ]]; then
   if [[ "${racine:A}" != "$cible_resolue" ]]; then
@@ -82,6 +91,10 @@ if [[ -e "$racine/.git" ]]; then
   fi
   a_cloner=0
 else
+  if [[ -z "$cible" ]]; then
+    dire "run outside a clone: give the target folder of the clone with PMZILLA_LAB_WORKSPACE, and the clone URL with --repo <URL>"
+    exit 2
+  fi
   if [[ -e "$cible" && ! -e "$cible/.git" ]]; then
     dire "target folder $cible exists and is not a clone, nothing was touched"
     exit 3

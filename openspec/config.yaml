@@ -37,5 +37,10 @@ rules:
     - Describe behavior only; never copy configuration values.
   proposal:
     - State the user-visible change and its motivation briefly; link to docs/pmzilla/application.md for the rationale of the work queue instead of repeating it.
+    - "Include a section \"What Mothra will consume\" (Mothra is the planned interface layer over the lab's data): the views, service functions, data contract and structured masked cells that the change exposes. A change with nothing to expose says so in one line."
+    - "For a change of a feature labelled product:mothra, follow docs/pmzilla/mothra-tranches.md: skeleton slice 0 first, then vertical slices each usable end to end; each slice states what it delivers, what it adds to the foundation and its estimate. Nothing is created before the author's validation."
+  design:
+    - "Include the section \"What Mothra will consume\" (views, service functions, data contract, structured masked cells). No business logic lives only in the output formatting of a command: it lives in a view or a service function that the formatting calls, so that Mothra can consume the same result."
   tasks:
     - Keep tasks small and verifiable; each one names the test suite that covers it when one exists.
+    - "For a change of a feature labelled product:mothra, follow docs/pmzilla/mothra-tranches.md: only the next two slices are detailed in tasks, the others stay hypotheses; an end-of-slice review comes before detailing the next slice; nothing is created before the author's validation."

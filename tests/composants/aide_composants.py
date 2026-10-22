@@ -125,6 +125,20 @@ GUIDE = textwrap.dedent("""\
     ### Update Node.js (fnm)
     ### Update Claude Code
     ### Update the OpenSpec CLI
+    ### Update the CI image
+    """)
+
+# Image de la CI locale (local-ci-container D4) : base et uv épinglées par empreinte, Python de .python-version, CLI OpenSpec épinglée.
+DIGEST_BASE_CI = "sha256:" + "b" * 64
+DIGEST_UV_CI = "sha256:" + "c" * 64
+DOCKERFILE_CI = textwrap.dedent(f"""\
+    # Image de la CI locale (valeurs inventées).
+    FROM node:26-slim@{DIGEST_BASE_CI}
+    COPY --from=ghcr.io/astral-sh/uv:0.13.0@{DIGEST_UV_CI} /uv /uvx /usr/local/bin/
+    WORKDIR /opt/ci
+    COPY .python-version ./
+    RUN uv python install
+    RUN npm install -g @fission-ai/openspec@1.0.0
     """)
 
 COMPOSE = textwrap.dedent("""\
@@ -203,11 +217,19 @@ def inventaire_complet() -> list[dict]:
             + outils)
 
 
+def entrees_ci() -> list[dict]:
+    """Entrées de l'image de la CI locale : la version reste dans ci/Dockerfile (jamais recopiée dans l'inventaire)."""
+    return [entree("library/node", "docker-image", "CI Dockerfile", "Docker Hub tags", "Update the CI image"),
+            entree("ghcr.io/astral-sh/uv", "docker-image", "CI Dockerfile", "GitHub releases", "Update the CI image"),
+            entree("@fission-ai/openspec", "tool", "CI Dockerfile", "npm registry", "Update the CI image")]
+
+
 class FauxDepot:
     """Arbre de dépôt inventé, une source de chaque sorte (design.md D2) ; inventaire cohérent au départ."""
 
     def __init__(self, base: Path):
         self.racine = base / "depot"
+        self.avec_ci = False
         r = self.racine
         self.ecrire("tools/a.py", entete(["pyyaml", "psycopg[binary]"]) + "print('a')\n")
         self.ecrire("tools/a.py.lock", verrou({"pyyaml": "6.0.3", "psycopg": "3.2.1", "psycopg-binary": "3.2.1"}))
@@ -242,9 +264,21 @@ class FauxDepot:
                                                                                   allow_unicode=True))
 
     def modifier_inventaire(self, fonction):
-        entrees = inventaire_complet()
+        entrees = inventaire_complet() + (entrees_ci() if self.avec_ci else [])
         fonction(entrees)
         self.ecrire_inventaire(entrees)
+
+    def ajouter_ci(self, dockerfile: str = DOCKERFILE_CI):
+        """Ajoute ci/Dockerfile et les trois entrées de l'image de la CI locale (inventaire cohérent)."""
+        self.avec_ci = True
+        self.ecrire("ci/Dockerfile", dockerfile)
+        self.ecrire_inventaire(inventaire_complet() + entrees_ci())
+
+    def changer_dockerfile(self, ancien: str, nouveau: str):
+        chemin = self.racine / "ci/Dockerfile"
+        texte = chemin.read_text(encoding="utf-8")
+        assert ancien in texte, ancien
+        chemin.write_text(texte.replace(ancien, nouveau), encoding="utf-8")
 
     def inchange(self) -> list[str]:
         """Fichiers du faux dépôt changés depuis sa création (vide si rien n'a bougé)."""

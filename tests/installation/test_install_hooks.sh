@@ -7,7 +7,7 @@ tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/tools/hooks"
 cp "$RACINE/tools/install_hooks.sh" "$tmp/tools/"
-for h in pre-commit post-commit commit-msg pre-push; do printf '#!/bin/sh\nexit 0\n' > "$tmp/tools/hooks/$h"; chmod -x "$tmp/tools/hooks/$h"; done
+for h in pre-commit post-commit commit-msg pre-push pre-merge-commit reference-transaction; do printf '#!/bin/sh\nexit 0\n' > "$tmp/tools/hooks/$h"; chmod -x "$tmp/tools/hooks/$h"; done
 cd "$tmp" && git init -q . || exit 1
 ok=0; ko=0
 verifie() { if eval "$2"; then echo "ok : $1"; ok=$((ok+1)); else echo "ECHEC : $1"; ko=$((ko+1)); fi; }
@@ -20,12 +20,14 @@ verifie "--verify ne crée rien" '[ ! -e .git/hooks/pre-commit ] && [ ! -L .git/
 echo "ancien" > .git/hooks/pre-commit
 installe; code=$?
 verifie "l'installation réussit" '[ $code -eq 0 ]'
-for h in pre-commit post-commit commit-msg pre-push; do
+for h in pre-commit post-commit commit-msg pre-push pre-merge-commit reference-transaction; do
   verifie "$h : lien relatif vers ../../tools/hooks/$h" '[ "$(readlink .git/hooks/'$h')" = "../../tools/hooks/'$h'" ]'
   verifie "$h : le hook est exécutable" '[ -x tools/hooks/'$h' ]'
 done
 verifie "un hook existant est rangé, pas supprimé" '[ "$(cat .git/hooks/pre-commit.avant-install)" = "ancien" ]'
 verifie "le message dit « Tous les hooks sont en place »" 'grep -q "Tous les hooks sont en place" "$tmp/sortie"'
+installe --verify; code=$?
+verifie "--verify liste six hooks en place (finish-under-lock D17)" '[ $code -eq 0 ] && [ "$(grep -c "^en place : " "$tmp/sortie")" -eq 6 ]'
 
 installe; code=$?
 verifie "deuxième lancement : succès" '[ $code -eq 0 ]'
@@ -49,7 +51,7 @@ verifie "un hook source absent est un échec nommé" '[ $code -ne 0 ] && grep -q
 # Hors dépôt Git : erreur, aucun lien. Dossier des hooks non standard (core.hooksPath) : erreur, aucun lien.
 mkdir -p "$tmp/hors/tools/hooks"
 cp "$RACINE/tools/install_hooks.sh" "$tmp/hors/tools/"
-for h in pre-commit post-commit commit-msg pre-push; do printf '#!/bin/sh\nexit 0\n' > "$tmp/hors/tools/hooks/$h"; done
+for h in pre-commit post-commit commit-msg pre-push pre-merge-commit reference-transaction; do printf '#!/bin/sh\nexit 0\n' > "$tmp/hors/tools/hooks/$h"; done
 # le dépôt temporaire $tmp est un dépôt Git : GIT_CEILING_DIRECTORIES l'empêche d'être trouvé depuis hors/
 ( cd "$tmp/hors" && GIT_CEILING_DIRECTORIES="$tmp" bash tools/install_hooks.sh >"$tmp/sortie" 2>&1 ); code=$?
 verifie "hors dépôt Git : sortie en erreur" '[ $code -ne 0 ] && grep -q "Pas un dépôt Git" "$tmp/sortie"'
@@ -57,7 +59,7 @@ verifie "hors dépôt Git : aucun lien créé" '[ ! -e "$tmp/hors/.git" ] && [ -
 
 git init -q "$tmp/perso" && mkdir -p "$tmp/perso/tools/hooks" "$tmp/perso/mes-hooks"
 cp "$tmp/hors/tools/install_hooks.sh" "$tmp/perso/tools/"
-for h in pre-commit post-commit commit-msg pre-push; do printf '#!/bin/sh\nexit 0\n' > "$tmp/perso/tools/hooks/$h"; done
+for h in pre-commit post-commit commit-msg pre-push pre-merge-commit reference-transaction; do printf '#!/bin/sh\nexit 0\n' > "$tmp/perso/tools/hooks/$h"; done
 ( cd "$tmp/perso" && git config core.hooksPath mes-hooks && bash tools/install_hooks.sh >"$tmp/sortie" 2>&1 ); code=$?
 verifie "dossier des hooks non standard : sortie en erreur" '[ $code -ne 0 ] && grep -q "Dossier des hooks inattendu" "$tmp/sortie"'
 verifie "dossier des hooks non standard : aucun lien créé" '[ -z "$(find "$tmp/perso" -type l)" ] && [ -z "$(ls "$tmp/perso/mes-hooks")" ]'

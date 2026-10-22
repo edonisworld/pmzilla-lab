@@ -97,7 +97,7 @@ class Placement(CasAmorce):
         p = self.lancer("--mode", "fresh", depuis=autre / "tools" / AMORCE.name, env={"INSTALL_LAB_ROOT": ""})
         self.assertEqual(p.code, 3)
         self.assertIn("clone must be at", p.texte)
-        self.assertIn("PMZilla-Lab/workspace", p.texte)
+        self.assertIn(str(self.fx.racine), p.texte)      # la cible est celle de PMZILLA_LAB_WORKSPACE
         self.assertEqual(p.appels_de("uv"), [])
         self.assertEqual(self.fx.empreinte(), avant)
 
@@ -118,6 +118,25 @@ class Placement(CasAmorce):
         self.assertIn("--repo", p.texte)
         self.assertEqual(p.appels_de("git"), [])
         self.assertFalse(self.fx.racine.exists())
+
+
+    def test_hors_clone_sans_dossier_cible_ni_variable(self):
+        copie, env = self.hors_clone()
+        p = self.lancer("--mode", "fresh", "--repo", DEPOT, depuis=copie, env={**env, "PMZILLA_LAB_WORKSPACE": ""})
+        self.assertEqual(p.code, 2)
+        self.assertIn("PMZILLA_LAB_WORKSPACE", p.texte)
+        self.assertEqual(p.appels_de("git"), [])
+
+    def test_clone_sans_variable_ni_depot_git_valide_sort_avec_le_code_78(self):
+        autre = self.fx.tmp / "autre"
+        (autre / "tools").mkdir(parents=True)
+        (autre / ".git").mkdir()      # faux dossier .git : Git n'en tire aucun dossier commun
+        shutil.copy(AMORCE, autre / "tools" / AMORCE.name)
+        shutil.copy(AMORCE.parent / "lab_paths.sh", autre / "tools" / "lab_paths.sh")
+        p = self.lancer("--mode", "fresh", depuis=autre / "tools" / AMORCE.name, env={"INSTALL_LAB_ROOT": "", "PMZILLA_LAB_WORKSPACE": ""})
+        self.assertEqual(p.code, 78)
+        self.assertIn("dossier de contenu introuvable", p.texte)
+        self.assertEqual(p.appels_de("uv"), [])
 
 
 class Clonage(CasAmorce):

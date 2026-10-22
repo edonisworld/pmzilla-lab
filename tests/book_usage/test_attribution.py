@@ -45,6 +45,41 @@ class Attribution(Base):
         self.assertEqual(par_bucket["Critic"]["books"]["equipes-reseau.md"]["cited"], 1)
         self.assertNotEqual(par_bucket["Critic"]["turn"], par_bucket["Delivery"]["turn"])
 
+    def critic_record(self, content):
+        t = Transcript()
+        t.user()
+        launch = t.launch_critic()
+        t.search([hit("equipes-reseau.md")], sidechain=True)
+        t.say("   ", sidechain=True)
+        t.text_result(launch, content)
+        t.say("[Posture: Delivery]\nRéponse.\n\n[Posture: Critic]\nObjections.")
+        self.put(t)
+        self.collect()
+        return {r["bucket"]: r for r in self.records()}["Critic"]
+
+    def test_critic_lit_le_resultat_de_l_appel_agent(self):
+        record = self.critic_record("Critic : Équipes en réseau est cité. Hypothèse non sourcée : hors bibliothèque.")
+        self.assertEqual(record["books"]["equipes-reseau.md"]["cited"], 1)
+        self.assertEqual(record["outside_library"], 1)
+
+    def test_critic_resultat_en_liste_de_blocs_text(self):
+        record = self.critic_record(["Premier bloc.", "Équipes en réseau est cité, hors bibliothèque."])
+        self.assertEqual(record["books"]["equipes-reseau.md"]["cited"], 1)
+        self.assertEqual(record["outside_library"], 1)
+
+    def test_critic_sans_resultat_repli_sur_le_sous_agent(self):
+        t = Transcript()
+        t.user()
+        t.launch_critic()
+        t.search([hit("equipes-reseau.md")], sidechain=True)
+        t.say("Équipes en réseau, hors bibliothèque.", sidechain=True)
+        t.say("[Posture: Delivery]\nRéponse.")
+        self.put(t)
+        self.collect()
+        record = {r["bucket"]: r for r in self.records()}["Critic"]
+        self.assertEqual(record["books"]["equipes-reseau.md"]["cited"], 1)
+        self.assertEqual(record["outside_library"], 1)
+
     def test_sous_agent_non_critic_non_compte(self):
         t = Transcript()
         t.user()

@@ -7,6 +7,7 @@ HOME_FAUX=$(mktemp -d)
 trap 'rm -rf "$HOME_FAUX"' EXIT
 LAB="$HOME_FAUX/PMZilla-Lab"
 mkdir -p "$LAB/workspace"
+export PMZILLA_LAB_WORKSPACE="$LAB/workspace"; unset PMZILLA_LAB_RUN   # faux lab : le module partagé en déduit le dossier du lab et son dossier run
 cp -R "$RACINE/tools" "$LAB/workspace/tools"
 cp -R "$RACINE/tools" "$LAB/run-tools-copie" && mkdir -p "$LAB/run" && mv "$LAB/run-tools-copie" "$LAB/run/tools"   # dossier d'exécution factice
 pass=0; fail=0
@@ -25,7 +26,7 @@ verifier "--verify sort en erreur avec des liens manquants" '[[ $code -ne 0 ]]'
 verifier "--verify ne crée rien" '[[ ! -L "$LAB/flux_jira.py" ]]'
 
 sortie=$(lancer 2>&1)
-for f in convert_books.py posture_evals.py flux_jira.py history_common.py mapping_lab.py pmzilla_lab_library.py watch_triage.py watch_lab.py sort_by_domain.py morning_summary.py watch.sh db_backup.sh offsite_backup.sh doctor.sh; do
+for f in convert_books.py posture_evals.py flux_jira.py mapping_lab.py pmzilla_lab_library.py watch_triage.py watch_lab.py sort_by_domain.py morning_summary.py watch.sh db_backup.sh offsite_backup.sh doctor.sh; do
   verifier "$f est un lien vers tools/ du dossier d'exécution" '[[ "$(readlink "$LAB/'$f'")" == "run/tools/'$f'" && -e "$LAB/'$f'" ]]'
 done
 verifier "la copie différente est signalée" '[[ "$sortie" == *"watch_lab.py : COPIE DIFFÉRENTE"* ]]'
@@ -141,13 +142,13 @@ exit 0
 STUB
 chmod +x "$HOME_FAUX/bin/docker"
 lancer_sauvegarde() { HOME="$HOME_FAUX" PATH="$HOME_FAUX/bin:$PATH" STUB_JOURNAL="$HOME_FAUX/docker.log" DB_BACKUP_SAUVEGARDES="$HOME_FAUX/sauvegardes" \
-  PMZILLA_LAB_DATA="$HOME_FAUX/donnees" DB_BACKUP_DATE=2026-01-02 bash "$LAB/db_backup.sh" 2>&1; }
+  PMZILLA_LAB_DATA="$HOME_FAUX/donnees" PMZILLA_LAB_WORKSPACE="$LAB/workspace" DB_BACKUP_DATE=2026-01-02 bash "$LAB/db_backup.sh" 2>&1; }
 : > "$HOME_FAUX/docker.log"
 sortie=$(lancer_sauvegarde); code=$?
 verifier "sauvegarde par son lien : réussit" '[[ $code -eq 0 ]]'
 attendu_code=$(cd "$LAB/run" && pwd -P)
 verifier "sauvegarde par son lien : le dossier de code est le dossier d'exécution, pas le dossier du labo" 'head -1 "$HOME_FAUX/docker.log" | cut -d"|" -f1 | { read -r l; [[ "$(cd "$l" && pwd -P)" == "$attendu_code" ]]; }'
-verifier "sauvegarde par son lien : exporte le dossier de contenu (défaut : le dépôt de développement)" '[[ "$(head -1 "$HOME_FAUX/docker.log" | cut -d"|" -f2)" == "$LAB/workspace" ]]'
+verifier "sauvegarde par son lien : exporte le dossier de contenu (celui du module partagé, ici la variable)" '[[ "$(head -1 "$HOME_FAUX/docker.log" | cut -d"|" -f2)" == "$(cd "$LAB/workspace" && pwd -P)" ]]'
 lancer --target workspace >/dev/null 2>&1
 rm -rf "$HOME_FAUX/sauvegardes/db-2026-01-02"; : > "$HOME_FAUX/docker.log"
 lancer_sauvegarde >/dev/null

@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aide_composants import SCRIPT, composants  # noqa: E402
+from aide_composants import DIGEST_BASE_CI, SCRIPT, composants  # noqa: E402
 from aide_verification import (DIGEST_IMAGE, MANIFESTE_MODELE_A, AvecSources, npm, pypi, sha)  # noqa: E402
 
 c = composants
@@ -212,6 +212,42 @@ class Sources(AvecSources):
     def test_only_inconnu(self):
         code, _, erreurs = self.verifier("--only", "inconnu")
         self.assertEqual(code, 2)
+
+
+class ImageCI(AvecSources):
+    """Image de la CI locale (local-ci-container D4) : base comparée aux étiquettes de Docker Hub et à l'empreinte de ci/Dockerfile,
+    image d'uv aux publications GitHub d'uv, CLI OpenSpec épinglée au registre npm."""
+
+    def setUp(self):
+        super().setUp()
+        self.depot.ajouter_ci()
+        self.serveur.routes.update({
+            "/hub/repositories/library/node/tags": {"results": [{"name": "26-slim"}, {"name": "27-slim"}], "next": None},
+            "/hub/repositories/library/node/tags/26-slim": {"name": "26-slim", "digest": DIGEST_BASE_CI},
+            "/github/repos/astral-sh/uv/releases": [{"tag_name": "0.13.0", "draft": False, "prerelease": False}],
+        })
+
+    def test_a_jour(self):
+        code, sortie, erreurs = self.verifier()
+        self.assertEqual(code, 0, sortie + erreurs)
+        self.assertIn("Veille des composants : rien de nouveau", sortie)
+        self.assertEqual(self.etat()["components"]["library/node"]["used"], "26-slim")
+        self.assertIn("/github/repos/astral-sh/uv/releases", [c for c, _ in self.serveur.requetes])
+
+    def test_base_republiee_sous_la_meme_etiquette(self):
+        self.serveur.routes["/hub/repositories/library/node/tags/26-slim"] = {"digest": "sha256:" + "d" * 64}
+        code, sortie, _ = self.verifier()
+        self.assertIn("library/node 26-slim@bbbbbbbbbbbb → 26-slim@dddddddddddd (étiquette republiée)", sortie)
+
+    def test_nouvelle_version_d_uv_et_de_la_cli(self):
+        self.serveur.routes["/github/repos/astral-sh/uv/releases"] = [
+            {"tag_name": "0.13.1", "draft": False, "prerelease": False}, {"tag_name": "0.13.0", "draft": False, "prerelease": False}]
+        self.serveur.routes["/npm/@fission-ai%2Fopenspec"] = npm("1.1.0", ["1.0.0", "1.1.0"])
+        code, sortie, _ = self.verifier()
+        self.assertIn("ghcr.io/astral-sh/uv 0.13.0 → 0.13.1 (mise à jour)", sortie)
+        self.assertIn("@fission-ai/openspec 1.0.0 → 1.1.0 (mise à jour)", sortie)
+        # l'outil non épinglé « openspec » du Mac garde sa version locale, sans lien avec celle de l'image
+        self.assertEqual(self.etat()["components"]["openspec"]["used"], "1.0.0")
 
 
 class Delai(AvecSources):

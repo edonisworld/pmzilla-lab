@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Modèle : __HOME__ est remplacé par le dossier personnel à l'installation (voir docs/pmzilla/installation.md). -->
+<!-- Modèle : __HOME__ est remplacé par le dossier personnel et __LAB__ par le dossier du lab (le parent du dépôt de développement) à l'installation (voir docs/pmzilla/installation.md). -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>__HOME__/PMZilla-Lab/watch.sh</string>
+    <string>__LAB__/watch.sh</string>
     <string>--catch-up</string>
   </array>
   <!-- Rattrapage : au chargement (ouverture de session), puis toutes les heures. Le script décide s'il y a quelque chose à faire. -->

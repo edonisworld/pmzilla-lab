@@ -7,7 +7,7 @@ Columns used:
   created                              Created
   resolved                             Resolved
   start (status category changed)      MISSING
-1 row(s) with an unreadable creation date: the expected format is the one of export_jira_api.py (09/Nov/2017 08:49); regenerate the CSV with uv run tools/export_jira_api.py export
+1 ticket(s) with an unreadable creation date, left out of the reading
 
 1 tickets, created from 2026-08-01 to 2026-08-01
 1 resolved, from 2026-08-10 to 2026-08-10
@@ -23,7 +23,6 @@ Types:
 $ statuses <WS>/a.csv <WS>/b.csv
 exit code: 0
 --- stdout ---
-Merged exports: 2, 5 duplicate ticket(s) removed
 Columns used:
   type                                 Issue Type
   status                               Status
@@ -92,7 +91,6 @@ Types:
 $ statuses <WS>/no-key.csv <WS>/no-key.csv
 exit code: 0
 --- stdout ---
-Merged exports: 2 (Key column missing: files joined end to end, duplicates are possible)
 Columns used:
   type                                 Issue Type
   status                               Status
@@ -140,15 +138,13 @@ $ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-09-20 --no-comparison --sc
 exit code: 0
 --- stdout ---
 --scope: 180 ticket(s) kept out of 200; 1 requested project(s) with no ticket in the export.
---dormant-from-history: 18 dormant ticket(s) according to the history; 13 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
+--dormant-from-history: 13 dormant ticket(s) according to the history; 11 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
 --history: 3 ticket(s) have an unreadable transition date in the cache: their transitions are ignored (run history_jira.py collect --refresh again).
 # Flow metrics: s, as of 2026-09-20
 
 Period: 2026-04-06 to 2026-09-13 (23 complete weeks). Types: all. Aggregates computed locally from a Jira export; no ticket is quoted.
 
 Scope: projects ABC, DEF, ZZZ (180 ticket(s) kept out of 200 read, option --scope).
-
-Merge of 2 exports by key (5 duplicate ticket(s) removed).
 
 Left out of throughput, lead time, WIP and forecasts (portfolio_types and excluded_projects in flux.yaml): 54 tickets; by type: Epic 27, RN Task 27.
 
@@ -199,8 +195,7 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
 | (no team) | 2 | 2 | 0 |
-| Team A | 6 | 4 | +2 |
-| Team A;Team B | 4 | 1 | +3 |
+| Team A | 10 | 5 | +5 |
 | Team B | 1 | 0 | +1 |
 | Team C | 10 | 1 | +9 |
 | Team D | 10 | 3 | +7 |
@@ -214,6 +209,15 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team L | 3 | 1 | +2 |
 
 Teams are not compared with each other: workflows, ticket sizes and types of work differ. Each row is first for the team concerned.
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -235,7 +239,7 @@ No batched closure in the period (32 tickets delivered).
 - Items in progress for more than 30 / 90 / 180 / 365 / 730 days: 42 / 27 / 11 / 10 / 10.
 - Active WIP: 36 (78%); waiting WIP: 0 (0%); dormant WIP: 10 (22%). A dormant ticket is taken out of the other two categories; the total WIP stays 46.
 - To do: 26 excluding dormant, 3 dormant (10% of the 29).
-- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 13 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
+- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 11 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
 - "In progress" and "to do" are decided by the Jira status category (column "Status Category"); the lists in flux.yaml only serve for tickets with no category.
 
 ### Age by status (basis: creation)
@@ -263,8 +267,7 @@ An item can wait a long time before it is started: this time counts neither in t
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Active WIP | Waiting WIP | Dormant WIP | Active share | Waiting share | Dormant share | To do | Dormant to do |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | (no team) | 2 | 0.1 | 57 d | 80 d | 1 | 183 d | 1 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
-| Team A | 4 | 0.2 | 35 d | 74 d | 1 | 71 d | 0 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
-| Team A;Team B | 1 | 0.0 | 14 d | 14 d | 2 | 521 d | 2 | 1 | 0 | 1 | 50% | 0% | 50% | 2 | 0 |
+| Team A | 5 | 0.2 | 14 d | 70 d | 3 | 115 d | 2 | 2 | 0 | 1 | 67% | 0% | 33% | 3 | 0 |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 158 d | 1 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
 | Team C | 1 | 0.0 | 50 d | 50 d | 3 | 97 d | 2 | 3 | 0 | 0 | 100% | 0% | 0% | 5 | 0 |
 | Team D | 3 | 0.1 | 21 d | 44 d | 9 | 168 d | 7 | 6 | 0 | 3 | 67% | 0% | 33% | 3 | 1 |
@@ -282,8 +285,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 Items finished per week and per team, from the oldest to the most recent (zero weeks between two peaks point to batched closures):
 
 - (no team): 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0
-- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0
+- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
 - Team D: 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0
@@ -296,7 +298,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0
 - Team L: 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-Tickets with several teams: 5 out of 126 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 126 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Time in segment
@@ -342,8 +344,7 @@ From the commitment point (entry into the segment "Ready") to resolution, for th
 | Team | Coverage | Delivered with commitment | Delivery lead time P50 | P85 | Efficiency P50 | Aggregate efficiency |
 |---|---|---|---|---|---|---|
 | (no team) | 100% | 2 | 50 d | 74 d | 92% | 95% |
-| Team A | 80% | 3 | 53 d | 73 d | 94% | 93% |
-| Team A;Team B | 100% | 1 | 8 d | 8 d | 75% | 75% |
+| Team A | 88% | 4 | 30 d | 68 d | 84% | 92% |
 | Team B | 100% | 0 | n/a | n/a | n/a | n/a |
 | Team C | 100% | 1 | 44 d | 44 d | 93% | 93% |
 | Team D | 92% | 3 | 15 d | 38 d | 87% | 90% |
@@ -361,8 +362,7 @@ Tickets that left each segment during the period, by team (count, P50 of the cum
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 2 · 4 d | 2 · 2 d | 2 · 48 d | 0 · n/a | 0 · n/a |
-| Team A | 5 · 3 d | 5 · 3 d | 3 · 52 d | 0 · n/a | 0 · n/a |
-| Team A;Team B | 3 · 4 d | 3 · 2 d | 1 · 6 d | 0 · n/a | 0 · n/a |
+| Team A | 8 · 4 d | 8 · 2 d | 4 · 29 d | 0 · n/a | 0 · n/a |
 | Team B | 1 · 2 d | 1 · 5 d | 0 · n/a | 0 · n/a | 0 · n/a |
 | Team C | 8 · 4 d | 8 · 3 d | 1 · 41 d | 0 · n/a | 0 · n/a |
 | Team D | 10 · 4 d | 11 · 3 d | 2 · 28 d | 0 · n/a | 0 · n/a |
@@ -380,8 +380,7 @@ Tickets still in each segment, by team (count, age P50):
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 0 · n/a | 0 · n/a | 1 · 175 d | 0 · n/a | 0 · n/a |
-| Team A | 0 · n/a | 0 · n/a | 1 · 64 d | 0 · n/a | 0 · n/a |
-| Team A;Team B | 0 · n/a | 0 · n/a | 3 · 134 d | 0 · n/a | 0 · n/a |
+| Team A | 0 · n/a | 0 · n/a | 4 · 122 d | 0 · n/a | 0 · n/a |
 | Team B | 0 · n/a | 0 · n/a | 2 · 75 d | 0 · n/a | 0 · n/a |
 | Team C | 0 · n/a | 0 · n/a | 6 · 101 d | 0 · n/a | 0 · n/a |
 | Team D | 0 · n/a | 0 · n/a | 10 · 164 d | 0 · n/a | 0 · n/a |
@@ -418,6 +417,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **Flow efficiency**: the share of time spent in an active status, between the commitment point and resolution. A waiting status (waiting_states) counts as time lost waiting, any other status as active time. A low efficiency says tickets wait a lot, not that people work badly.
 - **Coverage**: the share of the tickets in the report whose history is known. Below 90%, the figures for time in segment only describe part of the tickets.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 927 days: 15% of the items in progress have been there for more than 927 days.
@@ -440,15 +440,13 @@ $ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-10-04 --scope ABC,DEF,ZZZ 
 exit code: 0
 --- stdout ---
 --scope: 180 ticket(s) kept out of 200; 1 requested project(s) with no ticket in the export.
---dormant-from-history: 18 dormant ticket(s) according to the history; 13 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
+--dormant-from-history: 13 dormant ticket(s) according to the history; 11 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
 --history: 3 ticket(s) have an unreadable transition date in the cache: their transitions are ignored (run history_jira.py collect --refresh again).
 # Flow metrics: s, as of 2026-10-04
 
 Period: 2026-04-06 to 2026-09-27 (25 complete weeks). Types: all. Aggregates computed locally from a Jira export; no ticket is quoted.
 
 Scope: projects ABC, DEF, ZZZ (180 ticket(s) kept out of 200 read, option --scope).
-
-Merge of 2 exports by key (5 duplicate ticket(s) removed).
 
 Left out of throughput, lead time, WIP and forecasts (portfolio_types and excluded_projects in flux.yaml): 54 tickets; by type: Epic 27, RN Task 27.
 
@@ -501,8 +499,7 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
 | (no team) | 2 | 2 | 0 |
-| Team A | 6 | 4 | +2 |
-| Team A;Team B | 4 | 1 | +3 |
+| Team A | 10 | 5 | +5 |
 | Team B | 2 | 0 | +2 |
 | Team C | 10 | 2 | +8 |
 | Team D | 11 | 6 | +5 |
@@ -516,6 +513,15 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team L | 5 | 2 | +3 |
 
 Teams are not compared with each other: workflows, ticket sizes and types of work differ. Each row is first for the team concerned.
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -541,7 +547,7 @@ Delivered tickets (resolution: closed, done) whose resolution falls in the same 
 - Items in progress for more than 30 / 90 / 180 / 365 / 730 days: 44 / 29 / 14 / 10 / 10.
 - Active WIP: 36 (78%); waiting WIP: 0 (0%); dormant WIP: 10 (22%). A dormant ticket is taken out of the other two categories; the total WIP stays 46.
 - To do: 26 excluding dormant, 3 dormant (10% of the 29).
-- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 13 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
+- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 11 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
 - "In progress" and "to do" are decided by the Jira status category (column "Status Category"); the lists in flux.yaml only serve for tickets with no category.
 
 ### Age by status (basis: creation)
@@ -569,8 +575,7 @@ An item can wait a long time before it is started: this time counts neither in t
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Active WIP | Waiting WIP | Dormant WIP | Active share | Waiting share | Dormant share | To do | Dormant to do |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | (no team) | 2 | 0.1 | 57 d | 80 d | 1 | 197 d | 1 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
-| Team A | 4 | 0.2 | 35 d | 74 d | 1 | 85 d | 0 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
-| Team A;Team B | 1 | 0.0 | 14 d | 14 d | 2 | 535 d | 2 | 1 | 0 | 1 | 50% | 0% | 50% | 2 | 0 |
+| Team A | 5 | 0.2 | 14 d | 70 d | 3 | 129 d | 2 | 2 | 0 | 1 | 67% | 0% | 33% | 3 | 0 |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 172 d | 1 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
 | Team C | 2 | 0.1 | 52 d | 53 d | 3 | 111 d | 2 | 3 | 0 | 0 | 100% | 0% | 0% | 5 | 0 |
 | Team D | 6 | 0.2 | 34 d | 51 d | 9 | 182 d | 7 | 6 | 0 | 3 | 67% | 0% | 33% | 3 | 1 |
@@ -588,8 +593,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 Items finished per week and per team, from the oldest to the most recent (zero weeks between two peaks point to batched closures):
 
 - (no team): 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0
-- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 - Team D: 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 3
@@ -602,7 +606,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 2
 - Team L: 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 
-Tickets with several teams: 5 out of 126 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 126 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Time in segment
@@ -648,8 +652,7 @@ From the commitment point (entry into the segment "Ready") to resolution, for th
 | Team | Coverage | Delivered with commitment | Delivery lead time P50 | P85 | Efficiency P50 | Aggregate efficiency |
 |---|---|---|---|---|---|---|
 | (no team) | 100% | 2 | 50 d | 74 d | 92% | 95% |
-| Team A | 80% | 3 | 53 d | 73 d | 94% | 93% |
-| Team A;Team B | 100% | 1 | 8 d | 8 d | 75% | 75% |
+| Team A | 88% | 4 | 30 d | 68 d | 84% | 92% |
 | Team B | 100% | 0 | n/a | n/a | n/a | n/a |
 | Team C | 100% | 2 | 46 d | 47 d | 93% | 93% |
 | Team D | 93% | 6 | 28 d | 44 d | 90% | 90% |
@@ -667,8 +670,7 @@ Tickets that left each segment during the period, by team (count, P50 of the cum
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 2 · 4 d | 2 · 2 d | 2 · 48 d | 0 · n/a | 0 · n/a |
-| Team A | 5 · 3 d | 5 · 3 d | 4 · 39 d | 0 · n/a | 0 · n/a |
-| Team A;Team B | 3 · 4 d | 3 · 2 d | 1 · 6 d | 0 · n/a | 0 · n/a |
+| Team A | 8 · 4 d | 8 · 2 d | 5 · 26 d | 0 · n/a | 0 · n/a |
 | Team B | 2 · 2 d | 2 · 3 d | 0 · n/a | 0 · n/a | 0 · n/a |
 | Team C | 8 · 4 d | 8 · 3 d | 2 · 43 d | 0 · n/a | 0 · n/a |
 | Team D | 11 · 4 d | 12 · 3 d | 4 · 38 d | 0 · n/a | 0 · n/a |
@@ -686,8 +688,7 @@ Tickets still in each segment, by team (count, age P50):
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 0 · n/a | 0 · n/a | 1 · 189 d | 0 · n/a | 0 · n/a |
-| Team A | 0 · n/a | 0 · n/a | 1 · 78 d | 0 · n/a | 0 · n/a |
-| Team A;Team B | 0 · n/a | 0 · n/a | 3 · 148 d | 0 · n/a | 0 · n/a |
+| Team A | 0 · n/a | 0 · n/a | 4 · 136 d | 0 · n/a | 0 · n/a |
 | Team B | 0 · n/a | 0 · n/a | 2 · 86 d | 0 · n/a | 0 · n/a |
 | Team C | 0 · n/a | 0 · n/a | 6 · 115 d | 0 · n/a | 0 · n/a |
 | Team D | 0 · n/a | 0 · n/a | 10 · 178 d | 0 · n/a | 0 · n/a |
@@ -723,6 +724,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **Flow efficiency**: the share of time spent in an active status, between the commitment point and resolution. A waiting status (waiting_states) counts as time lost waiting, any other status as active time. A low efficiency says tickets wait a lot, not that people work badly.
 - **Coverage**: the share of the tickets in the report whose history is known. Below 90%, the figures for time in segment only describe part of the tickets.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 941 days: 15% of the items in progress have been there for more than 941 days.
@@ -808,8 +810,7 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 | Team | Recent throughput / wk | Lead time P85 | WIP | WIP > 90 d | Closures in 2 weeks |
 |---|---|---|---|---|---|
 | (no team) | 0.2 → 0.0 (-100%) | 80 d → 80 d (+0%) | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
-| Team A | 0.2 → 0.0 (-100%) | 74 d → 74 d (+0%) | 1 → 1 (+0%) | 0 → 0 | n/a → n/a |
-| Team A;Team B | 0.0 → 0.0 | 14 d → 14 d (+0%) | 2 → 2 (+0%) | 2 → 2 | n/a → n/a |
+| Team A | 0.2 → 0.0 (-100%) | 70 d → 70 d (+0%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team B | 0.0 → 0.0 | n/a → n/a | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
 | Team C | 0.0 → 0.5 | 50 d → 53 d (+5%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team D | 0.2 → 1.5 (+500%) | 44 d → 51 d (+16%) | 9 → 9 (+0%) | 7 → 7 | n/a → n/a |
@@ -847,14 +848,12 @@ written: tableaux/points-s-2026-10-04.json
 $ compute <WS>/a.csv <WS>/b.csv --name d --today 2026-10-04 --no-comparison --dormant-from-history --teams-only --types Story,Bug,Task --batch-closure-resolutions tous --scope tous
 exit code: 0
 --- stdout ---
---dormant-from-history: 18 dormant ticket(s) according to the history; 23 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
+--dormant-from-history: 13 dormant ticket(s) according to the history; 11 unfinished ticket(s) with no history in the cache, not counted as dormant; 10 in progress and 3 to do dormant.
 # Flow metrics: d, as of 2026-10-04
 
 Period: 2026-04-06 to 2026-09-27 (25 complete weeks). Types: Story,Bug,Task, tickets without a team excluded. Aggregates computed locally from a Jira export; no ticket is quoted.
 
 Scope: all projects of the export (200 ticket(s) kept out of 200 read, option --scope).
-
-Merge of 2 exports by key (5 duplicate ticket(s) removed).
 
 Left out of throughput, lead time, WIP and forecasts (portfolio_types and excluded_projects in flux.yaml): 74 tickets; by type: Epic 27, RN Task 27; by project: BUG 20.
 
@@ -906,8 +905,7 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
-| Team A | 6 | 4 | +2 |
-| Team A;Team B | 4 | 1 | +3 |
+| Team A | 10 | 5 | +5 |
 | Team B | 2 | 0 | +2 |
 | Team C | 10 | 2 | +8 |
 | Team D | 11 | 6 | +5 |
@@ -921,6 +919,15 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team L | 5 | 2 | +3 |
 
 Teams are not compared with each other: workflows, ticket sizes and types of work differ. Each row is first for the team concerned.
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -946,7 +953,7 @@ Delivered tickets (all resolutions counted as delivered) whose resolution falls 
 - Items in progress for more than 30 / 90 / 180 / 365 / 730 days: 43 / 28 / 13 / 10 / 10.
 - Active WIP: 35 (78%); waiting WIP: 0 (0%); dormant WIP: 10 (22%). A dormant ticket is taken out of the other two categories; the total WIP stays 45.
 - To do: 25 excluding dormant, 3 dormant (11% of the 28).
-- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 23 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
+- Note: a ticket is dormant when it is unfinished, created at least 365 days ago, with no status change for at least 365 days, according to the status history (date of the last transition, or of creation if there is none). 11 unfinished ticket(s) with no history in the cache are not counted as dormant. No key is written here.
 - "In progress" and "to do" are decided by the Jira status category (column "Status Category"); the lists in flux.yaml only serve for tickets with no category.
 
 ### Age by status (basis: creation)
@@ -973,8 +980,7 @@ An item can wait a long time before it is started: this time counts neither in t
 
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Active WIP | Waiting WIP | Dormant WIP | Active share | Waiting share | Dormant share | To do | Dormant to do |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Team A | 4 | 0.2 | 35 d | 74 d | 1 | 85 d | 0 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
-| Team A;Team B | 1 | 0.0 | 14 d | 14 d | 2 | 535 d | 2 | 1 | 0 | 1 | 50% | 0% | 50% | 2 | 0 |
+| Team A | 5 | 0.2 | 14 d | 70 d | 3 | 129 d | 2 | 2 | 0 | 1 | 67% | 0% | 33% | 3 | 0 |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 172 d | 1 | 1 | 0 | 0 | 100% | 0% | 0% | 1 | 0 |
 | Team C | 2 | 0.1 | 52 d | 53 d | 3 | 111 d | 2 | 3 | 0 | 0 | 100% | 0% | 0% | 5 | 0 |
 | Team D | 6 | 0.2 | 34 d | 51 d | 9 | 182 d | 7 | 6 | 0 | 3 | 67% | 0% | 33% | 3 | 1 |
@@ -991,8 +997,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 
 Items finished per week and per team, from the oldest to the most recent (zero weeks between two peaks point to batched closures):
 
-- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+- Team A: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 - Team D: 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 3
@@ -1005,7 +1010,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 2
 - Team L: 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 
-Tickets with several teams: 5 out of 122 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 122 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Monte Carlo forecasts (10,000 simulations on the weekly throughput of the period)
@@ -1023,6 +1028,7 @@ Tickets with several teams: 5 out of 122 (1 finished, 2 in progress). Current at
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 941 days: 15% of the items in progress have been there for more than 941 days.
@@ -1077,14 +1083,22 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
 | (no team) | 0 | 1 | -1 |
-| Team A | 0 | 1 | -1 |
-| Team A;Team B | 1 | 0 | +1 |
+| Team A | 1 | 1 | 0 |
 | Team D | 2 | 2 | 0 |
 | Team G | 1 | 3 | -2 |
 | Team I | 2 | 2 | 0 |
 | Team J | 1 | 1 | 0 |
 | Team K | 3 | 3 | 0 |
 | Team L | 2 | 1 | +1 |
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -1131,8 +1145,7 @@ An item can wait a long time before it is started: this time counts neither in t
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Waiting WIP | Waiting share |
 |---|---|---|---|---|---|---|---|---|---|
 | (no team) | 1 | 0.1 | 90 d | 90 d | 1 | 197 d | 1 | 0 | 0% |
-| Team A | 1 | 0.1 | 86 d | 86 d | 0 | n/a | 0 | 0 | n/a |
-| Team A;Team B | 0 | 0.0 | n/a | n/a | 2 | 535 d | 2 | 0 | 0% |
+| Team A | 1 | 0.1 | 86 d | 86 d | 2 | 535 d | 2 | 0 | 0% |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 172 d | 1 | 0 | 0% |
 | Team C | 0 | 0.0 | n/a | n/a | 2 | 122 d | 2 | 0 | 0% |
 | Team D | 2 | 0.2 | 8 d | 8 d | 1 | 941 d | 1 | 0 | 0% |
@@ -1150,7 +1163,6 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 
 - (no team): 0, 0, 0, 0, 1, 0, 0, 0
 - Team A: 0, 0, 1, 0, 0, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0
 - Team D: 0, 0, 0, 1, 0, 0, 0, 1
@@ -1162,7 +1174,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 0, 0, 0, 0, 1, 0, 0, 2
 - Team L: 0, 0, 0, 0, 0, 0, 0, 1
 
-Tickets with several teams: 5 out of 63 (0 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 63 (0 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Monte Carlo forecasts (10,000 simulations on the weekly throughput of the period)
@@ -1179,6 +1191,7 @@ Tickets with several teams: 5 out of 63 (0 finished, 2 in progress). Current att
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 941 days: 15% of the items in progress have been there for more than 941 days.
@@ -1250,8 +1263,7 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
 | (no team) | 2 | 2 | 0 |
-| Team A | 3 | 3 | 0 |
-| Team A;Team B | 4 | 1 | +3 |
+| Team A | 7 | 4 | +3 |
 | Team C | 4 | 0 | +4 |
 | Team D | 4 | 4 | 0 |
 | Team E | 1 | 1 | 0 |
@@ -1264,6 +1276,15 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team L | 2 | 2 | 0 |
 
 Teams are not compared with each other: workflows, ticket sizes and types of work differ. Each row is first for the team concerned.
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -1310,8 +1331,7 @@ An item can wait a long time before it is started: this time counts neither in t
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Waiting WIP | Waiting share |
 |---|---|---|---|---|---|---|---|---|---|
 | (no team) | 2 | 0.1 | 57 d | 80 d | 1 | 197 d | 1 | 0 | 0% |
-| Team A | 3 | 0.1 | 60 d | 78 d | 0 | n/a | 0 | 0 | n/a |
-| Team A;Team B | 1 | 0.0 | 14 d | 14 d | 2 | 535 d | 2 | 0 | 0% |
+| Team A | 4 | 0.2 | 37 d | 74 d | 2 | 535 d | 2 | 0 | 0% |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 172 d | 1 | 0 | 0% |
 | Team C | 0 | 0.0 | n/a | n/a | 2 | 122 d | 2 | 0 | 0% |
 | Team D | 4 | 0.2 | 14 d | 39 d | 1 | 941 d | 1 | 0 | 0% |
@@ -1329,8 +1349,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 Items finished per week and per team, from the oldest to the most recent (zero weeks between two peaks point to batched closures):
 
 - (no team): 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0
-- Team A: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+- Team A: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team D: 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1
@@ -1343,7 +1362,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 2
 - Team L: 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 
-Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Monte Carlo forecasts (10,000 simulations on the weekly throughput of the period)
@@ -1360,6 +1379,7 @@ Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current att
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 941 days: 15% of the items in progress have been there for more than 941 days.
@@ -1432,8 +1452,7 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team | Arrivals | Departures | Difference |
 |---|---|---|---|
 | (no team) | 2 | 2 | 0 |
-| Team A | 3 | 3 | 0 |
-| Team A;Team B | 4 | 1 | +3 |
+| Team A | 7 | 4 | +3 |
 | Team C | 4 | 0 | +4 |
 | Team D | 4 | 4 | 0 |
 | Team E | 1 | 1 | 0 |
@@ -1446,6 +1465,15 @@ Arrivals: tickets created during the period, same types and same exclusions as t
 | Team L | 2 | 2 | 0 |
 
 Teams are not compared with each other: workflows, ticket sizes and types of work differ. Each row is first for the team concerned.
+
+### Shared tickets by team
+
+First-team attribution: each ticket counts once, for its first team.
+
+| Team | Attributed here, shared | Carried here, attributed elsewhere |
+|---|---|---|
+| Team A | 5 | masked |
+| Team B | masked | 5 |
 
 ## Batched closures
 
@@ -1492,8 +1520,7 @@ An item can wait a long time before it is started: this time counts neither in t
 | Team | Finished | Throughput / wk | Lead time P50 | Lead time P85 | WIP | WIP age P50 | WIP > 90 d | Waiting WIP | Waiting share |
 |---|---|---|---|---|---|---|---|---|---|
 | (no team) | 2 | 0.1 | 57 d | 80 d | 1 | 197 d | 1 | 0 | 0% |
-| Team A | 3 | 0.1 | 60 d | 78 d | 0 | n/a | 0 | 0 | n/a |
-| Team A;Team B | 1 | 0.0 | 14 d | 14 d | 2 | 535 d | 2 | 0 | 0% |
+| Team A | 4 | 0.2 | 37 d | 74 d | 2 | 535 d | 2 | 0 | 0% |
 | Team B | 0 | 0.0 | n/a | n/a | 1 | 172 d | 1 | 0 | 0% |
 | Team C | 0 | 0.0 | n/a | n/a | 2 | 122 d | 2 | 0 | 0% |
 | Team D | 4 | 0.2 | 14 d | 39 d | 1 | 941 d | 1 | 0 | 0% |
@@ -1511,8 +1538,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 Items finished per week and per team, from the oldest to the most recent (zero weeks between two peaks point to batched closures):
 
 - (no team): 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0
-- Team A: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0
-- Team A;Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
+- Team A: 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0
 - Team B: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team C: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 - Team D: 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1
@@ -1525,7 +1551,7 @@ Items finished per week and per team, from the oldest to the most recent (zero w
 - Team K: 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 2
 - Team L: 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
 
-Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the value of its first team column, whole cell; the other team columns are ignored, and a cell that joins several teams forms a row of its own, with the combined label. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
+Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current attribution: each ticket counts once, in the row of the first value of its first team column; the other values and the other team columns attribute nothing. Teams are recognised by the columns of the same name and by the separator ";" in a cell (team_separator setting of flux.yaml).
 
 
 ## Time in segment
@@ -1571,8 +1597,7 @@ From the commitment point (entry into the segment "Ready") to resolution, for th
 | Team | Coverage | Delivered with commitment | Delivery lead time P50 | P85 | Efficiency P50 | Aggregate efficiency |
 |---|---|---|---|---|---|---|
 | (no team) | 100% | 2 | 50 d | 74 d | 92% | 95% |
-| Team A | 100% | 3 | 53 d | 73 d | 94% | 93% |
-| Team A;Team B | 100% | 1 | 8 d | 8 d | 75% | 75% |
+| Team A | 100% | 4 | 30 d | 68 d | 84% | 92% |
 | Team B | 100% | 0 | n/a | n/a | n/a | n/a |
 | Team C | 100% | 0 | n/a | n/a | n/a | n/a |
 | Team D | 100% | 4 | 8 d | 33 d | 80% | 89% |
@@ -1590,8 +1615,7 @@ Tickets that left each segment during the period, by team (count, P50 of the cum
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 2 · 4 d | 2 · 2 d | 2 · 48 d | 0 · n/a | 0 · n/a |
-| Team A | 3 · 3 d | 3 · 4 d | 3 · 52 d | 0 · n/a | 0 · n/a |
-| Team A;Team B | 3 · 4 d | 3 · 2 d | 1 · 6 d | 0 · n/a | 0 · n/a |
+| Team A | 6 · 3 d | 6 · 2 d | 4 · 29 d | 0 · n/a | 0 · n/a |
 | Team B | 0 · n/a | 1 · 5 d | 0 · n/a | 0 · n/a | 0 · n/a |
 | Team C | 3 · 4 d | 3 · 3 d | 0 · n/a | 0 · n/a | 0 · n/a |
 | Team D | 4 · 4 d | 4 · 2 d | 2 · 28 d | 0 · n/a | 0 · n/a |
@@ -1609,8 +1633,7 @@ Tickets still in each segment, by team (count, age P50):
 | Team | Definition | Ready | Implementation | Review and verification | Acceptance |
 |---|---|---|---|---|---|
 | (no team) | 0 · n/a | 0 · n/a | 1 · 189 d | 0 · n/a | 0 · n/a |
-| Team A | 0 · n/a | 0 · n/a | 0 · n/a | 0 · n/a | 0 · n/a |
-| Team A;Team B | 0 · n/a | 0 · n/a | 3 · 148 d | 0 · n/a | 0 · n/a |
+| Team A | 0 · n/a | 0 · n/a | 3 · 148 d | 0 · n/a | 0 · n/a |
 | Team B | 0 · n/a | 0 · n/a | 1 · 164 d | 0 · n/a | 0 · n/a |
 | Team C | 0 · n/a | 0 · n/a | 4 · 142 d | 0 · n/a | 0 · n/a |
 | Team D | 0 · n/a | 0 · n/a | 2 · 932 d | 0 · n/a | 0 · n/a |
@@ -1645,6 +1668,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **Flow efficiency**: the share of time spent in an active status, between the commitment point and resolution. A waiting status (waiting_states) counts as time lost waiting, any other status as active time. A low efficiency says tickets wait a lot, not that people work badly.
 - **Coverage**: the share of the tickets in the report whose history is known. Below 90%, the figures for time in segment only describe part of the tickets.
 - **Batched closure**: at least N delivered tickets of the same project whose resolution falls in the same minute (N: batch_closure_threshold in flux.yaml). It most likely points to a bulk status change (clean-up, migration) rather than deliveries as they happen. A count only: these tickets stay in the throughput.
+- **Shared tickets**: a ticket carried by several teams counts once, for its first team. For each team, the first column counts the tickets attributed to it while shared, the second those it carries without their being attributed to it. A cell under 5 tickets is written "masked".
 
 Examples taken from this report:
 - The P85 age of items in progress is 941 days: 15% of the items in progress have been there for more than 941 days.
@@ -1734,8 +1758,7 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 | Team | Recent throughput / wk | Lead time P85 | WIP | WIP > 90 d | Closures in 2 weeks |
 |---|---|---|---|---|---|
 | (no team) | 0.2 → 0.0 (-100%) | 80 d → 80 d (+0%) | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
-| Team A | 0.2 → 0.0 (-100%) | 74 d → 74 d (+0%) | 1 → 1 (+0%) | 0 → 0 | n/a → n/a |
-| Team A;Team B | 0.0 → 0.0 | 14 d → 14 d (+0%) | 2 → 2 (+0%) | 2 → 2 | n/a → n/a |
+| Team A | 0.2 → 0.0 (-100%) | 70 d → 70 d (+0%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team B | 0.0 → 0.0 | n/a → n/a | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
 | Team C | 0.0 → 0.5 | 50 d → 53 d (+5%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team D | 0.2 → 1.5 (+500%) | 44 d → 51 d (+16%) | 9 → 9 (+0%) | 7 → 7 | n/a → n/a |
@@ -1838,8 +1861,7 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 | Team | Recent throughput / wk | Lead time P85 | WIP | WIP > 90 d | Closures in 2 weeks |
 |---|---|---|---|---|---|
 | (no team) | 0.2 → 0.0 (-100%) | 80 d → 80 d (+0%) | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
-| Team A | 0.2 → 0.0 (-100%) | 74 d → 74 d (+0%) | 1 → 1 (+0%) | 0 → 0 | n/a → n/a |
-| Team A;Team B | 0.0 → 0.0 | 14 d → 14 d (+0%) | 2 → 2 (+0%) | 2 → 2 | n/a → n/a |
+| Team A | 0.2 → 0.0 (-100%) | 70 d → 70 d (+0%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team B | 0.0 → 0.0 | n/a → n/a | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
 | Team C | 0.0 → 0.5 | 50 d → 53 d (+5%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team D | 0.2 → 1.5 (+500%) | 44 d → 51 d (+16%) | 9 → 9 (+0%) | 7 → 7 | n/a → n/a |
@@ -1890,9 +1912,8 @@ Compares the reports of 2026-09-20 and 2026-10-04 (14 days apart), computed loca
 - Queue "Waiting" down: 42 → 14 items (-67%).
 - (no team): throughput down, 1.0 → 0.0 per week (-100%).
 - (no team): batched closures over the last 8 weeks (100% of the finished items in 2 weeks).
-- Team A;Team B: more items in progress for more than 90 days, 0 → 7.
-- Team B: closures are no longer batched (100% → 25% in 2 weeks).
-- Team D: more items in progress for more than 90 days, 0 → 7.
+- Team B: more items in progress for more than 90 days, 0 → 7.
+- Team C: closures are no longer batched (100% → 25% in 2 weeks).
 - Team F: more items in progress for more than 90 days, 0 → 4.
 - Team K: more items in progress for more than 90 days, 0 → 4.
 
@@ -1906,7 +1927,7 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 - The start column (Status Category Changed) is present in only one of the two exports: ages are not counted the same way.
 - Statuses in progress that appeared: New State (new workflow status, or flux.yaml changed?).
 - Statuses in progress that disappeared: Old State.
-- Team "Team C" not compared: key(s) missing from one of the two reports, probably an old report format.
+- Team "Team D" not compared: key(s) missing from one of the two reports, probably an old report format.
 - Team "Team Extra" is present in only one of the two reports.
 - Team "Team L" is present in only one of the two reports.
 
@@ -1962,10 +1983,9 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 | Team | Recent throughput / wk | Lead time P85 | WIP | WIP > 90 d | Closures in 2 weeks |
 |---|---|---|---|---|---|
 | (no team) | 1.0 → 0.0 (-100%) | 80 d → 80 d (+0%) | 1 → 1 (+0%) | 0 → 1 | 25% → 100% (batched) |
-| Team A | n/a | 74 d → 74 d (+0%) | 1 → 1 (+0%) | 0 → 0 | 25% → 33% |
-| Team A;Team B | n/a | 14 d → 14 d (+0%) | 2 → 2 (+0%) | 0 → 7 | 25% → n/a |
-| Team B | n/a | n/a → n/a | 1 → 1 (+0%) | 0 → 1 | 100% (batched) → 25% |
-| Team D | n/a | 51 d → 51 d (+0%) | 9 → 9 (+0%) | 0 → 7 | 25% → n/a |
+| Team A | n/a | 70 d → 70 d (+0%) | 3 → 3 (+0%) | 0 → 2 | 25% → 33% |
+| Team B | n/a | n/a → n/a | 1 → 1 (+0%) | 0 → 7 | 25% → n/a |
+| Team C | n/a | 53 d → 53 d (+0%) | 3 → 3 (+0%) | 0 → 2 | 100% (batched) → 25% |
 | Team E | n/a | 62 d → 62 d (+0%) | 1 → 1 (+0%) | 0 → 1 | 25% → n/a |
 | Team F | n/a | 84 d → 84 d (+0%) | 4 → 4 (+0%) | 0 → 4 | 25% → n/a |
 | Team G | n/a | 60 d → 60 d (+0%) | 3 → 3 (+0%) | 0 → 2 | 25% → n/a |
@@ -2070,8 +2090,7 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 | Team | Recent throughput / wk | Lead time P85 | WIP | WIP > 90 d | Closures in 2 weeks |
 |---|---|---|---|---|---|
 | (no team) | n/a | 80 d → 80 d (+0%) | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
-| Team A | n/a | 74 d → 74 d (+0%) | 1 → 1 (+0%) | 0 → 0 | n/a → n/a |
-| Team A;Team B | n/a | 14 d → 14 d (+0%) | 2 → 2 (+0%) | 2 → 2 | n/a → n/a |
+| Team A | n/a | 70 d → 70 d (+0%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team B | n/a | n/a → n/a | 1 → 1 (+0%) | 1 → 1 | n/a → n/a |
 | Team C | n/a | 50 d → 50 d (+0%) | 3 → 3 (+0%) | 2 → 2 | n/a → n/a |
 | Team D | n/a | 44 d → 44 d (+0%) | 9 → 9 (+0%) | 7 → 7 | n/a → n/a |
@@ -2121,7 +2140,6 @@ Thresholds: throughput ±25% (±30% per team), lead time P85 ±20%, WIP and Litt
 - The previous report does not contain the age of the queues before commitment yet: the comparison of these queues will start with the next report.
 - Team "(no team)" not compared: key(s) missing from one of the two reports, probably an old report format.
 - Team "Team A" not compared: key(s) missing from one of the two reports, probably an old report format.
-- Team "Team A;Team B" not compared: key(s) missing from one of the two reports, probably an old report format.
 - Team "Team B" not compared: key(s) missing from one of the two reports, probably an old report format.
 - Team "Team C" not compared: key(s) missing from one of the two reports, probably an old report format.
 - Team "Team D" not compared: key(s) missing from one of the two reports, probably an old report format.
@@ -2267,19 +2285,12 @@ exit code: 1
 --- stderr ---
 --history: the export has no key column, so tickets cannot be linked to their history.
 
-===== err-history-cache-missing =====
+===== err-no-history-in-db =====
 $ compute <WS>/a.csv --today 2026-10-04 --no-comparison --history <WS>/absent.json
 exit code: 1
 --- stdout ---
 --- stderr ---
---history: cache not found (<WS>/absent.json). Run tools/history_jira.py collect first.
-
-===== err-history-cache-unreadable =====
-$ compute <WS>/a.csv --today 2026-10-04 --no-comparison --history <WS>/broken.json
-exit code: 1
---- stdout ---
---- stderr ---
---history: cache unreadable.
+no history in the database: run the history collection first
 
 ===== err-teams-only-no-team =====
 $ compute <WS>/no-key.csv --today 2026-10-04 --no-comparison --teams-only
@@ -2294,13 +2305,6 @@ exit code: 1
 --- stdout ---
 --- stderr ---
 --batch-closure-resolutions: give resolutions separated by commas ("Done,Accepted & Released"), or "all" for every delivered resolution.
-
-===== err-columns-missing =====
-$ statuses <WS>/no-status.csv
-exit code: 1
---- stdout ---
---- stderr ---
-Columns "Status" and "Created" not found: this script reads the CSV files of export_jira_api.py (uv run tools/export_jira_api.py export), whose headers are in English; a manual Jira export is no longer read. Column names can be adjusted in <WS>/Flux-Lab/flux.yaml.
 
 ===== err-threshold-invalid =====
 $ compute <WS>/a.csv --today 2026-10-04 --no-comparison

@@ -2,25 +2,34 @@
 """Sélecteur de suites : lit les chemins de l'index Git et dit quelles suites de tests/ lancer (lancement ciblé, tests/run_all.sh --staged).
 
     python3 tools/select_suites.py [--root DOSSIER]
+    python3 tools/select_suites.py --openspec-readers [--root DOSSIER]
 
 Règles (design.md D4 du change workflow-tooling) :
   - un chemin dans le dossier d'une suite (tests/<suite>/) sélectionne cette suite ; un script de test shell listé dans
     tests/run_all.sh sélectionne sa suite shell ;
   - un chemin que le texte d'un fichier de test d'une suite nomme (chemin, ou nom de module pour un .py ou .sh, ou nom de fichier pour
     les autres) sélectionne cette suite ;
-  - la suite qui parcourt tous les fichiers suivis (identifiants_personnels) est toujours sélectionnée ;
+  - les suites qui parcourent tous les fichiers suivis (identifiants_personnels, secret_scan) sont toujours sélectionnées ;
   - le manuel généré (change user-manual) : un script .py ou .sh directement sous tools/, une commande de .claude/commands/ ou le
     fichier docs/pmzilla/manuel.md sélectionne en plus la suite « manual ». Ce renfort ne tient pas lieu de suite du chemin : un script
     qu'aucun test ne nomme exige toujours l'exécution complète, et le manuel est le seul fichier de documentation qui sélectionne une suite ;
   - documentation seule (docs/, openspec/, CHANGELOG.md, README.md, Markdown de _bmad-output/) : rien de plus ;
-  - tout autre chemin qu'aucune suite ne nomme, et tout changement de CLAUDE.md, du fichier de réglages, du lanceur, des hooks ou
-    du sélecteur, exige l'exécution complète (sûr par défaut).
+  - tout autre chemin qu'aucune suite ne nomme, et tout changement de CLAUDE.md, du fichier de réglages, du lanceur, des hooks, des
+    modules qu'importe le hook pre-commit (tools/secret_scan.py, tools/sensitive_names.py) ou du sélecteur, exige l'exécution complète
+    (sûr par défaut).
 
 Sortie : une ligne « select_suites : <suite> : <raison> » par suite (code 0), ou « select_suites : exécution complète requise : <chemins> »
 (code 3). Code 2 : usage ou hors dépôt Git. Le sélecteur ne lance aucun test, n'écrit aucun fichier et ne lit que l'index et tests/.
 Limites assumées : une suite qui n'exerce un fichier que par une chaîne d'imports est manquée ; un test qui nomme un fichier dans un
 commentaire sélectionne sa suite pour rien. Ces manques n'atteignent jamais main (script de fin de branche et pre-push exigent un
 lancement complet vert).
+
+Option --openspec-readers (change light-spec-finish, D6) : liste, sans lire l'index, les suites qui lisent le dossier OpenSpec, une ligne
+« select_suites : <suite> : <raison> » chacune (code 0 ; 2 usage, hors dépôt, ou liste absente ou mal formée ; jamais 3). Règle (question Q10) :
+(a) les gardes toujours sélectionnées (« garde toujours sélectionnée ») ; (b) les suites de la liste déclarée tests/openspec_readers.txt
+(« déclarée (tests/openspec_readers.txt) »). Une ligne de la liste est « <suite> » éventuellement suivie de « # pourquoi », ou
+« !<suite> : <raison> » pour une suite que le balayage de garde signale sans qu'elle lise openspec/ (jamais lancée). Le sélecteur ne lit que
+cette liste ; la garde est tests/select_suites/test_openspec_readers.py, qui échoue quand une suite lit openspec/ sans être déclarée.
 
 Exemple :
     python3 tools/select_suites.py
@@ -31,13 +40,27 @@ import sys
 from pathlib import Path
 
 PREFIXE = "select_suites : "
-TOUJOURS = {"identifiants_personnels": "toujours sélectionnée : parcourt tous les fichiers suivis"}
-COMPLETS = {"CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json", "tests/run_all.sh", "tools/select_suites.py"}
+TOUJOURS = {"identifiants_personnels": "toujours sélectionnée : parcourt tous les fichiers suivis",
+            "secret_scan": "toujours sélectionnée : parcourt tous les fichiers suivis"}
+# tools/secret_scan.py et tools/sensitive_names.py, importés par le crochet pre-commit, comptent comme lui (pre-commit-secret-scan, D7) ;
+# tools/commit_names_scan.py, lancé par les crochets commit-msg et pre-push, aussi (fix/sorties-et-masquage).
+COMPLETS = {"CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json", "tests/run_all.sh", "tools/select_suites.py",
+            "tools/secret_scan.py", "tools/sensitive_names.py", "tools/commit_names_scan.py"}
 PREFIXES_COMPLETS = ("tools/hooks/",)
 DOCS_PREFIXES = ("docs/", "openspec/")
 DOCS_FICHIERS = {"CHANGELOG.md", "README.md"}
 SUITE_MANUEL = "manual"
 CHEMIN_MANUEL = "docs/pmzilla/manuel.md"
+MOT_OPTION = "--openspec-readers"
+LISTE_LECTEURS = "tests/openspec_readers.txt"
+RAISON_GARDE = "garde toujours sélectionnée"
+RAISON_DECLAREE = f"déclarée ({LISTE_LECTEURS})"
+LIGNE_LECTEUR = re.compile(r"^(?P<suite>[A-Za-z0-9_.-]+)(?:\s+#.*)?$")
+LIGNE_EXEMPTION = re.compile(r"^!(?P<suite>[A-Za-z0-9_.-]+)\s*:\s*(?P<raison>\S.*)$")
+
+
+class ListeInvalide(Exception):
+    """La liste déclarée des lecteurs d'openspec est absente, illisible ou mal formée."""
 
 
 def erreur_usage(texte: str) -> int:
@@ -143,12 +166,53 @@ def selectionner(racine: Path, chemins: list[str]) -> tuple[dict[str, list[str]]
     return raisons, complets
 
 
+def lire_liste_lecteurs(racine: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """({suite : pourquoi} des lecteurs déclarés, {suite : raison} des exemptions) de tests/openspec_readers.txt (light-spec-finish, D6).
+    Lignes vides et lignes commençant par « # » ignorées. Lève ListeInvalide : fichier absent ou illisible, ligne mal formée, suite en double."""
+    chemin = racine / LISTE_LECTEURS
+    try:
+        texte = chemin.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise ListeInvalide(f"liste des suites qui lisent openspec/ introuvable ou illisible ({LISTE_LECTEURS})") from None
+    lecteurs: dict[str, str] = {}
+    exemptees: dict[str, str] = {}
+    for numero, brute in enumerate(texte.splitlines(), start=1):
+        ligne = brute.strip()
+        if not ligne or ligne.startswith("#"):
+            continue
+        exemption = LIGNE_EXEMPTION.match(ligne)
+        lecteur = None if exemption else LIGNE_LECTEUR.match(ligne)
+        if not exemption and not lecteur:
+            raise ListeInvalide(f"{LISTE_LECTEURS}, ligne {numero} mal formée : « {ligne} »")
+        suite = (exemption or lecteur).group("suite")
+        if suite in lecteurs or suite in exemptees:
+            raise ListeInvalide(f"{LISTE_LECTEURS}, ligne {numero} : la suite « {suite} » est présente deux fois")
+        if exemption:
+            exemptees[suite] = exemption.group("raison").strip()
+        else:
+            lecteurs[suite] = ligne
+    return lecteurs, exemptees
+
+
+def lecteurs_openspec(racine: Path) -> dict[str, str]:
+    """{suite : raison} des suites que le chemin allégé lance (light-spec-finish, D6, question Q10) : (a) les gardes toujours sélectionnées ;
+    (b) les suites de la liste déclarée tests/openspec_readers.txt (les exemptions n'en font pas partie). Lève ListeInvalide."""
+    lecteurs, _ = lire_liste_lecteurs(racine)
+    trouvees: dict[str, str] = {nom: RAISON_GARDE for nom in TOUJOURS}
+    for suite in lecteurs:
+        trouvees.setdefault(suite, RAISON_DECLAREE)
+    return trouvees
+
+
 def main(argv: list[str]) -> int:
     racine = Path.cwd()
     arguments = list(argv)
     if arguments in (["-h"], ["--help"]):
         print(__doc__)
         return 0
+    lecteurs = MOT_OPTION in arguments
+    if lecteurs:
+        arguments.remove(MOT_OPTION)
     if arguments[:1] == ["--root"]:
         if len(arguments) < 2:
             return erreur_usage("--root demande un dossier")
@@ -156,6 +220,19 @@ def main(argv: list[str]) -> int:
         arguments = arguments[2:]
     if arguments:
         return erreur_usage("python3 tools/select_suites.py [--root DOSSIER]")
+    if lecteurs:
+        sonde = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=racine, capture_output=True) if racine.is_dir() else None
+        if sonde is None or sonde.returncode != 0:
+            print(f"{PREFIXE}pas un dépôt Git : {racine}", file=sys.stderr)
+            return 2
+        try:
+            trouvees = lecteurs_openspec(racine)
+        except ListeInvalide as erreur:
+            print(f"{PREFIXE}{erreur}", file=sys.stderr)
+            return 2
+        for suite, raison in sorted(trouvees.items()):
+            print(f"{PREFIXE}{suite} : {raison}")
+        return 0
     chemins = chemins_indexes(racine)
     if chemins is None:
         print(f"{PREFIXE}pas un dépôt Git : {racine}", file=sys.stderr)

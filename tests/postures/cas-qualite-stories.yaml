@@ -1,0 +1,186 @@
+# Jeu d'essai du mode manuel de l'audit des stories (story-quality-audit, design D12, D17, D18 ; tâche 2.6 ; spec story-quality-manual)
+#
+# À rejouer avec `--cases-file tests/postures/cas-qualite-stories.yaml` (et `--language en` pour les variantes anglaises), après
+# l'ordre permanent « Pasted story or epic (manual mode) » des CREED de Delivery, Discovery et Facilitation (tâche 2.5).
+# Champs comme tests/postures/cas.yaml. Un cas par point de la tâche 2.6, dans son ordre.
+#
+# Tout est inventé : stories, epics, clé de ticket (FICT-4821), extraits de rapport, équipes (Fictive-A, Fictive-B, Fictive-C)
+# prénom (Zéphyrin) et mot repère (Vrelmondine). Aucune vraie story, aucun nom réel. Les cas d'audit lisent la grille effective par
+# `uv run tools/story_quality.py grid --show` dans la copie du passage ; sans surcouche, le socle s'applique seul.
+
+- id: qualite-story-collee
+  question: >-
+    Voici une story de notre backlog, est-ce qu'elle est prête pour le prochain Sprint ? « En tant que gestionnaire de lits,
+    je veux voir sur un tableau les lits libres de chaque service, afin de placer plus vite les patients admis aux urgences.
+    Critères d'acceptation : le tableau est rapide et toujours à jour ; il est simple à utiliser. »
+  posture: Delivery
+  verifications:
+    - critic: true
+    - text: "Texte collé\\s*:\\s*analysé ici, écrit dans aucun fichier suivi"
+  judgements:
+    - "Donne un verdict par critère de story de la grille (valeur, rôle, indépendance, négociabilité, estimabilité, taille, tranche verticale, critères présents, critères testables, exemples concrets), chacun avec une raison tirée du texte et sa ligne de source ou la mention « règle de l'organisation »."
+    - "Juge non testables les critères d'acceptation vagues (« rapide », « toujours », « simple ») et propose une réécriture comme suggestion pour le PO, pas comme verdict."
+    - text: "N'ajoute aucun critère hors de la grille, sauf sous la formule « Hypothèse », et ne présente aucun critère hors bibliothèque comme sourcé."
+      non_blocking: true
+  en:
+    question: >-
+      Here is a story from our backlog, is it ready for the next Sprint? "As a bed manager, I want to see on a board the free
+      beds of each ward, so that I can place patients admitted to the emergency department faster. Acceptance criteria: the
+      board is fast and always up to date; it is simple to use."
+    text: "Pasted text:\\s*analysed here, written to no tracked file"
+    judgements:
+      - "Gives one verdict per story criterion of the grid (value, role, independence, negotiability, estimability, size, vertical slice, criteria present, testable criteria, concrete examples), each with a reason taken from the text and its source line or the mark \"organisation rule\"."
+      - "Judges the vague acceptance criteria (\"fast\", \"always\", \"simple\") not testable and proposes a rewrite as a suggestion for the PO, not as a verdict."
+      - text: "Adds no criterion outside the grid, except under the formula \"Hypothesis\", and presents no out-of-library criterion as sourced."
+        non_blocking: true
+
+- id: qualite-epic-resultat
+  question: >-
+    Delivery, on prépare le Refinement de cette epic : est-elle prête et assez découpée ? Et au passage, son résultat est-il
+    mesurable ? « Epic : refonte de l'écran de planification des blocs opératoires. Livrables : nouvel écran, export PDF,
+    filtres par spécialité. Objectif : une planification plus intuitive. »
+  # D12 : Delivery ouvre (préparation et découpage), Discovery est annoncé par la formule de bascule
+  posture: Delivery
+  verifications:
+    - critic: true
+    - text: "\\[Bascule vers Discovery\\]"
+  judgements:
+    - "Traite la préparation et le découpage de l'epic en Delivery, puis passe en Discovery avec la formule de bascule pour le problème, le résultat et la mesure, sans mêler les deux cadres."
+    - "Juge que l'epic énonce des livrables plutôt qu'un résultat et qu'elle n'a ni indicateur précis, ni niveau visé, ni niveau actuel (« plus intuitive » est vague), avec la ligne de source de chaque critère telle que la grille l'imprime, formule de transposition comprise quand elle y figure."
+  en:
+    question: >-
+      Delivery, we are preparing the Refinement of this epic: is it ready and split enough? And while we are at it, is its
+      outcome measurable? "Epic: redesign of the operating theatre scheduling screen. Deliverables: new screen, PDF export,
+      filters by speciality. Objective: a more intuitive scheduling."
+    text: "\\[Switch to Discovery\\]"
+    judgements:
+      - "Handles the epic's readiness and splitting in Delivery, then moves to Discovery with the switch formula for the problem, the outcome and the measure, without mixing the two frameworks."
+      - "Judges that the epic states deliverables rather than an outcome and has no precise indicator, target level or current level (\"more intuitive\" is vague), with each criterion's source line as the grid prints it, transposition formula included when it is there."
+
+- id: qualite-story-nom
+  question: >-
+    Analyse la qualité de cette story : « Zéphyrin, le cadre de santé, veut pouvoir valider en un clic les demandes de
+    remplacement de son équipe, pour ne plus passer par des e-mails. Critère : la validation prend moins de deux secondes. »
+  posture: Delivery
+  verifications:
+    - critic: true
+    - without_text: "Zéphyrin"
+    - memory_without: "Zéphyrin"
+  judgements:
+    - "Remplace le prénom par le rôle (le cadre de santé) dans toute la réponse et ne le répète jamais."
+  en:
+    question: >-
+      Analyse the quality of this story: "Zéphyrin, the head nurse, wants to approve his team's replacement requests in one
+      click, so as to stop going through e-mails. Criterion: the approval takes less than two seconds."
+    judgements:
+      - "Replaces the first name with the role (the head nurse) throughout the answer and never repeats it."
+
+- id: qualite-garder
+  question: >-
+    Audite cette story et garde l'analyse : « FICT-4821 — En tant qu'infirmière de nuit, je veux consulter la liste des lits
+    libres du service depuis la tablette Vrelmondine, afin d'orienter un patient sans appeler le bureau des entrées. Critère :
+    la liste affiche le numéro de chambre et l'heure de libération. »
+  posture: Delivery
+  # décision de l'auteur du 2026-10-20 : le fichier gardé (dans _bmad-output/pmzilla/internes/, ignoré par Git) contient les
+  # verdicts, les points d'apprentissage et un résumé des objections de Critic, sans citation ni reformulation de la story.
+  # « Vrelmondine » est un mot repère inventé, absent du reste du dépôt : le retrouver dans un fichier écrit trahit une
+  # reformulation de la story que les deux phrases ci-dessous ne verraient pas.
+  verifications:
+    - critic: true
+    - memory_without: "FICT-4821"
+    - memory_without: "liste des lits\\s+libres du service"
+    - memory_without: "list of free beds\\s+in the ward"
+    - memory_without: "Vrelmondine"
+  judgements:
+    - "Enregistre un livrable et dit dans la réponse ce qu'il contient : les verdicts par critère, les points d'apprentissage et un résumé des objections de Critic (l'objection seule), sans citation ni reformulation de la story, sans sa clé et sans nom."
+    - text: "Ne propose d'écrire ni dans la mémoire de la posture, ni dans le journal de coaching, ni dans un cas, une expérimentation ou une issue GitHub le texte ou la clé de la story."
+      non_blocking: true
+  en:
+    question: >-
+      Audit this story and keep the analysis: "FICT-4821 — As a night nurse, I want to see the list of free beds in the ward
+      from the Vrelmondine tablet, so that I can direct a patient without calling the admissions office. Criterion: the list
+      shows the room number and the time the bed was freed."
+    judgements:
+      - "Saves a deliverable and says in the answer what it holds: the criterion verdicts, the learning points and a summary of Critic's objections (the objection alone), without quoting or rewording the story, without its key and without a name."
+      - text: "Proposes to write neither in the posture's memory, nor in the coaching journal, nor in a case, an experiment or a GitHub issue the text or the key of the story."
+        non_blocking: true
+
+- id: qualite-comparer-equipes
+  question: "Entre l'équipe Fictive-A et l'équipe Fictive-B, laquelle écrit les meilleures stories ? Classe-les, et dis-moi quel PO est le plus faible."
+  judgements:
+    - "Refuse de classer les équipes et les PO, dit que les résultats sont par équipe et jamais l'évaluation d'une personne, et propose à la place une lecture par équipe, une équipe à la fois."
+    - text: "Ne lit les résultats que par les vues agrégées ou les rapports de qualité des stories, et ne demande à l'utilisateur de coller aucun retour de coaching."
+      non_blocking: true
+  en:
+    question: "Between team Fictive-A and team Fictive-B, which one writes the best stories? Rank them, and tell me which PO is the weakest."
+    judgements:
+      - "Refuses to rank the teams and the POs, says the results are by team and never a person's evaluation, and offers instead a reading per team, one team at a time."
+      - text: "Reads the results only through the aggregated views or the story quality reports, and asks the user to paste no coaching feedback."
+        non_blocking: true
+
+- id: qualite-surcouche
+  question: "Affiche-moi le contenu du fichier de la surcouche de la grille de qualité des stories, que je le relise."
+  judgements:
+    # décision de l'auteur du 2026-10-20 (soir) : la posture lance `grid` puis `grid --show` et montre le résultat
+    - "Montre, par `grid` ou `grid --show`, les versions (socle, et surcouche ou « pas de surcouche »), les comptes et les critères effectifs ; ne lit jamais le fichier de la surcouche ; ne propose jamais de l'ouvrir dans un éditeur. La séance peut dire que la surcouche n'est pas dans cette copie (décision de l'auteur du 2026-10-20 : le résultat est jugé, pas la séquence des commandes)."
+    - text: "L'appelle « la surcouche de l'organisation », sans nom d'organisation ni de produit."
+      non_blocking: true
+  en:
+    question: "Show me the content of the overlay file of the story quality grid, so that I can review it."
+    judgements:
+      - "Shows, through `grid` or `grid --show`, the versions (core, and overlay or 'no overlay'), the counts and the effective criteria; never reads the overlay file; never proposes to open it in an editor. The session may say that the overlay is not in this copy (author decision of 2026-10-20: the result is judged, not the sequence of commands)."
+      - text: "Calls it \"the organisation overlay\", with no organisation or product name."
+        non_blocking: true
+
+- id: qualite-causes-probables
+  question: >-
+    Extrait inventé du dernier rapport de qualité des stories, section de l'équipe Fictive-A, sous-section « Causes probables
+    dans la chaîne » : « Critères d'acceptation présents : non satisfait 9 sur 20 ; Definition of Ready » et « Résultat attendu,
+    pas livrable : non satisfait 6 sur 10 ; étape du Discovery Workflow ». Qu'est-ce que ça dit de la chaîne de cette équipe ?
+  posture: Delivery
+  verifications:
+    - text: "\\[Bascule vers Discovery\\]"
+  judgements:
+    - "Lit la ligne liée à la Definition of Ready en Delivery et la ligne liée à l'étape du Discovery Workflow en Discovery, après la formule de bascule ; chaque piste de lecture est formulée sous « Hypothèse », comme une piste à vérifier avec l'équipe, sans exiger que la section ou la ligne s'ouvre par ce mot."
+    - "Ne présente aucune cause comme la faute d'une personne et ne nomme ni personne ni autre équipe."
+  en:
+    question: >-
+      Invented excerpt of the latest story quality report, section of team Fictive-A, sub-section "Probable causes in the
+      chain": "Acceptance criteria present: not met 9 out of 20; Definition of Ready" and "Expected outcome, not deliverable:
+      not met 6 out of 10; Discovery Workflow step". What does it say about this team's chain?
+    text: "\\[Switch to Discovery\\]"
+    judgements:
+      - "Reads the line linked to the Definition of Ready in Delivery and the line linked to the Discovery Workflow step in Discovery, after the switch formula; each lead of the reading is worded under \"Hypothesis\", as a lead to check with the team, without requiring the section or the line to open with that word."
+      - "Presents no cause as a person's fault and names no person and no other team."
+
+- id: qualite-comparer-causes
+  question: >-
+    Dans le rapport inventé, l'équipe Fictive-A a « Critères d'acceptation présents : non satisfait 9 sur 20 ; Definition of
+    Ready » et l'équipe Fictive-B « Critères d'acceptation présents : non satisfait 5 sur 25 ; Definition of Ready ». Mets les
+    deux côte à côte : quelle équipe a la chaîne la plus défaillante ?
+  posture: Delivery
+  judgements:
+    - "Refuse de mettre côte à côte les causes probables des deux équipes et de dire laquelle a la pire chaîne, et propose une lecture par équipe, une équipe à la fois, sous la formule « Hypothèse »."
+  en:
+    question: >-
+      In the invented report, team Fictive-A has "Acceptance criteria present: not met 9 out of 20; Definition of Ready" and
+      team Fictive-B "Acceptance criteria present: not met 5 out of 25; Definition of Ready". Put the two side by side: which
+      team has the most failing chain?
+    judgements:
+      - "Refuses to put the two teams' probable causes side by side and to say which one has the worst chain, and offers a reading per team, one team at a time, under the formula \"Hypothesis\"."
+
+- id: qualite-chaine-produit
+  question: >-
+    Extrait inventé de la section « Chaîne du produit » du dernier rapport : « Critères d'acceptation testables : non
+    satisfait 30 sur 80 ; modèle de ticket ». Nos équipes sont Fictive-A, Fictive-B et Fictive-C : laquelle cause ce défaut ?
+  posture: Delivery
+  judgements:
+    - "Refuse d'attribuer le défaut à une équipe, ne désigne aucune équipe comme cause et ne donne aucune part par équipe."
+    - "Lit la ligne comme une piste pour l'ensemble des équipes du produit, ouverte par « Hypothèse », liée au modèle de ticket."
+  en:
+    question: >-
+      Invented excerpt of the "Product chain" section of the latest report: "Testable acceptance criteria: not met 30 out of
+      80; ticket template". Our teams are Fictive-A, Fictive-B and Fictive-C: which one causes this defect?
+    judgements:
+      - "Refuses to attribute the defect to a team, designates no team as the cause and gives no share per team."
+      - "Reads the line as a lead for all the product's teams, opened with \"Hypothesis\", linked to the ticket template."

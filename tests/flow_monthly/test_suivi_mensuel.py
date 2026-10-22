@@ -1,6 +1,7 @@
 """
-Tests de tools/flow_monthly.py (change monthly-flow-orchestrator, R-48) : l'ordre des étapes, l'arrêt au premier écart, la reprise, le
-passage à blanc, le résumé et le refus d'un mois déjà fait. Faux outils, réglages inventés, aucune donnée réelle (aide_flow_monthly.py).
+Tests de tools/flow_monthly.py (change monthly-flow-orchestrator, R-48 ; plan de database-only, D8) : l'ordre des étapes, l'arrêt au
+premier écart, la reprise, le passage à blanc, le résumé et le refus d'un mois déjà fait. Faux outils, réglages inventés, aucune donnée
+réelle (aide_flow_monthly.py).
 
     uv run --with pyyaml python -W ignore -m unittest discover -s tests/flow_monthly -q -f
 """
@@ -17,34 +18,19 @@ from aide_flow_monthly import (Decor, MARQUES, PERIMETRE_1, PERIMETRE_2, REQUETE
 PORTEE = f"{PERIMETRE_1},{PERIMETRE_2}"
 
 
-def exports(jour: str) -> list[str]:
-    return [f"Flux-Lab/exports/api-{REQUETE_1}-{jour}.csv", f"Flux-Lab/exports/api-{REQUETE_2}-{jour}.csv"]
-
-
-def rapport(nom: str, jour: str) -> str:
-    return f"Flux-Lab/rapports/flux-{nom}-{jour}.md"
-
-
 def appels_attendus(jour: str, langue: str = "en", date_option: bool = False) -> list[tuple[str, list[str]]]:
-    e = exports(jour)
+    """Plan de la décision D8 : aucun chemin de fichier, ni --source, ni étape de comparaison ; l'import passe avant l'historique."""
     today = ["--today", jour] if date_option else []
     return [
         ("export_jira_api", ["export", "--strict-teams", "--language", langue]),
-        ("history_jira", ["collect", *e, "--strict", "--language", langue]),
-        ("flow_import", [*e, "--history", "--mark-absent", "--language", langue]),
-        ("flux_jira", ["compute", *e, "--name", SERIE_1, "--scope", PORTEE, "--history", "--dormant-from-history", "--points",
+        ("flow_import", ["--mark-absent", "--language", langue]),
+        ("history_jira", ["collect", "--strict", "--language", langue]),
+        ("flux_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--history", "--dormant-from-history", "--points",
                        "--language", langue, *today]),
-        ("flux_jira", ["compute", *e, "--name", SERIE_2, "--history", "--dormant-from-history", "--points", "--language", langue, *today]),
-        ("dependencies_jira", ["compute", *e, "--name", SERIE_1, "--scope", PORTEE, "--language", langue]),
-        ("dependencies_jira", ["compute", *e, "--name", SERIE_1, "--scope", PORTEE, "--by", "project", "--language", langue]),
-        ("dependencies_jira", ["compute", *e, "--name", SERIE_2, "--language", langue]),
-        ("flow_compare", ["--language", langue, "data", *e, "--history"]),
-        ("flux_jira", ["compute", "--source", "db", "--name", f"{SERIE_1}-db", "--scope", PORTEE, "--history", "--dormant-from-history",
-                       "--no-comparison", "--language", langue, *today]),
-        ("flow_compare", ["--language", langue, "reports", rapport(SERIE_1, jour), rapport(f"{SERIE_1}-db", jour)]),
-        ("flux_jira", ["compute", "--source", "db", "--name", f"{SERIE_2}-db", "--history", "--dormant-from-history",
-                       "--no-comparison", "--language", langue, *today]),
-        ("flow_compare", ["--language", langue, "reports", rapport(SERIE_2, jour), rapport(f"{SERIE_2}-db", jour)]),
+        ("flux_jira", ["compute", "--name", SERIE_2, "--history", "--dormant-from-history", "--points", "--language", langue, *today]),
+        ("dependencies_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--language", langue]),
+        ("dependencies_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--by", "project", "--language", langue]),
+        ("dependencies_jira", ["compute", "--name", SERIE_2, "--language", langue]),
         ("flow_board", ["--language", langue]),
         ("flow_board", ["--language", langue, "--anonymous"]),
         ("flow_retention", ["purge", "--language", langue]),
@@ -56,33 +42,47 @@ class OrdreEtOptions(Decor):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui()))
-        self.assertIn("Monthly run complete: 12 of 12 steps, 0 skipped", r.sortie)
+        self.assertIn("Monthly run complete: 9 of 9 steps, 0 skipped", r.sortie)
 
     def test_run_complet_en_francais_par_defaut(self):
         r = self.lancer()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertIn("Suivi mensuel terminé : 12 étapes sur 12, 0 sautées", r.sortie)
+        self.assertIn("Suivi mensuel terminé : 9 étapes sur 9, 0 sautées", r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui(), "fr"))
 
     def test_chaque_etape_est_annoncee_avec_son_rang(self):
         r = self.lancer_en()
-        for ligne in ("Step 1/12: export", "Step 2/12: history", "Step 3/12: import", "Step 4/12: flow (series 1)",
-                      "Step 5/12: flow (series 2)", "Step 6/12: dependencies (series 1)", "Step 7/12: dependencies (series 2)",
-                      "Step 8/12: compare-data", "Step 9/12: compare-reports (series 1)", "Step 10/12: compare-reports (series 2)",
-                      "Step 11/12: dashboard", "Step 12/12: retention"):
+        for ligne in ("Step 1/9: export", "Step 2/9: import", "Step 3/9: history", "Step 4/9: flow (series 1)",
+                      "Step 5/9: flow (series 2)", "Step 6/9: dependencies (series 1)", "Step 7/9: dependencies (series 2)",
+                      "Step 8/9: dashboard", "Step 9/9: retention"):
             self.assertIn(ligne, r.sortie)
         self.assertRegex(r.sortie, r"Step export passed \(\d+ s\)")
 
     def test_outils_exclus_jamais_appeles_et_commandes_de_lecture_affichees(self):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertEqual(set(self.outils_appeles()) & {"segment_sample", "db", "flow_views", "knowledge_import"}, set())
+        self.assertEqual(set(self.outils_appeles()) & {"segment_sample", "db", "flow_views", "knowledge_import", "flow_compare"}, set())
         self.assertNotIn("--dry-run", [m for a in self.appels() for m in a["args"]])      # pas d'essai à blanc de l'import
         for a in self.appels():
             self.assertNotIn("check", a["args"])
         derniere = r.sortie.strip().splitlines()[-3:]
         self.assertIn("/monthly-flow <series>", "\n".join(derniere))
         self.assertIn("/dependencies <series>", "\n".join(derniere))
+
+    def test_aucun_chemin_de_fichier_ni_source_dans_les_appels(self):
+        """Décision D8 : l'orchestrateur ne construit aucun chemin d'export, ne passe ni --source ni --history à l'import."""
+        self.lancer_en()
+        for a in self.appels():
+            for m in a["args"]:
+                self.assertFalse(m.endswith((".csv", ".json")) or "exports" in m, (a["outil"], m))
+            self.assertNotIn("--source", a["args"])
+        import_ = [a["args"] for a in self.appels() if a["outil"] == "flow_import"]
+        self.assertEqual(import_, [["--mark-absent", "--language", "en"]])
+
+    def test_l_historique_se_collecte_apres_l_import(self):
+        self.lancer_en()
+        outils = self.outils_appeles()
+        self.assertLess(outils.index("flow_import"), outils.index("history_jira"))
 
     def test_option_open_va_aux_tableaux(self):
         self.lancer_en("--open")
@@ -104,8 +104,7 @@ class OrdreEtOptions(Decor):
         self.ecrire_reglages("jql_export: project = AAA\nmonthly_run:\n  series:\n    - name: seulezz\n      dependencies: none\n")
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
-        chemin = f"Flux-Lab/exports/api-{aujourdhui()}.csv"
-        self.assertEqual(self.appels()[1]["args"], ["collect", chemin, "--strict", "--language", "en"])
+        self.assertEqual(self.appels()[2]["args"], ["collect", "--strict", "--language", "en"])
         self.assertNotIn("dependencies_jira", self.outils_appeles())             # dependencies: none
         self.assertIn("Step 1/", r.sortie)
 
@@ -122,17 +121,11 @@ class OrdreEtOptions(Decor):
             if a["outil"] in ("flux_jira", "dependencies_jira") and SERIE_2 in " ".join(a["args"]):
                 self.assertNotIn("--scope", a["args"])
 
-    def test_comparaison_des_rapports_par_la_serie_de_la_base(self):
+    def test_un_seul_calcul_de_flux_par_serie_sous_le_nom_de_la_serie(self):
+        """Plus de série « -db » ni de calcul à comparer : le rapport de flux est calculé une fois par série, depuis la base."""
         self.lancer_en()
-        base = [a["args"] for a in self.appels() if a["outil"] == "flux_jira" and "--source" in a["args"]]
-        self.assertEqual(len(base), 2)
-        for args in base:
-            self.assertIn("--no-comparison", args)
-            self.assertNotIn("--points", args)
-            self.assertTrue(args[args.index("--name") + 1].endswith("-db"))
-            self.assertEqual([x for x in args if x.endswith(".csv")], [])
-        comparaisons = [a["args"] for a in self.appels() if a["outil"] == "flow_compare" and "reports" in a["args"]]
-        self.assertEqual(comparaisons[0][-2:], [rapport(SERIE_1, aujourdhui()), rapport(f"{SERIE_1}-db", aujourdhui())])
+        calculs = [a["args"] for a in self.appels() if a["outil"] == "flux_jira"]
+        self.assertEqual([c[c.index("--name") + 1] for c in calculs], [SERIE_1, SERIE_2])
 
 
 class ArretAuPremierEcart(Decor):
@@ -142,45 +135,40 @@ class ArretAuPremierEcart(Decor):
         self.assertEqual(r.code, 1, r.sortie)
         self.assertIn("Stopped at step import: exit code 1", r.sortie)
         self.assertIn("--from import", r.sortie)
-        self.assertEqual(self.outils_appeles(), ["export_jira_api", "history_jira", "flow_import"])
+        self.assertEqual(self.outils_appeles(), ["export_jira_api", "flow_import"])
         self.assertEqual(r.sortie.strip().splitlines()[-1], "To resume: uv run tools/flow_monthly.py --from import")
 
-    def test_ecart_de_parite_sur_les_donnees(self):
-        self.codes(flow_compare__data=1)
-        r = self.lancer_en()
-        self.assertEqual(r.code, 4, r.sortie)
-        self.assertIn("Database and CSV differ at step compare-data", r.sortie)
-        self.assertEqual(self.outils_appeles()[-1], "flow_compare")
-        self.assertNotIn("flow_board", self.outils_appeles())
-        self.assertNotIn("--source", [m for a in self.appels() for m in a["args"]])
-
-    def test_ecart_de_parite_sur_les_rapports(self):
-        self.codes(flow_compare__reports=1)
-        r = self.lancer_en()
-        self.assertEqual(r.code, 4, r.sortie)
-        self.assertIn("Database and CSV differ at step compare-reports", r.sortie)
-        self.assertNotIn("flow_board", self.outils_appeles())
-        self.assertIn("--from compare-reports", r.sortie)
-
-    def test_entree_illisible_de_la_comparaison_n_est_pas_un_ecart(self):
-        self.codes(flow_compare__data=2)
+    def test_historique_en_echec_code_1_jamais_4(self):
+        self.codes(history_jira=3)
         r = self.lancer_en()
         self.assertEqual(r.code, 1, r.sortie)
-        self.assertIn("Stopped at step compare-data: exit code 2", r.sortie)
-        self.assertNotIn("differ", r.sortie)
+        self.assertIn("Stopped at step history: exit code 3", r.sortie)
+        self.assertEqual(self.outils_appeles(), ["export_jira_api", "flow_import", "history_jira"])
 
-    def test_calcul_de_la_base_en_echec_est_une_panne(self):
-        self.codes_de({"flux_jira:db": 1})
+    def test_aucun_code_4_ni_phrase_d_ecart_de_parite(self):
+        for outil in ("export_jira_api", "flow_import", "history_jira", "flux_jira", "dependencies_jira", "flow_board", "flow_retention"):
+            for code in (1, 2, 3, 4, 66):
+                self.setUp()
+                self.codes_de({outil: code})
+                for langue in ("en", "fr"):
+                    r = self.lancer("--language", langue, "--force")
+                    self.assertEqual(r.code, 1, (outil, code, r.sortie))
+                    self.assertNotIn("differ", r.sortie)
+                    self.assertNotIn("Écart", r.sortie)
+                    self.assertNotIn("Missing input", r.sortie)
+
+    def test_entree_illisible_du_tableau_de_bord_arrete_avec_le_code_1(self):
+        self.codes(flow_board=2)
         r = self.lancer_en()
         self.assertEqual(r.code, 1, r.sortie)
-        self.assertIn("Stopped at step compare-reports: exit code 1", r.sortie)
+        self.assertIn("Stopped at step dashboard: exit code 2", r.sortie)
 
-    def test_fichier_d_export_manquant_l_orchestrateur_ne_le_verifie_pas(self):
-        self.codes(history_jira=1)
+    def test_export_en_echec_l_orchestrateur_ne_verifie_aucun_fichier(self):
+        self.codes(export_jira_api=1)
         r = self.lancer_en()
         self.assertEqual(r.code, 1, r.sortie)
-        self.assertIn("Stopped at step history", r.sortie)
-        self.assertEqual(self.outils_appeles(), ["export_jira_api", "history_jira"])
+        self.assertIn("Stopped at step export", r.sortie)
+        self.assertEqual(self.outils_appeles(), ["export_jira_api"])
         self.assertEqual(list((self.flux / "exports").iterdir()), [self.flux / "exports" / "sentinelle.csv"])
 
     def test_pas_de_nouvelle_tentative(self):
@@ -203,28 +191,34 @@ class ArretAuPremierEcart(Decor):
 
     def test_reprise_avec_une_autre_date_dans_la_phrase_de_reprise(self):
         self.codes(flow_import=1)
-        r = self.lancer_en("--date", hier(), "--from", "history")
+        r = self.lancer_en("--date", hier(), "--from", "import")
         self.assertEqual(r.sortie.strip().splitlines()[-1], f"To resume: uv run tools/flow_monthly.py --from import --date {hier()}")
 
 
 class Reprise(Decor):
-    def test_from_compare_data(self):
-        r = self.lancer_en("--from", "compare-data")
+    def test_from_flow_sans_export_import_ni_historique(self):
+        r = self.lancer_en("--from", "flow", "--date", aujourdhui())
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertEqual(self.outils_appeles()[0], "flow_compare")
-        self.assertEqual(self.appels()[0]["args"], ["--language", "en", "data", *exports(aujourdhui()), "--history"])
-        for exclu in ("export_jira_api", "history_jira", "flow_import", "dependencies_jira"):
+        for exclu in ("export_jira_api", "history_jira", "flow_import"):
             self.assertNotIn(exclu, self.outils_appeles())
-        self.assertNotIn(("flux_jira", "--points"), [(a["outil"], m) for a in self.appels() for m in a["args"]])
+        self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui())[3:])
+
+    def test_etapes_retirees_refusees_code_2(self):
+        for etape in ("compare-data", "compare-reports"):
+            self.setUp()
+            r = self.lancer_en("--from", etape, "--date", aujourdhui())
+            self.assertEqual(r.code, 2, (etape, r.sortie))
+            self.assertEqual(self.appels(), [], etape)
+            self.assertFalse(list(self.rapports.glob("suivi-mensuel-*")), etape)
 
     def test_from_dashboard(self):
-        self.lancer_en("--from", "dashboard")
+        self.lancer_en("--from", "dashboard", "--date", aujourdhui())
         self.assertEqual(self.outils_appeles(), ["flow_board", "flow_board", "flow_retention"])
 
-    def test_date_d_un_autre_jour_chemins_et_rapports_de_cette_date(self):
+    def test_date_d_un_autre_jour_rapports_de_cette_date(self):
         r = self.lancer_en("--from", "import", "--date", hier())
         self.assertEqual(r.code, 0, r.sortie)
-        attendu = appels_attendus(hier(), date_option=True)[2:]
+        attendu = appels_attendus(hier(), date_option=True)[1:]
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], attendu)
         self.assertTrue((self.rapports / f"suivi-mensuel-{hier()}.md").exists())
 
@@ -247,13 +241,13 @@ class Reprise(Decor):
             self.assertFalse(list(self.rapports.glob("suivi-mensuel-*")), argv)
 
     def test_reprise_conserve_les_etapes_reussies_avant(self):
-        self.codes(flow_import=1)
-        self.lancer_en()                                                           # s'arrête à import
+        self.codes(history_jira=1)
+        self.lancer_en()                                                           # s'arrête à history
         self.codes_de({})
-        r = self.lancer_en("--from", "import")
+        r = self.lancer_en("--from", "history")
         self.assertEqual(r.code, 0, r.sortie)
         texte = self.resume()
-        for etape in ("export", "history"):
+        for etape in ("export", "import"):
             self.assertRegex(texte, rf"\| {etape} \| - \| passed \| 0 \|")             # repris du résumé précédent
         self.assertIn("- final status: complete", texte)
 
@@ -263,12 +257,13 @@ class PassageABlanc(Decor):
         r = self.lancer_en("--dry-run")
         self.assertEqual(r.code, 0, r.sortie)
         lignes = [l for l in r.sortie.splitlines() if l.strip()]
-        self.assertEqual(len(lignes), 16)
+        self.assertEqual(len(lignes), 11)
         for ligne in lignes:
             self.assertTrue(ligne.startswith("dry run: would run "), ligne)
         self.assertIn("<series 1>", r.sortie)
-        self.assertIn("<export 1>", r.sortie)
         self.assertIn("<scope 1>", r.sortie)
+        self.assertNotIn("<export", r.sortie)
+        self.assertNotIn(".csv", r.sortie)
         self.assertEqual(self.appels(), [])
         self.assertFalse(list(self.rapports.glob("suivi-mensuel-*")))
 
@@ -292,7 +287,7 @@ class PassageABlanc(Decor):
         return REGLAGES
 
     def test_dry_run_avec_from(self):
-        r = self.lancer_en("--dry-run", "--from", "dashboard")
+        r = self.lancer_en("--dry-run", "--from", "dashboard", "--date", aujourdhui())
         self.assertEqual(len([l for l in r.sortie.splitlines() if l.strip()]), 3)
 
 
@@ -365,24 +360,20 @@ class Resume(Decor):
         self.assertEqual(r.code, 1)
         texte = self.resume()
         self.assertRegex(texte, r"\| export \| - \| passed \| 0 \| \d+ \|")
+        self.assertRegex(texte, r"\| import \| - \| passed \| 0 \| \d+ \|")
         self.assertRegex(texte, r"\| history \| - \| failed \| 1 \| \d+ \|")
-        self.assertRegex(texte, r"\| import \| - \| not run \| - \| - \|")
         self.assertRegex(texte, r"\| flow \| 2 \| not run \|")
         self.assertIn("- final status: stopped at history", texte)
         self.assertIn("- export queries: 2", texte)
         self.assertIn("- series: 2", texte)
 
-    def test_resume_apres_un_ecart(self):
-        self.codes(flow_compare__data=1)
-        self.lancer_en()
-        self.assertRegex(self.resume(), r"\| compare-data \| - \| gap \| 1 \|")
-
     def test_resume_complet_avec_nombre_de_rapports(self):
         self.lancer_en()
         texte = self.resume()
         self.assertIn("- final status: complete", texte)
-        self.assertIn("- report files of the run date: 8", texte)        # 2 séries x (rapport CSV, rapport base) x (.md, .json)
+        self.assertIn("- report files of the run date: 4", texte)        # 2 séries x (.md, .json) : plus de rapport de la base à comparer
         self.assertNotIn("not run", texte)
+        self.assertNotIn("compare", texte)
 
     def test_permissions_du_resume(self):
         self.lancer_en()
@@ -392,7 +383,7 @@ class Resume(Decor):
     def test_le_resume_compte_les_outils_qui_ont_ecrit_sur_la_sortie_d_erreur(self):
         self.codes_de({"stderr_ok": 1})
         self.lancer_en()
-        self.assertRegex(self.resume(), r"- tools with error output on success: 16")
+        self.assertRegex(self.resume(), r"- tools with error output on success: 11")
 
     def test_pas_de_resume_quand_un_prerequis_est_refuse(self):
         self.ecrire_reglages("jira_site: x\n")
@@ -422,13 +413,13 @@ class MoisDejaFait(Decor):
 
     def test_from_ne_contourne_pas_le_refus(self):
         self.resume_ecrit(aujourdhui(), "complete")
-        r = self.lancer_en("--from", "dashboard")
+        r = self.lancer_en("--from", "dashboard", "--date", aujourdhui())
         self.assertEqual(r.code, 5, r.sortie)
         self.assertEqual(self.appels(), [])
 
     def test_un_resume_arrete_ne_bloque_pas(self):
         self.resume_ecrit(aujourdhui(), "stopped at import")
-        self.assertEqual(self.lancer_en("--from", "import").code, 0)
+        self.assertEqual(self.lancer_en("--from", "import", "--date", aujourdhui()).code, 0)
 
     def test_un_resume_d_un_autre_mois_ne_bloque_pas(self):
         import datetime as dt

@@ -1,7 +1,8 @@
 """Base jetable des tests de flow_store : création, migrations, insertion du jeu inventé sous le rôle pmzilla_flow.
 
-La base jetable (port 55432) est désignée par PMZILLA_LAB_DB_URL et PMZILLA_LAB_DB_PASSWORD (bash tools/dbtest.sh ; installation.md, 14.5). Sans elle, les
-tests qui en ont besoin sont sautés. Le vrai Trousseau n'est jamais interrogé : PMZILLA_LAB_DB_SECURITY_BIN pointe un faux binaire.
+La base jetable (port 55432) est celle de bash tools/dbtest.sh (installation.md, 14.5). La règle qui décide de l'utiliser est celle de tests/db/test_db.py
+(base_jetable_disponible, test-speed-2 D1) : sans le repère DBTEST_PORT posé par ce script, les tests qui en ont besoin sont sautés. Le vrai
+Trousseau n'est jamais interrogé : PMZILLA_LAB_DB_SECURITY_BIN pointe un faux binaire.
 """
 from __future__ import annotations
 
@@ -19,9 +20,11 @@ from urllib.parse import urlsplit, urlunsplit
 RACINE = Path(__file__).resolve().parents[2]
 TOOLS = RACINE / "tools"
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(RACINE / "tests" / "db"))
 import db  # noqa: E402
+import test_db  # noqa: E402  (la garde des tests avec base : une seule règle)
 
-MESSAGE_SAUT = "base jetable absente (lancer bash tools/dbtest.sh, installation.md 14.5)"
+MESSAGE_SAUT = test_db.MESSAGE_SAUT
 _DOSSIER = tempfile.TemporaryDirectory()
 FAUX_SECURITY = Path(_DOSSIER.name) / "security_absent"
 FAUX_SECURITY.write_text("#!/bin/sh\nexit 44\n")
@@ -31,21 +34,7 @@ URL_BASE = os.environ.get(db.VARIABLE_URL) or db.url_par_defaut()
 MOT_DE_PASSE = os.environ.get(db.VARIABLE_MOT_DE_PASSE)
 
 
-def _disponible() -> bool:
-    # la vraie base (port 5432) n'est jamais utilisée : sans port ou URL désignant la base jetable, tout est sauté
-    port = os.environ.get("PMZILLA_LAB_DB_PORT") or ""
-    if db.psycopg is None or not MOT_DE_PASSE or (not os.environ.get(db.VARIABLE_URL) and port in ("", "5432")):
-        return False
-    if ":5432/" in URL_BASE:
-        return False
-    try:
-        db.connect(URL_BASE, password=MOT_DE_PASSE, timeout=2, autocommit=True).close()
-        return True
-    except db.ErreurBase:
-        return False
-
-
-BASE_DISPONIBLE = _disponible()
+BASE_DISPONIBLE = test_db.base_jetable_disponible()
 
 
 def url_vers(nom_base: str) -> str:

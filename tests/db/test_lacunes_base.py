@@ -10,8 +10,12 @@ test_flow_schema.py (même fixture) et sont sautés quand aucun mot de passe ou 
 import contextlib
 import io
 import os
+import secrets
+import stat
+import tempfile
 import unittest
 import unittest.mock
+from pathlib import Path
 
 import test_db as base          # noqa: E402
 from test_db import db          # noqa: E402
@@ -104,6 +108,52 @@ class ColonneHasHistory(BaseJetable):
                 c.execute("UPDATE flow.issues SET has_history = NULL WHERE key = 'PROJ-1'")
 
 
+FAUX_COFFRE = """#!/bin/sh
+# Faux Trousseau d'un fichier : `-i` lit la commande d'ajout sur l'entrée standard (mot de passe = dernier mot) ;
+# find-generic-password rend le contenu, sauf pour l'entrée du superutilisateur (absente : sa variable sert).
+if [ "$1" = "-i" ]; then
+  read -r ligne
+  printf '%s\\n' "${ligne##* }" > "$FAUX_COFFRE"
+  exit 0
+fi
+[ "$1" = "find-generic-password" ] && [ "$3" != "pmzilla-lab-db" ] && [ -s "$FAUX_COFFRE" ] && cat "$FAUX_COFFRE" && exit 0
+exit 44
+"""
+
+
+class RolePasswordBaseJetable(BaseJetable):
+    """Tâche 1.4 : sur une base jetable seulement (sautée sans elle, lancée par l'auteur)."""
+
+    def test_le_mot_de_passe_genere_permet_la_connexion_par_le_faux_trousseau(self):
+        role = "pmzilla_test_" + secrets.token_hex(4)
+
+        def retirer():          # la base d'abord (elle porte les droits du rôle), puis le rôle
+            self._supprimer()
+            with db.connect(base.URL_BASE, password=base.MOT_DE_PASSE, autocommit=True) as nettoyage:
+                nettoyage.execute(f'DROP ROLE IF EXISTS "{role}"')
+        self.addCleanup(retirer)
+        self.admin.execute(f'CREATE ROLE "{role}" NOLOGIN')
+        self.admin.execute(f'GRANT CONNECT ON DATABASE "{self.nom_base}" TO "{role}"')
+        with tempfile.TemporaryDirectory() as dossier:
+            dossier = Path(dossier)
+            double = dossier / "security"
+            double.write_text(FAUX_COFFRE)
+            double.chmod(double.stat().st_mode | stat.S_IXUSR)
+            env = {db.VARIABLE_URL: self.url, db.VARIABLE_SECURITY: str(double), db.VARIABLE_MOT_DE_PASSE: base.MOT_DE_PASSE,
+                   "FAUX_COFFRE": str(dossier / "coffre")}
+            with unittest.mock.patch.dict(os.environ, env), \
+                    unittest.mock.patch.object(db, "ROLES_AVEC_MOT_DE_PASSE", (role,)):
+                db.generer_poser_ranger(role, (role,))
+                rangé = (dossier / "coffre").read_text().strip()
+                self.assertGreater(len(rangé), 12)
+                limite = db.connect(self.url, role=role)               # mot de passe relu dans le faux Trousseau
+                self.ouvertes.append(limite)
+                self.assertEqual(limite.execute("SELECT current_user").fetchone()[0], role)
+            verifieur = self.admin.execute("SELECT rolpassword FROM pg_authid WHERE rolname = %s", (role,)).fetchone()[0]
+            self.assertTrue(verifieur.startswith("SCRAM-SHA-256$"))
+            self.assertNotIn(rangé, verifieur)
+
+
 class SansBase(unittest.TestCase):
     def test_migration_0003_ajoute_la_colonne_sans_donnee(self):
         texte = (db.DOSSIER_MIGRATIONS / "0003_flow_has_history.sql").read_text(encoding="utf-8")
@@ -112,8 +162,6 @@ class SansBase(unittest.TestCase):
         self.assertNotRegex(sql, r"(?i)\bINSERT\s+INTO")
 
     def test_indice_sans_mot_de_passe_nomme_le_trousseau_et_la_variable(self):
-        if db.psycopg is None:
-            self.skipTest("psycopg absent")
         env = {k: v for k, v in os.environ.items() if not k.startswith("PMZILLA_LAB_DB_PASSWORD")}
         with unittest.mock.patch.dict(os.environ, env, clear=True):
             os.environ[db.VARIABLE_SECURITY] = "/inexistant/security"      # Trousseau vide, jamais le vrai
@@ -127,67 +175,313 @@ class SansBase(unittest.TestCase):
                           str(ctx.exception))
 
     def test_pas_d_indice_quand_un_mot_de_passe_est_fourni(self):
-        if db.psycopg is None:
-            self.skipTest("psycopg absent")
         with self.assertRaises(db.ErreurBase) as ctx:
             db.connect("postgresql://postgres@127.0.0.1:1/pmzilla", password="MotDePasseInvente-1", timeout=2)
         self.assertNotIn("Aucun mot de passe trouvé", str(ctx.exception))
 
 
+FAUX_TROUSSEAU = """#!/bin/sh
+printf '%s\\n' "$@" > "$FAUX_TROUSSEAU_ARGS"
+cat > "$FAUX_TROUSSEAU_ENTREE"
+exit "${FAUX_TROUSSEAU_CODE:-0}"
+"""
+VERIFIEUR = "SCRAM-SHA-256$4096:c2VsSW52ZW50ZQ==$Y2xlU3RvY2tlZQ==:Y2xlU2VydmV1cg=="
+
+
+class FausseConnexion:
+    """Fausse connexion de superutilisateur : enregistre dans `evenements` les instructions et les appels de transaction."""
+    def __init__(self, evenements, echec_verifieur=False):
+        self.evenements = evenements
+        self.instructions = []
+        self.pgconn = unittest.mock.MagicMock()
+        if echec_verifieur:
+            self.pgconn.encrypt_password.side_effect = RuntimeError("pas de chiffrement")
+        else:
+            self.pgconn.encrypt_password.return_value = VERIFIEUR.encode()
+
+    def execute(self, requete, params=None):
+        texte = requete if isinstance(requete, str) else requete.as_string(None)
+        self.instructions.append(texte)
+        self.evenements.append("execute")
+        return unittest.mock.MagicMock()
+
+    def commit(self):
+        self.evenements.append("commit")
+
+    def rollback(self):
+        self.evenements.append("rollback")
+
+    def close(self):
+        self.evenements.append("close")
+
+
+class FausseSession:
+    """Session d'essai sous le rôle : répond `SELECT current_user`."""
+    def __init__(self, utilisateur):
+        self.utilisateur = utilisateur
+        self.fermee = False
+
+    def execute(self, requete, params=None):
+        resultat = unittest.mock.MagicMock()
+        resultat.fetchone.return_value = (self.utilisateur,)
+        return resultat
+
+    def close(self):
+        self.fermee = True
+
+
 class CommandeRolePassword(unittest.TestCase):
-    def lancer(self, saisies, role="pmzilla_flow_views", definir=None):
-        """Pilote main(["role-password", role]) avec un faux getpass et une fausse connexion ; rend (code, sortie, erreur, appels)."""
-        conn = unittest.mock.MagicMock()
+    ROLE = "pmzilla_flow_views"
+
+    def setUp(self):
+        self.evenements = []
+        self.mots_de_passe_rangés = []
+
+    def lancer(self, role=None, *, echec_verifieur=False, refus_trousseau=False, session=None, erreur_session=None,
+               relecture="identique", variable="aucune"):
+        """Pilote main(["role-password", role]) : fausse connexion, Trousseau doublé, session d'essai doublée, getpass interdit.
+        `relecture` : "identique" (rend le mot de passe rangé), "differente", "echec" (rien) ou "exception" (la relecture lève).
+        `variable` : la variable d'environnement du mot de passe du rôle, posée pendant la commande : "aucune", "rangee" (elle
+        porte le mot de passe généré, comme une copie à jour) ou "autre" (elle porte une valeur étrangère).
+        Rend (code, sortie, erreur, connexion superutilisateur)."""
+        role = role or self.ROLE
+        superutilisateur = FausseConnexion(self.evenements, echec_verifieur)
+        self.appels_relecture = []
+
+        def ranger(r, mot_de_passe, security=None):
+            self.evenements.append("trousseau")
+            self.mots_de_passe_rangés.append(mot_de_passe)
+            if variable == "rangee":
+                os.environ[db.variable_du_role(role)] = mot_de_passe
+            if refus_trousseau:
+                raise db.ErreurBase(f"le Trousseau a refusé l'écriture (service {db.service_du_role(r)}) ; "
+                                    "aucun mot de passe n'a été posé.")
+
+        def relire(security=None, role=None):
+            self.evenements.append("relecture")
+            self.appels_relecture.append(role)
+            if relecture == "exception":
+                raise db.ErreurBase(f"relecture en échec : {self.mots_de_passe_rangés[-1]}")   # un faux message qui porterait le secret
+            return {"identique": lambda: self.mots_de_passe_rangés[-1], "differente": lambda: "Autre-Valeur-0123456789",
+                    "echec": lambda: None}[relecture]()
+
+        def connecter(*args, **kwargs):
+            if kwargs.get("role"):
+                self.evenements.append("session")
+                if erreur_session:
+                    raise db.ErreurBase(erreur_session)
+                return session or FausseSession(kwargs["role"])
+            return superutilisateur
+
         sortie, erreur = io.StringIO(), io.StringIO()
-        with unittest.mock.patch.object(db.getpass, "getpass", side_effect=saisies) as invites, \
-                unittest.mock.patch.object(db, "connect", return_value=conn) as connexion, \
+        with unittest.mock.patch.object(db.getpass, "getpass", side_effect=AssertionError("aucune saisie attendue")), \
+                unittest.mock.patch("builtins.input", side_effect=AssertionError("aucune saisie attendue")), \
+                unittest.mock.patch.object(db, "ranger_dans_trousseau", ranger), \
+                unittest.mock.patch.object(db, "mot_de_passe_trousseau", relire), \
+                unittest.mock.patch.object(db, "connect", connecter), \
+                unittest.mock.patch.dict(os.environ), \
                 contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreur):
-            if definir is None:
-                code = db.main(["role-password", role])
-            else:
-                with unittest.mock.patch.object(db, "definir_mot_de_passe", definir):
-                    code = db.main(["role-password", role])
-        return code, sortie.getvalue(), erreur.getvalue(), invites, connexion, conn
+            if variable == "autre":
+                os.environ[db.variable_du_role(role)] = "Variable-Etrangere-0123456789"
+            code = db.main(["role-password", role])
+        return code, sortie.getvalue(), erreur.getvalue(), superutilisateur
 
-    def test_double_saisie_masquee(self):
-        definir = unittest.mock.Mock()
-        code, _, _, invites, _, _ = self.lancer(["MotDePasseInvente-12", "MotDePasseInvente-12"], definir=definir)
-        self.assertEqual(code, 0)
-        self.assertEqual(invites.call_count, 2)                       # getpass : saisie masquée, jamais input()
-        self.assertIn("pmzilla_flow_views", invites.call_args_list[0].args[0])
-
-    def test_deux_saisies_differentes(self):
-        definir = unittest.mock.Mock()
-        code, sortie, erreur, _, connexion, _ = self.lancer(["MotDePasseInvente-12", "AutreMotDePasse-345"], definir=definir)
-        self.assertEqual(code, 1)
-        self.assertIn("Les deux saisies diffèrent", erreur)
-        connexion.assert_not_called()                                 # aucune connexion, aucun mot de passe posé
-        definir.assert_not_called()
-        self.assertNotIn("security add-generic-password", sortie)
-
-    def test_mot_de_passe_trop_court(self):
-        code, sortie, erreur, _, _, conn = self.lancer(["court", "court"])
-        self.assertEqual(code, 1)
-        self.assertIn("Mot de passe trop court (12 caractères au moins)", erreur)
-        self.assertNotIn("court\n", sortie + erreur.replace("trop court", ""))
-        conn.execute.assert_not_called()
-        conn.close.assert_called_once()                               # connexion fermée malgré l'erreur
-        self.assertNotIn("security add-generic-password", sortie)
-
-    def test_mot_de_passe_valide_affiche_la_commande_du_trousseau_sans_le_mot_de_passe(self):
-        secret = "MotDePasseInvente-12"
-        definir = unittest.mock.Mock()
-        code, sortie, erreur, _, _, conn = self.lancer([secret, secret], role="pmzilla_cases", definir=definir)
-        self.assertEqual(code, 0)
-        definir.assert_called_once_with(conn, "pmzilla_cases", secret)
-        conn.close.assert_called_once()
-        self.assertIn("Mot de passe posé", sortie)
-        self.assertIn('security add-generic-password -U -s pmzilla-lab-db-pmzilla_cases -a "$USER" -w', sortie)
+    def test_aucune_saisie_et_succes(self):
+        code, sortie, erreur, _ = self.lancer()
+        self.assertEqual(code, 0)                                      # getpass et input() lèvent s'ils sont appelés
+        self.assertIn(f"Mot de passe de {self.ROLE} généré, posé et rangé dans le Trousseau "
+                      f"(service pmzilla-lab-db-{self.ROLE}) ; connexion d'essai réussie.", sortie)
+        secret = self.mots_de_passe_rangés[0]
         self.assertNotIn(secret, sortie + erreur)
+
+    def test_deux_executions_donnent_deux_mots_de_passe_differents_de_l_alphabet(self):
+        for _ in range(2):
+            self.assertEqual(self.lancer()[0], 0)
+        premier, second = self.mots_de_passe_rangés
+        self.assertNotEqual(premier, second)
+        for mot in (premier, second):
+            self.assertGreater(len(mot), 12)                           # au-dessus du minimum du poseur
+            self.assertRegex(mot, r"^[A-Za-z0-9][A-Za-z0-9_-]*$")      # lettres, chiffres, tiret, tiret bas
+
+    def test_ordre_transaction_trousseau_validation_session(self):
+        code, _, _, _ = self.lancer()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.evenements, ["execute", "trousseau", "relecture", "commit", "close", "session"])
+
+    PHRASE_RELECTURE = "Erreur : le Trousseau n'a pas rendu le mot de passe écrit (service pmzilla-lab-db-{role}) ; aucun mot de passe n'a été posé."
+
+    def test_entree_relue_et_comparee_avant_la_validation(self):
+        for relecture in ("differente", "echec", "exception"):
+            with self.subTest(relecture=relecture):
+                self.evenements.clear()
+                self.mots_de_passe_rangés.clear()
+                code, sortie, erreur, _ = self.lancer(relecture=relecture)
+                secret = self.mots_de_passe_rangés[0]
+                self.assertEqual(code, 1)
+                self.assertIn(self.PHRASE_RELECTURE.format(role=self.ROLE), erreur)
+                self.assertIn("rollback", self.evenements)
+                self.assertNotIn("commit", self.evenements)
+                self.assertNotIn("session", self.evenements)
+                self.assertNotIn(secret, sortie + erreur)               # ni le cas de différence, ni l'échec de relecture
+                self.assertNotIn("Autre-Valeur-0123456789", sortie + erreur)
+
+    def test_relecture_lit_le_trousseau_meme_quand_la_variable_d_environnement_est_posee(self):
+        """Une relecture qui retomberait sur la variable (lire_mot_de_passe, os.environ) validerait un Trousseau vide ou périmé."""
+        # variable à jour, Trousseau qui ne rend rien : seul le Trousseau compte, la validation est refusée
+        for relecture in ("echec", "differente"):
+            with self.subTest(relecture=relecture):
+                self.evenements.clear()
+                self.mots_de_passe_rangés.clear()
+                code, sortie, erreur, _ = self.lancer(relecture=relecture, variable="rangee")
+                self.assertEqual(code, 1)
+                self.assertIn(self.PHRASE_RELECTURE.format(role=self.ROLE), erreur)
+                self.assertIn("relecture", self.evenements)            # la lecture du Trousseau a été appelée
+                self.assertNotIn("commit", self.evenements)
+                self.assertNotIn(self.mots_de_passe_rangés[0], sortie + erreur)
+        # variable étrangère, Trousseau à jour : la variable ne fait pas échouer la relecture
+        self.evenements.clear()
+        self.mots_de_passe_rangés.clear()
+        code, _, _, _ = self.lancer(relecture="identique", variable="autre")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.appels_relecture, [self.ROLE])           # le Trousseau du rôle, pas celui du superutilisateur
+
+    def test_refus_d_ecriture_dans_le_trousseau_aucune_relecture(self):
+        for relecture in ("identique", "differente", "echec"):
+            with self.subTest(relecture=relecture):
+                self.evenements.clear()
+                self.mots_de_passe_rangés.clear()
+                code, sortie, erreur, _ = self.lancer(refus_trousseau=True, relecture=relecture, variable="rangee")
+                self.assertEqual(code, 1)
+                self.assertNotIn("relecture", self.evenements)         # rien à relire : l'écriture a été refusée
+                self.assertEqual(self.appels_relecture, [])
+                self.assertEqual(self.evenements[:3], ["execute", "trousseau", "rollback"])
+                self.assertNotIn("commit", self.evenements)
+                self.assertNotIn("session", self.evenements)
+                self.assertNotIn(self.mots_de_passe_rangés[0], sortie + erreur)
+                self.assertIn("a refusé l'écriture", erreur)           # et non la phrase de la relecture
+                self.assertNotIn("n'a pas rendu", erreur)
+
+    def test_relecture_par_la_recherche_normale_du_trousseau(self):
+        """La vraie fonction de relecture est celle de la recherche normale : find-generic-password avec le service du rôle."""
+        with tempfile.TemporaryDirectory() as dossier:
+            double = Path(dossier) / "security"
+            double.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAUX_TROUSSEAU_ARGS\"\necho SecretRelu-0123456789\n")
+            double.chmod(double.stat().st_mode | stat.S_IXUSR)
+            with unittest.mock.patch.dict(os.environ, {"FAUX_TROUSSEAU_ARGS": str(Path(dossier) / "args")}):
+                self.assertEqual(db.mot_de_passe_trousseau(str(double), self.ROLE), "SecretRelu-0123456789")
+            arguments = (Path(dossier) / "args").read_text().split()
+        self.assertIn("find-generic-password", arguments)
+        self.assertIn(f"pmzilla-lab-db-{self.ROLE}", arguments)
+
+    def test_la_requete_porte_un_verifieur_jamais_le_mot_de_passe_en_clair(self):
+        _, sortie, erreur, conn = self.lancer()
+        secret = self.mots_de_passe_rangés[0]
+        self.assertEqual(len(conn.instructions), 1)
+        self.assertIn(VERIFIEUR, conn.instructions[0])
+        self.assertIn("ALTER ROLE", conn.instructions[0])
+        self.assertNotIn(secret, conn.instructions[0])
+        conn.pgconn.encrypt_password.assert_called_once()
+        self.assertEqual(conn.pgconn.encrypt_password.call_args.args[0], secret.encode())
+        self.assertEqual(conn.pgconn.encrypt_password.call_args.args[2], b"scram-sha-256")
+
+    def test_trousseau_refuse_annule_et_ne_valide_pas(self):
+        code, sortie, erreur, _ = self.lancer(refus_trousseau=True)
+        self.assertEqual(code, 1)
+        self.assertIn(f"Erreur : le Trousseau a refusé l'écriture (service pmzilla-lab-db-{self.ROLE}) ; "
+                      "aucun mot de passe n'a été posé.", erreur)
+        self.assertIn("rollback", self.evenements)
+        self.assertNotIn("commit", self.evenements)
+        self.assertNotIn("session", self.evenements)
+        self.assertNotIn(self.mots_de_passe_rangés[0], sortie + erreur)
+
+    def test_echec_de_la_session_d_essai(self):
+        message = "Connexion à la base impossible : mot de passe refusé."
+        code, sortie, erreur, _ = self.lancer(erreur_session=message)
+        self.assertEqual(code, 1)
+        self.assertIn(f"Erreur : mot de passe posé et rangé, mais la connexion d'essai sous {self.ROLE} a échoué : "
+                      f"{message}", erreur)
+        self.assertIn("commit", self.evenements)                       # posé et rangé : la validation a eu lieu
+        self.assertNotIn(self.mots_de_passe_rangés[0], sortie + erreur)
+
+    def test_session_d_essai_sous_un_autre_utilisateur_est_un_echec(self):
+        code, _, erreur, _ = self.lancer(session=FausseSession("postgres"))
+        self.assertEqual(code, 1)
+        self.assertIn("la connexion d'essai sous", erreur)
+
+    def test_verifieur_impossible_a_calculer_ne_modifie_rien(self):
+        code, sortie, erreur, conn = self.lancer(echec_verifieur=True)
+        self.assertEqual(code, 1)
+        self.assertIn("Erreur : chiffrement du mot de passe impossible côté client ; rien n'a été modifié.", erreur)
+        self.assertEqual(conn.instructions, [])
+        self.assertNotIn("trousseau", self.evenements)
+        self.assertNotIn("commit", self.evenements)
+
+    def test_trousseau_recoit_le_mot_de_passe_sur_l_entree_standard_et_dans_aucun_argument(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            dossier = Path(dossier)
+            double = dossier / "security"
+            double.write_text(FAUX_TROUSSEAU)
+            double.chmod(double.stat().st_mode | stat.S_IXUSR)
+            env = {"FAUX_TROUSSEAU_ARGS": str(dossier / "args"), "FAUX_TROUSSEAU_ENTREE": str(dossier / "entree")}
+            with unittest.mock.patch.dict(os.environ, env):
+                db.ranger_dans_trousseau(self.ROLE, "SecretInvente-ABCdef_12345", security=str(double))
+            arguments = (dossier / "args").read_text()
+            entree = (dossier / "entree").read_text()
+        self.assertNotIn("SecretInvente-ABCdef_12345", arguments)
+        self.assertIn("-i", arguments.split())                         # mode interactif
+        self.assertIn("add-generic-password", entree)
+        self.assertIn(f"-s pmzilla-lab-db-{self.ROLE}", entree)
+        self.assertIn("-U", entree)                                    # remplace une entrée existante
+        self.assertIn("SecretInvente-ABCdef_12345", entree)
+
+    def test_trousseau_en_echec_leve_sans_le_mot_de_passe(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            dossier = Path(dossier)
+            double = dossier / "security"
+            double.write_text(FAUX_TROUSSEAU)
+            double.chmod(double.stat().st_mode | stat.S_IXUSR)
+            env = {"FAUX_TROUSSEAU_ARGS": str(dossier / "args"), "FAUX_TROUSSEAU_ENTREE": str(dossier / "entree"),
+                   "FAUX_TROUSSEAU_CODE": "45"}
+            with unittest.mock.patch.dict(os.environ, env):
+                with self.assertRaises(db.ErreurBase) as ctx:
+                    db.ranger_dans_trousseau(self.ROLE, "SecretInvente-ABCdef_12345", security=str(double))
+        self.assertEqual(f"le Trousseau a refusé l'écriture (service pmzilla-lab-db-{self.ROLE}) ; aucun mot de passe n'a été posé.",
+                         str(ctx.exception))                           # phrase de D6 rendue par la vraie fonction
+        self.assertNotIn("SecretInvente-ABCdef_12345", str(ctx.exception))
+        with self.assertRaises(db.ErreurBase):                         # commande introuvable : même refus
+            db.ranger_dans_trousseau(self.ROLE, "SecretInvente-ABCdef_12345", security="/inexistant/security")
+
+    def test_mot_de_passe_trop_court_au_niveau_du_poseur(self):
+        with self.assertRaises(db.ErreurBase) as ctx:
+            db.definir_mot_de_passe(FausseConnexion([]), self.ROLE, "court")
+        self.assertIn("Mot de passe trop court (12 caractères au moins)", str(ctx.exception))
 
     def test_role_hors_liste_refuse_par_l_analyseur(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             db.main(["role-password", "postgres"])
+
+    def test_role_des_vues_de_qualite_accepte_et_ses_deux_autres_roles_refuses(self):
+        """R-78 (spec database-roles-views, « Limited roles log in… ») : seul le rôle des vues du schéma quality reçoit un mot de passe."""
+        secret = "MotDePasseInvente-12"
+        code, sortie, erreur, _ = self.lancer(role="pmzilla_quality_views")
+        self.assertEqual(code, 0)
+        self.assertIn("(service pmzilla-lab-db-pmzilla_quality_views)", sortie)
+        self.assertNotIn(self.mots_de_passe_rangés[0], sortie + erreur)
+        for refuse in ("pmzilla_quality", "pmzilla_quality_ro"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                db.main(["role-password", refuse])
+            with self.assertRaises(db.ErreurBase):                       # et le setter lui-même refuse, avant toute connexion
+                db.definir_mot_de_passe(unittest.mock.Mock(), refuse, secret)
+            with self.assertRaises(db.ErreurBase):
+                db.connect("postgresql://postgres@127.0.0.1:1/x", password=secret, role=refuse)
+
+    def test_secret_propre_au_role_des_vues_de_qualite(self):
+        self.assertEqual(db.service_du_role("pmzilla_quality_views"), "pmzilla-lab-db-pmzilla_quality_views")
+        self.assertEqual(db.variable_du_role("pmzilla_quality_views"), "PMZILLA_LAB_DB_PASSWORD_PMZILLA_QUALITY_VIEWS")
+        for autre in ("pmzilla_flow_views", "pmzilla_cases", "pmzilla_cases_ro", "pmzilla_knowledge_ro"):
+            self.assertNotEqual(db.service_du_role("pmzilla_quality_views"), db.service_du_role(autre))
+            self.assertNotEqual(db.variable_du_role("pmzilla_quality_views"), db.variable_du_role(autre))
+        self.assertNotEqual(db.service_du_role("pmzilla_quality_views"), db.SERVICE_TROUSSEAU)
 
 
 if __name__ == "__main__":

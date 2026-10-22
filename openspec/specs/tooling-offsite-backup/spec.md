@@ -6,7 +6,7 @@ The off-site backup: `tools/offsite_backup.sh` copies the newest database and sa
 ## Requirements
 
 ### Requirement: The off-site disk is identified by its volume identifier
-The system SHALL provide a setup subcommand that, after the destination checks and a confirmation by the user, records the identifier of one external volume in a local, owner-only configuration file of the lab data folder, and creates the off-site folder with its fixed name at the volume's root, owner-only. Every other subcommand SHALL find the volume by that identifier only. The system SHALL NOT find the volume by its name or by a mount path, SHALL NOT print the volume's name outside setup, and SHALL NOT write the identifier in any tracked file. Without a configuration, every subcommand except help and status SHALL exit with code 2 and the key phrase of design D13. Untested until implemented.
+The system SHALL provide a setup subcommand that, after the destination checks and a confirmation by the user, records the identifier of one external volume in a local, owner-only configuration file of the lab data folder, and creates the off-site folder with its fixed name at the volume's root, owner-only. Every other subcommand SHALL find the volume by that identifier only. The system SHALL NOT find the volume by its name or by a mount path, SHALL NOT print the volume's name outside setup, and SHALL NOT write the identifier in any tracked file. Without a configuration, every subcommand except help and status SHALL exit with code 2 and the key phrase of design D13.
 
 #### Scenario: Setup confirmed
 - **WHEN** setup is run on an encrypted external volume and the user answers yes
@@ -21,7 +21,7 @@ The system SHALL provide a setup subcommand that, after the destination checks a
 - **THEN** the output says "disque hors du Mac non configuré : lancer setup", nothing is written, and the exit code is 2
 
 ### Requirement: Only an encrypted, physically attached, local volume is accepted
-The system SHALL check the destination before any write, in setup, copy and restore test, and SHALL refuse with exit code 2, writing nothing, a volume that is not encrypted, the Mac's internal disk, a network volume, and a destination inside a cloud-synced folder or inside a Git work tree, each with its key phrase of design D13. The system SHALL NOT offer an option that bypasses these refusals. Untested until implemented.
+The system SHALL check the destination before any write, in setup, copy and restore test, and SHALL refuse with exit code 2, writing nothing, a volume that is not encrypted, the Mac's internal disk, a network volume, and a destination inside a cloud-synced folder or inside a Git work tree, each with its key phrase of design D13. The system SHALL NOT offer an option that bypasses these refusals.
 
 #### Scenario: Unencrypted volume
 - **WHEN** the configured volume is reported as not encrypted
@@ -32,7 +32,7 @@ The system SHALL check the destination before any write, in setup, copy and rest
 - **THEN** it refuses with "disque interne : refusé" or "volume réseau : refusé", records nothing, and exits with code 2
 
 ### Requirement: Nothing is sent to an online service
-The system SHALL write the off-site copies only under the off-site folder of the identified local volume, and its reports and status only under the lab data folder. The system SHALL NOT contain or run any network command (HTTP client, remote copy, remote shell, cloud synchronisation tool), SHALL NOT write into a cloud-synced folder, and SHALL NOT send a copy, a report or a checksum to any online service. Untested until implemented.
+The system SHALL write the off-site copies only under the off-site folder of the identified local volume, and its reports and status only under the lab data folder. The system SHALL NOT contain or run any network command (HTTP client, remote copy, remote shell, cloud synchronisation tool), SHALL NOT write into a cloud-synced folder, and SHALL NOT send a copy, a report or a checksum to any online service.
 
 #### Scenario: Static check of the script
 - **WHEN** the script's source is scanned
@@ -43,7 +43,7 @@ The system SHALL write the off-site copies only under the off-site folder of the
 - **THEN** the output says "dossier synchronisé ou dépôt Git : refusé", nothing is written, and the exit code is 2
 
 ### Requirement: The newest plain backups are copied atomically with a manifest
-The system SHALL copy, for the database series and for the sanctum series, the newest plain dated local backup when the disk does not already hold a complete copy of it. Each copy SHALL be written under a temporary name with a manifest that lists every file with its size and checksum, verified on the disk, then renamed to its final name; the copy folders SHALL be owner-only and the files owner read/write only, whatever the umask. The system SHALL NOT copy a labeled backup or any other folder of the backups folder, SHALL NOT leave a temporary folder counted as a copy, SHALL NOT modify or delete a local backup, and SHALL NOT start a copy when the free space is insufficient (exit code 1, nothing written). The protected sanctum backup SHALL be copied only on an explicit option. Untested until implemented.
+The system SHALL copy, for the database series and for the sanctum series, the newest plain dated local backup when the disk does not already hold a complete copy of it. Each copy SHALL be written under a temporary name with a manifest that lists every file with its size and checksum, verified on the disk, then renamed to its final name; the copy folders SHALL be owner-only and the files owner read/write only, whatever the umask. The system SHALL NOT copy a labeled backup or any other folder of the backups folder, SHALL NOT leave a temporary folder counted as a copy, SHALL NOT modify or delete a local backup, and SHALL NOT start a copy when the free space is insufficient (exit code 1, nothing written). The protected sanctum backup SHALL be copied only on an explicit option.
 
 #### Scenario: Nominal copy
 - **WHEN** the newest database and sanctum backups are not on the disk
@@ -66,7 +66,7 @@ The system SHALL copy, for the database series and for the sanctum series, the n
 - **THEN** the output says "place insuffisante sur le disque", nothing is written, and the exit code is 1
 
 ### Requirement: The rotation keeps recent and monthly copies and deletes only its own copies
-The system SHALL, after a verified copy only, keep in each series a configurable number of most recent copies plus the newest copy of each of a configurable number of recent months, and delete the older copies with one "copie supprimée" line each. The system SHALL NOT delete the newest complete copy, SHALL NOT delete a folder whose name is not a copy name, SHALL NOT rotate after a failed copy, and SHALL refuse an invalid retention value (zero, negative, non-numeric) with exit code 2, creating and deleting nothing. Untested until implemented.
+The system SHALL, after a verified copy only, keep in each series a configurable number of most recent copies plus the newest copy of each of a configurable number of recent months, and delete the older copies with one "copie supprimée" line each. The system SHALL NOT delete the newest complete copy, SHALL NOT delete a folder whose name is not a copy name, SHALL NOT rotate after a failed copy, and SHALL refuse an invalid retention value (zero, negative, non-numeric) with exit code 2, creating and deleting nothing.
 
 #### Scenario: Retention exceeded
 - **WHEN** a series holds more copies than the recent and monthly retention allow
@@ -81,7 +81,7 @@ The system SHALL, after a verified copy only, keep in each series a configurable
 - **THEN** the exit code is 2 and no copy is created or deleted
 
 ### Requirement: An absent or locked disk defers the run, with a single notification once copies get old
-The system SHALL, when the configured volume is not mounted or is locked, write nothing, print its deferral key phrase and exit with code 3. Under the scheduler, the system SHALL send no notification while the last successful copy is younger than a configurable age, and SHALL send at most one notification per day, stating the age, once it is older or when no copy ever succeeded. The system SHALL NOT treat an absent disk as a failure (code 1) or a refusal (code 2), and SHALL NOT notify on a manual run. Untested until implemented.
+The system SHALL, when the configured volume is not mounted or is locked, write nothing, print its deferral key phrase and exit with code 3. Under the scheduler, the system SHALL send no notification while the last successful copy is younger than a configurable age, and SHALL send at most one notification per day, stating the age, once it is older or when no copy ever succeeded. The system SHALL NOT treat an absent disk as a failure (code 1) or a refusal (code 2), and SHALL NOT notify on a manual run.
 
 #### Scenario: Disk unplugged, recent copy
 - **WHEN** the scheduled copy runs without the disk and the last success is recent
@@ -92,7 +92,7 @@ The system SHALL, when the configured volume is not mounted or is locked, write 
 - **THEN** exactly one notification is sent that day, stating the number of days
 
 ### Requirement: Failures and refusals notify under the scheduler only, without sensitive content
-The system SHALL send one macOS notification on exit codes 1 and 2 when the notifier setting is enabled, stating the cause and the exit code. A manual run and a successful run SHALL send none. The notification, the output and the report SHALL NOT contain a password, the volume's name or identifier, a file name inside a copy, a database value or any sanctum content. Untested until implemented.
+The system SHALL send one macOS notification on exit codes 1 and 2 when the notifier setting is enabled, stating the cause and the exit code. A manual run and a successful run SHALL send none. The notification, the output and the report SHALL NOT contain a password, the volume's name or identifier, a file name inside a copy, a database value or any sanctum content.
 
 #### Scenario: Scheduled refusal
 - **WHEN** the scheduled copy finds the volume unencrypted
@@ -103,7 +103,7 @@ The system SHALL send one macOS notification on exit codes 1 and 2 when the noti
 - **THEN** the sentinel appears in no output, notification or report
 
 ### Requirement: The monthly restore test restores the off-site copy into a disposable database only
-The system SHALL provide a restore test that runs only when no successful test exists for the current calendar month (unless forced), and that checks the manifest of the newest copy of each series (every file present, same size, same checksum, no extra file), restores the newest off-site database copy through the existing restore-test script (disposable container, migrations, counts compared with the real database read in counts only), and checks the file count of the newest sanctum copy against its manifest. The system SHALL NOT restore into the real database, SHALL NOT start, stop or write to the real database, SHALL NOT read a database value or a sanctum file's content, and SHALL NOT decrypt or unlock the disk itself. A disk absent or locked, or a real database not running, SHALL defer the test with exit code 3. A checksum difference, a restore-test failure or a sanctum count gap SHALL give exit code 1. Untested until implemented.
+The system SHALL provide a restore test that runs only when no successful test exists for the current calendar month (unless forced), and that checks the manifest of the newest copy of each series (every file present, same size, same checksum, no extra file), restores the newest off-site database copy through the existing restore-test script (disposable container, migrations, counts compared with the real database read in counts only), and checks the file count of the newest sanctum copy against its manifest. The system SHALL NOT restore into the real database, SHALL NOT start, stop or write to the real database, SHALL NOT read a database value or a sanctum file's content, and SHALL NOT decrypt or unlock the disk itself. A disk absent or locked, or a real database not running, SHALL defer the test with exit code 3. A checksum difference, a restore-test failure or a sanctum count gap SHALL give exit code 1.
 
 #### Scenario: Not due
 - **WHEN** a successful test already exists for the current month
@@ -122,18 +122,23 @@ The system SHALL provide a restore test that runs only when no successful test e
 - **THEN** the output says "vraie base indisponible : test reporté", the real database is not started, and the exit code is 3
 
 ### Requirement: The restore test writes a counts-only report in the lab data folder
-The system SHALL write one report per month, owner read/write only, in a reports subfolder of the lab data folder, keeping a configurable number of the newest reports, and SHALL update a status file with the date and result of the last copy and of the last test. The report SHALL hold only the run date, the copy names tested, the checksum result per series, the table names with their two counts and status, the sanctum file counts, the final result and the exit code. The system SHALL NOT write a report in the repository, in the flow folder or in the deliverables folder, and SHALL NOT write a value, a person's, team's or project's name, or a file name inside a copy into a report. A status subcommand SHALL print the status file and the age of the newest copy of each series without mounting or writing anything. Untested until implemented.
+The system SHALL write one report per month, owner read/write only, in a reports subfolder of the lab data folder, keeping a configurable number of the newest reports, and SHALL update a status file with the date and result of the last copy and of the last test. The report SHALL hold only the run date, the copy names tested, the checksum result per series, the table names with their two counts and status (missing tables included), the restore result lines, the numbers of migrations absent from an older copy, the sanctum file counts, the final result and the exit code. The system SHALL NOT write a report in the repository, in the flow folder or in the deliverables folder, and SHALL NOT write a value, a person's, team's or project's name, or a file name inside a copy into a report. A status subcommand SHALL print the status file and the age of the newest copy of each series without mounting or writing anything.
 
 #### Scenario: Report content
 - **WHEN** a restore test completes
 - **THEN** its report holds only the listed fields, and the status file records the test's date and result
+- **AND** a missing table is reported as "MANQUE" with "-" in place of its restored count, and the restore result lines ("RESTAURATION OK" or "ÉCHEC <cause> : …") are cut to 200 characters and hold only names and numbers
+
+#### Scenario: Backup older than the last migration
+- **WHEN** the tested copy lacks migrations present in the migration files and in the real database
+- **THEN** the report holds the line "sauvegarde antérieure à la dernière migration appliquée : migrations absentes de la copie : <numbers>", with migration numbers only
 
 #### Scenario: Report retention
 - **WHEN** more monthly reports exist than the configured number
 - **THEN** the oldest are removed and the newest remain
 
 ### Requirement: Two launchd templates schedule the copy and the restore test, installed by the user
-The system SHALL provide two launchd job templates that run the copy daily at a time later than the database backup job and at every volume mount, and the restore test daily at a time later than the copy job and at every volume mount, with output and errors to one log file each, notifications enabled, the home placeholder as the only user path, no run at load and no keep-alive. The templates SHALL NOT contain a secret, a Keychain command, a volume identifier or a real path. The session SHALL NOT install, load, start or unload them; the user does. Untested until implemented.
+The system SHALL provide two launchd job templates that run the copy daily at a time later than the database backup job and at every volume mount, and the restore test daily at a time later than the copy job and at every volume mount, with output and errors to one log file each, notifications enabled, the home placeholder as the only user path, no run at load and no keep-alive. The templates SHALL NOT contain a secret, a Keychain command, a volume identifier or a real path. The session SHALL NOT install, load, start or unload them; the user does.
 
 #### Scenario: Well-formed templates
 - **WHEN** each template is parsed
@@ -144,11 +149,15 @@ The system SHALL provide two launchd job templates that run the copy daily at a 
 - **THEN** they contain no password mention, no Keychain command, no identifier and no user path other than the placeholder
 
 ### Requirement: Flow dumps are removed from old off-site copies
-The system SHALL, after a verified copy and after the rotation, remove the flow dump from every database copy of the off-site folder older than a configurable flow age (design D9), rewrite that copy's manifest without the removed file, verify the rewritten manifest, and print one "flux retiré" line per copy. It SHALL keep the knowledge and cases dumps of those copies, SHALL NOT remove the flow dump of the newest complete copy, and SHALL NOT touch a sanctum copy. An invalid flow age (zero, negative, non-numeric) SHALL be refused with exit code 2, creating and deleting nothing. The status subcommand SHALL print the number of copies holding a flow dump older than the flow age, which the retention check reads. Untested until implemented.
+The system SHALL, after a verified copy and after the rotation, remove the flow dump from every database copy of the off-site folder older than a configurable flow age (design D9), rewrite that copy's manifest without the removed file, verify the rewritten manifest, and print one "flux retiré" line per copy. It SHALL keep the knowledge and cases dumps of those copies, and the partial quality dump `quality-sans-texte` when the copy holds one: free of story text and ticket keys, it is outside the flow-dump lifetime rules (design D10 of change story-quality-audit, amendment of 2026-10-18). It SHALL NOT remove the flow dump of the newest complete copy, and SHALL NOT touch a sanctum copy. An invalid flow age (zero, negative, non-numeric) SHALL be refused with exit code 2, creating and deleting nothing. The status subcommand SHALL print the number of copies holding a flow dump older than the flow age, which the retention check reads. Untested until implemented.
 
 #### Scenario: Old copy
 - **WHEN** the disk holds a database copy older than the flow age with three dumps
 - **THEN** after the run it holds the knowledge and cases dumps, its manifest lists only them, and the output holds "flux retiré" once
+
+#### Scenario: Old copy with the partial quality dump
+- **WHEN** the disk holds a database copy older than the flow age with the three schema dumps and `quality-sans-texte`
+- **THEN** after the run it holds the knowledge and cases dumps and `quality-sans-texte`, its manifest lists only them, and the output holds "flux retiré" once
 
 #### Scenario: Recent copies
 - **WHEN** every copy is younger than the flow age
@@ -159,7 +168,7 @@ The system SHALL, after a verified copy and after the rotation, remove the flow 
 - **THEN** the manifest check passes, because the rewritten manifest no longer lists the flow dump
 
 ### Requirement: The off-site jobs run from the run tree and mark their run
-The system SHALL make the copy and restore-test templates launch the off-site script through its lab-folder link, and SHALL make the copy and the restore-test subcommands each mark their run with their own folder by the rules of design D14, removed at exit by their own process, whatever the exit code, a deferred run included. Other subcommands SHALL create no marker. A marker SHALL NOT stop a run, and the script SHALL NOT remove another job's marker or the watch lock. Untested until implemented.
+The system SHALL make the copy and restore-test templates launch the off-site script through its lab-folder link, and SHALL make the copy and the restore-test subcommands each mark their run with their own folder by the rules of design D14, removed at exit by their own process, whatever the exit code, a deferred run included. Other subcommands SHALL create no marker. A marker SHALL NOT stop a run, and the script SHALL NOT remove another job's marker or the watch lock.
 
 #### Scenario: Rendered templates
 - **WHEN** the two off-site templates are rendered
@@ -180,3 +189,44 @@ The system SHALL make the copy and restore-test templates launch the off-site sc
 #### Scenario: Status creates none
 - **WHEN** the status subcommand runs
 - **THEN** no marker folder is created in the lab data folder
+
+### Requirement: Copy log lines are dated
+The system SHALL start every line the copy subcommand prints with the date and time of morning-guard design D8, and SHALL open each run with a launch line saying scheduled or manual, the messages after the prefix unchanged. It SHALL NOT date the lines of other subcommands, nor add a path, a volume name or identifier, or a file name inside a copy.
+
+#### Scenario: Nominal copy
+- **WHEN** the copy runs with the clock replaced and creates the database copy of today
+- **THEN** the output holds `<date> <time> copie hors du Mac : lancement manuel` first, then a line made of the same date prefix followed by `copie créée : db-<today>`
+
+#### Scenario: Disk absent
+- **WHEN** the copy is deferred because the disk is absent
+- **THEN** the deferral line starts with the date prefix and keeps the phrase `disque absent ou verrouillé : copie reportée`
+
+### Requirement: A manual copy writes the same dated lines in the copy log
+The system SHALL append the copy's dated lines to the configurable copy log, by default the copy template's output path, when its standard output is not already that log, and write nothing more when it is (morning-guard design D9). A log that cannot be written SHALL give `journal de la copie impossible à écrire`, exit code unchanged. It SHALL NOT write a line twice, truncate or rewrite the log, or write the restore-test log.
+
+#### Scenario: Manual run
+- **WHEN** the copy runs with its output to the terminal and the copy log variable naming a temporary file
+- **THEN** that file gains the run's dated lines, labelled `lancement manuel`, once each
+
+#### Scenario: Scheduled run
+- **WHEN** the copy runs with its standard output redirected to the copy log
+- **THEN** each dated line appears exactly once in the log and the launch line says `lancement planifié`
+
+#### Scenario: Template and default agree
+- **WHEN** the copy template is rendered and the script's default copy log is read
+- **THEN** they name the same file
+
+### Requirement: The author can declare the postponement of the day's off-site copy
+The system SHALL provide a postpone subcommand that takes a required one-line reason and appends to the copy log `<date> <time> copie reportée déclarée : db-<today> : <reason>`, with the outcomes, phrases and codes of morning-guard design D10. It SHALL NOT take a date, need the disk, create a marker, notify, or change a copy, a backup or the status file, and SHALL NOT be run by the session (see tooling-permission-guards).
+
+#### Scenario: Declaration written
+- **WHEN** postpone runs with a valid reason and no copy proof of today exists
+- **THEN** the copy log gains one line dated today with `copie reportée déclarée : db-<today> : ` and the reason, the output says `copie hors du Mac du jour reportée : déclaration écrite`, and the exit code is 0
+
+#### Scenario: Missing or multi-line reason
+- **WHEN** postpone runs without a reason, with an empty one, with a line break or with more than 200 characters
+- **THEN** the exit code is 2, the output holds `raison du report requise (une ligne, au plus 200 caractères)` and the log is unchanged
+
+#### Scenario: Copy already proven
+- **WHEN** postpone runs while the copy log holds `copie créée : db-<today>` dated today
+- **THEN** the output says `copie hors du Mac du jour déjà prouvée : rien n'est déclaré`, the log is unchanged, and the exit code is 0

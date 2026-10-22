@@ -3,8 +3,8 @@ de CSV pour le même jeu inventé (tickets PROJ-n, équipes Alpha et Beta, aucun
 
     bash tools/dbtest.sh flow_store          (instance jetable : installation.md, 14.5 ; sautés sans elle)
 
-Le jeu (jeu.py) est écrit deux fois : en CSV (lu par flux_jira.read_exports et dependencies_jira.read_exports) et en lignes SQL
-sous le rôle pmzilla_flow (lu par flow_store sous le rôle pmzilla_flow_ro).
+Le jeu (jeu.py) est écrit deux fois : en CSV (lu par le chargeur de test tests/flux_jira/chargeur_csv.py, qui garde les structures
+attendues des lecteurs) et en lignes SQL sous le rôle pmzilla_flow (lu par flow_store sous le rôle pmzilla_flow_ro).
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ sys.path.insert(0, str(ICI))
 import aide_base as base          # noqa: E402
 import jeu                        # noqa: E402
 
+sys.path.append(str(ICI.parents[1] / "tests" / "flux_jira"))
+import chargeur_csv as chargeur   # noqa: E402
 import dependencies_jira as dj    # noqa: E402
 import flux_jira as fj            # noqa: E402
 
@@ -56,7 +58,7 @@ class LectureDeLaBase(base.AvecBase):
         liste = jeu.tickets()
         self.inserer(liste, jeu.liens(), [])
         reglages = self.reglages_flux()
-        attendu = fj.read_exports([self.csv(liste)], reglages)
+        attendu = chargeur.lire_tickets_flux(reglages, [self.csv(liste)])
         lu = self.store.lire_tickets_flux(reglages)
         self.assertEqual(trier(lu[0]), trier(attendu[0]))
         self.assertEqual(lu[1:], attendu[1:])        # colonnes trouvées, illisibles, doublons
@@ -74,7 +76,7 @@ class LectureDeLaBase(base.AvecBase):
         liste = jeu.a_minuit(jeu.tickets())
         self.inserer(liste, [], [])
         reglages = self.reglages_flux()
-        attendu = fj.read_exports([self.csv(liste)], reglages)
+        attendu = chargeur.lire_tickets_flux(reglages, [self.csv(liste)])
         lu = self.store.lire_tickets_flux(reglages)
         self.assertEqual(trier(lu[0]), trier(attendu[0]))
         self.assertTrue(any(t["resolu"] for t in lu[0]))
@@ -83,7 +85,7 @@ class LectureDeLaBase(base.AvecBase):
         liste = jeu.tickets()
         self.inserer(liste, [], [], fuseau="America/New_York")
         reglages = self.reglages_flux(fuseau="America/New_York")
-        attendu = fj.read_exports([self.csv(liste)], reglages)
+        attendu = chargeur.lire_tickets_flux(reglages, [self.csv(liste)])
         self.assertEqual(trier(self.store.lire_tickets_flux(reglages)[0]), trier(attendu[0]))
         # lu dans le fuseau par défaut, le même instant tombe à une autre heure : la conversion n'est pas neutre
         paris = self.store.lire_tickets_flux(self.reglages_flux())[0]
@@ -99,14 +101,14 @@ class LectureDeLaBase(base.AvecBase):
         liste = jeu.tickets()
         self.inserer(liste, jeu.liens(), [])
         reglages = self.reglages_dependances()
-        attendu = dj.read_exports([self.csv(liste)], reglages)
+        attendu = chargeur.lire_dependances(reglages, [self.csv(liste)])
         lu = self.store.lire_dependances(reglages)
         self.assertEqual(lu["tickets"], attendu["tickets"])
         self.assertEqual(lu["liens"], attendu["liens"])
         self.assertEqual(lu["colonnes"], attendu["colonnes"])
         self.assertEqual(lu["liens_types"], attendu["liens_types"])
         self.assertEqual(lu["liens_simples"], attendu["liens_simples"])
-        self.assertEqual(lu["tronques"], [])
+        self.assertNotIn("tronques", lu)
         self.assertEqual(lu["fichiers"], ["base"])
         sens = {(typ, s) for _, _, typ, s in lu["liens"]}
         self.assertEqual(sens, {("Blocks", "entrant"), ("Blocks", "sortant"), ("Depends", "sortant"), (None, None)})
@@ -117,7 +119,7 @@ class LectureDeLaBase(base.AvecBase):
         liste = jeu.tickets()
         self.inserer(liste, liens, [])
         reglages = self.reglages_dependances()
-        attendu = dj.read_exports([self.csv(liste, liens_base=liens)], reglages)
+        attendu = chargeur.lire_dependances(reglages, [self.csv(liste, liens_base=liens)])
         lu = self.store.lire_dependances(reglages)
         self.assertEqual(lu["liens"], attendu["liens"])
         self.assertEqual(lu["liens_simples"], [])
@@ -148,7 +150,8 @@ class LectureDeLaBase(base.AvecBase):
             cache[cle]["transitions"].append([iso, depart, arrivee])
         chemin = self.dossier / "transitions.json"
         chemin.write_text(json.dumps(cache), encoding="utf-8")
-        self.assertEqual(self.store.lire_historique(self.reglages_flux()), fj.charger_historique(chemin))
+        self.assertEqual(self.store.lire_historique(self.reglages_flux()),
+                         chargeur.lire_historique(self.reglages_flux(), str(chemin)))
 
     # --- rôle -----------------------------------------------------------------------------------------------------
     def test_lecture_seule(self):

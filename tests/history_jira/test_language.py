@@ -38,7 +38,7 @@ class Parcours(base.Base):
     def _parcours(self, *extra: str) -> str:
         blocs: list[str] = []
         self.faux.__init__()                                    # état neuf : un parcours peut être rejoué dans le même test
-        shutil.rmtree(self.ws / "Flux-Lab" / "historique", ignore_errors=True)
+        self.magasin.__init__()                                 # base fictive neuve (le faux flow_store est lié à cet objet)
         self.ecrire_reglages("scopes")
 
         def lancer(nom: str, *argv: str) -> tuple[int, str]:
@@ -93,16 +93,18 @@ class Parcours(base.Base):
         flux.write_text(reglages, encoding="utf-8")
 
         lignes = self.inventer(5, termines=("ABC-1", "ABC-2", "ABC-3", "ABC-4"))
+        self.magasin.stock.clear()
+        lancer("collect, empty database", "collect")
         export = self.ecrire_export(lignes)
         lancer("collect, bulk mode", "collect", export)
-        lancer("collect, everything cached", "collect", export)
+        lancer("collect, everything already collected", "collect", export)
         lancer("collect, --refresh", "collect", export, "--refresh")
         lancer("collect, --team", "collect", export, "--team", "Equipe Test")
         lancer("collect, unknown team", "collect", export, "--team", "Inconnue")
-        ancien = self.ws / "ancien.csv"
-        ancien.write_text("Issue key,Issue Type,Status,Resolved,Team\nABC-1,Story,Done,01/Jan/2025 10:00,Equipe Test\n"
-                          "ABC-5,Story,Open,,Equipe Test\n", encoding="utf-8")
-        lancer("collect, tickets past retention", "collect", str(ancien))
+        resolu = self.magasin.stock["ABC-1"]["resolu"]
+        self.magasin.stock["ABC-1"]["resolu"] = dt.datetime(2025, 1, 1, 10, 0, tzinfo=base.PARIS)
+        lancer("collect, tickets past retention", "collect", "--refresh")
+        self.magasin.stock["ABC-1"]["resolu"] = resolu
         self.faux.groupe = False
         self.faux.introuvables = {"ABC-2"}
         lancer("collect, ticket by ticket with one error", "collect", export, "--refresh")
@@ -111,38 +113,34 @@ class Parcours(base.Base):
         self.faux.attendu = "Basic autre"
         lancer("collect, access denied", "collect", export, "--refresh")
         self.faux.attendu = attendu
-        sans_cle = self.ws / "sans_cle.csv"
-        sans_cle.write_text("Summary,Status\nx,Open\n", encoding="utf-8")
-        lancer("collect, no key column", "collect", str(sans_cle))
-        sans_equipe = self.ws / "sans_equipe.csv"
-        sans_equipe.write_text("Issue key,Issue Type,Status\nABC-1,Story,Open\n", encoding="utf-8")
-        lancer("collect, --team without a team column", "collect", str(sans_equipe), "--team", "x")
-
-        cache = self.cache()
+        lancer("collect, export file refused", "collect", str(self.ws / "export.csv"))
+        for ticket in self.magasin.stock.values():
+            ticket["equipes"] = []
+        lancer("collect, --team without a team in the database", "collect", "--team", "x")
 
         def parcours_etats(*etats):
-            return [[f"2026-03-0{n + 1}T10:00:00.000+0200", a, b] for n, (a, b) in enumerate(zip(etats, etats[1:]))]
-        cache["ABC-1"]["transitions"] = parcours_etats("Open", "Definition", "Ready for Implementation", "Implementation", "Done")
-        cache["ABC-2"]["transitions"] = parcours_etats("Implementation", "Verification", "Done")
-        cache["ABC-3"]["transitions"] = []
-        cache["ABC-4"]["transitions"] = [["illisible", "Open", "Done"]]
-        cache["ABC-5"]["transitions"] = parcours_etats("Open", "Closed")
-        (self.ws / "Flux-Lab" / "historique" / "transitions.json").write_text(json.dumps(cache), encoding="utf-8")
-        export_etat = self.ws / "etat.csv"
-        export_etat.write_text("Issue key,Issue Type,Status,Resolved,Created,Team\n" + "".join(
-            f"ABC-{i},Story,{'Done' if i < 5 else 'Open'},{'10/Sep/2026 10:00' if i < 5 else ''},01/Jan/2024 09:00,Equipe Test\n"
-            for i in range(1, 7)), encoding="utf-8")
-        lancer("check", "check", str(export_etat))
-        lancer("check, --team", "check", str(export_etat), "--team", "Equipe Test")
-        lancer("check, --dormants removed", "check", str(export_etat), "--dormants", "dormants.csv")
-        lancer("check, --key", "check", "--key", "abc-2", str(export_etat))
+            return [(dt.datetime.fromisoformat(f"2026-03-0{n + 1}T10:00:00+02:00"), a, b)
+                    for n, (a, b) in enumerate(zip(etats, etats[1:]))]
+        for ticket in self.magasin.stock.values():
+            ticket["equipes"] = ["Equipe Test"]
+            ticket["cree"] = dt.datetime(2024, 1, 1, 9, 0, tzinfo=base.PARIS)
+        self.magasin.transitions["ABC-1"] = parcours_etats("Open", "Definition", "Ready for Implementation", "Implementation", "Done")
+        self.magasin.transitions["ABC-2"] = parcours_etats("Implementation", "Verification", "Done")
+        self.magasin.transitions["ABC-3"] = []
+        self.magasin.transitions["ABC-4"] = [(dt.datetime.fromisoformat("2026-03-01T10:00:00+02:00"), "Open", "Done")]
+        self.magasin.transitions["ABC-5"] = parcours_etats("Open", "Closed")
+        self.magasin.stock["ABC-6"] = {**self.magasin.stock["ABC-5"], "cle": "ABC-6", "a_historique": False}
+        lancer("check", "check")
+        lancer("check, --team", "check", "--team", "Equipe Test")
+        lancer("check, --dormants removed", "check", "--dormants", "dormants.csv")
+        lancer("check, --key", "check", "--key", "abc-2")
         lancer("check, unknown --key", "check", "--key", "ZZZ-9")
-        lancer("check, no export", "check")
-        sans_etat = self.ws / "sans_etat.csv"
-        sans_etat.write_text("Issue key,Issue Type\nABC-1,Story\n", encoding="utf-8")
-        lancer("check, no status column", "check", str(sans_etat))
-        (self.ws / "Flux-Lab" / "historique" / "transitions.json").write_text("illisible", encoding="utf-8")
-        lancer("check, unreadable cache", "check", str(export_etat))
+        lancer("check, export file refused", "check", str(self.ws / "export.csv"))
+        with mock.patch.dict(os.environ, {"CLAUDECODE": "1"}):
+            lancer("check, inside a Claude Code session", "check")
+        for ticket in self.magasin.stock.values():
+            ticket["a_historique"] = False
+        lancer("check, no history in the database", "check")
         return "\n".join(["# history_jira.py, parcours de test\n"] + blocs)
 
 

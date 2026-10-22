@@ -1,5 +1,6 @@
 #!/bin/bash
-# PMZilla Lab : sauvegarde de la base PostgreSQL, un pg_dump par schéma (knowledge, cases, flow).
+# PMZilla Lab : sauvegarde de la base PostgreSQL, un pg_dump par schéma (knowledge, cases, flow), plus le dump partiel quality-sans-texte
+# (trois tables de quality, sans texte de story ni clé de ticket : voir plus bas).
 #
 #     bash tools/db_backup.sh
 #
@@ -17,19 +18,20 @@
 # Notification macOS (osascript) sur tout code non nul, seulement si DB_BACKUP_NOTIFIER=1 (posé par le .plist, jamais
 # en lancement à la main).
 #
-# Variables (pour les tests) : DB_BACKUP_SAUVEGARDES (défaut : ~/.pmzilla-lab/sauvegardes), DB_BACKUP_DATE (défaut : date du
-# jour, AAAA-MM-JJ ; AAAA-MM-JJ-étiquette en minuscules et chiffres pour une deuxième sauvegarde le même jour, jamais
+# Variables (pour les tests) : DB_BACKUP_SAUVEGARDES (défaut : « sauvegardes » sous PMZILLA_LAB_DATA, soit
+# ~/.pmzilla-lab/sauvegardes, par tools/lab_paths.sh), DB_BACKUP_DATE (défaut : date du jour, AAAA-MM-JJ ;
+# AAAA-MM-JJ-étiquette en minuscules et chiffres pour une deuxième sauvegarde le même jour, jamais
 # supprimée par la rotation), DB_BACKUP_GARDER (défaut : 14, entier au moins égal à 1), DB_BACKUP_SCHEMAS (défaut :
 # knowledge cases flow), DB_BACKUP_NOTIFIER (défaut : vide, pas de notification), PMZILLA_LAB_DATA (dossier de données du labo,
 # défaut ~/.pmzilla-lab : repère sauvegarde.encours), PMZILLA_RUN_MARKER_MAX_AGE (âge maximal du repère, défaut 21600 secondes),
 # PMZILLA_LAB_WORKSPACE (dossier de contenu exporté, défaut le dépôt de développement).
-# Lancé par son lien ~/PMZilla-Lab/db_backup.sh : le script résout le lien pour trouver son dossier de code.
+# Lancé par son lien <dossier du lab>/db_backup.sh : le script résout le lien pour trouver son dossier de code.
 # Repère de passage (D14) : dossier sauvegarde.encours créé avec mkdir après les contrôles d'argument, retiré à la sortie par le seul
 # processus qui l'a créé ; il n'empêche jamais la sauvegarde et ne change jamais son code de sortie.
 set -uo pipefail
 umask 077
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
-# Le script se lance par son lien du dossier du labo (~/PMZilla-Lab/<script>) : on résout le lien pour trouver le dossier de code
+# Le script se lance par son lien du dossier du labo (<dossier du lab>/<script>) : on résout le lien pour trouver le dossier de code
 # (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
 SOI="$0"
 while [ -L "$SOI" ]; do
@@ -37,13 +39,13 @@ while [ -L "$SOI" ]; do
   case "$CIBLE_LIEN" in /*) SOI="$CIBLE_LIEN" ;; *) SOI="$(dirname "$SOI")/$CIBLE_LIEN" ;; esac
 done
 RACINE="$(cd "$(dirname "$SOI")/.." && pwd)"
-# Dossier de contenu : le dépôt de développement (défaut), jamais déduit de l'emplacement du code.
-if [ -z "${PMZILLA_LAB_WORKSPACE:-}" ]; then
-  if [ -d "$HOME/PMZilla-Lab/workspace" ]; then PMZILLA_LAB_WORKSPACE="$HOME/PMZilla-Lab/workspace"; else PMZILLA_LAB_WORKSPACE="$RACINE"; fi
-fi
+# Dossier de contenu : le module partagé tools/lab_paths.sh (variable, sinon dépôt Git du code) ; sinon code 78, avant tout pas.
+. "$RACINE/tools/lab_paths.sh"
+lab_paths_init || exit $?
+PMZILLA_LAB_WORKSPACE="$LAB_CONTENT_ROOT"
 export PMZILLA_LAB_WORKSPACE
 cd "$RACINE" || exit 2
-DEST="${DB_BACKUP_SAUVEGARDES:-$HOME/.pmzilla-lab/sauvegardes}"
+DEST="$LAB_BACKUPS_FOLDER"   # DB_BACKUP_SAUVEGARDES, sinon <dossier de données du labo>/sauvegardes (tools/lab_paths.sh)
 DATE="${DB_BACKUP_DATE:-$(date +%Y-%m-%d)}"
 GARDER="${DB_BACKUP_GARDER:-14}"
 SCHEMAS="${DB_BACKUP_SCHEMAS:-knowledge cases flow}"
@@ -155,6 +157,21 @@ for schema in $SCHEMAS; do
     echo "Échec de pg_dump pour le schéma : $schema"; rm -f "$fichier"; echecs=$((echecs + 1))
   fi
 done
+# Dump partiel de quality (change story-quality-audit, D10 amendé le 2026-10-18) : TROIS tables nommées une à une (attributs d'équipe,
+# relectures d'équipe, versions de surcouche), données seulement (le schéma vient des migrations), dans quality-sans-texte.dump. Jamais le
+# schéma quality entier, jamais les éléments, contenus, verdicts ni retours de coaching : aucun texte de story ni clé de ticket.
+existe="$(docker compose exec -T db psql -U postgres -d pmzilla -Atc "select 1 from pg_namespace where nspname = 'quality'" 2>/dev/null | tr -d '[:space:]')"
+if [ "$existe" != "1" ]; then
+  echo "Schéma absent, non sauvegardé : quality (dump partiel)"; echecs=$((echecs + 1))
+else
+  fichier="$CIBLE/quality-sans-texte.dump"
+  if docker compose exec -T db pg_dump -U postgres -d pmzilla --data-only -Fc -t quality.team_attributes -t quality.team_reviews -t quality.overlay_versions > "$fichier" 2>/dev/null && [ -s "$fichier" ]; then
+    chmod 600 "$fichier" 2>/dev/null || true
+    echo "Sauvegarde créée : $fichier ($(wc -c < "$fichier" | tr -d ' ') octets)"; faits=$((faits + 1))
+  else
+    echo "Échec de pg_dump pour le dump partiel de quality"; rm -f "$fichier"; echecs=$((echecs + 1))
+  fi
+fi
 if [ "$faits" -eq 0 ]; then
   rmdir "$CIBLE" 2>/dev/null && echo "Aucun fichier écrit : dossier $CIBLE retiré"
   echec 1 "Aucune sauvegarde faite, rotation non faite"

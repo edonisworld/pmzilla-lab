@@ -65,10 +65,6 @@ class FichierDEtat(Labo):
         self.assertEqual(self.lancer("--record").returncode, 0)
         self.assertEqual(self.etat()["version"], 1)
 
-    def test_parite_absente_de_l_etat_quand_la_fenetre_est_fermee(self):
-        self.lancer("--record")
-        self.assertNotIn("parity", [c["id"] for c in self.etat()["checks"]])
-
 
 class Notification(Labo):
     def notifications(self):

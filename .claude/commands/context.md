@@ -28,5 +28,5 @@ To change only the review date of a note, run `uv run tools/context_lab.py revie
 - Open, list or copy anything in the originals folder of the context space, or read the notes folder as files: the notes are read through the library only.
 - Run the indexer `pmzilla_lab_library.py` (`index`, `rename-collection`, `probe`, `status`): the daily run indexes the notes.
 - Write a person's name, or a figure of a cell under five.
-- Run the real Jira tools (`history_jira.py`, `export_jira_api.py`), `flow_import.py`, `flow_compare.py`, `psql`, `db.py` (nor any calculation with `--source db`), a branch finish (`finish_branch`), or use `PMZILLA_SKIP_GREEN_CHECK` or `--no-verify`.
+- Run the real Jira tools (`history_jira.py`, `export_jira_api.py`), `flow_import.py`, `flow_compare.py`, `psql`, `db.py` (nor any calculation with `--source db`), a branch finish (`finish_train`), or use `PMZILLA_SKIP_GREEN_CHECK` or `--no-verify`.
 - Write to GitHub, push or merge.

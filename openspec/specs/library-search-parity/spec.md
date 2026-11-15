@@ -26,9 +26,9 @@ Source: `tests/parity/test_parity.py` (Mesure)
 - **THEN** each question is embedded before its latency is measured
 
 ### Requirement: Give a verdict from mean overlap, worst query and rare queries
-The system SHALL declare parity with the snapshot when the mean overlap reaches a threshold, no query falls under a minimum overlap, and every query marked rare shares at least a stricter minimum of results. It SHALL expose the mean, the minimum, the worst query, the queries below the minimum and the failing rare queries, and SHALL let the mean threshold be set from the command line.
+The system SHALL declare parity with the snapshot when the mean overlap reaches a threshold, no query falls under a minimum overlap, and every query marked rare shares at least a stricter minimum of results. It SHALL expose the mean, the minimum, the worst query, the queries below the minimum and the failing rare queries.
 
-Source: `tests/parity/test_parity.py` (Mesure.test_moyenne_minimum_et_pire_requete, test_verdict_parite, test_seuil_de_la_moyenne, test_requete_rare_exige_7_sur_8)
+Source: `tests/parity/test_parity.py` (Mesure.test_moyenne_minimum_et_pire_requete, test_verdict_parite, test_requete_rare_exige_7_sur_8)
 
 #### Scenario: Identical results
 - **WHEN** the search returns the snapshot's results for every query
@@ -38,13 +38,18 @@ Source: `tests/parity/test_parity.py` (Mesure.test_moyenne_minimum_et_pire_reque
 - **WHEN** one of three queries has no common result with the snapshot
 - **THEN** the mean is the average of the three, the minimum is zero, that query is named worst and below the minimum, and the verdict is not parity
 
-#### Scenario: Mean threshold
-- **WHEN** the mean is slightly under the default threshold
-- **THEN** the verdict fails by default and succeeds with a lower threshold given
-
 #### Scenario: Rare query
 - **WHEN** a rare query shares fewer results than the rare-query minimum
 - **THEN** it is listed as a failing rare query and the verdict is not parity even with a low threshold
+
+### Requirement: Let the mean threshold be set from the command line
+The system SHALL let the mean threshold of the parity verdict be set from the command line.
+
+Source: `tests/parity/test_parity.py` (Mesure.test_seuil_de_la_moyenne)
+
+#### Scenario: Mean threshold
+- **WHEN** the mean is slightly under the default threshold
+- **THEN** the verdict fails by default and succeeds with a lower threshold given
 
 ### Requirement: Report latency for each path
 The system SHALL measure the search duration of each query on the PostgreSQL search, excluding embedding, and SHALL report a latency summary including a 95th percentile.
@@ -103,17 +108,27 @@ Source: `tests/parity/test_parity.py` (Plan)
 - **THEN** setup statements run first, the explain statement runs with its parameters and the transaction is rolled back
 
 ### Requirement: Refuse a BM25 run when the migration is missing and refuse out-of-range options
-The system SHALL exit with code 2 and say the keyword-index migration is absent, before any connection, when the BM25 option is chosen on a repository lacking that migration; SHALL refuse a search-breadth option outside the supported range; and SHALL expose defaults for breadth and scan consistent with the search module. The normalisation-flag option SHALL accept exactly the values the query builder accepts.
+The system SHALL exit with code 2 and say the keyword-index migration is absent, before any connection, when the BM25 option is chosen on a repository lacking that migration.
 
-Source: `tests/parity/test_parity.py` (Plan.test_option_explain_de_la_ligne_de_commande, EfSearch, Rapport.test_bm25_non_disponible_tant_que_la_migration_manque), `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_option_rank_norm_de_la_parite_aligne_sur_la_validation)
+Source: `tests/parity/test_parity.py` (Rapport.test_bm25_non_disponible_tant_que_la_migration_manque)
 
 #### Scenario: Missing migration
 - **WHEN** the BM25 option is used and the migration is absent
 - **THEN** the exit code is 2 and the message says the migration is absent
 
+### Requirement: Refuse an out-of-range search breadth
+The system SHALL refuse a search-breadth option outside the supported range, and SHALL expose defaults for breadth and scan consistent with the search module.
+
+Source: `tests/parity/test_parity.py` (Plan.test_option_explain_de_la_ligne_de_commande, EfSearch)
+
 #### Scenario: Breadth out of range
 - **WHEN** the breadth is above the supported range
 - **THEN** the command exits with an argument error
+
+### Requirement: Accept exactly the query builder's normalisation flags
+The normalisation-flag option SHALL accept exactly the values the query builder accepts.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_option_rank_norm_de_la_parite_aligne_sur_la_validation)
 
 #### Scenario: Normalisation flag
 - **WHEN** the flag is set to a supported value, to an unsupported value, or omitted

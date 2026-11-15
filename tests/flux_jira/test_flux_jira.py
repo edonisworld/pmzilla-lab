@@ -588,8 +588,8 @@ class ExclusionPartout(unittest.TestCase):
 
 class EtatsAttente(unittest.TestCase):
     WORKFLOW = {"termine": ("Closed", "Done"),
-                "en_cours": [("Doing", "In Progress"), ("Ready for Review", "In Progress"),
-                             ("Ready for Acceptance", "In Progress"), ("Implementation - On Hold", "In Progress")],
+                "en_cours": [("Doing", "In Progress"), ("Awaiting Review", "In Progress"),
+                             ("Awaiting Acceptance", "In Progress"), ("Development - Blocked", "In Progress")],
                 "a_faire": [("Waiting", "To Do")]}
 
     def donnees(self):
@@ -606,10 +606,10 @@ class EtatsAttente(unittest.TestCase):
     def test_wip_total_inchange_et_attente_comptee_a_part(self):
         lot = self.donnees()
         sans, _ = calculer([lot], "")
-        avec, md = calculer([lot], 'waiting_states: ["Ready for", "On Hold"]\n')
+        avec, md = calculer([lot], 'waiting_states: ["Awaiting", "Blocked"]\n')
         self.assertEqual(avec["wip"], sans["wip"])                       # les états d'attente restent dans le WIP
         en_cours = [t for t in lot if not t["resolu"] and t["categorie"] == "In Progress"]
-        attendu = [t for t in en_cours if t["etat"].startswith("Ready for") or t["etat"].endswith("On Hold")]
+        attendu = [t for t in en_cours if t["etat"].startswith("Awaiting") or t["etat"].endswith("Blocked")]
         w = avec["wip_attente"]
         self.assertEqual((w["actif"], w["attente"]), (len(en_cours) - len(attendu), len(attendu)))
         self.assertAlmostEqual(w["part"], len(attendu) / len(en_cours))
@@ -619,7 +619,7 @@ class EtatsAttente(unittest.TestCase):
 
     def test_par_equipe(self):
         lot = self.donnees()
-        avec, md = calculer([lot], 'waiting_states: ["Ready for", "On Hold"]\n')
+        avec, md = calculer([lot], 'waiting_states: ["Awaiting", "Blocked"]\n')
         equipes = avec["par_equipe"]
         self.assertEqual(sum(d["wip_attente"] for d in equipes.values()), avec["wip_attente"]["attente"])
         for d in equipes.values():
@@ -635,7 +635,7 @@ class EtatsAttente(unittest.TestCase):
 
 class Dormants(unittest.TestCase):
     """--dormant-from-history : répartition actif / attente / dormant, calculée sur un cache d'historique."""
-    YAML = 'waiting_states: ["Ready for", "On Hold"]\n'
+    YAML = 'waiting_states: ["Awaiting", "Blocked"]\n'
     WORKFLOW = EtatsAttente.WORKFLOW
 
     def lot(self):
@@ -675,7 +675,7 @@ class Dormants(unittest.TestCase):
         cles = [t["cle"] for t in dormants_wip + dormants_todo]
         sortie, r, md = self.lancer_avec(lot, cles)
         vivants = [t for t in en_cours if t not in dormants_wip]
-        attente = [t for t in vivants if t["etat"].startswith("Ready for") or t["etat"].endswith("On Hold")]
+        attente = [t for t in vivants if t["etat"].startswith("Awaiting") or t["etat"].endswith("Blocked")]
         w = r["wip_repartition"]
         self.assertEqual((w["actif"], w["attente"], w["dormant"]),
                          (len(vivants) - len(attente), len(attente), len(dormants_wip)))
@@ -955,25 +955,25 @@ class TempsParSegment(unittest.TestCase):
     T3 (B) ouvert, en implémentation depuis le 09-20 ; T4 (B) ouvert, sans historique ;
     T5 (B) livré le 07-10 via « prêt » ; T6 (B) ouvert, créé le 09-24 directement en implémentation, sans transition.
     """
-    YAML = 'waiting_states: ["Ready for"]\n'
+    YAML = 'waiting_states: ["Awaiting"]\n'
 
     PARCOURS = {   # clé : (équipe, création, état initial, [(date, état d'arrivée)], résolution ou None)
         "ABC-0": ("Equipe A", "2026-04-01", "Open", [("2026-04-07", "Closed")], "2026-04-07"),
         "ABC-1": ("Equipe A", "2026-05-04", "Open",
-                  [("2026-05-06", "Definition - Ongoing"), ("2026-05-20", "Ready for Implementation"),
-                   ("2026-05-27", "Implementation - Ongoing"), ("2026-06-10", "Ready for Review (Implementation)"),
-                   ("2026-06-20", "Ready for Acceptance"), ("2026-06-25", "Closed")], "2026-06-25"),
+                  [("2026-05-06", "Specification - Active"), ("2026-05-20", "Awaiting Development"),
+                   ("2026-05-27", "Development - Active"), ("2026-06-10", "Awaiting Review (Development)"),
+                   ("2026-06-20", "Awaiting Acceptance"), ("2026-06-25", "Closed")], "2026-06-25"),
         "ABC-2": ("Equipe A", "2026-05-01", "Open",
-                  [("2026-05-10", "Implementation - Ongoing"), ("2026-05-20", "Ready for Review (Implementation)"),
-                   ("2026-05-25", "Implementation - Ongoing"), ("2026-06-01", "Closed")], "2026-06-01"),
+                  [("2026-05-10", "Development - Active"), ("2026-05-20", "Awaiting Review (Development)"),
+                   ("2026-05-25", "Development - Active"), ("2026-06-01", "Closed")], "2026-06-01"),
         "ABC-3": ("Equipe B", "2026-09-01", "Open",
-                  [("2026-09-05", "Definition - Ongoing"), ("2026-09-12", "Ready for Implementation"),
-                   ("2026-09-20", "Implementation - Ongoing")], None),
+                  [("2026-09-05", "Specification - Active"), ("2026-09-12", "Awaiting Development"),
+                   ("2026-09-20", "Development - Active")], None),
         "ABC-4": ("Equipe B", "2026-08-01", "In Progress", None, None),            # absent du cache
         "ABC-5": ("Equipe B", "2026-06-01", "Open",
-                  [("2026-06-03", "Ready for Implementation"), ("2026-06-10", "Implementation - Ongoing"),
+                  [("2026-06-03", "Awaiting Development"), ("2026-06-10", "Development - Active"),
                    ("2026-07-10", "Closed")], "2026-07-10"),
-        "ABC-6": ("Equipe B", "2026-09-24", "Implementation - Ongoing", [], None),   # aucune transition
+        "ABC-6": ("Equipe B", "2026-09-24", "Development - Active", [], None),   # aucune transition
     }
 
     def preparer(self, yaml_texte=None, sans_cle=False, sans_cache=False):
@@ -1058,7 +1058,7 @@ class TempsParSegment(unittest.TestCase):
     def test_efficacite_de_flux(self):
         ts, _ = self.rapport()
         e = ts["global"]["efficacite"]
-        # T1 : 14 j actifs sur 36 ; T5 : 30 j actifs sur 37 (les états « Ready for … » sont des attentes)
+        # T1 : 14 j actifs sur 36 ; T5 : 30 j actifs sur 37 (les états « Awaiting … » sont des attentes)
         self.assertEqual(e["n"], 2)
         self.assertAlmostEqual(e["p50"], (14 / 36 + 30 / 37) / 2)
         self.assertAlmostEqual(e["agregee"], 44 / 73)
@@ -1123,7 +1123,7 @@ class TempsParSegment(unittest.TestCase):
         self.assertIn("commitment_point", r.stdout + r.stderr)
 
     def test_segments_reglables(self):
-        ts, md = self.rapport(yaml_texte=self.YAML + "segments:\n  debut: [Definition - Ongoing]\n  ready: [Ready for Implementation]\n")
+        ts, md = self.rapport(yaml_texte=self.YAML + "segments:\n  debut: [Specification - Active]\n  ready: [Awaiting Development]\n")
         self.assertEqual(list(ts["global"]["sortis"]), ["debut", "pret"])
         self.assertEqual(ts["global"]["sortis"]["debut"]["n"], 2)
 
@@ -1194,8 +1194,9 @@ class TempsParSegment(unittest.TestCase):
 
 
 class DonneesDuTableau(unittest.TestCase):
-    """Données ajoutées pour le tableau de bord : arrivées par équipe, CFD (avec --historique) et points de l'Aging WIP
-    (avec --points, fichier à part). Mêmes parcours inventés que TempsParSegment (aujourd'hui : 2026-10-04)."""
+    """Données du rapport JSON gardées pour les lecteurs à venir (Mothra) : arrivées par équipe et CFD (avec --history) ; l'option
+    --points (points de l'Aging WIP du tableau retiré) est refusée (R-146). Le nom de la classe est cité par la spécification
+    jira-flow-reports. Mêmes parcours inventés que TempsParSegment (aujourd'hui : 2026-10-04)."""
     YAML = TempsParSegment.YAML
     PARCOURS = TempsParSegment.PARCOURS
     preparer = TempsParSegment.preparer
@@ -1247,38 +1248,47 @@ class DonneesDuTableau(unittest.TestCase):
         _, _, js, _ = self.lancer_avec()
         self.assertNotIn("temps_par_segment", js)
 
-    def test_points_de_l_aging_wip_seulement_avec_l_option(self):
-        ws, _, _, _ = self.lancer_avec("--history")
+    # R-146 : les trois tests des points de l'Aging WIP (fichier points-*.json, option --points) sont remplacés par le refus de
+    # l'option (code supprimé : ecrire_points et son fichier n'existent plus).
+    PHRASES_POINTS = {"fr": "--points est retirée : le tableau visuel des flux n'existe plus",
+                      "en": "--points is retired: the visual flow dashboard no longer exists"}
+
+    def lancer_points(self, ws, *extra, env_extra=None):
+        env = {**{k: v for k, v in os.environ.items() if k != "CLAUDECODE"}, "PMZILLA_LAB_WORKSPACE": str(ws), **(env_extra or {})}
+        return subprocess.run(["uv", "run", str(SCRIPT), "compute", "--name", "seg", "--today", AUJOURDHUI.isoformat(),
+                               "--no-comparison", "--points", *extra], env=env, capture_output=True, text=True)
+
+    def test_points_refuse_code_2_en_francais_par_defaut_et_en_anglais(self):
+        for langue, extra in (("fr", ()), ("en", ("--language", "en"))):
+            ws = self.preparer()
+            r = self.lancer_points(ws, *extra)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn(self.PHRASES_POINTS[langue], r.stderr)
+            self.assertEqual(r.stdout, "")
+
+    def test_points_refuse_de_la_meme_facon_dans_et_hors_session(self):
+        for env_extra in ({}, {"CLAUDECODE": "1"}):
+            ws = self.preparer()
+            r = self.lancer_points(ws, env_extra=env_extra)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn(self.PHRASES_POINTS["fr"], r.stderr)
+
+    def test_points_refuse_n_ecrit_ni_rapport_ni_fichier_des_tableaux(self):
+        ws = self.preparer()
+        self.lancer_points(ws)
         self.assertFalse((ws / "Flux-Lab" / "tableaux").exists())
-        ws, r, _, _ = self.lancer_avec("--history", "--points")
-        fichier = ws / "Flux-Lab" / "tableaux" / "points-seg-2026-10-04.json"
-        self.assertTrue(fichier.exists())
-        self.assertIn("3 ticket(s) en cours", r.stdout)
-        self.assertEqual(oct(fichier.stat().st_mode & 0o777), "0o600")
-        self.assertEqual(oct(fichier.parent.stat().st_mode & 0o777), "0o700")
-        contenu = json.loads(fichier.read_text(encoding="utf-8"))
-        self.assertEqual(contenu["nom"], "seg")
-        self.assertNotRegex(fichier.read_text(encoding="utf-8"), r"[A-Z]{2,}-\d+")      # aucune clé de ticket
-        points = contenu["points"]
-        self.assertEqual({tuple(sorted(p)) for p in points},
-                         {("age", "age_segment", "equipe", "etat", "nature", "segment")})
-        self.assertEqual([(p["equipe"], p["age"], p["segment"], p["age_segment"], p["nature"]) for p in points],
-                         [("Equipe B", 10, "implementation", 10, "actif"),      # ABC-6
-                          ("Equipe B", 33, "implementation", 14, "actif"),      # ABC-3
-                          ("Equipe B", 64, None, None, "actif")])               # ABC-4 : sans historique
+        self.assertEqual(list((ws / "Flux-Lab" / "rapports").glob("*")) if (ws / "Flux-Lab" / "rapports").exists() else [], [])
 
-    def test_points_sans_historique_ni_segment(self):
-        ws, _, _, _ = self.lancer_avec("--points")
-        contenu = json.loads((ws / "Flux-Lab" / "tableaux" / "points-seg-2026-10-04.json").read_text(encoding="utf-8"))
-        self.assertEqual({p["segment"] for p in contenu["points"]}, {None})
-        self.assertEqual(len(contenu["points"]), 3)
+    def test_points_refuse_avant_toute_lecture_de_reglage(self):
+        ws = self.preparer("jira_site: [pas, un\n")                   # un fichier illisible : le refus de --points passe avant
+        r = self.lancer_points(ws)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(self.PHRASES_POINTS["fr"], r.stderr)
 
-    def test_points_nature_attente(self):
-        ws = self.preparer('waiting_states: ["Implementation - Ongoing"]\n')
-        r, js, _ = self.calcul(ws, "--points")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        contenu = json.loads((ws / "Flux-Lab" / "tableaux" / "points-seg-2026-10-04.json").read_text(encoding="utf-8"))
-        self.assertEqual({p["nature"] for p in contenu["points"] if p["etat"] == "Implementation - Ongoing"}, {"attente"})
+    def test_sans_l_option_le_rapport_json_garde_arrivees_et_cfd(self):
+        _, _, js, _ = self.lancer_avec("--history")
+        self.assertIn("arrivees_par_semaine", next(iter(js["par_equipe"].values())))
+        self.assertIn("cfd", js["temps_par_segment"])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Aperçu de la fusion de main dans une branche (change finish-under-lock, design D10). Module sourcé, jamais lancé : tools/finish_branch.sh et
-# tools/finish_worktree.sh le chargent ; la règle n'existe qu'ici. POSIX sh. Les fonctions travaillent dans le dossier courant (le dépôt) ;
+# Aperçu de la fusion de main dans une branche (change finish-under-lock, design D10). Module sourcé, jamais lancé : tools/branch_sync.sh le charge
+# (les fins unitaires qui le chargeaient sont retirées par B9) ; la règle n'existe qu'ici. POSIX sh. Les fonctions travaillent dans le dossier courant (le dépôt) ;
 # elles ne changent ni référence, ni index, ni fichier (git merge-tree --write-tree n'écrit que des objets).
 #
 # Fonctions :

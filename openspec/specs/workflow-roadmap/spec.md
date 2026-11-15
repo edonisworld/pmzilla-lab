@@ -1,24 +1,20 @@
 # workflow-roadmap Specification
 
 ## Purpose
-A work queue that lives in the issues of the GitHub repository, a reader that loads it through a cached snapshot, checks it, proposes the ready jobs that fit a time budget, prints a feature, the counts and a board page, drafts the release notes of a milestone and proposes a batch, and the `/next` command that presents those proposals without editing anything. The reader never writes to GitHub: the write tool does.
+A work queue that lives in the issues of the GitHub repository, a reader that loads it through a cached snapshot, checks it, proposes the ready jobs that fit a time budget, prints a feature and the counts, drafts the release notes of a milestone and proposes a batch, and the `/next` command that presents those proposals without editing anything. The reader never writes to GitHub: the write tool does.
 
 ## Requirements
 
 ### Requirement: The work queue has a fixed, checkable format
-The system SHALL keep the work queue in the issues of the private repository, never in a tracked document. Each job SHALL be one feature issue titled `R-<n> · <title>` (a fixed prefix followed by digits, unique among open and closed features), with the labels `type:feature` and exactly one `theme:<theme>` label, a milestone, an identity marker that names the identifier of the title, and a fenced `roadmap` block of design D5 (theme, estimate, method, model, conditions, rank on an open feature, and optionally change, not-before, due, started-on and done-on dates) whose theme equals the theme label. The queue SHALL NOT contain a person's, team's or project's name.
+The system SHALL keep the work queue in the private repository's issues, never in a tracked document. Each job SHALL be one feature issue titled `R-<n> · <title>` (prefix and digits, unique among all features), with `type:feature`, exactly one `theme:<theme>` label, a milestone or none (a later horizon placed by its Horizon, R-20261103-22 Q2), a marker naming the title's identifier, and the `roadmap` block of the next requirement. The queue SHALL NOT contain a person's, team's or project's name.
 
 #### Scenario: Valid feature
 - **WHEN** a feature has its title, marker, labels, milestone, Status and a block whose keys hold allowed values
 - **THEN** it is a valid job
 
-#### Scenario: Unknown block key
-- **WHEN** the block of a feature holds a key outside design D5
-- **THEN** the queue is invalid and the identifier and the key are named
-
-#### Scenario: Forbidden values
-- **WHEN** a block has a method or a model outside the allowed values, a zero or malformed estimate, an impossible date, or a theme different from the theme label
-- **THEN** the queue is invalid and the identifier and the field are named
+#### Scenario: Feature without milestone
+- **WHEN** an open feature has its title, marker, labels, Status and a valid block, and no milestone
+- **THEN** it is a valid job and the check names no milestone problem for it
 
 #### Scenario: Two theme labels
 - **WHEN** a feature carries two `theme:` labels
@@ -28,7 +24,20 @@ The system SHALL keep the work queue in the issues of the private repository, ne
 - **WHEN** a feature's title has no identifier, or its marker names another identifier than its title
 - **THEN** the queue is invalid and the title or marker field is named
 
-Source: tests/roadmap/test_roadmap_github.py (TestCheck); tests/roadmap_model/test_roadmap_model.py (TestMarkers, TestTitles, TestBlock); the name rule rests on the write tool's guard (spec workflow-github-issues)
+Source: tests/roadmap/test_roadmap_github.py (TestCheck); tests/roadmap_model/test_roadmap_model.py (TestMarkers, TestTitles); the name rule rests on the write tool's guard (spec workflow-github-issues)
+
+### Requirement: Each job carries a roadmap block of design D5
+Each job's feature issue SHALL carry a fenced `roadmap` block of design D5 (theme, estimate, method, model, conditions, rank on an open feature, and optionally change, not-before, due, started-on and done-on dates) whose theme equals the theme label.
+
+#### Scenario: Unknown block key
+- **WHEN** the block of a feature holds a key outside design D5
+- **THEN** the queue is invalid and the identifier and the key are named
+
+#### Scenario: Forbidden values
+- **WHEN** a block has a method or a model outside the allowed values, a zero or malformed estimate, an impossible date, or a theme different from the theme label
+- **THEN** the queue is invalid and the identifier and the field are named
+
+Source: tests/roadmap/test_roadmap_github.py (TestCheck); tests/roadmap_model/test_roadmap_model.py (TestBlock)
 
 ### Requirement: /next proposes ready jobs for the time given
 The system SHALL provide a `/next <duration> [mothra|pmzilla]` slash command that runs the queue reader's next command with the duration, and with the reader's product filter when the user names a product, presents the result in the user's language (enumerated values translated), and asks the user which job to start. It SHALL NOT edit the queue, start a job, reorder the queue, invent an estimate or a model, or run anything other than the queue reader.
@@ -48,15 +57,7 @@ The system SHALL provide a `/next <duration> [mothra|pmzilla]` slash command tha
 Source: tests/workflow_commands/test_workflow_commands.py (test_next_ne_pre_approuve_que_la_sous_commande_next_du_lecteur); the presentation is untested
 
 ### Requirement: The reader works from a cache when GitHub is unreachable
-The system SHALL write, after each successful full read, a snapshot of the queue into the lab data folder, outside the repository, replacing the previous one. The snapshot SHALL be dated with the real day of the read, never with the date given by the today option or its environment variable. When GitHub is unreachable or `gh` is not authenticated, the check, next, status, board and show commands SHALL read the snapshot and print first `GitHub unreachable; read from the cache of <date>`; with no snapshot they SHALL exit 5 with `GitHub unreachable and no cache`. The reader SHALL NOT write the snapshot inside the repository, SHALL NOT rewrite it from an offline run, and SHALL NOT write to GitHub from it.
-
-#### Scenario: Offline with a cache
-- **WHEN** GitHub is unreachable and a snapshot exists
-- **THEN** next proposes from the snapshot and the first line names the date of the cache
-
-#### Scenario: Offline without a cache
-- **WHEN** GitHub is unreachable and no snapshot exists
-- **THEN** the reader exits 5
+The system SHALL write, after each successful full read, a snapshot of the queue into the lab data folder, outside the repository, replacing the previous one. The snapshot SHALL be dated with the real day of the read, never with the date given by the today option or its environment variable. The reader SHALL NOT write the snapshot inside the repository and SHALL NOT rewrite it from an offline run.
 
 #### Scenario: Snapshot dated with the real day
 - **WHEN** a successful read runs with a today option or variable set to another date
@@ -68,8 +69,25 @@ The system SHALL write, after each successful full read, a snapshot of the queue
 
 Source: tests/roadmap/test_roadmap_github.py (TestHorsLigne; TestCorrectionsRevue: test_date_du_cache_est_la_date_reelle_pas_today)
 
+### Requirement: Offline commands read the snapshot
+When GitHub is unreachable or `gh` is not authenticated, the check, next, status and show commands SHALL read the snapshot and print first `GitHub unreachable; read from the cache of <date>`; with no snapshot they SHALL exit 5 with `GitHub unreachable and no cache`. The reader SHALL NOT write to GitHub from the snapshot.
+
+#### Scenario: Offline with a cache
+- **WHEN** GitHub is unreachable and a snapshot exists
+- **THEN** next proposes from the snapshot and the first line names the date of the cache
+
+#### Scenario: Offline without a cache
+- **WHEN** GitHub is unreachable and no snapshot exists
+- **THEN** the reader exits 5
+
+Source: tests/roadmap/test_roadmap_github.py (TestHorsLigne)
+
 ### Requirement: The session start recalls the queue in one line
-The system SHALL provide a reminder command for the session-start hook that reads only the snapshot, never the network, and prints one line `roadmap: <n> ready, <n> in progress (cache of <date>)`, or nothing when no snapshot exists or the snapshot cannot be read. It SHALL always exit 0, SHALL NOT launch `gh`, and SHALL NOT print a title or a body.
+The system SHALL provide a reminder command for the session-start hook that reads only the snapshot, never the network, and prints one line `roadmap: <n> ready, <n> in progress (cache of <date>)`, or nothing when no snapshot exists or the snapshot cannot be read. It SHALL always exit 0, SHALL NOT launch `gh`, and SHALL NOT print a title or a body. The `--session-hook` option SHALL be accepted and SHALL change nothing: the reminder has no other mode.
+
+#### Scenario: Option without effect
+- **WHEN** the reminder runs with and without `--session-hook` on the same snapshot
+- **THEN** both runs print the same output and exit 0
 
 #### Scenario: Session start offline
 - **WHEN** the session starts without network and a snapshot exists
@@ -140,7 +158,7 @@ The system SHALL keep the current release as a tracked queue setting that names 
 - **THEN** the check raises no problem for it
 
 ### Requirement: The reader drafts the release notes of a milestone
-The system SHALL provide a reader command that prints Markdown release notes of a milestone from its features closed as completed, one line per feature grouped by theme, and names on the error stream what it leaves out (design D5 of `github-roadmap`). Themes SHALL come in alphabetical order, and features within a theme by closing date, then identifier number, an unknown date last. Features closed as not planned, sub-issues and ideas SHALL be left out; issues without a type label SHALL be named on the error stream by number only, with `not listed: issues without a type label:`. With the public option, it SHALL keep only the closed features carrying the label `edition:public` and name on the error stream the closed features it leaves out for lack of that label (design D20 of `edition-publish-tooling`); the notes keep the titles as they are, in French, and the command translates nothing. It SHALL pass the notes through the write tool's guard and print nothing on a finding (exit 3) or when the guard cannot run (exit 4). It SHALL NOT write to GitHub or a file, create a release or tag, or list sub-issues, ideas or open features.
+The system SHALL provide a reader command that prints Markdown release notes of a milestone from its features closed as completed, one line per feature grouped by theme, and names on the error stream what it leaves out (design D5 of `github-roadmap`). Themes SHALL come in alphabetical order, and features within a theme by closing date, then identifier number, an unknown date last. It SHALL NOT write to GitHub or a file, create a release or tag, or list sub-issues, ideas or open features.
 
 #### Scenario: Closed features listed
 - **WHEN** a milestone holds two closed features of different themes
@@ -154,6 +172,19 @@ The system SHALL provide a reader command that prints Markdown release notes of 
 - **WHEN** the milestone also holds an open feature and closed sub-issues
 - **THEN** none of them is in the notes and the error stream says `not listed: 1 open feature(s)`
 
+#### Scenario: Unknown milestone
+- **WHEN** the milestone does not exist
+- **THEN** the command exits 2 with `usage: unknown milestone`
+
+#### Scenario: Offline with a cache
+- **WHEN** GitHub is unreachable and a snapshot exists
+- **THEN** the notes come from the snapshot and the error stream starts with the cache banner
+
+Source: tests/roadmap/test_roadmap_notes.py (TestNotesSelection, TestNotesGarde, TestNotesHorsLigne, TestNotesPubliques)
+
+### Requirement: Release notes leave out unplanned features and untyped issues
+In the release notes of a milestone, features closed as not planned, sub-issues and ideas SHALL be left out; issues without a type label SHALL be named on the error stream by number only, with `not listed: issues without a type label:`.
+
 #### Scenario: Feature closed as not planned
 - **WHEN** a feature of the milestone was closed as not planned
 - **THEN** it is not in the notes, from a live read or from the snapshot
@@ -162,17 +193,10 @@ The system SHALL provide a reader command that prints Markdown release notes of 
 - **WHEN** the milestone holds an issue labelled neither feature, task nor idea
 - **THEN** it is not in the notes and the error stream names its number, never its title
 
-#### Scenario: Sensitive name in a title
-- **WHEN** a closed feature's title holds a name of the sensitive-names list
-- **THEN** the command exits 3 with `refused: sensitive name in notes`, prints no notes and does not print the name
+Source: tests/roadmap/test_roadmap_notes.py (TestNotesSelection)
 
-#### Scenario: Unknown milestone
-- **WHEN** the milestone does not exist
-- **THEN** the command exits 2 with `usage: unknown milestone`
-
-#### Scenario: Offline with a cache
-- **WHEN** GitHub is unreachable and a snapshot exists
-- **THEN** the notes come from the snapshot and the error stream starts with the cache banner
+### Requirement: Public release notes keep only the public-edition features
+With the public option, the release-notes command SHALL keep only the closed features carrying the label `edition:public` and name on the error stream the closed features it leaves out for lack of that label (design D20 of `edition-publish-tooling`); the notes keep the titles as they are, in French, and the command translates nothing.
 
 #### Scenario: Public notes
 - **WHEN** the milestone holds three closed features, one of them labelled `edition:public`, and the public option is given
@@ -182,28 +206,16 @@ The system SHALL provide a reader command that prints Markdown release notes of 
 - **WHEN** the same milestone is read without the public option
 - **THEN** the notes hold the three features
 
-Source: tests/roadmap/test_roadmap_notes.py (TestNotesSelection, TestNotesGarde, TestNotesHorsLigne, TestNotesPubliques)
+Source: tests/roadmap/test_roadmap_notes.py (TestNotesPubliques)
 
-### Requirement: Ideas stay outside the queue
-The system SHALL make the queue reader ignore issues labelled `type:idea`: the check SHALL NOT report them, next SHALL NOT propose them, and status and board SHALL NOT count them. An issue that carries an idea marker without the `type:idea` label is not an idea: the check SHALL report it by its number. An idea SHALL become a job only when the user creates a feature for it through the write tool.
+### Requirement: Release notes pass the write tool's guard
+The release-notes command SHALL pass the notes through the write tool's guard and print nothing on a finding (exit 3) or when the guard cannot run (exit 4).
 
-#### Scenario: Idea without milestone
-- **WHEN** the repository holds an open `type:idea` issue without milestone, block or marker of a job
-- **THEN** the check exits 0 and names no problem for it
+#### Scenario: Sensitive name in a title
+- **WHEN** a closed feature's title holds a name of the sensitive-names list
+- **THEN** the command exits 3 with `refused: sensitive name in notes`, prints no notes and does not print the name
 
-#### Scenario: Next ignores ideas
-- **WHEN** the next command walks the queue
-- **THEN** no idea is proposed, listed too long or listed unestimated
-
-#### Scenario: Status and board unchanged
-- **WHEN** open and closed ideas are added to a queue
-- **THEN** the status output and the board page are the same as without them
-
-#### Scenario: Idea marker without the idea label
-- **WHEN** an issue carries an idea marker and another label than `type:idea`
-- **THEN** the check exits 1 and names its number
-
-Source: tests/roadmap/test_roadmap_notes.py (TestIdees)
+Source: tests/roadmap/test_roadmap_notes.py (TestNotesGarde)
 
 ### Requirement: No evolutions document remains
 The system SHALL hold no evolutions document in the repository: an unnumbered idea SHALL live as a `type:idea` issue without milestone. No command, agent or tracked document SHALL point to an evolutions document. Untested until implemented.
@@ -238,7 +250,7 @@ The system SHALL provide a reader batch command that takes a milestone and walks
 Source: tests/roadmap/test_roadmap_github.py (TestBatch)
 
 ### Requirement: Known files come from the feature's change
-The system SHALL take the known files of a feature from the tasks and design of the unarchived change its block names: each code span that is, whole, a repository path existing as a file or folder, outside the OpenSpec folder (design D3). A folder SHALL overlap every path under it. A span that starts with `/` or `~`, or holds a `.` or `..` segment, SHALL NOT be a known file, and a change name holding `/`, `.`, `..` or `archive` SHALL NOT name a change. The reader SHALL NOT decide from any other file, nor guess files from a title or a description.
+The system SHALL take the known files of a feature from the tasks and design of the unarchived change its block names: each code span that is, whole, a repository path existing as a file or folder, outside the OpenSpec folder (design D3). A folder SHALL overlap every path under it. The reader SHALL NOT decide from any other file, nor guess files from a title or a description.
 
 #### Scenario: Command line in a code span
 - **WHEN** a tasks file quotes a command line holding a space and a script path
@@ -252,11 +264,20 @@ The system SHALL take the known files of a feature from the tasks and design of 
 - **WHEN** two changes both cite a baseline spec file
 - **THEN** that path does not make them overlap
 
+Source: tests/roadmap/test_roadmap.py (TestFichiersConnus, TestRecoupement)
+
+### Requirement: Paths leaving the repository and unsafe change names give no known file
+A span that starts with `/` or `~`, or holds a `.` or `..` segment, SHALL NOT be a known file, and a change name holding `/`, `.`, `..` or `archive` SHALL NOT name a change.
+
 #### Scenario: Path leaving the repository
 - **WHEN** a tasks file quotes an existing file as an absolute path, from the home folder, or through a `..` or `.` segment
 - **THEN** that span gives no known file
 
-Source: tests/roadmap/test_roadmap.py (TestFichiersConnus, TestRecoupement)
+#### Scenario: Unsafe change name
+- **WHEN** a feature's block names a change holding `/`, `.`, `..` or `archive`
+- **THEN** that name names no change
+
+Source: tests/roadmap/test_roadmap.py (TestFichiersConnus)
 
 ### Requirement: Unknown files are flagged and a missing change sets aside
 The system SHALL retain a feature whose block names no change with the unknown-files flag of design D2, and SHALL NOT set another feature aside because of it. It SHALL set aside, with the reason of design D2, a feature whose change field names no unarchived change.
@@ -448,7 +469,7 @@ The system SHALL provide a reader show command that prints, for one identifier, 
 - **WHEN** the feature has the Status `Done` in another Project and `Ready` in the queue's Project
 - **THEN** show prints the Status `Ready`
 
-Source: tests/roadmap/test_roadmap_github.py (TestShowStatusBoard: test_show, test_show_identifiant_inconnu; TestCorrectionsRevue: test_status_d_un_autre_project_ignore)
+Source: tests/roadmap/test_roadmap_github.py (TestShowStatus: test_show, test_show_identifiant_inconnu; TestCorrectionsRevue: test_status_d_un_autre_project_ignore)
 
 ### Requirement: The status command prints counts and open jobs
 The system SHALL provide a reader status command that prints the number of features ready, in progress, blocked and done, then a line per job in progress with its start date, per blocked job with the features it waits for, and per ready job with its estimate. It SHALL exit 1 on an invalid queue and SHALL NOT write to GitHub.
@@ -461,20 +482,7 @@ The system SHALL provide a reader status command that prints the number of featu
 - **WHEN** a feature's block holds a forbidden method
 - **THEN** the status command exits 1
 
-Source: tests/roadmap/test_roadmap_github.py (TestShowStatusBoard: test_status, test_status_file_invalide)
-
-### Requirement: The board command writes a page in the data folder
-The system SHALL provide a reader board command that writes an HTML page of the queue into the lab data folder, outside the repository, and prints the page's file name without any absolute path. It SHALL exit 1 on an invalid queue and SHALL NOT write to GitHub or in the repository.
-
-#### Scenario: Page written
-- **WHEN** the board command runs on a valid queue
-- **THEN** the page exists in the data folder and holds the identifiers and the closing dates
-
-#### Scenario: No absolute path printed
-- **WHEN** the board command runs
-- **THEN** its output names the page file and holds neither the data folder path nor the home folder path
-
-Source: tests/roadmap/test_roadmap_github.py (TestShowStatusBoard: test_board_ecrit_dans_le_dossier_de_donnees; TestCorrectionsRevue: test_board_n_imprime_pas_de_chemin_absolu); the option that opens the page is untested
+Source: tests/roadmap/test_roadmap_github.py (TestShowStatus: test_status, test_status_file_invalide)
 
 ### Requirement: GitHub error messages holding an identifier are withheld
 The system SHALL make the reader check every GitHub refusal message against the personal identifiers before printing it. When the message holds one, or the identifiers cannot be read, the reader SHALL exit 1 with `GitHub refused: HTTP <code> (message withheld)`; otherwise it SHALL print `GitHub refused:` followed by the message. It SHALL NOT print a withheld message in part.
@@ -494,7 +502,7 @@ The system SHALL make the reader check every GitHub refusal message against the 
 Source: tests/roadmap/test_roadmap_github.py (TestCorrectionsRevue: test_erreur_graphql_avec_identifiant_personnel_retenue, test_erreur_graphql_sans_identifiant_gardee, test_erreurs_dans_la_reponse_json_avec_identifiant_retenues)
 
 ### Requirement: A missing or unauthenticated gh falls back to the snapshot
-The system SHALL treat a `gh` that cannot be launched, or that is not authenticated, as GitHub unreachable: the check, next, status, board, show and release-notes commands SHALL read an existing snapshot with the cache line, or exit 5 with `GitHub unreachable and no cache` when none exists. The reader SHALL NOT ask the user to log in and SHALL NOT launch `gh auth`.
+The system SHALL treat a `gh` that cannot be launched, or that is not authenticated, as GitHub unreachable: the check, next, status, show and release-notes commands SHALL read an existing snapshot with the cache line, or exit 5 with `GitHub unreachable and no cache` when none exists. The reader SHALL NOT ask the user to log in and SHALL NOT launch `gh auth`.
 
 #### Scenario: gh missing without a snapshot
 - **WHEN** the `gh` executable cannot be found and no snapshot exists
@@ -531,8 +539,55 @@ The system SHALL make the check accept, on a feature and on a sub-issue, zero or
 
 Source: tests/roadmap/test_roadmap_product.py (TestCheck)
 
-### Requirement: The product filter narrows next, status, board and batch
-The system SHALL let the reader's next, status, board and batch commands take `--product`: `mothra` keeps the features labelled `product:mothra`, `pmzilla` keeps those without a `product:` label, and no option keeps the whole queue. Any other value SHALL exit 2. The filter SHALL NOT hide an invalid queue (problems of the check still give exit 1) and SHALL NOT write to GitHub.
+### Requirement: Blockers are computed over the whole queue
+The system SHALL compute blockers over the whole queue whatever the product filter: a feature stays blocked by an open feature of the other product, and a closed blocker of the other product does not block. In the batch, a feature `In progress` of another product SHALL still count for the known files that set a feature aside. The filter SHALL NOT make a blocked feature proposable.
+
+#### Scenario: Open blocker of the other product
+- **WHEN** a Mothra feature is blocked by an open PMZilla feature and next runs with `--product mothra`
+- **THEN** the Mothra feature is not proposed, and the same holds the other way round with `--product pmzilla`
+
+#### Scenario: Closed blocker of the other product
+- **WHEN** a Mothra feature is blocked by a closed PMZilla feature and next runs with `--product mothra`
+- **THEN** the Mothra feature is proposed
+
+#### Scenario: Blocked feature in status
+- **WHEN** status runs with `--product mothra` and a Mothra feature is blocked by a PMZilla feature
+- **THEN** the Mothra feature is listed as blocked, waiting for the PMZilla feature, which is not listed itself
+
+Source: tests/roadmap/test_roadmap_product.py (TestNextFiltre: test_blocage_croise_conserve, test_bloqueur_ferme_d_un_autre_produit_ne_bloque_pas; TestStatusFiltre: test_blocage_croise_conserve); the files of a job in progress of another product are read in tools/roadmap.py (untested)
+
+### Requirement: A feature closed as not planned is neither done nor a lifted block
+The reader SHALL treat a feature closed as not planned as neither done nor valid-by-Done: no Done Status is required of it, it is counted apart in status, and it keeps blocking its dependents in next, status and the batch. Check SHALL flag a dependent `Ready` or `In progress`.
+
+#### Scenario: Dropped blocker
+- **WHEN** R-1 is closed as not planned and R-2, blocked by R-1, is `Todo`
+- **THEN** check passes, next does not propose R-2, and status counts R-1 as dropped, not done
+
+Source: tests/roadmap/test_roadmap_notes.py (TestFermeeNotPlanned)
+
+### Requirement: Ideas stay outside the queue and its summary
+The system SHALL make the queue reader ignore issues labelled `type:idea`: the check SHALL NOT report them, next SHALL NOT propose them, and status SHALL NOT count them. An issue that carries an idea marker without the `type:idea` label is not an idea: the check SHALL report it by its number. An idea SHALL become a job only when the user creates a feature for it through the write tool.
+
+#### Scenario: Idea without milestone
+- **WHEN** the repository holds an open `type:idea` issue without milestone, block or marker of a job
+- **THEN** the check exits 0 and names no problem for it
+
+#### Scenario: Next ignores ideas
+- **WHEN** the next command walks the queue
+- **THEN** no idea is proposed, listed too long or listed unestimated
+
+#### Scenario: Status unchanged
+- **WHEN** open and closed ideas are added to a queue
+- **THEN** the status output is the same as without them
+
+#### Scenario: Idea marker without the idea label
+- **WHEN** an issue carries an idea marker and another label than `type:idea`
+- **THEN** the check exits 1 and names its number
+
+Source: tests/roadmap/test_roadmap_notes.py (TestIdees)
+
+### Requirement: The product filter narrows next, status and batch
+The system SHALL let the reader's next, status and batch commands take `--product`: `mothra` keeps the features labelled `product:mothra`, `pmzilla` keeps those without a `product:` label, and no option keeps the whole queue. Any other value SHALL exit 2. The filter SHALL NOT hide an invalid queue (problems of the check still give exit 1) and SHALL NOT write to GitHub.
 
 #### Scenario: No option
 - **WHEN** next runs on a queue with a proposable PMZilla feature and a proposable Mothra feature
@@ -550,10 +605,6 @@ The system SHALL let the reader's next, status, board and batch commands take `-
 - **WHEN** status runs with `--product mothra` on a queue with one `Ready` PMZilla feature and two Mothra features, one of them `In progress`
 - **THEN** the counts are `ready 0` and `in-progress 1`, and only the Mothra feature is listed
 
-#### Scenario: Board
-- **WHEN** board runs with `--product mothra`
-- **THEN** the page holds the Mothra feature and not the PMZilla one
-
 #### Scenario: Batch
 - **WHEN** batch runs on a milestone with a PMZilla and a Mothra feature, with `--product mothra`, with `--product pmzilla` and without the option
 - **THEN** the first run retains the Mothra feature only, the second the PMZilla one only, and the third both
@@ -564,22 +615,18 @@ The system SHALL let the reader's next, status, board and batch commands take `-
 
 Source: tests/roadmap/test_roadmap_product.py (TestNextFiltre, TestStatusFiltre, TestBatchFiltre)
 
-### Requirement: Blockers are computed over the whole queue
-The system SHALL compute blockers over the whole queue whatever the product filter: a feature stays blocked by an open feature of the other product, and a closed blocker of the other product does not block. In the batch, a feature `In progress` of another product SHALL still count for the known files that set a feature aside. The filter SHALL NOT make a blocked feature proposable.
+### Requirement: The reader has no board command
+The system SHALL give the queue reader no board command and no option that writes or opens a page of the queue. Called with `board`, with or without options, the reader SHALL exit 2 with the parser's usage error naming `invalid choice` and `board` (design D1 of `remove-roadmap-board`). It SHALL NOT call `gh`, read or write the snapshot, write an HTML page or any other file, or open a file for the user.
 
-#### Scenario: Open blocker of the other product
-- **WHEN** a Mothra feature is blocked by an open PMZilla feature and next runs with `--product mothra`
-- **THEN** the Mothra feature is not proposed, and the same holds the other way round with `--product pmzilla`
+#### Scenario: Former board command
+- **WHEN** the reader is run with `board`, `board --open` or `board --product mothra`
+- **THEN** it exits 2, its error stream holds `invalid choice` and `board`, the fake `gh` records no call, and no page exists in the data folder
 
-#### Scenario: Closed blocker of the other product
-- **WHEN** a Mothra feature is blocked by a closed PMZilla feature and next runs with `--product mothra`
-- **THEN** the Mothra feature is proposed
+#### Scenario: Summary of the queue
+- **WHEN** the user wants the counts, the jobs in progress, the next ready jobs and the blocked jobs
+- **THEN** the status command prints them, and no command prints done work per week
 
-#### Scenario: Blocked feature in status
-- **WHEN** status runs with `--product mothra` and a Mothra feature is blocked by a PMZilla feature
-- **THEN** the Mothra feature is listed as blocked, waiting for the PMZilla feature, which is not listed itself
-
-Source: tests/roadmap/test_roadmap_product.py (TestNextFiltre: test_blocage_croise_conserve, test_bloqueur_ferme_d_un_autre_produit_ne_bloque_pas; TestStatusFiltre: test_blocage_croise_conserve); the files of a job in progress of another product are read in tools/roadmap.py (untested)
+Source: tests/roadmap/test_roadmap_github.py (TestBoardRetire); the scenario "Summary of the queue" is covered by the status tests (TestShowStatus: test_status), and the absence of a per-week count is untested
 
 ## Open questions
 

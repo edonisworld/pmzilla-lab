@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pyyaml", "psycopg[binary]", "httpx", "numpy", "mcp>=1.2,<2"]
+# dependencies = ["pyyaml", "psycopg[binary]", "httpx", "numpy", "mcp>=2,<3"]
 # ///
 """PMZilla Lab : mesure, sans aucun appel au modèle, de l'indicateur « un seul message final » sur les traces conservées.
 

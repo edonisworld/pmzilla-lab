@@ -18,9 +18,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
 from aide_story_quality import (EQUIPE_A, EQUIPE_B, IDENTIFIANT_FICTIF, SOCLE, SURCOUCHE, EspaceCollecte, sq, so)
+import patient_data as pd                          # noqa: E402
 import story_quality_audit_store as audit_store    # noqa: E402
 import story_quality_engine as engine              # noqa: E402
 
+ORIGINE_FICTIVE = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
 CLE_ANALYSE = "fausse-cle-analyse-zz-777"
 SERVICE_CLE = "service-fictif"
 ANCIEN = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
@@ -42,6 +44,14 @@ BLOC = """story_quality:
 {plafond}"""
 
 
+def contenu_requete(requete: dict) -> dict:
+    """Le document de la requête : la partie JSON, plus le titre, la description et les critères lus entre les balises pasted_content."""
+    message = requete["messages"][0]["content"]
+    corps, _, reste = message.partition("\n\n<pasted_content id=")
+    texte = reste.split(">\n", 1)[1].rsplit("\n</pasted_content id=", 1)[0]
+    return {**json.loads(corps), **json.loads(texte)}
+
+
 class FauxMoteur:
     """État du faux serveur d'analyse : requêtes reçues (corps, en-têtes), réponse choisie par le test."""
 
@@ -56,7 +66,7 @@ class FauxMoteur:
 
     @staticmethod
     def criteres(requete: dict) -> list[str]:
-        return [c["code"] for c in json.loads(requete["messages"][0]["content"])["criteria"]]
+        return [c["code"] for c in contenu_requete(requete)["criteria"]]
 
     def valide(self, requete: dict) -> str:
         """Réponse correcte : « met » partout (avec un retour court en mode coaching)."""
@@ -115,6 +125,40 @@ class MagasinAnalyseMemoire:
         self.ecritures = 0
         self.ouvert = True
         self.versions = 0
+        # change patient-data-detection (tâche 4.5, décision Q10) : le montage commun enregistre une levée de la suspension à la version
+        # actuelle du détecteur, sans catégorie acceptée ; aucun test existant ne change de valeur attendue. Horloge fictive : un instant par
+        # événement, pour que « après la levée » soit exact.
+        self.horloge = 0
+        self.passages: list[dict] = []
+        self.levees: list[dict] = []
+        self.enregistrer_levee(pd.DETECTOR_VERSION, None, 0, [])
+
+    def _instant(self):
+        self.horloge += 1
+        return ORIGINE_FICTIVE + dt.timedelta(seconds=self.horloge)
+
+    def textes_pour_detection(self):
+        return [(it["kind"], *self.contenus[k][:3]) for k, it in sorted(self.items.items())]
+
+    def enregistrer_detection(self, version, empreinte, lus, trouves):
+        instant = self._instant()
+        self.passages.append({"id": len(self.passages) + 1, "run_at": instant, "detector_version": version, "labels_fingerprint": empreinte,
+                              "items_read": dict(lus), "found": dict(trouves)})
+        return instant
+
+    def derniere_detection(self):
+        return dict(self.passages[-1]) if self.passages else None
+
+    def enregistrer_levee(self, version, empreinte, run_id, acceptees):
+        self.levees.append({"id": len(self.levees) + 1, "lifted_at": self._instant(), "detector_version": version,
+                            "labels_fingerprint": empreinte, "run_id": run_id, "accepted": sorted(set(acceptees))})
+
+    def derniere_levee(self):
+        if not self.levees:
+            return None
+        levee = self.levees[-1]
+        apres = {c for p in self.passages if p["run_at"] > levee["lifted_at"] for c, drapeau in p["found"].items() if drapeau}
+        return {**levee, "found_after": sorted(apres)}
 
     def _empreinte(self, cle):
         self.versions += 1
@@ -188,6 +232,20 @@ class MagasinAnalyseMemoire:
         return {v["key"] for v in self.verdicts if not v["sample"] and (paire is None or v["pair"] == tuple(paire))}
 
 
+class PorteFictive:
+    """Ce que `engine.ouvrir_porte` rend dans les tests : la lecture de la porte de suspension (avant la clé) sur le faux magasin, sans
+    compter comme ouverture du magasin de l'analyse et sans le fermer."""
+
+    def __init__(self, magasin):
+        self.magasin = magasin
+
+    def derniere_levee(self):
+        return self.magasin.derniere_levee()
+
+    def fermer(self):
+        pass
+
+
 class EspaceAnalyse(EspaceCollecte):
     """Espace de travail temporaire (réglages, socle fictif, dossier de contexte), faux moteur, fausse clé, faux magasin. `lancer` appelle
     l'outil réel dans le processus."""
@@ -254,6 +312,7 @@ class EspaceAnalyse(EspaceCollecte):
         avant = self.fichiers_temporaires()
         with mock.patch.object(audit_store, "ouvrir", ouvrir), mock.patch.object(engine, "demander", demander), \
                 mock.patch.object(engine, "lire_cle", lire_cle), mock.patch.object(engine, "est_terminal", lambda: terminal), \
+                mock.patch.object(engine, "ouvrir_porte", lambda: PorteFictive(self.analyse)), \
                 mock.patch.object(engine, "nouvel_alea", lambda: random.Random(graine)), \
                 mock.patch.object(engine, "identifiants", lambda: [IDENTIFIANT_FICTIF]), \
                 mock.patch.object(engine, "ENGINE_URL", self.url_moteur), \

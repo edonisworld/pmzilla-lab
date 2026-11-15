@@ -29,9 +29,7 @@ posture Delivery lit.
         l'éviter).
 
     uv run flux_jira.py compute --points
-        Écrit aussi Flux-Lab/tableaux/points-<nom>-AAAA-MM-JJ.json : un point par ticket en cours (équipe, état, segment, âge,
-        âge dans le segment, nature actif / attente / dormant), sans clé ni titre, pour l'Aging WIP du tableau de bord
-        (fichier hors Git, permissions 600). Segment et âge dans le segment : seulement avec --history.
+        Option retirée avec le tableau visuel des flux (R-146) : code 2, aucun rapport écrit, quelle que soit la session.
 
     uv run flux_jira.py compute --scope ABC,DEF
         Ne garde que les tickets des projets listés (clés séparées par des virgules, ou « tous » : aucun filtre), comme
@@ -99,15 +97,15 @@ Fermetures groupées : avec une colonne de clé et l'heure dans la date de réso
 tickets livrés (motif de résolution listé dans batch_closure_resolutions, « Done » par défaut) dont la résolution tombe
 dans la même minute que celle d'au moins batch_closure_threshold - 1 autres du même projet (5 par défaut), avec leur
 part dans le débit du projet. Un compte seulement : ces tickets restent dans le débit, le lead time et les prévisions.
-L'option --batch-closure-resolutions « Done,Accepted & Released » (ou « tous » pour tous les motifs livrés) remplace
+L'option --batch-closure-resolutions « Done,Shipped » (ou « tous » pour tous les motifs livrés) remplace
 batch_closure_resolutions pour ce calcul, sans toucher à flux.yaml.
 
 Fenêtre d'export : quand une requête d'export de flux.yaml (jql_export, jql_exports) filtre « resolved >= -Nw », la fenêtre
 commence N semaines avant la date du calcul ; la première semaine de la période est alors tronquée (les éléments résolus
 avant la fenêtre manquent) et « Arrivées et sorties » le dit : elle est à exclure des comparaisons.
 
-États d'attente : waiting_states (facultatif) liste des états ou des motifs (« Ready for » en préfixe,
-« On Hold » en suffixe) dont les éléments restent dans le WIP total mais sont comptés à part, comme files
+États d'attente : waiting_states (facultatif) liste des états ou des motifs (« Awaiting » en préfixe,
+« Blocked » en suffixe) dont les éléments restent dans le WIP total mais sont comptés à part, comme files
 d'attente. Le rapport montre alors le WIP actif, le WIP en attente et la part d'attente (par équipe aussi).
 """
 from __future__ import annotations
@@ -136,7 +134,7 @@ import flow_organisation as organisation
 from flux_jira_messages import CATALOGS
 from messages import DEFAULT_LANGUAGE, Messages, add_language_option
 
-T_FR = Messages(CATALOGS, "fr")      # langue par défaut des fonctions appelées par d'autres scripts (segment_sample, flow_board)
+T_FR = Messages(CATALOGS, "fr")      # langue par défaut des fonctions appelées par d'autres scripts (segment_sample)
 
 
 def langue_demandee(argv: list[str] | None = None) -> str:
@@ -205,7 +203,7 @@ DEFAULT_CONFIG = {
     "types_portefeuille": [],
     # projets Jira écartés de la même façon (anomalies, support…), reconnus par la clé du ticket
     "projets_exclus": [],
-    # facultatif : états (ou motifs de préfixe ou de suffixe, comme « Ready for » et « On Hold ») dont les éléments
+    # facultatif : états (ou motifs de préfixe ou de suffixe, comme « Awaiting » et « Blocked ») dont les éléments
     # en cours sont comptés à part, comme files d'attente. Vide : aucun comptage à part.
     "etats_attente": [],
     # segments du flux (option --history) : chaque segment regroupe des états ; un état hors segment n'entre
@@ -217,7 +215,7 @@ DEFAULT_CONFIG = {
     # calculé pour eux. Le réglage remplace la valeur par défaut en entier.
     "segments_hors_calcul": commun.SEGMENTS_HORS_CALCUL_PAR_DEFAUT,
     # point d'engagement du lead time de livraison : l'entrée dans ce segment (par défaut, « pret »)
-    "point_engagement": "pret",
+    "point_engagement": commun.POINT_ENGAGEMENT_PAR_DEFAUT,
     # fermetures groupées : nombre de tickets d'un même projet résolus dans la même minute à partir duquel ils forment
     # une fermeture groupée (section « Fermetures groupées » du rapport, un compte seulement)
     "seuil_fermetures_groupees": 5,
@@ -1003,7 +1001,6 @@ def cmd_cycles(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 SEUIL_MASQUE = 5
-ETATS_CELLULE = ("ok", "lt5", "masked", "no_reference", "cycle_in_progress", "not_computed")
 
 
 class Brut(NamedTuple):
@@ -1604,6 +1601,9 @@ def lire_perimetre(valeur: str | None, tr=None) -> list[str] | None:
 
 def cmd_calcul(args: argparse.Namespace) -> None:
     tr = Messages(CATALOGS, args.language)
+    if args.points:                                                      # retirée avec le tableau des flux (R-146) : avant tout le reste
+        print(tr("points_retired"), file=sys.stderr)
+        sys.exit(2)
     if args.dormants is not None:
         sys.exit(tr("dormants_removed"))
     verifier_usage_lecteur(args, tr)
@@ -1792,7 +1792,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         histoires = lire_historique_lu(settings, tr)
         segment_de, noms_segments = commun.table_segments(settings)
         table = {nom: None for nom in noms_segments}
-        engagement = settings.get("point_engagement") or "pret"
+        engagement = commun.point_engagement(settings)
         if engagement not in table:
             sys.exit(tr("commitment_unknown", point=engagement, segments=", ".join(
                 nom if tr.language == DEFAULT_LANGUAGE else cfg.SEGMENTS.get(nom, nom) for nom in noms_segments)))
@@ -1896,12 +1896,6 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         result["regroupement"] = {"par": args.par, "hors_referentiel": hors_referentiel(tickets, referentiel),
                                   "structure": referentiel.structure_summary(args.par, "fr")}
     write_report(result, tr_texte)
-    if args.points:
-        ecrire_points(nom_rapport, today, wip, age_of, est_dormant, est_attente,
-                      periodes if args.historique is not None else None,
-                      segment_de if args.historique is not None else None,
-                      noms_segments if args.historique is not None else [],
-                      "début" if reference_age is ages_from_start else "création", tr)
     if not args.sans_comparaison:
         reports = find_reports(nom_rapport)
         earlier = [day for day in reports if day < result["date"]]
@@ -2109,34 +2103,6 @@ def arrivees_lines(r: dict, tr=None) -> list[str]:
     if r.get("tickets_partages_par_equipe"):
         lines += partages_lines(r, tr)
     return lines + [""]
-
-
-def ecrire_points(nom: str, aujourdhui: dt.date, wip: list[dict], age_of, est_dormant, est_attente,
-                  periodes: dict | None, segment_de: dict | None, segments: list[str], base: str, tr=None) -> None:
-    """Points de l'Aging WIP du tableau de bord : un par ticket en cours (équipe, état, segment, âge, âge dans le
-    segment, nature), sans clé ni titre. Fichier à part, Flux-Lab/tableaux/points-<nom>-AAAA-MM-JJ.json (hors Git,
-    permissions 600) : les rapports restent des agrégats. Segment et âge dans le segment : seulement avec
-    --history."""
-    points = []
-    for t in wip:
-        segment = age_segment = None
-        if periodes is not None and id(t) in periodes:
-            courante = [v for v in visites(periodes[id(t)], segment_de, ouvert=True) if v["en_cours"]]
-            if courante:
-                segment, age_segment = courante[0]["segment"], courante[0]["jours"]
-        nature = ("dormant" if est_dormant and est_dormant(t) else
-                  "attente" if est_attente and est_attente(t) else "actif")
-        points.append({"equipe": t["equipe"], "etat": t["etat"], "segment": segment, "age": age_of(t),
-                       "age_segment": age_segment, "nature": nature})
-    points.sort(key=lambda p: (p["equipe"], p["etat"], p["age"]))
-    contenu = {"nom": nom, "date": aujourdhui.isoformat(), "base_age": base, "segments": segments, "points": points}
-    dossier = FLUX_DIR / "tableaux"
-    dossier.mkdir(parents=True, exist_ok=True)
-    os.chmod(dossier, 0o700)
-    chemin = dossier / f"points-{nom or 'serie'}-{aujourdhui.isoformat()}.json"
-    chemin.write_text(json.dumps(contenu, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.chmod(chemin, 0o600)
-    print((tr or T_FR)("points_written", n=len(points), path=chemin))
 
 
 def write_report(r: dict, tr=None) -> None:
@@ -2724,12 +2690,10 @@ def main(argv: list[str] | None = None) -> None:
     calc.add_argument("--history", dest="historique", nargs="?", const="", default=None, metavar="CHEMIN",
                       help="ajoute la section « Temps par segment » à partir de l'historique des états collecté par "
                            "history_jira.py et lu dans la base (aucun chemin n'est accepté)")
-    calc.add_argument("--points", action="store_true",
-                      help="écrit aussi Flux-Lab/tableaux/points-<nom>-AAAA-MM-JJ.json : un point par ticket en cours "
-                           "(équipe, état, segment, âge, nature), sans clé, pour le tableau de bord (hors Git)")
+    calc.add_argument("--points", action="store_true", help=argparse.SUPPRESS)       # retirée (R-146) : refusée, code 2
     calc.add_argument("--batch-closure-resolutions", dest="motifs_fermetures", metavar="MOTIFS",
                       help="motifs de résolution suivis par la section « Fermetures groupées », séparés par des virgules "
-                           "(« Done,Accepted & Released »), ou « tous » pour tous les motifs livrés ; remplace "
+                           "(« Done,Shipped »), ou « tous » pour tous les motifs livrés ; remplace "
                            "batch_closure_resolutions de flux.yaml pour ce calcul")
     calc.add_argument("--today", dest="aujourdhui", help=argparse.SUPPRESS)   # pour les tests
     add_language_option(calc)

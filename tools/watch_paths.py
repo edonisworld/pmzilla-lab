@@ -3,8 +3,7 @@
 Les dossiers ont changé de nom : `veille/` (sources.yaml, tri.yaml) est devenu `watch/`, `Veille-Lab/` `Watch-Lab/` (son
 sous-dossier de collection `veille/` devient `watch/`), `Veille-Ecartes/` `Watch-Excluded/` et `_a-lire.md`
 `_to-read.md`. Les anciens noms ne sont plus acceptés : quand seul l'ancien dossier existe, la résolution s'arrête avec
-un message qui donne le nom actuel et l'outil de migration `tools/migrate_watch.py` (code de sortie non nul en ligne de
-commande). Sinon : le dossier actuel (il sera créé s'il manque).
+un message qui donne le nom actuel et demande de renommer à la main (code de sortie non nul en ligne de commande). Sinon : le dossier actuel (il sera créé s'il manque).
 
 Une seule logique, importée par watch_lab.py, watch_triage.py et dashboard.py ; watch.sh l'appelle par la ligne de
 commande (`python3 watch_paths.py lab|excluded|config|collection <workspace>` écrit le chemin ou le nom à utiliser).
@@ -33,12 +32,12 @@ OWN_COLLECTION = "own-articles"   # collection personnelle des articles de l'uti
 
 
 class AncienNom(SystemExit):
-    """Seul un dossier à l'ancien nom existe : arrêt propre, le message donne le nom actuel et l'outil de migration."""
+    """Seul un dossier à l'ancien nom existe : arrêt propre, le message donne le nom actuel et demande de renommer à la main."""
 
 
 def _refuse(old: str, new: str) -> AncienNom:
     return AncienNom(f"PMZilla Lab, erreur : le dossier {old}/ n'est plus pris en charge ; le nom actuel est {new}/. "
-                     "Lancer `uv run tools/migrate_watch.py` (une seule fois) pour le migrer.")
+                     "dossier de veille à l'ancien nom : renommer à la main.")
 
 
 def _pick(parent: Path, kind: str) -> Path:

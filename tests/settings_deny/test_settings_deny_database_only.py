@@ -72,7 +72,12 @@ LANCEMENTS_COMPLEMENT = (
     ("flow_import.py", ("", " a.csv b.csv --mark-absent", " --rebuild --dry-run", " a.csv --history")),
     ("flow_compare.py", (" reports a.md b.md", " data a.csv", " data a.csv --history")),
 )
-REGLES_COMPLEMENT = [r for commande, _ in LANCEMENTS_COMPLEMENT for r in regles_de_lancement(commande, PREFIXES_TOOLS)]
+# Désherbage du 2026-10-28 (D30) : les neuf formes par lanceur de flow_import.py et de flow_compare.py (`uv run */x`, `uv run x`, `uv run * x` et leurs jumelles
+# python et python3) sont retirées du fragment 25 : les formes larges du fragment 05 (REGLES_FLOW_LARGES) les couvrent. Le bloc ne garde de ces deux outils
+# que les formes de lancement direct ; la matrice est rejouée avec les formes larges, présentes avant comme après.
+REGLES_FLOW_RETIREES = [r for script in ("flow_import.py", "flow_compare.py") for r in regles_de_lancement(script, ())]
+REGLES_FLOW_LARGES = [f"Bash({lanceur} *{script}*)" for script in ("flow_import.py", "flow_compare.py") for lanceur in ("uv run", "python", "python3")]
+REGLES_COMPLEMENT = [r for commande, _ in LANCEMENTS_COMPLEMENT for r in regles_de_lancement(commande, PREFIXES_TOOLS) if r not in REGLES_FLOW_RETIREES]
 COMMANDES_PERMISES_COMPLEMENT = (
     'grep -rn "uv run tools/flux_jira.py epics" docs/', 'git grep -n "flow_import.py" -- docs/',
     "grep -n reports tools/flow_compare.py", "cat tools/flow_import.py", "head -40 tools/flow_compare.py",
@@ -337,10 +342,10 @@ class BlocComplement(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.moteur = Moteur(REGLES_COMPLEMENT)
+        cls.moteur = Moteur(REGLES_COMPLEMENT + REGLES_FLOW_LARGES)
 
     def test_aucune_regle_ne_commence_par_un_joker_et_pas_de_doublon(self):
-        for regle in REGLES_COMPLEMENT:
+        for regle in REGLES_COMPLEMENT + REGLES_FLOW_LARGES:
             self.assertTrue(regle.startswith("Bash(") and regle.endswith(")"), regle)
             self.assertNotEqual(regle[len("Bash("):][:1], "*", regle)
         self.assertEqual(len(REGLES_COMPLEMENT), len(set(REGLES_COMPLEMENT)))
@@ -371,6 +376,7 @@ class ComplementDansLeFichierDeReglages(unittest.TestCase):
         if self.manquantes:
             self.fail(f"étape 13.2 : {len(self.manquantes)} règle(s) de REGLES_COMPLEMENT pas encore dans .claude/settings.json")
         self.assertEqual(self.manquantes, [])
+        self.assertEqual([r for r in REGLES_FLOW_LARGES if r not in self.deny], [])
 
     def test_la_matrice_contre_les_regles_reelles(self):
         if self.manquantes:

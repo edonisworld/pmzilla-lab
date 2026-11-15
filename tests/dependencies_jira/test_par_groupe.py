@@ -212,10 +212,11 @@ class ParGroupe(Base):
         self.referentiel()
         r_csv, _ = self.calcul_par("mission-team", nom="csv")
         export = self.csv(TICKETS, nom="base.csv")
-        donnees = chargeur.lire_export_dependances(Path(export), dj.config())
+        racine = self.ws / "Flux-Lab"
+        with mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"):       # jamais le flux.yaml réel de l'auteur
+            donnees = chargeur.lire_export_dependances(Path(export), dj.config())
         magasin = types.SimpleNamespace(lire_dependances=lambda settings: dict(donnees))
         args = ["compute", "--by", "mission-team", "--name", "db"]
-        racine = self.ws / "Flux-Lab"
         with mock.patch.dict(sys.modules, {"flow_store": magasin}), mock.patch.dict(os.environ), \
                 mock.patch.object(dj, "FLUX_DIR", racine), mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"), \
                 mock.patch.object(dj, "REPORT_DIR", racine / "rapports"), contextlib.redirect_stdout(io.StringIO()):

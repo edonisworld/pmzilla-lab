@@ -25,14 +25,12 @@ def appels_attendus(jour: str, langue: str = "en", date_option: bool = False) ->
         ("export_jira_api", ["export", "--strict-teams", "--language", langue]),
         ("flow_import", ["--mark-absent", "--language", langue]),
         ("history_jira", ["collect", "--strict", "--language", langue]),
-        ("flux_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--history", "--dormant-from-history", "--points",
+        ("flux_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--history", "--dormant-from-history",
                        "--language", langue, *today]),
-        ("flux_jira", ["compute", "--name", SERIE_2, "--history", "--dormant-from-history", "--points", "--language", langue, *today]),
+        ("flux_jira", ["compute", "--name", SERIE_2, "--history", "--dormant-from-history", "--language", langue, *today]),
         ("dependencies_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--language", langue]),
         ("dependencies_jira", ["compute", "--name", SERIE_1, "--scope", PORTEE, "--by", "project", "--language", langue]),
         ("dependencies_jira", ["compute", "--name", SERIE_2, "--language", langue]),
-        ("flow_board", ["--language", langue]),
-        ("flow_board", ["--language", langue, "--anonymous"]),
         ("flow_retention", ["purge", "--language", langue]),
     ]
 
@@ -42,26 +40,28 @@ class OrdreEtOptions(Decor):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui()))
-        self.assertIn("Monthly run complete: 9 of 9 steps, 0 skipped", r.sortie)
+        self.assertIn("Monthly run complete: 8 of 8 steps, 0 skipped", r.sortie)
 
     def test_run_complet_en_francais_par_defaut(self):
         r = self.lancer()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertIn("Suivi mensuel terminé : 9 étapes sur 9, 0 sautées", r.sortie)
+        self.assertIn("Suivi mensuel terminé : 8 étapes sur 8, 0 sautées", r.sortie)
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui(), "fr"))
 
     def test_chaque_etape_est_annoncee_avec_son_rang(self):
         r = self.lancer_en()
-        for ligne in ("Step 1/9: export", "Step 2/9: import", "Step 3/9: history", "Step 4/9: flow (series 1)",
-                      "Step 5/9: flow (series 2)", "Step 6/9: dependencies (series 1)", "Step 7/9: dependencies (series 2)",
-                      "Step 8/9: dashboard", "Step 9/9: retention"):
+        for ligne in ("Step 1/8: export", "Step 2/8: import", "Step 3/8: history", "Step 4/8: flow (series 1)",
+                      "Step 5/8: flow (series 2)", "Step 6/8: dependencies (series 1)", "Step 7/8: dependencies (series 2)",
+                      "Step 8/8: retention"):
             self.assertIn(ligne, r.sortie)
+        self.assertNotIn("dashboard", r.sortie)
         self.assertRegex(r.sortie, r"Step export passed \(\d+ s\)")
 
     def test_outils_exclus_jamais_appeles_et_commandes_de_lecture_affichees(self):
         r = self.lancer_en()
         self.assertEqual(r.code, 0, r.sortie)
-        self.assertEqual(set(self.outils_appeles()) & {"segment_sample", "db", "flow_views", "knowledge_import", "flow_compare"}, set())
+        self.assertEqual(set(self.outils_appeles()) & {"segment_sample", "db", "flow_views", "knowledge_import", "flow_compare",
+                                                       "flow_board"}, set())
         self.assertNotIn("--dry-run", [m for a in self.appels() for m in a["args"]])      # pas d'essai à blanc de l'import
         for a in self.appels():
             self.assertNotIn("check", a["args"])
@@ -84,21 +84,32 @@ class OrdreEtOptions(Decor):
         outils = self.outils_appeles()
         self.assertLess(outils.index("flow_import"), outils.index("history_jira"))
 
-    def test_option_open_va_aux_tableaux(self):
-        self.lancer_en("--open")
-        tableaux = [a["args"] for a in self.appels() if a["outil"] == "flow_board"]
-        self.assertEqual(tableaux, [["--language", "en", "--open"], ["--language", "en", "--anonymous", "--open"]])
-
-    def test_tableaux_selon_le_reglage(self):
-        for valeur, attendu in (("full", [["--language", "en"]]), ("anonymous", [["--language", "en", "--anonymous"]])):
+    def test_option_open_refusee_code_2_aucun_outil(self):
+        """Décision du 2026-10-26 (D3) : --open reste dans l'analyseur comme option refusée, avant toute lecture de réglage."""
+        for langue, phrase in (("fr", "--open est retiré avec le tableau des flux"), ("en", "--open is retired with the flow dashboard")):
             self.setUp()
-            self.ecrire_reglages(self.reglages_avec_tableaux(valeur))
-            self.lancer_en()
-            self.assertEqual([a["args"] for a in self.appels() if a["outil"] == "flow_board"], attendu)
+            r = self.lancer("--language", langue, "--open")
+            self.assertEqual(r.code, 2, r.sortie)
+            self.assertIn(phrase, r.sortie)
+            self.assertEqual(self.appels(), [])
+            self.assertFalse(list(self.rapports.glob("suivi-mensuel-*")))
 
-    def reglages_avec_tableaux(self, valeur: str) -> str:
-        from aide_flow_monthly import REGLAGES
-        return REGLAGES.replace("dashboard: both", f"dashboard: {valeur}")
+    def test_option_open_refusee_avant_la_lecture_des_reglages(self):
+        (self.flux / "flux.yaml").unlink()
+        r = self.lancer_en("--open")
+        self.assertEqual(r.code, 2, r.sortie)
+        self.assertNotIn("Missing prerequisite", r.sortie)
+
+    def test_plan_sans_etape_de_tableau_de_bord_retention_apres_la_derniere_dependance(self):
+        """R-146 : aucun appel au générateur retiré ; la rétention suit la dernière étape de dépendances."""
+        self.lancer_en()
+        outils = self.outils_appeles()
+        self.assertNotIn("flow_board", outils)
+        self.assertEqual(outils[-1], "flow_retention")
+        self.assertEqual(outils[-2], "dependencies_jira")
+        for a in self.appels():
+            self.assertNotIn("--points", a["args"])
+            self.assertNotIn("--open", a["args"])
 
     def test_requete_unique_sans_nom(self):
         self.ecrire_reglages("jql_export: project = AAA\nmonthly_run:\n  series:\n    - name: seulezz\n      dependencies: none\n")
@@ -146,7 +157,7 @@ class ArretAuPremierEcart(Decor):
         self.assertEqual(self.outils_appeles(), ["export_jira_api", "flow_import", "history_jira"])
 
     def test_aucun_code_4_ni_phrase_d_ecart_de_parite(self):
-        for outil in ("export_jira_api", "flow_import", "history_jira", "flux_jira", "dependencies_jira", "flow_board", "flow_retention"):
+        for outil in ("export_jira_api", "flow_import", "history_jira", "flux_jira", "dependencies_jira", "flow_retention"):
             for code in (1, 2, 3, 4, 66):
                 self.setUp()
                 self.codes_de({outil: code})
@@ -157,11 +168,12 @@ class ArretAuPremierEcart(Decor):
                     self.assertNotIn("Écart", r.sortie)
                     self.assertNotIn("Missing input", r.sortie)
 
-    def test_entree_illisible_du_tableau_de_bord_arrete_avec_le_code_1(self):
-        self.codes(flow_board=2)
+    def test_echec_de_la_retention_arrete_avec_le_code_1(self):
+        """Remplace le test de l'échec du tableau de bord (code supprimé, R-146) : même contrat sur la dernière étape, maintenant la rétention."""
+        self.codes(flow_retention=2)
         r = self.lancer_en()
         self.assertEqual(r.code, 1, r.sortie)
-        self.assertIn("Stopped at step dashboard: exit code 2", r.sortie)
+        self.assertIn("Stopped at step retention: exit code 2", r.sortie)
 
     def test_export_en_echec_l_orchestrateur_ne_verifie_aucun_fichier(self):
         self.codes(export_jira_api=1)
@@ -204,16 +216,18 @@ class Reprise(Decor):
         self.assertEqual([(a["outil"], a["args"]) for a in self.appels()], appels_attendus(aujourdhui())[3:])
 
     def test_etapes_retirees_refusees_code_2(self):
-        for etape in ("compare-data", "compare-reports"):
+        for etape in ("compare-data", "compare-reports", "dashboard"):
             self.setUp()
             r = self.lancer_en("--from", etape, "--date", aujourdhui())
             self.assertEqual(r.code, 2, (etape, r.sortie))
+            self.assertIn("Usage error: unknown step", r.sortie, etape)
             self.assertEqual(self.appels(), [], etape)
             self.assertFalse(list(self.rapports.glob("suivi-mensuel-*")), etape)
 
-    def test_from_dashboard(self):
-        self.lancer_en("--from", "dashboard", "--date", aujourdhui())
-        self.assertEqual(self.outils_appeles(), ["flow_board", "flow_board", "flow_retention"])
+    def test_from_retention(self):
+        """Remplace test_from_dashboard (étape supprimée) : la reprise à la dernière étape ne lance que la rétention."""
+        self.lancer_en("--from", "retention", "--date", aujourdhui())
+        self.assertEqual(self.outils_appeles(), ["flow_retention"])
 
     def test_date_d_un_autre_jour_rapports_de_cette_date(self):
         r = self.lancer_en("--from", "import", "--date", hier())
@@ -257,7 +271,7 @@ class PassageABlanc(Decor):
         r = self.lancer_en("--dry-run")
         self.assertEqual(r.code, 0, r.sortie)
         lignes = [l for l in r.sortie.splitlines() if l.strip()]
-        self.assertEqual(len(lignes), 11)
+        self.assertEqual(len(lignes), 9)
         for ligne in lignes:
             self.assertTrue(ligne.startswith("dry run: would run "), ligne)
         self.assertIn("<series 1>", r.sortie)
@@ -287,8 +301,8 @@ class PassageABlanc(Decor):
         return REGLAGES
 
     def test_dry_run_avec_from(self):
-        r = self.lancer_en("--dry-run", "--from", "dashboard", "--date", aujourdhui())
-        self.assertEqual(len([l for l in r.sortie.splitlines() if l.strip()]), 3)
+        r = self.lancer_en("--dry-run", "--from", "dependencies", "--date", aujourdhui())
+        self.assertEqual(len([l for l in r.sortie.splitlines() if l.strip()]), 4)    # 3 cartes de dépendances et la rétention
 
 
 class Reglages(Decor):
@@ -311,6 +325,12 @@ class Reglages(Decor):
 
     def test_cle_inconnue_au_niveau_du_bloc(self):
         self.refuse(self.BASE + "monthly_run:\n  extra: 1\n  series:\n    - name: s1\n", "monthly_run.extra (L4)")
+
+    def test_cle_dashboard_retiree_refusee_avec_son_chemin_et_sa_ligne_sans_valeur(self):
+        """R-146 (D2) : monthly_run.dashboard devient une clé inconnue du bloc : code 3, chemin et ligne, jamais la valeur."""
+        sortie = self.refuse(self.BASE + "monthly_run:\n  series:\n    - name: s1\n  dashboard: valeurconfidentielle\n",
+                             "monthly_run.dashboard (L6)")
+        self.assertNotIn("valeurconfidentielle", sortie)
 
     def test_fichier_de_reglages_absent(self):
         (self.flux / "flux.yaml").unlink()
@@ -342,7 +362,6 @@ class Reglages(Decor):
 
     def test_valeurs_invalides(self):
         self.refuse(self.BASE + "monthly_run:\n  series:\n    - name: s1\n      dependencies: partout\n", "invalid value")
-        self.refuse(self.BASE + "monthly_run:\n  series:\n    - name: s1\n  dashboard: tous\n", "invalid value")
         self.refuse(self.BASE + "monthly_run:\n  series:\n    - name: s1\n      scope: 12\n", "invalid value")
 
     def test_cle_ecrite_deux_fois_refusee_par_le_chargeur_strict(self):
@@ -383,7 +402,7 @@ class Resume(Decor):
     def test_le_resume_compte_les_outils_qui_ont_ecrit_sur_la_sortie_d_erreur(self):
         self.codes_de({"stderr_ok": 1})
         self.lancer_en()
-        self.assertRegex(self.resume(), r"- tools with error output on success: 11")
+        self.assertRegex(self.resume(), r"- tools with error output on success: 9")
 
     def test_pas_de_resume_quand_un_prerequis_est_refuse(self):
         self.ecrire_reglages("jira_site: x\n")
@@ -413,7 +432,7 @@ class MoisDejaFait(Decor):
 
     def test_from_ne_contourne_pas_le_refus(self):
         self.resume_ecrit(aujourdhui(), "complete")
-        r = self.lancer_en("--from", "dashboard", "--date", aujourdhui())
+        r = self.lancer_en("--from", "retention", "--date", aujourdhui())
         self.assertEqual(r.code, 5, r.sortie)
         self.assertEqual(self.appels(), [])
 

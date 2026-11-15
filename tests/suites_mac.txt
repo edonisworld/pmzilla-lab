@@ -1,33 +1,41 @@
-# Suites propres au Mac (local-ci-container, D3) : une ligne « <suite>:<python|shell> # <raison> » par suite.
+# Suites propres au Mac (local-ci-container, D3 ; tooling-proof-in-container, D6) : une ligne « <suite>:<python|shell> # <raison> » par suite.
 # bash tests/run_all.sh --portable lance toutes les autres (conteneur de la CI locale) ; bash tests/run_all.sh --mac lance celles-ci.
-# Règle : toute suite shell du lanceur est propre au Mac par défaut ; une suite Python l'est si elle appelle une commande propre à macOS
-# sans faux (inventaire, tâche 2.1), ou si elle est rouge sous Linux au premier passage du conteneur (tâche 6.5, à porter, #403).
-# Une suite mal classée coûte du temps, jamais de couverture : chaque suite passe une fois, dans le conteneur ou sur le Mac.
-# Un test de tests/run_all vérifie que chaque entrée nomme une suite existante du genre dit, une fois, avec sa raison.
+# Règle (D6) : une suite est portable par défaut, propre au Mac seulement avec une raison vérifiée : son test ou le script qu'il lance appelle une
+# commande dont les comportements BSD et GNU diffèrent sans repli complet (Q320) ; un vrai crochet lancé par git par #!/bin/sh compte comme telle
+# (Q330 a) ; une suite dont l'outil tourne sur le Mac y reste (Q331 b). Une entrée ne quitte la liste qu'après deux rejeux verts dans le
+# conteneur, un commit par suite. Une suite mal classée coûte du temps, jamais de couverture : chaque suite passe une fois, dans le conteneur
+# ou sur le Mac. Un test de tests/run_all vérifie que chaque entrée nomme une suite existante du genre dit, une fois, avec sa raison.
+# Remplace : « toute suite shell du lanceur est propre au Mac par défaut ». Retrait : la règle tombe quand la liste est vide (suite run_all).
 
-# Suites shell du lanceur (propres au Mac par défaut)
-hooks:shell # outils BSD et bash 3.2 du Mac
+# Suites shell du lanceur (propres au Mac ; classement R-20261102-42)
+hooks:shell # outils BSD et bash 3.2 du Mac ; le test du gel ciblé (commit dans l'espace de travail sur main hors liste : refusé) ne passe que sur le Mac (R-20261107-5 ; idée #725 pour le rendre portable)
 post-commit:shell # outils BSD et bash 3.2 du Mac
 commit-msg:shell # outils BSD et bash 3.2 du Mac
 pre-commit-green:shell # outils BSD et bash 3.2 du Mac
 pre-push:shell # outils BSD et bash 3.2 du Mac
+echec-ferme:shell # outils BSD et bash 3.2 du Mac ; lance les vrais crochets (A-41 à A-43 de #629)
+interpreteur-crochets:shell # stat -f BSD et relais /usr/bin/python3 qui suit DEVELOPER_DIR, propres au Mac
 lock-hooks:shell # outils BSD et bash 3.2 du Mac
 evals_auto:shell # outils BSD et bash 3.2 du Mac
 installation:shell # outils BSD et bash 3.2 du Mac
-install_hooks:shell # outils BSD et bash 3.2 du Mac
 db_scripts:shell # outils BSD et bash 3.2 du Mac ; stat -f %Lp et shasum sans repli
 dbtest:shell # outils BSD et bash 3.2 du Mac
 offsite_backup:shell # outils BSD et bash 3.2 du Mac ; vrai plutil
-finish_branch:shell # outils BSD et bash 3.2 du Mac ; shasum -a 256 sans repli
-worktree:shell # outils BSD et bash 3.2 du Mac
-finish_worktree:shell # outils BSD et bash 3.2 du Mac ; lsof supposé absent de /usr/bin:/bin, ps -o et pgrep -f
 run_worktree:shell # outils BSD et bash 3.2 du Mac ; date -j -f et date -r sans repli
 morning_state:shell # outils BSD et bash 3.2 du Mac
 ci_local:shell # outils BSD et bash 3.2 du Mac ; teste le script qui lance le conteneur, jamais lancé dans le conteneur
-branch_sync:shell # outils BSD et bash 3.2 du Mac ; ps -o command= et /bin/bash 3.2
+branch_sync:shell # outils BSD et bash 3.2 du Mac ; /bin/bash 3.2
+fin_piege:shell # outils BSD et bash 3.2 du Mac ; les fichiers d'étape ne tournent que sur le Mac, et perl rétablit les dispositions de signaux
+
+# Suites shell portables après deux rejeux (D6, R-20261106-2) : une ligne « # portable après deux rejeux : <suite>:shell # <rejeux> » par suite
+# sortie de la liste ci-dessus ; commentées, elles ne sont lues que par le test du classement (tests/run_all), jamais par le lanceur.
+# Une suite shell nouvelle est classée dès son ajout : entrée ci-dessus, ou déclaration ci-dessous après ses deux rejeux verts.
+# portable après deux rejeux : install_hooks:shell # deux rejeux verts le 2026-11-06, arbre 477ccadcc668, image 94796eabb708
+# portable après deux rejeux : worktree:shell # deux rejeux verts le 2026-11-06, arbre 477ccadcc668, image 94796eabb708
 
 # Suites Python qui appellent une commande propre à macOS sans faux (inventaire, tâche 2.1)
 watch_sh:python # date -r et stat -f BSD de tools/watch.sh, lancé pour de bon par la suite
+forme_p_mac:python # le vrai /bin/bash 3.2 du Mac lance la chaîne exacte /bin/bash --noprofile --norc -p <enveloppe> (bash-sandbox-n2, D13, R-20261111-27 ; remplace : rien ; retrait : avec le bac à sable)
 
 # Suites Python rouges sous Linux au premier passage du conteneur (tâche 6.5, décision de l'auteur du 2026-10-20)
 posture_evals:python # compare à origin/main, absent du dépôt jetable du conteneur

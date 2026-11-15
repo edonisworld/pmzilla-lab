@@ -13,7 +13,9 @@ résolu par tools/lab_paths.py seulement). Il porte deux sous-dossiers réservé
     uv run tools/context_lab.py init [--yes]        crée les deux sous-dossiers, après confirmation
     uv run tools/context_lab.py add                 lit un brouillon de note (en-tête et corps) sur l'entrée standard, le contrôle, l'écrit
     uv run tools/context_lab.py check               contrôle chaque note (en-tête, confidentialité, une seule carte)
-    uv run tools/context_lab.py list                les mêmes lignes, sans le contrôle de confidentialité
+    uv run tools/context_lab.py list                les mêmes lignes, sans le contrôle du contenu : seuls les noms de notes passent au contrôle
+                                                    des noms sensibles et des identifiants, masqués « (file name hidden) » au besoin, et tous
+                                                    masqués quand la liste des noms manque
     uv run tools/context_lab.py review <fichier> <AAAA-MM-JJ>   remplace la date de revue d'une note, rien d'autre
 
 En-tête de chaque note (front matter YAML, clés en anglais) : title, date, nature (declarative ou measured), source, review (postérieure
@@ -23,7 +25,8 @@ Contrôle de confidentialité (add, check, review, l'indexeur et le réveil des 
 des noms sensibles et les noms distinctifs de l'extrait des noms d'équipes voisin de la liste, lu en local, moins la liste des noms
 génériques (change context-index-name-guard, D4), appariés comme le fait le hook pre-commit (tools/sensitive_names.py). Une correspondance
 refuse la note avec « personal identifier in line <n> », « sensitive name in line <n> » ou « extract team name in line <n> » : le numéro de
-ligne seulement, jamais la valeur. La liste reste exigée : vide, elle est indisponible même avec un extrait. Aucune sous-commande n'écrit
+ligne seulement, jamais la valeur. Le nom du fichier est contrôlé de même (« sensitive name in file name » et les deux autres formes) et
+n'est alors jamais affiché : `list` et `check` impriment « (file name hidden) » à sa place. La liste reste exigée : vide, elle est indisponible même avec un extrait. Aucune sous-commande n'écrit
 une ligne du corps d'une note. Au réveil, la carte n'est imprimée qu'après ce contrôle ; sinon « context map not shown: <raison> » (D5).
 
 Codes de sortie : 0 fait (check : aucune note invalide ; une note à revoir n'est pas une erreur) ; 1 check : au moins une note invalide ;
@@ -49,7 +52,8 @@ import sensitive_names  # noqa: E402
 
 PREFIX = "context_lab: "
 MAP_NAME = "carte-contexte.md"
-MAP_LINE_CAP = 80                      # lignes du corps de la carte imprimées au réveil des postures (design D9)
+NAME_HIDDEN = "(file name hidden)"    # à la place du nom de fichier qu'une garde a refusé
+MAP_LINE_CAP = 80                     # lignes du corps de la carte imprimées au réveil des postures (design D9)
 NATURES = ("declarative", "measured")
 REQUIRED = ("title", "date", "nature", "source", "review")
 FRONT_MATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
@@ -140,6 +144,16 @@ def confidentiality_problem(text: str, patterns: list, identifiers: list[str], e
     return None
 
 
+def _spaced(text: str) -> str:
+    return re.sub(r"[-_]+", " ", text)
+
+
+def _fold(text: str) -> str:
+    """Forme repliée d'un nom ou d'un nom de fichier : tirets et soulignés en espaces, accents retirés, casse ignorée (fonction de
+    tools/sensitive_names.py, non modifiée)."""
+    return sensitive_names._plain(_spaced(text))
+
+
 class Guard:
     """Les moyens du contrôle de confidentialité : motifs des noms sensibles (liste lue en place), motifs des noms distinctifs de l'extrait
     des noms d'équipes voisin de la liste (lu en local, moins la liste des noms génériques ; change context-index-name-guard, D4) et
@@ -152,6 +166,7 @@ class Guard:
         self.env, self.content_root, self.injected, self.code_root = env, content_root, identifiers, code_root
         self.patterns: list | None = None
         self.extract_patterns: list = []
+        self.folded_patterns: list = []
         self.unavailable = False
         self._identifiers: list[str] | None = None
         path = list_path
@@ -161,11 +176,15 @@ class Guard:
             self.unavailable = True
             return
         try:
-            self.patterns = sensitive_names.patterns(sensitive_names.load_names(path))
+            # Source unique des noms jugés (A-75, R-20261112-20) ; la séparation liste / extrait ne sert qu'au message « extract team name ».
+            names, extract = sensitive_names.load_judged_split(path)
+            self.patterns = sensitive_names.patterns(names)
         except sensitive_names.SensitiveNamesUnavailable:
             self.unavailable = True
             return
-        self.extract_patterns = sensitive_names.patterns(sensitive_names.extract_names(Path(path).parent / sensitive_names.NOM_EXTRAIT))
+        self.extract_patterns = sensitive_names.patterns(extract)
+        # Formes repliées (accents retirés, casse ignorée, tirets et soulignés en espaces) pour le seul nom de fichier (revue du commit f8cb0ee4).
+        self.folded_patterns = sensitive_names.patterns([_fold(n) for n in [*names, *extract]])
 
     def identifiers(self) -> list[str]:
         if self.injected is not None:
@@ -177,6 +196,17 @@ class Guard:
 
     def problem(self, text: str) -> str | None:
         return confidentiality_problem(text, self.patterns or [], self.identifiers(), self.extract_patterns)
+
+    # Garde du nom de fichier d'une note (audit #629, A-55) : le nom est exposé par list_books et read_passage (champ `file`).
+    # Remplace : rien (le nom n'était pas contrôlé). Retrait : permanent tant que le nom du fichier est exposé par la bibliothèque.
+    # Complétée par la revue du commit f8cb0ee4 : un nom transformé en slug (tirets, soulignés, accents retirés, casse) est vu aussi.
+    # Remplace : rien. Retrait : permanent, avec la garde ci-dessus. Les noms de trois caractères ou moins et les sigles, comparés en
+    # respectant la casse dans un texte, sont comparés sans casse dans un nom de fichier (un slug est en minuscules) : un refus en plus
+    # est sans danger, une note refusée à tort se renomme.
+    def name_problem(self, name: str) -> str | None:
+        found = (self.problem(name) or self.problem(_spaced(name))
+                 or confidentiality_problem(_fold(name), self.folded_patterns, [], []))
+        return found.replace("in line 1", "in file name") if found else None
 
 
 # -- dossier -------------------------------------------------------------------------------------------------------------------------
@@ -245,10 +275,19 @@ def survey(notes: Path, today: dt.date, guard: Guard | None) -> list[dict]:
         text = read_note(path)
         fields, _ = parse_header(text)
         problem = header_problem(fields)
-        if problem is None and guard is not None and not guard.unavailable:
-            problem = guard.problem(text)
+        name_problem = None
+        if guard is not None and not guard.unavailable:
+            # Le nom est contrôlé même si l'en-tête est invalide (revue du commit f8cb0ee4) : un nom refusé ne s'affiche jamais.
+            # Remplace : rien. Retrait : permanent, avec la garde du nom (name_problem).
+            name_problem = guard.name_problem(path.name)
+            if problem is None:
+                problem = guard.problem(text) or name_problem
+        # Liste des noms indisponible : le nom ne peut pas être jugé, il est masqué (échec fermé). Le contenu et les états ne changent pas.
+        # Remplace : l'affichage du nom quand la liste est indisponible. Retrait : permanent, tant que le nom de fichier d'une note est exposé et jugé par la garde des noms (R-20261108-03, question 3 a).
+        hide_all = guard is not None and guard.unavailable
         row = {"file": path.name, "date": (fields or {}).get("date") or "-", "nature": (fields or {}).get("nature") or "-",
-               "review": (fields or {}).get("review") or "-", "problem": problem, "kind": (fields or {}).get("kind")}
+               "review": (fields or {}).get("review") or "-", "problem": problem, "kind": (fields or {}).get("kind"),
+               "name_hidden": name_problem is not None or hide_all}
         if problem is None and row["kind"] == "map":
             maps.append(row)
         rows.append(row)
@@ -265,7 +304,8 @@ def survey(notes: Path, today: dt.date, guard: Guard | None) -> list[dict]:
 
 def print_survey(rows: list[dict], out) -> None:
     for row in rows:
-        print(f"{row['file']}  {row['date']}  {row['nature']}  {row['review']}  {row['state']}", file=out)
+        shown = NAME_HIDDEN if row.get("name_hidden") else row["file"]    # jamais le nom que la garde refuse (la commande `list` renseigne `name_hidden` elle-même, dans main)
+        print(f"{shown}  {row['date']}  {row['nature']}  {row['review']}  {row['state']}", file=out)
     stale = sum(r["state"] == "stale" for r in rows)
     invalid = sum(r["state"].startswith("invalid") for r in rows)
     print(f"{len(rows)} notes, {stale} stale, {invalid} invalid", file=out)
@@ -351,6 +391,9 @@ def cmd_add(folder: Path, guard: Guard, stdin, out) -> int:
     if problem:
         raise Refusal(problem, EXIT_PRIVATE)
     name = file_name_for(fields)
+    problem = guard.name_problem(name)
+    if problem:
+        raise Refusal(problem, EXIT_PRIVATE)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
         descriptor = os.open(notes / name, flags, 0o600)
@@ -378,7 +421,7 @@ def cmd_review(folder: Path, guard: Guard, name: str, date: str, out) -> int:
         raise Refusal("review date must be after the note date", EXIT_HEADER)
     if guard.unavailable:
         raise Refusal("sensitive-names list unavailable: nothing written", EXIT_MISSING)
-    problem = guard.problem(text)
+    problem = guard.problem(text) or guard.name_problem(name)
     if problem:
         raise Refusal(problem, EXIT_PRIVATE)
     raw = path.read_bytes().decode("utf-8")
@@ -432,12 +475,21 @@ def main(argv=None, env=None, stdin=None, out=None, err=None, today=None, identi
             return cmd_init(folder, args, stdin, out)
         notes = require_notes(folder)
         day = today or today_paris(env)
-        guard = Guard(env, folders["content_root"], identifiers) if args.command != "list" else None
+        guard = Guard(env, folders["content_root"], identifiers)
         if args.command == "add":
             return cmd_add(folder, guard, stdin, out)
         if args.command == "review":
             return cmd_review(folder, guard, args.file, args.date, out)
-        rows = survey(notes, day, guard)
+        # `list` ne fait pas le contrôle de confidentialité (états inchangés) mais ne montre plus un nom de fichier que la garde refuse
+        # (lot 5, question 2c, option a ; audit #629). Remplace : l'affichage du nom tel quel dans list et removed:. Retrait : permanent, avec la garde du nom (name_problem).
+        # Liste des noms indisponible : le nom ne peut pas être jugé, tous les noms sont masqués (échec fermé).
+        # Remplace : l'affichage du nom quand la liste est indisponible. Retrait : permanent, tant que le nom de fichier d'une note est exposé et jugé par la garde des noms (R-20261108-03, question 3 a).
+        rows = survey(notes, day, guard if args.command == "check" else None)
+        if args.command == "list":
+            for row in rows:
+                row["name_hidden"] = guard.unavailable or guard.name_problem(row["file"]) is not None
+            if guard.unavailable:
+                print(f"{PREFIX}sensitive-names list unavailable: confidentiality not checked", file=err)
         print_survey(rows, out)
         if args.command == "check" and guard.unavailable:
             print(f"{PREFIX}sensitive-names list unavailable: confidentiality not checked", file=err)

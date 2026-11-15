@@ -22,6 +22,8 @@ class MagasinMemoire:
         self.types: dict[str, str | None] = {}          # flow.teams en mémoire : nom d'équipe -> type (None : type nul)
         self.sans_type = 0                              # équipes rencontrées au type nul, après le dernier enregistrement
         self.ecritures_de_type: list[str] = []          # noms d'équipe dont la colonne a été écrite (créée ou mise à jour)
+        self.instantanes_de_version: list[dict] = []    # {"object_id", "content", "passage"} : ajout seulement, écrit quand le contenu change
+        self.versions_recues: list = []                 # l'argument `versions` de chaque enregistrement (None : aucune recherche de versions)
 
     def derniers(self) -> dict:
         derniers: dict = {}
@@ -29,7 +31,9 @@ class MagasinMemoire:
             derniers[instantane["issue_key"]] = (instantane["updated_at"], instantane["content_hash"])
         return derniers
 
-    def enregistrer(self, *, genre, nb_requetes, toutes, vus, instantanes, types_equipes=None):
+    def enregistrer(self, *, genre, nb_requetes, toutes, vus, instantanes, types_equipes=None, versions=None, livraison_conservee=False):
+        if livraison_conservee:          # même règle que flow_raw.MagasinBase.enregistrer : la livraison du dernier instantané est reprise
+            flow_raw.conserver_livraison(instantanes, {i["issue_key"]: i.get("delivery") for i in self.instantanes})
         a_ajouter = flow_raw.choisir(instantanes, self.derniers())
         if self.echec_ecriture is not None:
             raise self.echec_ecriture
@@ -39,6 +43,11 @@ class MagasinMemoire:
         self.passages.append({"genre": genre, "nb_requetes": nb_requetes, "toutes": toutes})
         self.visites += [(numero, cle) for cle in vus]
         self.instantanes += [{**i, "passage": numero} for i in a_ajouter]
+        for objet, contenu in (versions or {}).items():          # instantanés de version (change jira-delivery-fields) : écrits quand le contenu change
+            dernier = [v for v in self.instantanes_de_version if v["object_id"] == objet]
+            if not dernier or dernier[-1]["content"] != contenu:
+                self.instantanes_de_version.append({"object_id": objet, "content": contenu, "passage": numero})
+        self.versions_recues.append(versions)
         if types_equipes is not None:          # même règle que flow_raw.MagasinBase._ecrire_types
             for nom, type_ in types_equipes.items():
                 if nom not in self.types:

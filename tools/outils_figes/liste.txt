@@ -1,0 +1,35 @@
+# Liste fermée des fichiers figés (niveau 2 du bac à sable, design D5 ; tâche 7.1 pour les dépendances). Lue par rafraichir.sh et par les tests.
+# Une ligne par fichier :
+#   E <nom>      une enveloppe : tools/outils_figes/<nom>, copiée à la racine du dossier ~/.pmzilla-lab/outils-figes/
+#   C <chemin>   une dépendance d'un outil figé : <chemin> du dépôt, copiée sous copie/<chemin> (même disposition que le dépôt)
+# Les autres fichiers du relevé (dossiers.conf, écrit par l'auteur) ne viennent pas du dépôt : rafraichir.sh les garde et les relève.
+# Dépendances lues (7.1), sans jamais sourcer le module du verrou de fin :
+#   ci_local.sh : tools/ci_local.sh source tools/finish_lock.sh et tools/lab_paths.sh, lance tools/finish_lock.py, lit tools/e2e_steps.sh et
+#                 ci/passage.sh (« $ICI/../ci/passage.sh », d'où la disposition copie/tools et copie/ci).
+#   gh_issue.py : importe roadmap_model, sensitive_names et identifiants_personnels ; les deux derniers importent lab_paths ; il lit les réglages de la
+#                 file (tools/roadmap_settings.yaml) dans le dossier du code, donc dans la copie figée, et non dans le dépôt de la session.
+#   flow_views.py : importe db, messages et flow_views_messages, et lab_paths (import tardif).
+# Remplace : rien (liste neuve). Retrait : avec le bac à sable. Source des noms d'enveloppes de dossiers.conf et du fichier géré : le fichier géré
+# (`excludedCommands`) ; un test de la suite outils_figes, qui lit ce fichier-ci, détecte un écart avec lui.
+E ci_local.sh
+E gh_issue.sh
+E flow_views.sh
+E worktree.sh
+E npm_ci.sh
+E enveloppe.sh
+C tools/ci_local.sh
+C tools/finish_lock.sh
+C tools/finish_lock.py
+C tools/lab_paths.sh
+C tools/e2e_steps.sh
+C ci/passage.sh
+C tools/gh_issue.py
+C tools/roadmap_model.py
+C tools/sensitive_names.py
+C tools/identifiants_personnels.py
+C tools/lab_paths.py
+C tools/roadmap_settings.yaml
+C tools/flow_views.py
+C tools/db.py
+C tools/messages.py
+C tools/flow_views_messages.py

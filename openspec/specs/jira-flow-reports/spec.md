@@ -46,13 +46,18 @@ Source: tests/flux_config/test_flux_config.py (test_un_flux_yaml_ancien_est_refu
 - **THEN** the run stops with a message that the setting no longer exists, without its value
 
 ### Requirement: Data source selection
-The system SHALL read tickets only from the local database, under the read-only role, and SHALL pass the settings to the database reader. The retired option `--source`, whatever its value, SHALL stop the run with exit code 2 and the key phrase of design D6, and an export file given as argument SHALL stop it with exit code 2 and the key phrase of design D6, in French or English, before any database read. A database error SHALL stop the run with the database-read message followed by the error detail; any other error SHALL NOT be masked by that message.
+The system SHALL read tickets only from the local database, under the read-only role, and SHALL pass the settings to the database reader.
 
-Source: tests/flux_jira/test_lecteur_base.py (Lecture, Refus); tests/flow_store/test_erreurs_scripts.py (Erreurs); tools/flux_jira.py (verifier_usage_lecteur, lire_tickets, depuis_la_base)
+Source: tests/flux_jira/test_lecteur_base.py (Lecture); tools/flux_jira.py (lire_tickets, depuis_la_base)
 
 #### Scenario: Default source
 - **WHEN** `compute` runs with no option
 - **THEN** the tickets are read from the database
+
+### Requirement: Retired source option and export files refused
+The retired option `--source`, whatever its value, SHALL stop the run with exit code 2 and the key phrase of design D6, and an export file given as argument SHALL stop it with exit code 2 and the key phrase of design D6, in French or English, before any database read.
+
+Source: tests/flux_jira/test_lecteur_base.py (Refus); tests/flow_store/test_erreurs_scripts.py (Erreurs); tools/flux_jira.py (verifier_usage_lecteur)
 
 #### Scenario: Unknown source
 - **WHEN** `--source ftp` or `--source db` is given
@@ -61,6 +66,11 @@ Source: tests/flux_jira/test_lecteur_base.py (Lecture, Refus); tests/flow_store/
 #### Scenario: Files with database
 - **WHEN** an export file is given without `--source`
 - **THEN** the run stops with "export files are no longer read: the database is the only source" and exit code 2, and the database is not read
+
+### Requirement: Database error message of the flow report
+A database error SHALL stop the run with the database-read message followed by the error detail; any other error SHALL NOT be masked by that message.
+
+Source: tests/flow_store/test_erreurs_scripts.py (Erreurs); tools/flux_jira.py (depuis_la_base)
 
 #### Scenario: Unreachable database
 - **WHEN** the database reader raises a database error
@@ -98,7 +108,7 @@ Source: tests/flux_jira/test_flux_jira.py (MultiProjets.test_categorie_decide_en
 - **THEN** the lists of the settings decide and unlisted states are reported as unclassified
 
 ### Requirement: Scope filter
-The system SHALL, with `--scope`, restrict the report to the listed projects (case- and space-insensitive, empty entries ignored) or to all projects with the word "all", produce for one project the same metrics as an export containing only that project, and state the scope, with tickets kept over tickets read, at the top of the report and on the console, including the number of requested projects without tickets. An empty scope, or one that matches no ticket, SHALL stop with a non-zero code. Without the option the report SHALL NOT change, even if the settings define a project scope used by another tool.
+The system SHALL, with `--scope`, restrict the report to the listed projects (case- and space-insensitive, empty entries ignored) or to all projects with the word "all", produce for one project the same metrics as an export containing only that project, and state the scope, with tickets kept over tickets read, at the top of the report and on the console, including the number of requested projects without tickets.
 
 Source: tests/flux_jira/test_flux_jira.py (Perimetre)
 
@@ -106,18 +116,55 @@ Source: tests/flux_jira/test_flux_jira.py (Perimetre)
 - **WHEN** the scope lists two projects out of three
 - **THEN** the metrics equal those of an export holding only those two, and the scope line gives retained over read
 
+### Requirement: Empty or unmatched scope and absent scope option
+An empty scope, or one that matches no ticket, SHALL stop with a non-zero code. Without the option the report SHALL NOT change, even if the settings define a project scope used by another tool.
+
+Source: tests/flux_jira/test_flux_jira.py (Perimetre)
+
 #### Scenario: Unknown project
 - **WHEN** the scope matches no ticket
 - **THEN** the exit code is non-zero and the message says no ticket of the requested projects exists
 
 ### Requirement: Period and metrics
-The system SHALL analyse a configurable number of complete weeks ending with the last full week before today, trimming leading weeks that precede the first resolution in the export. It SHALL compute weekly throughput of delivered tickets (resolved tickets whose resolution is not on the excluded-resolutions list), lead time percentiles, work in progress, to-do count, age of work in progress (from start when available for all, otherwise from creation), ageing counts over thresholds, age per state, age of the to-do queue per state, per-team metrics when a team column exists, Little's law, and Monte Carlo forecasts of the weeks needed (percentiles) and, with a target date, of the items finishable. Resolved but undelivered tickets SHALL be counted separately by resolution, and the target number of items SHALL default to the current work in progress.
+The system SHALL analyse a configurable number of complete weeks ending with the last full week before today, trimming leading weeks that precede the first resolution in the export.
 
-Source: tests/flux_jira/test_flux_jira.py (AncienFormat, Arrivees, EtatsAttente); tools/flux_jira.py (cmd_calcul) for the forecast options, not asserted by a test.
+Source: tests/flux_jira/test_flux_jira.py (AncienFormat, ArriveesEtSorties, EtatsAttente)
+
+#### Scenario: Leading weeks trimmed
+- **WHEN** the first resolution in the export falls after the start of the configured weeks
+- **THEN** the weeks that precede it are not analysed
+
+### Requirement: Flow metrics of the report
+The system SHALL compute weekly throughput of delivered tickets (resolved tickets whose resolution is not on the excluded-resolutions list), lead time percentiles, work in progress, to-do count, per-team metrics when a team column exists, and Little's law.
+
+Source: tests/flux_jira/test_flux_jira.py (AncienFormat, ArriveesEtSorties, EtatsAttente)
 
 #### Scenario: Frozen reference
 - **WHEN** a legacy-layout export (no key, no state category) is computed
 - **THEN** the Markdown and JSON reports equal the frozen reference reports (apart from the glossary sentence about dormant tickets)
+
+### Requirement: Age metrics of the report
+The system SHALL compute the age of work in progress (from start when available for all, otherwise from creation), ageing counts over thresholds, age per state, and age of the to-do queue per state.
+
+Source: tests/flux_jira/test_flux_jira.py (AncienFormat, ArriveesEtSorties, EtatsAttente)
+
+#### Scenario: Start missing for some tickets
+- **WHEN** not every ticket in progress has a start date
+- **THEN** the age of work in progress is counted from creation
+
+### Requirement: Monte Carlo forecasts
+The system SHALL compute Monte Carlo forecasts of the weeks needed (percentiles) and, with a target date, of the items finishable. The target number of items SHALL default to the current work in progress.
+
+Source: tools/flux_jira.py (cmd_calcul) for the forecast options, not asserted by a test.
+
+#### Scenario: Default target
+- **WHEN** `compute` runs without a target number of items
+- **THEN** the forecast of the weeks needed takes the current work in progress as target
+
+### Requirement: Resolved but undelivered tickets
+Resolved but undelivered tickets SHALL be counted separately by resolution.
+
+Source: tests/flux_jira/test_flux_jira.py (AncienFormat, ArriveesEtSorties, EtatsAttente)
 
 #### Scenario: Excluded resolutions
 - **WHEN** tickets are closed as rejected
@@ -168,13 +215,36 @@ Source: tests/flux_jira/test_flux_jira.py (EtatsAttente)
 - **THEN** it does not enter WIP and is absent from the waiting list
 
 ### Requirement: Dormant tickets from history
-The system SHALL, with the dormant-from-history option, derive dormant tickets from the history stored in the database, split work in progress into active, waiting and dormant (exclusive and exhaustive), split to-do into alive and dormant, and report the dormancy threshold in days, the source "history" and the number of tickets without history (not counted dormant). Little's law and the forecast SHALL then use the non-dormant WIP, with the total-WIP results given for comparison; with an explicit target both use that target. Per-team and per-state dormant counts SHALL sum to the totals. The console SHALL give counts and no keys. Without the option the report SHALL NOT change. A path given to the history option SHALL be refused with exit code 2 and the key phrase of design D6, and the removed dormant-file option SHALL be refused with a message naming the replacement.
+The system SHALL, with the dormant-from-history option, derive dormant tickets from the history stored in the database, split work in progress into active, waiting and dormant (exclusive and exhaustive), and split to-do into alive and dormant. Per-team and per-state dormant counts SHALL sum to the totals.
 
-Source: tests/flux_jira/test_flux_jira.py (DormantsHistorique, Dormants); tests/flux_jira/test_lecteur_base.py (Refus.test_chemin_donne_a_history_refuse, HistoriqueAbsent)
+Source: tests/flux_jira/test_flux_jira.py (DormantsHistorique, Dormants)
 
 #### Scenario: Edge cases of dormancy
 - **WHEN** one ticket has no transition and was created exactly the threshold number of days ago, another one day less, another has no history, another is finished
 - **THEN** the first is dormant, the others are not, and the one without history is counted as without history
+
+### Requirement: Dormancy details in the report
+With the dormant-from-history option, the system SHALL report the dormancy threshold in days, the source "history" and the number of tickets without history (not counted dormant). The console SHALL give counts and no keys. Without the option the report SHALL NOT change.
+
+Source: tests/flux_jira/test_flux_jira.py (DormantsHistorique, Dormants)
+
+#### Scenario: Dormancy details
+- **WHEN** `compute` runs with the dormant-from-history option
+- **THEN** the report gives the threshold in days, the source "history" and the number of tickets without history, and the console holds counts and no key
+
+### Requirement: Little's law and forecast on non-dormant work
+With the dormant-from-history option, Little's law and the forecast SHALL use the non-dormant WIP, with the total-WIP results given for comparison; with an explicit target both use that target.
+
+Source: tests/flux_jira/test_flux_jira.py (DormantsHistorique)
+
+#### Scenario: Dormant work in progress
+- **WHEN** the option is given, some work in progress is dormant and no explicit target is set
+- **THEN** Little's law and the forecast use the non-dormant WIP, and the total-WIP results are given for comparison
+
+### Requirement: Retired dormancy inputs refused
+A path given to the history option SHALL be refused with exit code 2 and the key phrase of design D6, and the removed dormant-file option SHALL be refused with a message naming the replacement.
+
+Source: tests/flux_jira/test_flux_jira.py (Dormants); tests/flux_jira/test_lecteur_base.py (Refus.test_chemin_donne_a_history_refuse, HistoriqueAbsent)
 
 #### Scenario: Removed option
 - **WHEN** the removed dormant-file option is used, in either language
@@ -185,7 +255,7 @@ Source: tests/flux_jira/test_flux_jira.py (DormantsHistorique, Dormants); tests/
 - **THEN** the run stops with "--history takes no file: the history is read from the database" and exit code 2
 
 ### Requirement: Batch closures
-The system SHALL, when the export has a key column and a resolution time, report per project the delivered tickets resolved within the same minute in groups reaching a configurable threshold, restricted to configurable resolutions (an empty list or the word "all" meaning every delivered resolution), with groups, tickets, largest group, delivered total and share, sorted by tickets descending and with a total line. Groups SHALL NOT merge across projects. Nothing SHALL be removed from throughput. A message SHALL state when there is none. A threshold below two or an empty option SHALL stop the run naming the setting or option. An option SHALL override the setting without writing to the settings file. Without a key column or time the section and its glossary entry SHALL be absent. The report SHALL contain no ticket key.
+The system SHALL, when the export has a key column and a resolution time, report per project the delivered tickets resolved within the same minute in groups reaching a configurable threshold, restricted to configurable resolutions (an empty list or the word "all" meaning every delivered resolution), with groups, tickets, largest group, delivered total and share, sorted by tickets descending and with a total line.
 
 Source: tests/flux_jira/test_fermetures_groupees.py
 
@@ -201,14 +271,68 @@ Source: tests/flux_jira/test_fermetures_groupees.py
 - **WHEN** the export query filters on a resolution window and the period would start before that window
 - **THEN** the arrivals section notes the truncated first week with the filter, the window start and the number of missing days, and the JSON holds the window; with no filter, or a period starting after the window, no note appears
 
-### Requirement: Time per segment from history
-The system SHALL, with the history option, compute from the history stored in the database time per state and per segment (segments and commitment point configurable): for tickets that left each segment, the days spent (a ticket's visits to the same segment cumulated) with median, 85th percentile and mean; the age of tickets currently in each segment (counting the initial state when no transition exists); delivery lead time from the commitment point and from creation, with the number of tickets without commitment; flow efficiency (active over total, with median and aggregated figure; not computed with a note when no waiting state is configured); coverage (tickets with history over total) with a warning when it is below a minimum; per-team results without ranking; states not assigned to any segment (known start and end states excluded by default); unreadable transition dates counted and warned. An unknown commitment point SHALL stop the run naming the setting; no stored history SHALL stop the run with exit code 1 and the key phrase of design D6. Without the option the report SHALL contain none of these sections. The report SHALL hold no ticket key, and the fixed "how to read" section SHALL gain the corresponding definitions.
+### Requirement: Batch closures stay within a project and remove nothing
+Batch closure groups SHALL NOT merge across projects. Nothing SHALL be removed from throughput. A message SHALL state when there is no batch closure. The report SHALL contain no ticket key.
 
-Source: tests/flux_jira/test_flux_jira.py (TempsParSegment); tests/flux_jira/test_lecteur_base.py (HistoriqueAbsent.test_history_sans_historique_code_1_et_une_phrase)
+Source: tests/flux_jira/test_fermetures_groupees.py
+
+#### Scenario: Same minute in two projects
+- **WHEN** two projects each close tickets within the same minute
+- **THEN** each project's tickets form their own group, throughput is unchanged, and the report holds no ticket key
+
+### Requirement: Batch closure threshold and options
+A batch closure threshold below two or an empty option SHALL stop the run naming the setting or option. An option SHALL override the setting without writing to the settings file.
+
+Source: tests/flux_jira/test_fermetures_groupees.py
+
+#### Scenario: Threshold of one
+- **WHEN** the threshold is set to one
+- **THEN** the run stops naming the setting
+
+### Requirement: Batch closures need a key column and a resolution time
+Without a key column or a resolution time the batch closures section and its glossary entry SHALL be absent.
+
+Source: tests/flux_jira/test_fermetures_groupees.py
+
+#### Scenario: No key column
+- **WHEN** the export has no key column
+- **THEN** the report holds neither the batch closures section nor its glossary entry
+
+### Requirement: Time per segment from history
+The system SHALL, with the history option, compute from the history stored in the database time per state and per segment (segments and commitment point configurable): for tickets that left each segment, the days spent (a ticket's visits to the same segment cumulated) with median, 85th percentile and mean; the age of tickets currently in each segment (counting the initial state when no transition exists).
+
+Source: tests/flux_jira/test_flux_jira.py (TempsParSegment)
 
 #### Scenario: Hand-checked history
 - **WHEN** a set of invented journeys is computed
 - **THEN** the exits per segment, the age in segment, the delivery lead time, the aggregated efficiency and the coverage equal the hand-computed values
+
+### Requirement: Delivery lead time and flow efficiency from history
+With the history option, the system SHALL compute delivery lead time from the commitment point and from creation, with the number of tickets without commitment, and flow efficiency (active over total, with median and aggregated figure; not computed with a note when no waiting state is configured).
+
+Source: tests/flux_jira/test_flux_jira.py (TempsParSegment)
+
+#### Scenario: No waiting state configured
+- **WHEN** the history option is given and no waiting state is configured
+- **THEN** flow efficiency is not computed and a note says so
+
+### Requirement: Coverage and unassigned states from history
+With the history option, the system SHALL report coverage (tickets with history over total) with a warning when it is below a minimum; per-team results without ranking; states not assigned to any segment (known start and end states excluded by default); unreadable transition dates counted and warned.
+
+Source: tests/flux_jira/test_flux_jira.py (TempsParSegment)
+
+#### Scenario: Low coverage
+- **WHEN** the share of tickets with history is below the minimum
+- **THEN** the report gives the coverage with a warning
+
+### Requirement: Time per segment refusals
+With the history option, an unknown commitment point SHALL stop the run naming the setting; no stored history SHALL stop the run with exit code 1 and the key phrase of design D6.
+
+Source: tests/flux_jira/test_flux_jira.py (TempsParSegment); tests/flux_jira/test_lecteur_base.py (HistoriqueAbsent.test_history_sans_historique_code_1_et_une_phrase)
+
+#### Scenario: Unknown commitment point
+- **WHEN** the history option is given with an unknown commitment point
+- **THEN** the run stops naming the setting
 
 #### Scenario: Custom cache path
 - **WHEN** the history option is given a path
@@ -218,14 +342,27 @@ Source: tests/flux_jira/test_flux_jira.py (TempsParSegment); tests/flux_jira/tes
 - **WHEN** the history option is given and no transition is stored
 - **THEN** the run stops with "no history in the database: run the history collection first" and exit code 1
 
-### Requirement: Dashboard data
-The system SHALL add, per team, arrivals per week; with the history option, a weekly cumulative flow (end-of-week counts to-do, per segment and delivered, per team summing to the global one, with delivered cumulative non-decreasing and the total never above the ticket count, plus the number of tickets without history); and, with the points option, a private file of ageing-WIP points (team, age, state, segment, age in segment, nature active or waiting) with no ticket key, written owner-only in an owner-only folder. Without the history option there SHALL be no cumulative flow or segments in points, and without the points option no points file.
+### Requirement: Time per segment sections only with the history option
+Without the history option the report SHALL contain none of the time-per-segment sections. The report SHALL hold no ticket key, and the fixed "how to read" section SHALL gain the corresponding definitions.
 
-Source: tests/flux_jira/test_flux_jira.py (DonneesDuTableau)
+Source: tests/flux_jira/test_flux_jira.py (TempsParSegment)
 
-#### Scenario: Points file
-- **WHEN** the points option is given
-- **THEN** the file exists with owner-only permissions, contains no key, and the console reports the number of tickets in progress
+#### Scenario: Without the history option
+- **WHEN** `compute` runs without the history option
+- **THEN** the report holds no time-per-segment section and no ticket key
+
+### Requirement: Weekly team arrivals and cumulative flow kept in the JSON report
+The system SHALL add to the report data, per team, arrivals per week and, with the history option, a weekly cumulative flow (end-of-week counts to-do, per segment and delivered, plus the number of tickets without history), with the invariants of the scenario "Cumulative flow". It SHALL keep these data in the JSON report although the flow dashboard that drew them is retired, and SHALL NOT drop them from the report.
+
+#### Scenario: Cumulative flow
+- **WHEN** `compute` runs with the history option
+- **THEN** the per-team cumulative flows sum to the global one, delivered cumulative never decreases, and the total never exceeds the ticket count
+
+#### Scenario: Data kept without the dashboard
+- **WHEN** `compute` runs with the history option after the removal of the dashboard
+- **THEN** the JSON report still holds the per-team weekly arrivals and the weekly cumulative flow
+
+Source: design D4 of change remove-flow-board (dashboard retired); tests/flux_jira/test_flux_jira.py (DonneesDuTableau)
 
 ### Requirement: Fixed reading guide
 The system SHALL include in every report a fixed "how to read this report" section placed after the forecasts and before the limits, whose fixed text does not depend on the data, whose optional notions (waiting, dormant, batch closure, segments) appear only when their section does, and whose examples (age and lead time at the 85th percentile) are computed from the report's own figures.
@@ -246,17 +383,40 @@ Source: tests/flux_jira/test_flux_jira.py, tests/flux_jira/test_noms_anglais.py 
 - **THEN** one is created with English names and nothing is printed to the error stream
 
 ### Requirement: Evolution comparison between reports
-The system SHALL, unless `--no-comparison` is given, compare the new report with the previous one of the same name, and provide a `compare` subcommand with `--before` and `--after` days (defaults: latest and the one before it), writing an evolution report (Markdown, plus JSON with signals, comparability notes and recent throughput) and printing it. It SHALL stop with messages when fewer than two reports exist, when a requested day has no report, or when the dates are not in increasing order. It SHALL flag in comparability notes any difference in types, scope, number of weeks, presence of the start column and appearing or disappearing states, SHALL report the scope difference only when scopes differ and not a mere headcount difference, SHALL give the same result whatever the ordering of lists in the older report, and SHALL, for a report of an older format missing keys, skip only the affected section (or team) with one line saying which keys are missing and a "partial comparison" line, without failing and also on the console.
+The system SHALL, unless `--no-comparison` is given, compare the new report with the previous one of the same name, and provide a `compare` subcommand with `--before` and `--after` days (defaults: latest and the one before it), writing an evolution report (Markdown, plus JSON with signals, comparability notes and recent throughput) and printing it.
 
-Source: tests/flux_jira/test_flux_jira.py (Perimetre.test_comparaison_signale_un_perimetre_different_pas_un_effectif_different, OrdreDesListesDansLaSerie, AncienFormatDeRapport); tests/flux_jira/test_noms_anglais.py
+Source: tests/flux_jira/test_flux_jira.py; tests/flux_jira/test_noms_anglais.py
 
-#### Scenario: Missing throughput key
-- **WHEN** the earlier report lacks the weekly throughput
-- **THEN** the throughput section says it is not compared, the partial-comparison line names it, and the other sections are compared
+#### Scenario: Default days
+- **WHEN** `compare` runs without `--before` and `--after`
+- **THEN** it compares the latest report with the one before it, writes the evolution report and prints it
+
+### Requirement: Comparison refusals
+The comparison SHALL stop with messages when fewer than two reports exist, when a requested day has no report, or when the dates are not in increasing order.
+
+Source: tests/flux_jira/test_flux_jira.py; tests/flux_jira/test_noms_anglais.py
+
+#### Scenario: Single report
+- **WHEN** only one report of the name exists
+- **THEN** `compare` stops with a message
+
+### Requirement: Comparability notes
+The comparison SHALL flag in comparability notes any difference in types, scope, number of weeks, presence of the start column and appearing or disappearing states, SHALL report the scope difference only when scopes differ and not a mere headcount difference, and SHALL give the same result whatever the ordering of lists in the older report.
+
+Source: tests/flux_jira/test_flux_jira.py (Perimetre.test_comparaison_signale_un_perimetre_different_pas_un_effectif_different, OrdreDesListesDansLaSerie)
 
 #### Scenario: Different scope
 - **WHEN** the two reports have different scopes
 - **THEN** the comparability notes say "different scopes" and name both
+
+### Requirement: Partial comparison of an older report
+The comparison SHALL, for a report of an older format missing keys, skip only the affected section (or team) with one line saying which keys are missing and a "partial comparison" line, without failing and also on the console.
+
+Source: tests/flux_jira/test_flux_jira.py (AncienFormatDeRapport)
+
+#### Scenario: Missing throughput key
+- **WHEN** the earlier report lacks the weekly throughput
+- **THEN** the throughput section says it is not compared, the partial-comparison line names it, and the other sections are compared
 
 ### Requirement: Settings migration
 The system SHALL provide `config migrate` that rewrites the settings file with English names (keeping comments), keeps the old file beside it with a suffix, lists changes as "line: old -> new" using names only and never values, says nothing to migrate on a second run, supports `--dry-run` (writes nothing), and stops when the file does not exist.
@@ -304,7 +464,7 @@ Source: tests/flux_jira/test_language.py
 - **THEN** the written report is English and the JSON equals the French run's JSON
 
 ### Requirement: Aggregation by team, Mission Team or site
-The system SHALL accept on `compute` the option `--by team|mission-team|site`, default `team`. With `mission-team` or `site`, it SHALL read the organisation referential, replace the per-team sections by per-group sections following the jira-flow-organisation capability, and write a report whose name carries the aggregation, on both data sources. Without the option, the report SHALL stay unchanged. A missing or invalid referential with a group aggregation SHALL stop with exit code 1, naming the referential and never a value.
+The system SHALL accept on `compute` the option `--by team|mission-team|site`, default `team`. With `mission-team` or `site`, it SHALL read the organisation referential, replace the per-team sections by per-group sections following the jira-flow-organisation capability, and write a report whose name carries the aggregation, on both data sources. Without the option, the report SHALL stay unchanged.
 
 Source: tests/flux_jira/test_regroupement.py
 
@@ -312,12 +472,17 @@ Source: tests/flux_jira/test_regroupement.py
 - **WHEN** `compute` runs without `--by`
 - **THEN** the report is identical to the report of the previous version
 
+### Requirement: Missing referential for a group aggregation
+A missing or invalid referential with a group aggregation SHALL stop with exit code 1, naming the referential and never a value.
+
+Source: tests/flux_jira/test_regroupement.py
+
 #### Scenario: Referential missing
 - **WHEN** `compute --by site` runs without a referential
 - **THEN** the exit code is 1 and no report is written
 
 ### Requirement: Labels and versions absent from the flow report
-The system SHALL NOT write a label or a version name in a flow report, an evolution report, an ageing-points file or the console of the flow report tool; cycles appear only by their neutral keys.
+The system SHALL NOT write a label or a version name in a flow report, an evolution report or the console of the flow report tool; cycles appear only by their neutral keys.
 
 Source: tests/flux_jira/test_chaines_distinctives.py; tests/flux_jira/test_cycles_commande.py (SortiesSansValeurDistinctive)
 
@@ -356,13 +521,18 @@ Source: tests/flux_jira/test_tickets_partages.py (SectionPartages)
 - **THEN** the section is absent
 
 ### Requirement: Reports grouped by team type mask single-team groups and rank no team
-The system SHALL, in any report section grouped by team type (design, "Complement: team type column"), mask a count cell under the threshold as "<5", mask whole a type group of fewer than 2 teams with "masked: fewer than 2 teams", put a null type in "type not set", and show a team count only from 2 on. It SHALL NOT show a total that recomputes a masked group, a team line, a team label or a ranking, nor let a setting lower the minimum of 2. Untested until implemented.
+The system SHALL, in any report section grouped by team type (design, "Complement: team type column"), mask a count cell under the threshold as "<5", mask whole a type group of fewer than 2 teams with "masked: fewer than 2 teams", put a null type in "type not set", and show a team count only from 2 on. Untested until implemented.
 
 Source: not built, deferred (idea in Kraken, author decision of 2026-10-21)
 
 #### Scenario: Type held by one team
 - **WHEN** a report grouped by type covers one verification team and three development teams
 - **THEN** the verification group shows "masked: fewer than 2 teams" in every cell, and no total lets its figures be recomputed
+
+### Requirement: Reports grouped by team type show no team and keep the minimum
+A report section grouped by team type SHALL NOT show a total that recomputes a masked group, a team line, a team label or a ranking, nor let a setting lower the minimum of 2. Untested until implemented.
+
+Source: not built, deferred (idea in Kraken, author decision of 2026-10-21)
 
 #### Scenario: No team line
 - **WHEN** a report grouped by type is written
@@ -377,6 +547,23 @@ The system SHALL refuse `statuses` and `compute` to start, with the exit code an
 #### Scenario: Comparison from a session
 - **WHEN** `compare` starts with the variable present
 - **THEN** it runs as usual
+
+### Requirement: Retired points option refused
+The system SHALL refuse `compute --points` with exit code 2 and the retired-points key phrase of design D4 of change remove-flow-board, in French by default or in English with `--language en`, at argument parsing: before the Claude Code session refusal, before any setting is read and before any connection. It SHALL write no report and no ageing-points file, and SHALL NOT accept the option with a warning.
+
+Source: tests/flux_jira/test_flux_jira.py (DonneesDuTableau)
+
+#### Scenario: French refusal
+- **WHEN** `compute --points` runs without a language option
+- **THEN** the error output holds "--points est retirée : le tableau visuel des flux n'existe plus", no report and no ageing-points file is written, no connection is opened, and the exit code is 2
+
+#### Scenario: English refusal
+- **WHEN** `compute --points --language en` runs
+- **THEN** the error output holds "--points is retired: the visual flow dashboard no longer exists" and the exit code is 2
+
+#### Scenario: Inside a session
+- **WHEN** `compute --points` starts with the variable that Claude Code sets in its shells present
+- **THEN** the run stops with the retired-points key phrase and exit code 2, not with the session refusal
 
 ## Open questions
 

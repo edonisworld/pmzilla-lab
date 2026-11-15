@@ -126,8 +126,8 @@ DEFAULTS = {
     # « bloquants » : le sens sortant se lit « bloque » (A blocks B : B attend A).
     # « attente » : le sens sortant se lit « dépend de » (A depends on B : A attend B).
     # À vérifier dans Jira sur un ticket : le libellé affiché du lien dit le sens.
-    "types_bloquants": ["Blocks", "Bloque", "Blocage", "Prerequisite", "Prérequis"],
-    "types_attente": ["Depends", "Dependance", "Dépendance", "Dependency"],
+    "types_bloquants": cfg.TYPES_BLOQUANTS_PAR_DEFAUT,       # défauts partagés avec le chargeur des définitions de flux
+    "types_attente": cfg.TYPES_ATTENTE_PAR_DEFAUT,
     # projets Jira dont les liens ne sont pas des dépendances entre équipes (projet d'anomalies, de support…) :
     # comptés à part, hors de la matrice
     "projets_exclus": [],
@@ -615,7 +615,7 @@ def cmd_calcul(args: argparse.Namespace) -> None:
         "matrice_portefeuille": [[a, b, n] for (a, b), n in ordre(matrice_haut)],
         "matrice_inconnue": [[a, b, n] for (a, b), n in ordre(matrice_inconnu)],
         "matrice_totale": [[a, b, n] for (a, b), n in ordre(matrice_tous)],
-        # une entrée par paire, pour le tableau de bord (graphe) : de = l'équipe qui attend, vers = l'équipe attendue
+        # une entrée par paire : de = l'équipe qui attend, vers = l'équipe attendue
         "aretes": [{"de": a, "vers": b, "ouvertes": matrice.get((a, b), 0), "inconnues": matrice_inconnu.get((a, b), 0),
                     "toutes": n, "entre_epics": matrice_haut.get((a, b), 0),
                     "bloquees_en_cours": len(ages_paire.get((a, b), [])),

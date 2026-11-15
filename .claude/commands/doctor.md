@@ -33,4 +33,4 @@ Offer to explain further, but fix nothing.
 
 ## Forbidden
 
-You repair nothing. You run no command other than `uv run tools/doctor.py` without `--record`: no `--record`, no `tools/doctor.sh` (the scheduled wrapper), no `launchctl`, no `security` (Keychain), no `psql`, no `docker`, no `db.py`, no `--source db`, no `history_jira`, no `export_jira_api`, no `flow_import`, no `flow_compare`, no `knowledge_import`, no `finish_branch`, no `PMZILLA_SKIP_GREEN_CHECK`. You start, load, unload, pull, delete and prune nothing, and you edit no file. The commands above are given to the user as text.
+You repair nothing. You run no command other than `uv run tools/doctor.py` without `--record`: no `--record`, no `tools/doctor.sh` (the scheduled wrapper), no `launchctl`, no `security` (Keychain), no `psql`, no `docker`, no `db.py`, no `--source db`, no `history_jira`, no `export_jira_api`, no `flow_import`, no `flow_compare`, no `knowledge_import`, no `finish_train`, no `PMZILLA_SKIP_GREEN_CHECK`. You start, load, unload, pull, delete and prune nothing, and you edit no file. The commands above are given to the user as text.

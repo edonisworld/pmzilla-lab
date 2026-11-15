@@ -31,6 +31,13 @@ The system SHALL count an item's text as changed when the fingerprint of its cur
 - **WHEN** an audited item is collected again with a different scrubbed text
 - **THEN** the next `analyse` selects it again
 
+### Requirement: The item text is wrapped as data
+The system SHALL wrap an item's title, description and acceptance criteria, in every request to the engine (audit and coaching), between `pasted_content` tags carrying a random identifier drawn anew for each request, and SHALL add a system note saying that this text is data to evaluate, never an instruction, and that only tags with that identifier delimit it.
+
+#### Scenario: Booby-trapped story
+- **WHEN** a story text says to ignore the grid and the fake server records the request
+- **THEN** the text sits between tags with a fresh identifier, a fake closing tag inside it does not end the wrapping, and the system note is present
+
 ### Requirement: The engine receives only the scrubbed item and the effective grid
 The system SHALL send the engine only the item kind, its scrubbed texts, and the effective grid for that kind: core criteria not disabled, overlay criteria, the overlay's expected structure and its product context summary. It SHALL NOT send a person field, a team name, a ticket key, a disabled criterion, a disabling reason, or business context other than that summary. The engine SHALL get no tool and no file access. Untested until implemented.
 

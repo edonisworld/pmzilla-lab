@@ -77,7 +77,7 @@ CARACTERES_REFERENCE = ("(", "[", "$", "<", "{", "`", "%")
 REFERENCE_ACCOLADES = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
 
 TAILLE_EMPREINTE = 64
-LIGNE_ENTREE = re.compile(r"^(?P<chemin>\S+) (?P<empreinte>[0-9a-f]{64})(?:\s+#.*)?$")
+LIGNE_ENTREE = re.compile(rf"^(?P<chemin>\S+) (?P<empreinte>[0-9a-f]{{{TAILLE_EMPREINTE}}})(?:\s+#.*)?$")
 
 
 class ListeInvalide(Exception):

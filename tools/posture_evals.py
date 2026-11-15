@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab — jeu d'essai des postures.
@@ -50,6 +50,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -59,7 +60,14 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lab_paths  # noqa: E402
-import posture_eval_fingerprint  # noqa: E402   # empreinte des fichiers évalués, partagée avec tools/finish_branch.sh
+import posture_eval_fingerprint  # noqa: E402   # empreinte des fichiers évalués, partagée avec tools/finish_checks.py
+
+if __name__ == "__main__" and "CLAUDECODE" in os.environ:
+    # Le jeu d'essai est payant (une séance Claude Code et un jugement par cas) et reste à l'auteur : refusé dans une session Claude Code
+    # (marqueur posé, même vide), code 6, avant toute lecture du lab, toute copie et tout appel. L'import du module (tests) n'est pas visé.
+    print("posture_evals : jeu d'essai refusé dans une session Claude Code : payant, réservé à l'auteur (Terminal). Rien n'a été lancé.",
+          file=sys.stderr)
+    raise SystemExit(6)
 
 LAB = lab_paths.resolve_or_exit()   # module partagé : variable, sinon dépôt Git du code, sinon code 78
 WORKSPACE = LAB["content_root"]
@@ -68,7 +76,7 @@ DATA = Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser() /
 CASES_FILE = WORKSPACE / "tests" / "postures" / "cas.yaml"
 REPORT_DIR = WORKSPACE / "_bmad-output" / "essais"
 CLAUDE = os.environ.get("PMZILLA_LAB_CLAUDE", "claude")
-# Liste partagée des chemins évalués (posture-evals-on-branch-tip, D3 et D7) : lue aussi par tools/finish_branch.sh, contrôle 6
+# Liste partagée des chemins évalués (posture-evals-on-branch-tip, D3 et D7) : lue aussi par tools/finish_checks.py, contrôle 6
 EVALUATED_LIST = Path("tests/postures/fichiers-evalues.txt")
 EVALUATED_LIST_MISSING = "liste des fichiers évalués absente ou vide"
 DEFAULT_MODEL_LABEL = "défaut"   # aucun --model / --judge-model : le modèle habituel de Claude Code
@@ -463,6 +471,39 @@ def drop_copy(target: Path) -> None:
     git("worktree", "remove", "--force", str(target), check=False)
     shutil.rmtree(target, ignore_errors=True)
     git("worktree", "prune", check=False)
+
+
+def exit_on_signal(signum, _frame) -> None:
+    """SIGTERM et SIGHUP (Terminal fermé, arrêt demandé) suivent le chemin de Ctrl-C : le `finally` du cas retire la copie de séance."""
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
+def install_signal_exit() -> None:
+    for name in ("SIGTERM", "SIGHUP"):
+        signal.signal(getattr(signal, name), exit_on_signal)
+
+
+def trial_orphans(data: Path) -> list[Path]:
+    """Worktrees du dépôt situés sous le dossier des essais `data` (copies de séance) : à appeler sous le verrou des passages, donc
+    aucun n'est en cours. Un worktree hors de ce dossier n'est jamais listé."""
+    root = data.resolve()
+    found = []
+    for block in git("worktree", "list", "--porcelain").split("\n\n")[1:]:     # la première entrée est le dépôt principal
+        fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
+        path = Path(fields["worktree"]).resolve() if fields.get("worktree") else None
+        if path is not None and root in path.parents:
+            found.append(path)
+    return found
+
+
+def handle_orphans(data: Path, remove: bool) -> list[Path]:
+    """Au démarrage d'un passage (sous le verrou) : affiche les copies orphelines ; ne les retire qu'avec `--remove-orphans`."""
+    orphans = trial_orphans(data)
+    for path in orphans:
+        print(f"copie de séance orpheline : {path}" + (" (retirée)" if remove else " (--remove-orphans la retire)"), flush=True)
+        if remove:
+            drop_copy(path)
+    return orphans
 
 
 OUTPUT_DIR_PREFIX = "_bmad-output/"                     # livrables de la séance : vus même ignorés par Git
@@ -1442,6 +1483,9 @@ def main() -> None:
     parser.add_argument("--prerequisites-only", action="store_true",
                         help="vérifier seulement les prérequis des cas du fichier choisi contre la base de l'installation : "
                              "aucune séance, aucun juge, aucun rapport ; code de sortie 0 si tous sont satisfaits, 1 sinon")
+    parser.add_argument("--remove-orphans", action="store_true",
+                        help="retirer les copies de séance orphelines (worktrees sous le dossier des essais laissés par un passage interrompu) ; "
+                             "sans cette option, elles sont seulement listées au démarrage")
     parser.add_argument("--language", choices=LANGUAGES, default=DEFAULT_LANGUAGE,
                         help="langue des cas : fr (défaut, comportement d'avant) ou en (ne rejoue que les cas qui ont une variante `en:`)")
     refuse_backend_option(sys.argv[1:])
@@ -1509,6 +1553,9 @@ def run(args, cases: list[dict], language: str, cases_db: str | None) -> None:
     """Le passage : séances, vérifications, jugement, rapport. `cases_db` : base de cas jetable (None : indisponible, ou rejugement)."""
     cases_env = None if args.rejudge else cases_environment(cases_db)
     lock = None if args.rejudge else lock_pass(DATA)   # gardé ouvert jusqu'à la fin du passage
+    if lock is not None:
+        handle_orphans(DATA, args.remove_orphans)      # sous le verrou : aucun autre passage ne tourne
+        install_signal_exit()
     stamp = dt.datetime.now().strftime("%Y-%m-%d-%H%M%S")
     folder = DATA / stamp
     folder.mkdir(parents=True, exist_ok=True)

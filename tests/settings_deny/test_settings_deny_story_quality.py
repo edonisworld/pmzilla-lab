@@ -44,6 +44,11 @@ DOSSIER = nom_du_dossier()
 
 SOUS_COMMANDES_REFUSEES = ("collect", "review", "analyse", "coach")
 SOUS_COMMANDES_PERMISES = ("report", "grid")
+# Change patient-data-detection (tâche 5.3, décision Q8 de l'auteur) : `patient-scan` et `patient-lift` sont réservées à l'utilisateur ; la
+# session les refuse elle-même (code 3, avant toute lecture ; tests/story_quality/test_scan_patient.py) et UNE règle courte, en forme directe
+# seulement, les couvre ici. Elles sont classées à part de SOUS_COMMANDES_REFUSEES : cette liste engendre les permutations de lanceurs et de
+# chemins de REGLES_D13, que la décision Q8 écarte pour elles.
+SOUS_COMMANDES_REGLE_COURTE = ("patient-scan", "patient-lift")
 SERVICE_CLE_ANALYSE = "pmzilla-story-analysis"          # service par défaut de la clé d'analyse dans le Trousseau (réglage engine)
 FICHIER_SURCOUCHE = "surcouche-qualite-stories.yaml"
 LECTEURS_SURCOUCHE = LECTEURS_TERMINAL + ("strings",)    # ceux des notes de contexte : cat head tail less more grep awk sed cp strings
@@ -58,6 +63,15 @@ REGLES_D13 = tuple(
     + [f"Bash({lecteur} *{DOSSIER}/regles*)" for lecteur in LECTEURS_SURCOUCHE]
     + [f"Bash({lecteur} *{DOSSIER}/*/{FICHIER_SURCOUCHE}*)" for lecteur in LECTEURS_SURCOUCHE]
 )
+
+# La règle courte de `patient-scan` et `patient-lift` (change patient-data-detection, tâche 5.2, décision Q8) : UNE règle par sous-commande, forme
+# directe seulement (l'outil lancé par son lanceur et son chemin habituels), aucune permutation de lanceur ni de chemin, aucune règle
+# Write( ou NotebookEdit( et aucune clé de permission vide. Remplace : rien. Condition de retrait : tombe avec R-149 (la garde des interdits
+# connus), dans le change qui remplit cette condition. Autre condition : passe dans le fragment .claude/deny/ et dans DansLeFichierDeReglages
+# à la pose (tâche 5.4). Le texte à poser dans le fragment 21-story-quality.txt est celui de ces deux lignes,
+# posé par l'auteur avec le fichier d'étape qui assemble les réglages en écriture (tâche 5.4) ; ce bloc n'est pas encore dans REGLES_D13 : l'y
+# mettre ferait échouer test_les_regles_sont_dans_settings_json jusqu'à la pose.
+REGLES_PATIENT_COURTES = tuple(f"Bash(uv run tools/story_quality.py {sous}*)" for sous in SOUS_COMMANDES_REGLE_COURTE)
 
 OPTIONS_PAR_SOUS_COMMANDE = {
     "collect": ("", " --query q1", " --language en", " --query q1 --language fr"),
@@ -158,7 +172,8 @@ def sous_commandes_declarees(texte: str) -> set:
 
 
 def sous_commandes_non_classees(texte: str) -> list:
-    return sorted(sous_commandes_declarees(texte) - set(SOUS_COMMANDES_REFUSEES) - set(SOUS_COMMANDES_PERMISES))
+    return sorted(sous_commandes_declarees(texte) - set(SOUS_COMMANDES_REFUSEES) - set(SOUS_COMMANDES_PERMISES)
+                  - set(SOUS_COMMANDES_REGLE_COURTE))
 
 
 def commandes_json_permises():
@@ -290,10 +305,45 @@ class ClassementDesSousCommandes(unittest.TestCase):
         self.assertEqual(set(SOUS_COMMANDES_REFUSEES) & set(SOUS_COMMANDES_PERMISES), set())
 
     def test_l_outil_ne_declare_que_des_sous_commandes_classees(self):
-        if not OUTIL.is_file():
-            self.skipTest("tools/story_quality.py n'existe pas encore (groupe 3)")
         self.assertEqual(sous_commandes_non_classees(OUTIL.read_text(encoding="utf-8")), [],
                          "sous-commande de tools/story_quality.py non classée : l'ajouter à SOUS_COMMANDES_REFUSEES ou _PERMISES")
+
+
+class ReglesPatientCourtes(unittest.TestCase):
+    """Tâches 5.2 et 5.3 : la règle courte couvre la forme directe des deux sous-commandes et rien d'autre ; elle passe la garde partagée."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.moteur = Moteur(REGLES_PATIENT_COURTES)
+
+    def test_une_regle_par_sous_commande_en_forme_directe(self):
+        self.assertEqual(REGLES_PATIENT_COURTES, ("Bash(uv run tools/story_quality.py patient-scan*)",
+                                                  "Bash(uv run tools/story_quality.py patient-lift*)"))
+
+    def test_la_forme_directe_est_refusee(self):
+        for sous in SOUS_COMMANDES_REGLE_COURTE:
+            for suite in ("", " --json", " --language en", " --accept P5", " --accept P5 --accept P3 --language en"):
+                commande = f"uv run tools/story_quality.py {sous}{suite}"
+                self.assertTrue(self.moteur.interdite(commande), commande)
+
+    def test_les_autres_sous_commandes_restent_permises(self):
+        for suite in ("report --name x", "report --name x --json", "grid", "grid --show --json", "--help"):
+            commande = f"uv run tools/story_quality.py {suite}"
+            self.assertFalse(self.moteur.interdite(commande), commande)
+
+    def test_aucune_permutation_n_est_ajoutee(self):
+        """Décision Q8 : les autres formes de lanceur et de chemin ne sont pas couvertes ici (le refus de la session fait le reste)."""
+        for commande in ("python3 tools/story_quality.py patient-scan", "uv run --with pyyaml tools/story_quality.py patient-scan --json"):
+            self.assertFalse(self.moteur.interdite(commande), commande)
+
+    def test_la_garde_partagee_laisse_passer_la_liste(self):
+        import garde_regles
+        self.assertEqual(garde_regles.constats(list(REGLES_PATIENT_COURTES)), [])
+        self.assertTrue(all(r.startswith("Bash(") and r.endswith(")") for r in REGLES_PATIENT_COURTES))
+
+    def test_la_regle_courte_n_est_pas_dans_les_permutations_de_regles_d13(self):
+        self.assertEqual(set(REGLES_PATIENT_COURTES) & set(REGLES_D13), set())
+        self.assertEqual(set(SOUS_COMMANDES_REGLE_COURTE) & set(SOUS_COMMANDES_REFUSEES), set())
 
 
 class DansLeFichierDeReglages(unittest.TestCase):

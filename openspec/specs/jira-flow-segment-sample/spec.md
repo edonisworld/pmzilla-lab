@@ -11,26 +11,36 @@ Source of truth: `tests/segment_sample/test_segment_sample.py`, `tests/segment_s
 ## Requirements
 
 ### Requirement: Use the same population and calculation as the flow report
-The system SHALL sample tickets that left the chosen segment during the analysed complete weeks, with time summed over all their finished visits to the segment, SHALL read the tickets and the history from the database under the read-only role, through the readers of the flow report, and SHALL use the same settings, excluded projects and types and calculation functions as the flow report, so that the displayed P50 equals the report's, and SHALL show the states that make up the segment, the number of tickets without history and the number set aside.
+The system SHALL sample tickets that left the chosen segment during the analysed complete weeks, with time summed over all their finished visits to the segment, and SHALL use the same settings, excluded projects and types and calculation functions as the flow report, so that the displayed P50 equals the report's.
 
-Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_etats_du_segment_et_population, test_meme_population_que_flux_jira, through the fake reader of tests/flux_jira/lanceur_csv.py)
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_meme_population_que_flux_jira, through the fake reader of tests/flux_jira/lanceur_csv.py)
 
 #### Scenario: Same figures as the report
 - **WHEN** the sample and the flow report are computed on the same data and date
 - **THEN** the population size, P50, P85, mean and the count of tickets still in the segment are those of the report
+
+### Requirement: Read the database through the flow report readers
+The system SHALL read the tickets and the history from the database under the read-only role, through the readers of the flow report.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_meme_population_que_flux_jira, through the fake reader of tests/flux_jira/lanceur_csv.py)
+
+#### Scenario: Readers of the flow report
+- **WHEN** the sample runs
+- **THEN** the tickets and the history come from the readers of the flow report, under the read-only role
+
+### Requirement: Show the segment states and the tickets left out
+The system SHALL show the states that make up the segment, the number of tickets without history and the number set aside.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_etats_du_segment_et_population)
 
 #### Scenario: Segment states
 - **WHEN** the sample runs
 - **THEN** the states composing the segment are listed, states of other steps are not, and counts of tickets without history and of set-aside tickets (excluded project or type) appear
 
 ### Requirement: Show the longest tickets, a near-median draw and the oldest tickets still inside
-The system SHALL show, for each sampled ticket, its key, project, cumulative days, number of visits, entry and exit dates of its longest visit, days of that visit, origin state and destination state, SHALL use markers for a created ticket (no origin) and a ticket resolved from the segment, SHALL list the longest tickets, then a random draw among tickets within a window around the median that does not overlap the longest, and, apart, the oldest tickets still in the segment with the age of their current visit and cumulative time including previous visits.
+The system SHALL list the longest tickets, then a random draw among tickets within a window around the median that does not overlap the longest, and, apart, the oldest tickets still in the segment with the age of their current visit and cumulative time including previous visits.
 
-Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_cas_construits, test_resolu_depuis_le_segment, test_plus_longs_puis_proches_sans_recouvrement, test_plus_anciens_dans_le_segment, test_aller_retour_encore_dans_le_segment)
-
-#### Scenario: Built cases
-- **WHEN** tickets with a return, a creation directly in the segment and a resolution from the segment exist
-- **THEN** each row shows its days, visits, dates and origin and destination, using the creation or resolved marker where applicable, and out-of-population tickets do not appear
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_plus_longs_puis_proches_sans_recouvrement, test_plus_anciens_dans_le_segment, test_aller_retour_encore_dans_le_segment)
 
 #### Scenario: Longest then near-median
 - **WHEN** the sample is shown
@@ -39,6 +49,15 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_cas_
 #### Scenario: Still inside after a return
 - **WHEN** a ticket left and came back to the segment
 - **THEN** its current visit age and its cumulative time over two visits are shown
+
+### Requirement: Show the columns and markers of each sampled ticket
+The system SHALL show, for each sampled ticket, its key, project, cumulative days, number of visits, entry and exit dates of its longest visit, days of that visit, origin state and destination state, and SHALL use markers for a created ticket (no origin) and a ticket resolved from the segment.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_cas_construits, test_resolu_depuis_le_segment)
+
+#### Scenario: Built cases
+- **WHEN** tickets with a return, a creation directly in the segment and a resolution from the segment exist
+- **THEN** each row shows its days, visits, dates and origin and destination, using the creation or resolved marker where applicable, and out-of-population tickets do not appear
 
 ### Requirement: Make the draw reproducible
 The system SHALL give the same draw for the same data, calculation date and seed, and SHALL give different draws for different seeds.
@@ -80,7 +99,7 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestEchantillon.test_segm
 - **THEN** the output equals the one for the internal name
 
 ### Requirement: Break the segment time down by state on request
-The system SHALL, with the per-state option, add the time spent in each state of the segment over the whole population (state total, share of segment time, P50 and P85 among tickets that passed through the state, and their number), in the order of the settings, with states summing to the segment total; the per-state detail of each sampled ticket (group: longest, near-median draw, still inside), including the ongoing visit; and, for the longest tickets, the number of other tickets whose segment visit ends the same day, with the maximum exits in a day as a baseline. Without the option none of these sections SHALL appear.
+The system SHALL, with the per-state option, add the time spent in each state of the segment over the whole population (state total, share of segment time, P50 and P85 among tickets that passed through the state, and their number), in the order of the settings, with states summing to the segment total. Without the option none of the per-state sections (time by state, per-ticket detail by state, grouped exits) SHALL appear.
 
 Source: `tests/segment_sample/test_segment_sample.py` (TestParEtat)
 
@@ -88,34 +107,36 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestParEtat)
 - **WHEN** the option is used
 - **THEN** all states of the segment are listed with totals that add up to the segment total, and an unused state shows zero and dashes
 
+#### Scenario: Without the option
+- **WHEN** the option is omitted
+- **THEN** no per-state or grouped-exit section is shown
+
+### Requirement: Per-state detail of each sampled ticket on request
+The system SHALL, with the per-state option, add the per-state detail of each sampled ticket (group: longest, near-median draw, still inside), including the ongoing visit.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestParEtat)
+
 #### Scenario: Ticket still inside after two visits
 - **WHEN** a ticket has one finished and one ongoing visit in different states
 - **THEN** its row shows days per state with the ongoing visit counted to the reference date
+
+### Requirement: Grouped exits of the longest tickets on request
+The system SHALL, with the per-state option, add for the longest tickets the number of other tickets whose segment visit ends the same day, with the maximum exits in a day as a baseline.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestParEtat)
 
 #### Scenario: Grouped exits
 - **WHEN** other tickets leave the segment on the same day as a longest ticket's longest visit
 - **THEN** their number is shown for that ticket and the maximum per day is stated
 
-#### Scenario: Without the option
-- **WHEN** the option is omitted
-- **THEN** no per-state or grouped-exit section is shown
-
 ### Requirement: Exclude batch closures on request
-The system SHALL, with the batch-closure option, remove from the population, before any calculation, the delivered tickets whose resolution falls in the same minute as at least a threshold of other tickets of the same project among the configured closure reasons, SHALL apply the same rule as the flow report (shared function), SHALL state at the top how many tickets and segment passes are removed, and SHALL never count as a batch a ticket whose resolution has no time of day, reporting how many such tickets there are. Without the option the output SHALL NOT change.
+The system SHALL, with the batch-closure option, remove from the population, before any calculation, the delivered tickets whose resolution falls in the same minute as at least a threshold of other tickets of the same project among the configured closure reasons, and SHALL apply the same rule as the flow report (shared function). Without the option the output SHALL NOT change.
 
 Source: `tests/segment_sample/test_segment_sample.py` (TestFermeturesEnLot)
 
 #### Scenario: A batch in one minute
 - **WHEN** six tickets of one project are resolved in the same minute and the batch threshold is five (the threshold itself is configurable)
 - **THEN** they leave the population while tickets resolved over several minutes, or four in the same minute, stay
-
-#### Scenario: Header and downstream figures
-- **WHEN** the option is used with the per-state and starts sections
-- **THEN** the header counts the removed tickets and passes and every figure is computed without them
-
-#### Scenario: No time of day
-- **WHEN** resolutions have no hour
-- **THEN** no ticket is in a batch and the count of such tickets is reported
 
 #### Scenario: Option off
 - **WHEN** the option is omitted
@@ -125,30 +146,63 @@ Source: `tests/segment_sample/test_segment_sample.py` (TestFermeturesEnLot)
 - **WHEN** the shared rule is applied to a set with five tickets in one minute and four in the next
 - **THEN** five tickets form a batch for the matching reason and none for a non-matching reason
 
+### Requirement: Batch closures stated, tickets without time of day never batched
+The system SHALL, with the batch-closure option, state at the top how many tickets and segment passes are removed, and SHALL never count as a batch a ticket whose resolution has no time of day, reporting how many such tickets there are.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestFermeturesEnLot)
+
+#### Scenario: Header and downstream figures
+- **WHEN** the option is used with the per-state and starts sections
+- **THEN** the header counts the removed tickets and passes and every figure is computed without them
+
+#### Scenario: No time of day
+- **WHEN** resolutions have no hour
+- **THEN** no ticket is in a batch and the count of such tickets is reported
+
 ### Requirement: Compare per-project verification starts to a random reference
-The system SHALL, with the starts option, list per project with at least a minimum number of passes (settable) the passes from the waiting state to the ongoing verification state (direct passes only, each visit counting once), the number of distinct days, the share of passes on the busiest fifth of days, the median wait before each pass, and two comparisons against random draws of the project's passes over the working days of the period with French public holidays removed: the concentration at equal active days (expected share, upper percentile, indicator "more concentrated") and the number of active days (expected distinct days, lower percentile, ratio, indicator "fewer active days than chance"). The reference SHALL be reproducible for a given seed, SHALL not depend on the other projects, SHALL keep the observed share equal to the percentile as not above it, and SHALL give percentiles at least the mean. Both comparisons SHALL read the same random draws. When the period has no working day, the system SHALL NOT compute a reference and SHALL show dashes in the reference columns. Projects below the minimum SHALL be counted, and when none reaches it a message SHALL say so. Without the option the section SHALL NOT appear.
+The system SHALL, with the starts option, list per project with at least a minimum number of passes (settable) the passes from the waiting state to the ongoing verification state (direct passes only, each visit counting once), the number of distinct days, the share of passes on the busiest fifth of days and the median wait before each pass. Without the option the section SHALL NOT appear.
 
-Source: `tests/segment_sample/test_segment_sample.py` (TestDebuts, TestPartAttendue, TestIndicateurDeReference)
-
-#### Scenario: No working day
-- **WHEN** the period holds only a weekend
-- **THEN** the project row shows its passes and observed share, and dashes in every reference column
-
-#### Scenario: Concentrated and spread projects
-- **WHEN** one project has all its passes on few days and another one pass per day
-- **THEN** the former shows a high observed share flagged "more concentrated" and "fewer active days", the latter neither
+Source: `tests/segment_sample/test_segment_sample.py` (TestDebuts)
 
 #### Scenario: Direct passes only
 - **WHEN** a ticket passes through an intermediate state before the ongoing state, or goes through the waiting state twice
 - **THEN** the indirect pass is not counted and each of the two visits counts once
 
+### Requirement: Projects below the starts threshold counted
+Projects below the minimum number of passes of the starts option SHALL be counted, and when none reaches it a message SHALL say so.
+
+Source: `tests/segment_sample/test_segment_sample.py` (TestDebuts)
+
 #### Scenario: Threshold
 - **WHEN** the minimum is raised above every project, or lowered to include a small project
 - **THEN** a "no project reaches the threshold" message appears, respectively the small project is listed, and projects below are counted
 
+### Requirement: Starts compared to random draws over working days
+The system SHALL give, for each project listed by the starts option, two comparisons against random draws of the project's passes over the working days of the period with French public holidays removed.
+
+Source: tests/segment_sample/test_segment_sample.py (TestPartAttendue, TestIndicateurDeReference)
+
 #### Scenario: Holidays and weekends
 - **WHEN** the working days of the period are computed
 - **THEN** weekends and French public holidays are excluded from the period and from the draws, and passes on those days are outside the model
+
+### Requirement: Concentration and active-days comparisons of the starts
+The two comparisons of the starts SHALL be the concentration at equal active days (expected share, upper percentile, indicator "more concentrated") and the number of active days (expected distinct days, lower percentile, ratio, indicator "fewer active days than chance").
+
+Source: tests/segment_sample/test_segment_sample.py (TestPartAttendue, TestIndicateurDeReference)
+
+#### Scenario: Concentrated and spread projects
+- **WHEN** one project has all its passes on few days and another one pass per day
+- **THEN** the former shows a high observed share flagged "more concentrated" and "fewer active days", the latter neither
+
+### Requirement: Properties of the random reference of the starts
+The reference SHALL be reproducible for a given seed, SHALL not depend on the other projects, SHALL keep the observed share equal to the percentile as not above it, and SHALL give percentiles at least the mean. Both comparisons SHALL read the same random draws. When the period has no working day, the system SHALL NOT compute a reference and SHALL show dashes in the reference columns.
+
+Source: tests/segment_sample/test_segment_sample.py (TestDebuts, TestPartAttendue, TestIndicateurDeReference)
+
+#### Scenario: No working day
+- **WHEN** the period holds only a weekend
+- **THEN** the project row shows its passes and observed share, and dashes in every reference column
 
 #### Scenario: Stable output
 - **WHEN** the tool runs twice with the same seed

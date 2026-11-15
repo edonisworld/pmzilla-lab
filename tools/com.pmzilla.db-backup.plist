@@ -10,6 +10,11 @@
     <string>/bin/bash</string>
     <string>__LAB__/db_backup.sh</string>
   </array>
+  <!-- Au chargement (ouverture de session) puis toutes les heures : le dossier daté du jour rend les passages suivants sans effet, et un passage est sauté pendant une fin de branche (R-20261102-5, Q275, Q278). Remplace : « pas de démarrage à la charge ». Retrait : permanent tant que la veille et la sauvegarde tournent sur le Mac des fins (D6, D8). -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <!-- Chaque jour à 7 h 45, après la collecte de la veille (7 h 10). Si le Mac dort à cette heure, launchd lance la tâche au réveil. -->
   <key>StartCalendarInterval</key>
   <dict>

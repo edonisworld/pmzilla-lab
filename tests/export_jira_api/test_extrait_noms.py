@@ -84,6 +84,16 @@ class ServiceFunction(unittest.TestCase):
         self.assertTrue(par_nom["Eq-Gamma"]["without_identifier"])
         self.assertIsNone(par_nom["Eq-Gamma"]["type"])
 
+    def test_marqueur_repris_dans_l_extrait(self):
+        ref = REF.replace("  - name: Eq-Gamma\n    headcount: " + EFFECTIF + "\n",
+                          "  - name: Eq-Gamma\n    headcount: " + EFFECTIF + "\n    jira_team: none\n    jira_team_reason: transverse\n")
+        par_nom = {e["name"]: e for e in self.donnees(ref=ref).referential_teams}
+        self.assertTrue(par_nom["Eq-Gamma"]["without_jira_team"])
+        self.assertEqual(par_nom["Eq-Gamma"]["without_jira_team_reason"], "transverse")
+        self.assertFalse(par_nom["Eq-Gamma"]["without_identifier"])                  # marquée : pas un manque
+        self.assertFalse(par_nom["Eq-Alpha"]["without_jira_team"])
+        self.assertIsNone(par_nom["Eq-Alpha"]["without_jira_team_reason"])
+
     def test_entrees_du_catalogue(self):
         par_nom = {e["name"]: e for e in self.donnees().catalogue_teams}
         self.assertEqual(list(par_nom), ["Lib-Alpha", "Lib-Beta", "Lib-Dehors", "Lib-Libre"])
@@ -98,7 +108,8 @@ class ServiceFunction(unittest.TestCase):
 
     def test_aucun_champ_hors_conception(self):
         extrait = self.donnees()
-        self.assertEqual({k for e in extrait.referential_teams for k in e}, {"name", "jira_team_ids", "without_identifier", "type"})
+        self.assertEqual({k for e in extrait.referential_teams for k in e},
+                         {"name", "jira_team_ids", "without_identifier", "without_jira_team", "without_jira_team_reason", "type"})
         self.assertEqual({k for e in extrait.catalogue_teams for k in e},
                          {"name", "jira_team_ids", "type", "obsolete", "outside_referential"})
         texte = repr(extrait)

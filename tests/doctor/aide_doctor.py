@@ -7,6 +7,7 @@ PATH (journal des appels dans $STUB_LOG) ; `security`, `psql` et `docker` par de
 """
 import atexit
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -27,11 +28,13 @@ DOCTOR = TOOLS / "doctor.py"
 sys.path.insert(0, str(TOOLS))
 
 import doctor  # noqa: E402
+import sandbox_config  # noqa: E402
 
 SENTINELLE = "SENTINELLE-CONTENU-DE-SAUVEGARDE-9f3a"
 AUJOURDHUI = "2026-10-14"
 HEURE = "10:00"
 SCHEMAS = ("knowledge", "cases", "flow", "quality-sans-texte")   # les dumps de tools/db_backup.sh, dump partiel de quality compris
+VERSION_CLAUDE = "2.1.303"   # la version de la doublure `claude`, celle de l'essai du crochet PreToolUse dans l'état sain
 MODELES = {"embedding": None, "watch triage": None}   # remplis par modeles_du_depot()
 
 
@@ -52,7 +55,7 @@ def modele_du_depot() -> Path:
     """Le dépôt principal du faux laboratoire et son dossier d'exécution (worktree détaché au sommet de main, D3), construits une
     seule fois par processus dans un dossier temporaire, puis copiés par test."""
     if not _MODELE:
-        racine = Path(tempfile.mkdtemp(prefix="doctor-modele."))
+        racine = Path(tempfile.mkdtemp(prefix="doctor-modele.")).resolve()   # R-20261111-16 : chemin réel (sous macOS /var est un lien vers /private/var)
         atexit.register(shutil.rmtree, racine, ignore_errors=True)
         principal = racine / "PMZilla-Lab" / "workspace"
         principal.mkdir(parents=True)
@@ -105,10 +108,42 @@ class FauxOllama:
             self.actif = False
 
 
+def resume_attendu(avertissements: int = 0, langue: str = "fr") -> str:
+    """Le résumé de fin attendu du doctor pour `avertissements` avertissement(s) propres au test.
+
+    Dans l'arbre public de l'édition, le dossier des fichiers gérés n'est pas livré : le contrôle sandbox ajoute alors un avertissement (« fichier géré
+    absent »), que le test ne peut pas poser. L'avertissement de plus n'est compté que si la source du fichier géré est absente de l'arbre testé.
+    Remplace : rien. Retrait : tombe quand ce dossier est publié ou quand le contrôle sandbox ne signale plus l'absence (R-20261108-03).
+    Source : la présence de sandbox_config.SOURCE_RELATIVE à la racine, la même que celle de Labo.ecrire_bac_a_sable."""
+    if not (RACINE / sandbox_config.SOURCE_RELATIVE).is_file():
+        # La tolérance ne joue que dans l'arbre public (manifeste absent) ; dans le dépôt privé, l'absence de la source est un échec.
+        assert not (RACINE / "edition" / "manifest.yaml").is_file(), "la source du fichier géré est absente du dépôt privé (le manifeste de l'édition est présent)"
+        avertissements += 1
+    if langue == "en":
+        return "doctor: all good" if avertissements == 0 else f"doctor: {avertissements} warning(s)"
+    return "doctor : tout va bien" if avertissements == 0 else f"doctor : {avertissements} avertissement(s)"
+
+
 def git(dossier, *args, env=None, check=True):
     environnement = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                      "GIT_COMMITTER_EMAIL": "t@t", **(env or {})}
     return subprocess.run(["git", "-C", str(dossier), *args], capture_output=True, text=True, env=environnement, check=check)
+
+
+def depot_avec_crochet(dossier, conforme=True):
+    """R-20261110-42 : un dépôt jetable dont le crochet reference-transaction est installé comme le fait tools/install_hooks.sh (lien relatif
+    ../../tools/hooks/reference-transaction vers un fichier suivi exécutable) ; `conforme=False` : dépôt sans le lien. Le dossier est créé par l'appelant."""
+    dossier = Path(dossier)
+    dossier.mkdir(parents=True, exist_ok=True)
+    git(dossier, "init", "-q", "-b", "main")
+    source = dossier / "tools" / "hooks" / "reference-transaction"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    source.chmod(0o755)
+    if conforme:
+        (dossier / ".git" / "hooks").mkdir(exist_ok=True)
+        (dossier / ".git" / "hooks" / "reference-transaction").symlink_to("../../tools/hooks/reference-transaction")
+    return dossier
 
 
 class Labo(unittest.TestCase):
@@ -117,7 +152,7 @@ class Labo(unittest.TestCase):
     TACHES = "une"      # tâches launchd installées dans l'état sain : « une » (chaque contrôle lance une doublure par tâche) ou « toutes »
 
     def setUp(self):
-        self.base = Path(tempfile.mkdtemp(prefix="doctor-test."))
+        self.base = Path(tempfile.mkdtemp(prefix="doctor-test.")).resolve()   # R-20261111-13 : chemin réel (sous macOS /var est un lien vers /private/var)
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.maison = self.base / "maison"
         self.donnees = self.maison / ".pmzilla-lab"
@@ -137,6 +172,7 @@ class Labo(unittest.TestCase):
         self.ollama = FauxOllama(modeles_du_depot())
         self.addCleanup(self.ollama.arreter)
         self._base_de_donnees()
+        self.depot_crochets = depot_avec_crochet(self.base / "depot-crochets")   # R-20261110-42 : le crochet conforme, dans l'état sain
         self._etat_sain()
 
     # --- doublures et services factices -------------------------------------------------------------------------------
@@ -147,7 +183,13 @@ class Labo(unittest.TestCase):
                          'if [ "$1" = print ]; then label="${2##*/}"; [ -e "$STUB_NON_CHARGES/$label" ] && exit 113; exit 0; fi\nexit 0\n',
             "osascript": 'echo "osascript $*" >> "$STUB_LOG"\nexit 0\n',
             "git": f'echo "git $*" >> "$STUB_LOG"\nexec "{git_reel}" "$@"\n',
+            "claude": 'echo "claude $*" >> "$STUB_LOG"\n[ -n "${FAUX_CLAUDE_ABSENT:-}" ] && exit 127\n'
+                      'echo "${FAUX_CLAUDE_VERSION:-' + VERSION_CLAUDE + '} (Claude Code)"\n',
         }
+        # R-20261103-6 (Q9) : contrôle ci-container. colima : tourne (code FAUX_COLIMA_CODE, 0 par défaut) ; ci_local : doublure de
+        # `bash tools/ci_local.sh cle` (DOCTOR_CI_LOCAL), image présente par défaut (code FAUX_CI_LOCAL_CODE) ; ni l'un ni l'autre n'appelle Docker.
+        scripts["colima"] = 'echo "colima $*" >> "$STUB_LOG"\n[ -n "${FAUX_COLIMA_ABSENT:-}" ] && exit 127\nexit "${FAUX_COLIMA_CODE:-0}"\n'
+        scripts["ci_local"] = 'echo "ci_local $*" >> "$STUB_LOG"\nexit "${FAUX_CI_LOCAL_CODE:-0}"\n'
         for nom in ("security", "psql", "docker", "pg_dump", "curl"):
             scripts[nom] = f'echo "INTERDIT {nom} $*" >> "$STUB_LOG"\nexit 1\n'
         for nom, corps in scripts.items():
@@ -225,6 +267,8 @@ class Labo(unittest.TestCase):
         self.ecrire_sauvegarde(AUJOURDHUI, SCHEMAS)
         self.ecrire_hors_mac(derniere_reussite="2026-10-13")
         self.ecrire_flux("2027-06-01")
+        self.ecrire_essai_crochet(VERSION_CLAUDE, "lu")
+        self.ecrire_bac_a_sable()
         gabarits = gabarits_launchd()
         for etiquette in (gabarits if self.TACHES == "toutes" else gabarits[:1]):
             self.installer_tache(etiquette)
@@ -297,6 +341,36 @@ class Labo(unittest.TestCase):
             lignes.append(f"jira_token_expires: {expiration}")
         self.flux.write_text("\n".join(lignes) + "\n" + extra, encoding="utf-8")
 
+    def ecrire_essai_crochet(self, version, verdict):
+        """État du dernier essai du crochet PreToolUse (tools/essai_crochet_pretooluse.sh), dans le dossier de données."""
+        (self.donnees / "essai-crochet-pretooluse.json").write_text(
+            json.dumps({"version": 1, "claude_version": version, "date": "2026-10-13", "verdict": verdict}), encoding="utf-8")
+
+    def ecrire_bac_a_sable(self):
+        """État sain du contrôle `sandbox` (change bash-sandbox-n2, D8) : un fichier géré égal à la source suivie dont « ~/ » est développé vers la
+        maison factice, de propriétaire l'utilisateur du test et fermé en écriture au groupe et aux autres (le propriétaire root est remplacé par
+        DOCTOR_SANDBOX_OWNER_UID), et les outils figés que la source exclut (familles réelles) égaux à leur relevé. Rien n'est écrit hors de la base temporaire."""
+        self.fichier_gere = self.base / "gere" / "50-pmzilla-bac-a-sable.json"
+        self.fichier_gere.parent.mkdir(parents=True, exist_ok=True)
+        # Édition publique : config/gere/ n'est pas livré (R-20261108-03, question 11) ; le doctor dit « absent » et il n'y a rien à poser.
+        # Remplace : rien. Retrait : tombe avec R-20261108-03.
+        if not (RACINE / sandbox_config.SOURCE_RELATIVE).is_file():
+            return
+        # R-20261111-49, -51 (C1) : développé avec le dossier personnel de la base des comptes, pas avec la maison factice (HOME du doctor).
+        contenu = sandbox_config.etendre(sandbox_config.lire_source(RACINE))
+        self.fichier_gere.write_text(json.dumps(contenu, indent=2), encoding="utf-8")
+        self.fichier_gere.chmod(0o644)
+        self.figes = self.donnees / sandbox_config.DOSSIER_FIGES
+        shutil.rmtree(self.figes, ignore_errors=True)
+        self.figes.mkdir()
+        lignes = []
+        # Les familles réelles, tirées de la source comme le fait le code (une seule source des noms).
+        for nom in sorted(sandbox_config.noms_figes_attendus(RACINE)):
+            texte = f"#!/bin/sh\necho {nom}\n"
+            (self.figes / nom).write_text(texte, encoding="utf-8")
+            lignes.append(f"{hashlib.sha256(texte.encode()).hexdigest()}  {nom}")
+        (self.figes / sandbox_config.RELEVE_FIGES).write_text("\n".join(lignes) + "\n", encoding="utf-8")
+
     # --- lancement ----------------------------------------------------------------------------------------------------
     def environnement(self, **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("DOCTOR_", "PMZILLA_LAB_"))}
@@ -305,7 +379,11 @@ class Labo(unittest.TestCase):
             "STUB_NON_CHARGES": str(self.non_charges), "PMZILLA_LAB_DATA": str(self.donnees), "PMZILLA_LAB_LOGS": str(self.journaux),
             "PMZILLA_LAB_TODAY": AUJOURDHUI, "PMZILLA_LAB_NOW": HEURE, "PMZILLA_LAB_WORKSPACE": str(self.principal),
             "PMZILLA_LAB_DB_PORT": str(self.port_base), "DOCTOR_OLLAMA_URL": self.ollama.url(), "DOCTOR_FLUX": str(self.flux),
-            "DOCTOR_DISK_FREE_GB": "100", "UV_OFFLINE": "1",
+            "DOCTOR_DISK_FREE_GB": "100", "UV_OFFLINE": "1", "DOCTOR_CI_LOCAL": str(self.bin / "ci_local"),
+            # contrôle sandbox : le fichier géré factice, son propriétaire attendu (l'utilisateur du test, pas root) et le minimum de version
+            # ramené à celui de la doublure `claude` (VERSION_CLAUDE) ; les tests du contrôle les remplacent un à un.
+            "DOCTOR_SANDBOX_FILE": str(self.fichier_gere), "DOCTOR_SANDBOX_OWNER_UID": str(os.getuid()),
+            "DOCTOR_SANDBOX_MIN_VERSION": VERSION_CLAUDE, "DOCTOR_CROCHETS_DEPOT": str(self.depot_crochets),
         })
         env.update({k: str(v) for k, v in extra.items()})
         return env
@@ -315,13 +393,18 @@ class Labo(unittest.TestCase):
         courant = la base temporaire) ; `reel=True` : un vrai processus, pour ce qui vise le lancement lui-même."""
         environnement = self.environnement(**(env or {}))
         if reel:
+            # R-20261108-10 : variable vide, le doctor ignore le contrôle de l'interpréteur des crochets (le Mac réel n'est jamais lu) ;
+            # sauf si le test la fixe lui-même. Remplace : rien. Retrait : avec le contrôle.
+            environnement.setdefault("DOCTOR_INTERPRETEUR_CROCHETS", "")
             return subprocess.run([sys.executable, str(DOCTOR), *args], capture_output=True, text=True, timeout=60,
                                   env=environnement, cwd=str(self.base))
         sortie, erreur = io.StringIO(), io.StringIO()
         courant = os.getcwd()
         os.chdir(self.base)
         try:
+            # R-20261108-10 : le contrôle de l'interpréteur des crochets lit le Mac ; ici il rend la clé conforme. Remplace : rien. Retrait : avec le contrôle.
             with mock.patch.dict(os.environ, environnement, clear=True), \
+                    mock.patch.object(doctor, "verifier_interpreteur", return_value="ok"), \
                     contextlib.redirect_stdout(sortie), contextlib.redirect_stderr(erreur):
                 try:
                     code = doctor.main(list(args))

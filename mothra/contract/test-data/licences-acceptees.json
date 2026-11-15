@@ -1,0 +1,32 @@
+{
+  "note": "Closed list of accepted open-source licences (SPDX identifiers, compared exactly) for the npm lock check (design D16). Extended only by a commit the author reviews; an unknown licence is refused, never accepted by default.",
+  "licences": [
+    "0BSD",
+    "Apache-2.0",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "OFL-1.1",
+    "Python-2.0"
+  ],
+  "exceptions": [
+    {
+      "paquet": "lightningcss",
+      "licence": "MPL-2.0",
+      "raison": "dépendance de construction de Vite 8, non modifiée, copyleft limité aux fichiers, rien dans le CSS produit"
+    },
+    {
+      "paquet": "lightningcss-darwin-arm64",
+      "licence": "MPL-2.0",
+      "raison": "dépendance de construction de Vite 8, non modifiée, copyleft limité aux fichiers, rien dans le CSS produit"
+    },
+    {
+      "paquet": "lightningcss-linux-arm64-gnu",
+      "licence": "MPL-2.0",
+      "raison": "dépendance de construction de Vite 8, non modifiée, copyleft limité aux fichiers, rien dans le CSS produit"
+    }
+  ]
+}

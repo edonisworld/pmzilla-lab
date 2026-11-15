@@ -165,17 +165,20 @@ SORTIE="journal npm : $(cat "$journal_npm")"; [ "$(cat "$journal_npm")" = "$doss
 verifie "oui : un seul appel, exactement « ci --offline », dans mothra/ du worktree" $?
 
 nouveau; avec_verrou; npm_lance 1 n non
-code_et "terminal, non : code 0 et commande affichée" 0 "npm ci --offline"
-contient "cd $(cd -P "$cas" && pwd -P)/worktrees/wt-non/mothra && npm ci --offline" || contient "cd $cas/worktrees/wt-non/mothra && npm ci --offline"
+code_et "terminal, non : code 0 et commande affichée" 0 "&& npm ci"
+contient "cd $(cd -P "$cas" && pwd -P)/worktrees/wt-non/mothra && npm ci" || contient "cd $cas/worktrees/wt-non/mothra && npm ci"
 verifie "non : la commande à taper nomme mothra/ du worktree" $?
+! contient "&& npm ci --offline"; verifie "non : la commande à taper est sans --offline (R-20261110-28 point 2)" $?
 [ ! -s "$journal_npm" ] && ! contient "$SUCCES"; verifie "non : aucun appel de npm" $?
 
 nouveau; avec_verrou; npm_lance 1 "" vide
-[ ! -s "$journal_npm" ] && contient "npm ci --offline"; verifie "terminal, réponse vide (N par défaut) : commande affichée, aucun appel" $?
+[ ! -s "$journal_npm" ] && contient "&& npm ci"; verifie "terminal, réponse vide (N par défaut) : commande affichée, aucun appel" $?
+! contient "&& npm ci --offline"; verifie "réponse vide : la commande à taper est sans --offline (R-20261110-35)" $?
 
 nouveau; avec_verrou; npm_lance 0 o sans-terminal
 code_et "sans terminal : code 0 et ligne « non installées »" 0 "dépendances npm de Mothra non installées : cd "
-contient "/worktrees/wt-sans-terminal/mothra && npm ci --offline"; verifie "sans terminal : la ligne donne la commande exacte" $?
+contient "/worktrees/wt-sans-terminal/mothra && npm ci"; verifie "sans terminal : la ligne donne la commande exacte" $?
+! contient "&& npm ci --offline"; verifie "sans terminal : la commande à taper est sans --offline (R-20261110-35)" $?
 ! contient "$QUESTION" && [ ! -s "$journal_npm" ]; verifie "sans terminal : aucune question, aucun appel, même avec « o » sur l'entrée" $?
 
 nouveau; avec_verrou; npm_lance "" o non-pose   # entrée standard en tube : [ -t 0 ] faux

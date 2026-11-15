@@ -70,22 +70,67 @@ class TestIdees(Base):
         self.assertEqual(code, 0, sortie)
         self.assertEqual(sortie, attendu)
 
-    def test_board_ne_compte_pas_les_idees(self):
-        self.depot(*self.base())
-        self.lance("board")
-        page = (self.dir / "data" / "feuille-de-route.html").read_text(encoding="utf-8")
-        self.depot(*self.base(), idee(900, "Titre d'idée"), idee(901, "Fermée", state="CLOSED"))
-        code, _, _ = self.lance("board")
-        self.assertEqual(code, 0)
-        apres = (self.dir / "data" / "feuille-de-route.html").read_text(encoding="utf-8")
-        self.assertEqual(apres, page)
-        self.assertNotIn("Titre d&#x27;idée", apres)
-
     def test_une_idee_sans_label_idee_reste_signalee(self):
         self.depot(*self.base(), idee(900, labels=["autre"]))
         code, sortie, _ = self.lance("check")
         self.assertEqual(code, 1)
         self.assertIn("#900", sortie)
+
+
+def abandonnee(n, titre="Remplacée", **kw):
+    """Feature fermée « not planned » (close-feature --reason) : ni Status Done ni done_on."""
+    noeud = feature(n, titre, state="CLOSED", status=kw.pop("status", "In progress"), **kw)
+    noeud["stateReason"] = "NOT_PLANNED"
+    return noeud
+
+
+class TestFermeeNotPlanned(Base):
+    """Une feature fermée not planned ne compte pas comme faite, ne lève aucun blocage, et ne rend pas la file invalide."""
+
+    def base(self):
+        return [abandonnee(1), feature(2, blocked_by=[101])]
+
+    def test_la_file_reste_valide_sans_status_done(self):
+        self.depot(abandonnee(1), feature(3))
+        self.assertEqual(self.lance("check")[0:2], (0, "roadmap : file valide\n"))
+
+    def test_une_fermee_completed_sans_done_reste_signalee(self):
+        faux = abandonnee(1)
+        faux["stateReason"] = "COMPLETED"
+        self.depot(faux)
+        code, sortie, _ = self.lance("check")
+        self.assertEqual(code, 1)
+        self.assertIn("Done attendu", sortie)
+
+    def test_check_signale_la_dependante_ready_ou_en_cours(self):
+        self.depot(*self.base())
+        code, sortie, _ = self.lance("check")
+        self.assertEqual(code, 1)
+        self.assertIn("R-2 : Status : Ready alors que R-1 est fermée not planned", sortie)
+
+    def test_next_ne_propose_pas_la_dependante(self):
+        self.depot(abandonnee(1), feature(2, status="Todo", blocked_by=[101]), feature(3))
+        code, sortie, _ = self.lance("next", "--budget", "8h", "--today", "2026-10-12")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("R-3 |", sortie)
+        self.assertNotIn("R-2 |", sortie)
+
+    def test_status_ne_compte_pas_comme_faite_et_garde_le_blocage(self):
+        self.depot(abandonnee(1), feature(2, status="Todo", blocked_by=[101]))
+        code, sortie, _ = self.lance("status")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("done 0", sortie)
+        self.assertIn("dropped 1", sortie)
+        self.assertIn("R-2 | Travail | attend R-1", sortie)
+        self.assertNotIn("dépendances faites", sortie)
+
+    def test_status_sans_abandonnee_inchange(self):
+        self.depot(feature(1))
+        self.assertNotIn("dropped", self.lance("status")[1])
+
+    def test_show_dit_not_planned(self):
+        self.depot(abandonnee(1), feature(2, status="Todo", blocked_by=[101]))
+        self.assertIn("R-1 (fermée not planned)", self.lance("show", "R-2")[1])
 
 
 class TestNotesBase(Base):

@@ -3,7 +3,7 @@ Tests des figures dans la bibliothèque (tools/pmzilla_lab_library.py) : passage
 figure, légende PDF sans doublon, paramètre `types` de la recherche, `ref` et chemin de l'image en texte,
 aucun accès aux images.
 
-    uv run --with numpy --with httpx --with pyyaml --with pymupdf4llm --with ebooklib --with markdownify \
+    uv run --with numpy --with httpx --with pyyaml --with "pymupdf4llm<2" --with ebooklib --with markdownify \
         --with beautifulsoup4 python -m unittest discover -s tests/pmzilla_lab_library -v
 
 Livres Markdown inventés dans un dossier temporaire ; l'embedding d'Ollama est remplacé par un plongement

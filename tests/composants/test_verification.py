@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aide_composants import DIGEST_BASE_CI, SCRIPT, composants  # noqa: E402
-from aide_verification import (DIGEST_IMAGE, MANIFESTE_MODELE_A, AvecSources, npm, pypi, sha)  # noqa: E402
+from aide_verification import (DIGEST_IMAGE, MANIFESTE_MODELE_A, UV_PYTHON_LIST, AvecSources, npm, pypi, sha)  # noqa: E402
 
 c = composants
 
@@ -24,17 +24,18 @@ class Semantique(unittest.TestCase):
     def natures(self, ecosysteme, utilisee, candidates):
         return {n.nature: n.disponible for n in c.classer(ecosysteme, utilisee, candidates)}
 
-    def test_pep440_mise_a_jour_majeure_et_preversion_separees(self):
+    def test_pep440_mise_a_jour_majeure_et_preversion_ecartee(self):
         r = self.natures("pep440", "2.1.0", [("2.2.0", False), ("3.0.0", False), ("3.1.0rc1", False), ("2.1.0", False)])
-        self.assertEqual(r, {"update": "2.2.0", "major": "3.0.0", "pre-release": "3.1.0rc1"})
+        self.assertEqual(r, {"update": "2.2.0", "major": "3.0.0"})
 
     def test_pep440_post_comptee_comme_publication(self):
         self.assertEqual(self.natures("pep440", "2.1.0", [("2.1.0.post1", False)]), {"update": "2.1.0.post1"})
 
-    def test_pep440_dev_et_alpha_sont_des_preversions(self):
-        for v in ("2.2.0a1", "2.2.0b2", "2.2.0.dev3", "2.2.0rc1"):
+    def test_pep440_dev_et_alpha_sont_des_preversions_ecartees(self):
+        for v in ("2.2.0a1", "2.2.0b2", "2.2.0.dev3", "2.2.0rc1", "3.0.dev6"):
             with self.subTest(v=v):
-                self.assertEqual(self.natures("pep440", "2.1.0", [(v, False)]), {"pre-release": v})
+                self.assertTrue(c.lire_version("pep440", v).preversion)
+                self.assertEqual(self.natures("pep440", "2.1.0", [(v, False)]), {})
 
     def test_preversion_plus_ancienne_que_la_stable_ignoree(self):
         self.assertEqual(self.natures("pep440", "2.1.0", [("2.2.0rc1", False), ("2.2.0", False)]), {"update": "2.2.0"})
@@ -45,21 +46,21 @@ class Semantique(unittest.TestCase):
 
     def test_runtime_python(self):
         self.assertEqual(self.natures("python", "3.14", [("3.14.2", False), ("3.15.0", False), ("3.16.0a1", False)]),
-                         {"major": "3.15.0", "pre-release": "3.16.0a1"})
+                         {"major": "3.15.0"})
         self.assertEqual(self.natures("python", "3.14.0", [("3.14.2", False)]), {"update": "3.14.2"})
 
     def test_semver_v_initial(self):
         self.assertEqual(self.natures("semver", "v2.2.2", [("2.2.2", False)]), {})
         self.assertEqual(self.natures("semver", "v2.2.2", [("2.3.0", False), ("3.0.0-beta.1", False)]),
-                         {"update": "2.3.0", "pre-release": "3.0.0-beta.1"})
+                         {"update": "2.3.0"})
 
     def test_semver_drapeau_preversion(self):
-        self.assertEqual(self.natures("semver", "4.5.0", [("4.6.0", True)]), {"pre-release": "4.6.0"})
+        self.assertEqual(self.natures("semver", "4.5.0", [("4.6.0", True)]), {})
 
     def test_etiquettes_de_l_image(self):
         r = self.natures("docker", "0.26.0-pg18", [("0.26.1-pg18", False), ("0.27.0-pg18", False), ("0.26.0-pg19", False),
                                                     ("latest", False), ("main", False), ("0.28.0-rc.1-pg18", False)])
-        self.assertEqual(r, {"update": "0.27.0-pg18", "major": "0.26.0-pg19", "pre-release": "0.28.0-rc.1-pg18"})
+        self.assertEqual(r, {"update": "0.27.0-pg18", "major": "0.26.0-pg19"})
         self.assertEqual(self.natures("docker", "1.2.0-pg18", [("2.0.0-pg18", False)]), {"major": "2.0.0-pg18"})
 
     def test_homebrew_revision_ignoree(self):
@@ -92,12 +93,32 @@ class Sources(AvecSources):
         self.assertEqual(code, 0)
         self.assertIn("rien de nouveau", sortie)
 
-    def test_majeure_et_preversion_a_part(self):
+    def test_majeure_signalee_preversion_ecartee(self):
         self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "3.0.0": False, "3.1.0rc1": False})
         code, sortie, _ = self.verifier()
         self.assertIn("numpy 2.1.0 → 3.0.0 (version majeure)", sortie)
-        self.assertIn("numpy 2.1.0 → 3.1.0rc1 (préversion)", sortie)
+        self.assertNotIn("3.1.0rc1", sortie)
+        self.assertNotIn("préversion", sortie)
         self.assertNotIn("(mise à jour)", sortie)
+
+    def test_preversions_pypi_et_python_ni_affichees_ni_proposees(self):
+        self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "3.0.dev6": False})
+        (self.bin / "uv-python-list.txt").write_text("cpython-3.16.0a1-macos-aarch64-none    <download available>\n" + UV_PYTHON_LIST)
+        code, sortie, _ = self.verifier()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("Veille des composants : rien de nouveau", sortie)
+        for texte in ("3.0.dev6", "3.16.0a1", "Job proposé", "préversion"):
+            self.assertNotIn(texte, sortie)
+        self.assertEqual(self.etat()["components"]["numpy"]["novelties"], [])
+        self.assertEqual(self.etat()["components"]["python"]["novelties"], [])
+        self.assertEqual(self.etat()["notified"], [])
+
+    def test_stable_proposee_preversion_plus_recente_ecartee(self):
+        self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "2.1.1": False, "3.0.dev6": False})
+        code, sortie, _ = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn("Job proposé : Mettre à jour numpy 2.1.0 → 2.1.1", sortie)
+        self.assertNotIn("3.0.dev6", sortie)
 
     def test_verrous_en_desaccord_la_plus_recente_compte(self):
         # une version publiée au-delà de tous les verrous est une nouveauté ; le verrou en retard se voit à l'essai à blanc
@@ -161,13 +182,14 @@ class Sources(AvecSources):
         self.assertIn("/brew/cask/ollama-app.json", [c for c, _ in self.serveur.requetes])
         self.assertNotIn("/brew/cask/ollama.json", [c for c, _ in self.serveur.requetes])
 
-    def test_github_brouillons_ignores_et_preversion(self):
+    def test_github_brouillons_et_preversions_ignores(self):
         self.serveur.routes["/github/repos/Homebrew/brew/releases"] = [
             {"tag_name": "4.7.0", "draft": True, "prerelease": False},
             {"tag_name": "4.6.1", "draft": False, "prerelease": True}, {"tag_name": "4.6.0", "draft": False, "prerelease": False}]
         code, sortie, _ = self.verifier()
-        self.assertIn("homebrew 4.6.0 → 4.6.1 (préversion)", sortie)
+        self.assertNotIn("4.6.1", sortie)
         self.assertNotIn("4.7.0", sortie)
+        self.assertEqual(self.etat()["components"]["homebrew"]["novelties"], [])
 
     def test_image_ligne_postgresql_et_etiquette_republiee(self):
         self.serveur.routes["/hub/repositories/exemple/base/tags"] = {
@@ -252,9 +274,12 @@ class ImageCI(AvecSources):
 
 class Delai(AvecSources):
     def test_delai_depasse_rend_le_composant_incomplet(self):
-        self.serveur.delais["/pypi/numpy/json"] = 2
+        # délai du client large (5 s) pour que les autres sources, répondant tout de suite, ne le dépassent jamais même sur une machine chargée ;
+        # la source lente répond bien au-delà (20 s, rapport 4 comme sur main) : le dépassement du délai ne dépend plus de la vitesse de la machine
+        self.serveur.delais["/pypi/numpy/json"] = 20
         self.serveur.routes["/pypi/psycopg/json"] = pypi({"3.2.1": False, "3.2.2": False})
-        code, sortie, _ = self.verifier("--timeout", "0.5")
+        code, sortie, _ = self.verifier("--timeout", "5")
+        self.assertNotIn("/pypi/numpy/json", self.serveur.delais_finis, "la source lente est allée au bout de son délai : le client ne l'a pas interrompu")
         self.assertEqual(code, 1)                                   # la nouveauté de psycopg décide, pas l'incomplétude
         self.assertIn("Veille des composants incomplète : 1 source(s) injoignable(s)", sortie)
         self.assertIn("numpy : source injoignable (", sortie)
@@ -275,13 +300,13 @@ class Delai(AvecSources):
 
     def test_statut_inattendu_et_corps_illisible(self):
         self.serveur.statuts["/pypi/numpy/json"] = 429
-        self.serveur.routes["/npm/graphes"] = b"<html>pas du json"
+        self.serveur.routes["/npm/ext-paquet"] = b"<html>pas du json"
         code, sortie, _ = self.verifier()
         self.assertEqual(code, 0)
         self.assertIn("Veille des composants incomplète : 2 source(s) injoignable(s)", sortie)
         etat = self.etat()
         self.assertEqual(etat["components"]["numpy"]["incomplete"], "HTTPError")
-        self.assertEqual(etat["components"]["graphes"]["incomplete"], "JSONDecodeError")
+        self.assertEqual(etat["components"]["ext"]["incomplete"], "JSONDecodeError")
         texte = json.dumps(etat)
         self.assertNotIn("127.0.0.1", texte)
         self.assertNotIn("http", texte)
@@ -457,7 +482,7 @@ class Etat(AvecSources):
         self.assertEqual(self.depot.inchange(), [])
 
     def test_contenu_sans_adresse_ni_message(self):
-        self.serveur.statuts["/npm/graphes"] = 500
+        self.serveur.statuts["/npm/ext-paquet"] = 500
         self.verifier()
         texte = (self.donnees / "composants-etat.json").read_text()
         self.assertNotRegex(texte, r"https?://|127\.0\.0\.1|Internal Server Error")
@@ -520,10 +545,47 @@ class Notification(AvecSources):
         code, _, _ = self.verifier()
         self.assertEqual(code, 1)
         self.assertIn(["numpy", "2.1.1"], self.etat()["notified"])
+        self.assertIn(["numpy", "2.1.1", "2026-10-12"], self.etat()["notified_dates"])
         self.aujourdhui = "2026-10-19"
         code, sortie, _ = self.verifier()
-        self.assertEqual(code, 0)
-        self.assertIn("numpy 2.1.0 → 2.1.1 (mise à jour)", sortie)
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("numpy 2.1.0 → 2.1.1", sortie)
+        self.assertNotIn("Job proposé", sortie)
+        self.assertIn("Veille des composants : rien de nouveau (1 nouveauté(s) déjà notifiée(s))", sortie)
+        # la nouveauté reste dans l'état lu par le tableau de bord, et sa date de première notification est gardée
+        self.assertEqual(self.etat()["components"]["numpy"]["novelties"][0]["available"], "2.1.1")
+        self.assertIn(["numpy", "2.1.1", "2026-10-12"], self.etat()["notified_dates"])
+
+    def test_seules_les_nouvelles_affichees_avec_le_compte_des_connues(self):
+        self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "2.1.1": False})
+        self.verifier()
+        self.aujourdhui = "2026-10-19"
+        self.serveur.routes["/pypi/pyyaml/json"] = pypi({"6.0.3": False, "6.0.4": False})
+        code, sortie, _ = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertIn("Veille des composants : 1 nouveauté(s), 1 nouveauté(s) déjà notifiée(s)", sortie)
+        self.assertIn("Job proposé : Mettre à jour pyyaml 6.0.3 → 6.0.4", sortie)
+        self.assertNotIn("numpy 2.1.0 → 2.1.1", sortie)
+        dates = self.etat()["notified_dates"]
+        self.assertIn(["numpy", "2.1.1", "2026-10-12"], dates)
+        self.assertIn(["pyyaml", "6.0.4", "2026-10-19"], dates)
+
+    def test_etat_ancien_sans_dates_lisible(self):
+        self.ecrire_etat({"last_attempt": "2026-10-05", "last_complete": "2026-10-05", "notified": [["numpy", "2.1.1"], ["git", "2.56.0"]]})
+        self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "2.1.1": False})
+        code, sortie, _ = self.verifier()
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("rien de nouveau (1 nouveauté(s) déjà notifiée(s))", sortie)
+        etat = self.etat()
+        self.assertEqual(etat["notified"], [["git", "2.56.0"], ["numpy", "2.1.1"]])
+        self.assertEqual(etat["notified_dates"], [])                    # aucune date inventée pour une paire ancienne
+
+    def test_dates_illisibles_ignorees(self):
+        self.ecrire_etat({"last_attempt": "2026-10-05", "notified": [], "notified_dates": [["numpy"], "x", ["numpy", "2.1.1", 3]]})
+        self.serveur.routes["/pypi/numpy/json"] = pypi({"2.1.0": False, "2.1.1": False})
+        code, _, _ = self.verifier()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.etat()["notified_dates"], [["numpy", "2.1.1", "2026-10-12"]])
 
     def test_echec_reseau_seul_ne_notifie_pas(self):
         self.serveur.arreter()

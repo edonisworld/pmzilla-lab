@@ -6,7 +6,7 @@
 PMZilla Lab : lecteur de la file de travail.
 
 La file est dans les issues du dépôt privé (remote origin), lue par `gh` en lecture seule (change github-roadmap, design D14 à D16) :
-`check`, `next --budget 2h [--milestone M]`, `batch --milestone M`, `status`, `board [--open]`, `show R-<n>` et `reminder --session-hook`. Un instantané de la
+`check`, `next --budget 2h [--milestone M]`, `batch --milestone M`, `status`, `show R-<n>` et `reminder --session-hook`. Un instantané de la
 dernière lecture réussie est écrit dans le dossier de données (hors dépôt, $PMZILLA_LAB_DATA, défaut ~/.pmzilla-lab) et sert quand
 GitHub est injoignable (code 5 sans instantané) ; `reminder` ne lit que lui. L'exécutable `gh` peut être remplacé par la variable
 d'environnement PMZILLA_GH (tests). Code 0 : valide. Code 1 : une ligne par problème. Code 2 : usage.
@@ -18,9 +18,24 @@ chacune la branche, le modèle de lancement et le genre de session (cadrage ou e
 fichiers partagés. Lecture seule, en direct seulement. Codes : 0 (liste éventuellement vide), 1 file invalide (une ligne par problème),
 2 usage (jalon absent, inconnu ou fermé), 5 GitHub injoignable (`GitHub unreachable; a batch needs a live read`, instantané ou non).
 
-`--product mothra|pmzilla` (next, batch, status, board) : `mothra` garde les features étiquetées `product:mothra`, `pmzilla` celles sans label
+`next` propose les features `Ready` et les features `Todo` de méthode `direct-prompt` ; `batch` retient aussi ces dernières (lancement d'exécution) et
+les `Todo` de méthode `openspec` sans change (lancement de cadrage), jamais un `Todo` dont le bloc nomme un change (change github-status-lifecycle,
+D11) ; aucun n'écrit un Status.
+
+`check` imprime, après ses lignes de problème et avant `roadmap : file valide`, des signaux de cycle de vie lus dans le Status et dans Git en lecture
+seule (`git for-each-ref`, `git ls-tree` sur la ref locale `main`, sans fetch, entrée fermée, délai borné ; D3 à D5) :
+`roadmap : signalement : R-<n> : Status : In progress sans branche ouverte`, `... : Ready alors que le change <change> n'est pas sur main`,
+`... : Ready sans change sur main` (une `Ready` de méthode `direct-prompt` n'en lève aucun) ; Git illisible : une seule ligne
+`roadmap : signalement : branches et main illisibles ; aucun signalement de cycle`. Un signal ne change jamais le code de sortie (0, 1, 2 ou 5, décidé par
+les problèmes seuls) et le check ne corrige rien ; seuls des identifiants et des noms de change sont imprimés.
+
+`--product mothra|pmzilla` (next, batch, status) : `mothra` garde les features étiquetées `product:mothra`, `pmzilla` celles sans label
 `product:` ; sans option, toute la file. Les blocages se calculent toujours sur toute la file. `check` accepte zéro ou un label `product:`
 connu (aujourd'hui mothra) sur une feature ou une tâche et refuse un produit inconnu ou deux labels.
+
+`--issues-json <fichier>` (check, next, batch, status, show, release-notes ; niveau 2 du bac à sable de Bash, 7.9, R-20261109-12) : les issues et les jalons
+viennent du fichier JSON que la sous-commande `list` de l'outil d'écriture écrit par `--sortie` ; l'outil n'appelle alors jamais gh, ne
+résout pas `origin` et ne lit ni n'écrit l'instantané. Fichier absent ou mal formé : code 2. Sans l'option, rien ne change.
 
 Interdit à l'outil : écrire dans GitHub, réordonner la file, calculer une date autre que la comparaison avec aujourd'hui.
 La date du jour peut être imposée avec --today AAAA-MM-JJ ou ROADMAP_TODAY (tests).
@@ -31,7 +46,6 @@ Exemple :
 import argparse
 import collections
 import datetime
-import html
 import json
 import os
 import subprocess
@@ -47,7 +61,6 @@ PREFIXE = "roadmap : "
 
 ETATS = ("ready", "blocked", "in-progress", "done")
 THEMES = ("fiabilite", "veille", "bibliotheque", "base", "cas", "postures", "edition", "outillage")   # R-57
-INCONNUE = "inconnue"   # done_on d'un job fait dont la date n'a pas été retrouvée
 NB_PRETS = 5
 
 
@@ -188,7 +201,7 @@ def cmd_next(args) -> int:
 
 
 def vue(jobs: list, archives: list, etat_global: dict | None = None) -> dict:
-    """Ce que montrent `status` et `board` : comptes, en cours, prochains prêts, bloqués, faits par semaine.
+    """Ce que montre `status` : comptes, thèmes, en cours, prochains prêts, bloqués.
     `etat_global` : état de toute la file quand `jobs` et `archives` sont filtrés (les blocages se calculent sur toute la file)."""
     tous = jobs + archives
     etat = {**(etat_global or {}), **{j["id"]: j["state"] for j in tous}}
@@ -197,23 +210,12 @@ def vue(jobs: list, archives: list, etat_global: dict | None = None) -> dict:
         par_theme[j["theme"]][1] += 1
         par_theme[j["theme"]][0] += j["state"] == "done"
     prets = [j for j in jobs if j["state"] == "ready" and all(etat[d] == "done" for d in j["depends_on"])]
-    semaines: dict = collections.Counter()
-    for j in tous:
-        if j["state"] == "done":
-            fin = j.get("done_on", INCONNUE)
-            if fin == INCONNUE:
-                semaines[INCONNUE] += 1
-            else:
-                fin = en_date(fin)
-                semaines[(fin - datetime.timedelta(days=fin.weekday())).isoformat()] += 1
     return {
         "etats": collections.Counter(j["state"] for j in tous),
         "themes": {th: v for th, v in par_theme.items() if v[1]},
         "en_cours": [j for j in jobs if j["state"] == "in-progress"],
         "prets": prets[:NB_PRETS],
         "bloques": [(j, [d for d in j["depends_on"] if etat[d] != "done"]) for j in jobs if j["state"] == "blocked"],
-        "semaines": sorted(((s, n) for s, n in semaines.items() if s != INCONNUE), reverse=True),
-        "inconnues": semaines[INCONNUE],
     }
 
 
@@ -229,8 +231,13 @@ def attente(deps: list) -> str:
     return "attend " + ", ".join(deps) if deps else "dépendances faites, à passer ready si tu le décides"
 
 
+def etats_affiches(v: dict) -> tuple:
+    """Les quatre états, plus « dropped » (fermée not planned) seulement quand il y en a."""
+    return ETATS + (("dropped",) if v["etats"]["dropped"] else ())
+
+
 def imprime_status(v: dict) -> None:
-    print(PREFIXE + "par état : " + ", ".join(f"{e} {v['etats'][e]}" for e in ETATS))
+    print(PREFIXE + "par état : " + ", ".join(f"{e} {v['etats'][e]}" for e in etats_affiches(v)))
     print(PREFIXE + "par thème (faits/total) :")
     for th, (faits, total) in v["themes"].items():
         print(f"  {th:<13}{faits}/{total}")
@@ -247,72 +254,13 @@ def cmd_status(args) -> int:
     return cmd_status_github(args)
 
 
-STYLE = """:root{--fond:#fbfaf7;--texte:#1d1d1b;--doux:#6b6a65;--trait:#e3e1da;--plein:#2f6f5e;--vide:#e8e6df}
-@media (prefers-color-scheme:dark){:root{--fond:#1b1b1a;--texte:#ecebe6;--doux:#a3a29c;--trait:#33322f;--plein:#5fb39b;--vide:#2c2b29}}
-body{margin:0;background:var(--fond);color:var(--texte);font:15px/1.5 -apple-system,system-ui,sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 16px}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
-p.doux,span.doux{color:var(--doux)}ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid var(--trait)}
-.ligne{display:grid;grid-template-columns:110px 1fr 56px;gap:10px;align-items:center;padding:3px 0}
-.barre{height:12px;background:var(--vide);border-radius:6px;overflow:hidden}.barre i{display:block;height:100%;background:var(--plein)}
-code{font-size:13px}"""
-
-
-def ligne_html(j, info: str) -> str:
-    e = html.escape
-    return f"<li><code>{e(j['id'])}</code> {e(j['title'])} <span class=\"doux\">{e(info)}</span></li>"
-
-
-def page_board(v: dict, jour: datetime.date) -> str:
-    e = html.escape
-    bloc = [f"<!doctype html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
-            f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Feuille de route</title>"
-            f"<style>{STYLE}</style></head><body><main>",
-            "<h1>Feuille de route</h1>",
-            f"<p class=\"doux\">Généré le {jour.isoformat()} par roadmap.py board · "
-            + " · ".join(f"{e(s)} {v['etats'][s]}" for s in ETATS) + "</p>",
-            "<h2>Avancement par thème</h2>"]
-    for th, (faits, total) in v["themes"].items():
-        bloc.append(f"<div class=\"ligne\"><span>{e(th)}</span><div class=\"barre\"><i style=\"width:{round(100 * faits / total)}%\">"
-                    f"</i></div><span class=\"doux\">{faits}/{total}</span></div>")
-    sections = (("En cours", [(j, debut(j)) for j in v["en_cours"]]),
-                (f"{NB_PRETS} prochains prêts", [(j, estimation(j)) for j in v["prets"]]),
-                ("Bloqués, et par quoi", [(j, attente(d)) for j, d in v["bloques"]]))
-    for titre, liste in sections:
-        bloc.append(f"<h2>{e(titre)}</h2>")
-        bloc.append("<ul>" + "".join(ligne_html(j, info) for j, info in liste) + "</ul>" if liste else "<p class=\"doux\">aucun</p>")
-    bloc.append("<h2>Fait par semaine</h2>")
-    plus = max([n for _, n in v["semaines"]] + [1])
-    for s, n in v["semaines"]:
-        bloc.append(f"<div class=\"ligne\"><span>{e(s)}</span><div class=\"barre\"><i style=\"width:{round(100 * n / plus)}%\"></i>"
-                    f"</div><span class=\"doux\">{n}</span></div>")
-    if v["inconnues"]:
-        bloc.append(f"<p class=\"doux\">{v['inconnues']} travaux faits à date inconnue.</p>")
-    bloc.append("</main></body></html>\n")
-    return "\n".join(bloc)
-
-
 def dossier_donnees() -> Path:
     return Path(os.environ.get("PMZILLA_LAB_DATA", "~/.pmzilla-lab")).expanduser()
 
 
-def ouvre(chemin: Path) -> None:
-    subprocess.run(["open", str(chemin)], check=False)
-
-
-def cmd_board(args) -> int:
-    return cmd_board_github(args)
-
-
 # --- Mode GitHub (change github-roadmap, design D14 à D16) ------------------------------------------------------------
 
-REQUETE = (
-    "query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){"
-    "milestones(first:100){nodes{title state}} "
-    "issues(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){pageInfo{hasNextPage endCursor}"
-    "nodes{number title body state stateReason labels(first:30){nodes{name}} milestone{title state} parent{number} "
-    "blockedBy(first:50){nodes{number}} projectItems(first:20){nodes{project{title} "
-    "fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}}"
-)
+REQUETE = rm.GRAPHQL_ISSUES_QUERY   # la requête vit dans le modèle partagé (niveau 2 du bac à sable, 7.8) ; alias gardé pour les lecteurs de ce nom
 PROJECT_TITLE = "PMZilla Lab roadmap"   # comme gh_issue.PROJECT_TITLE
 TARASQUE = "Tarasque"
 FICHIER_CACHE = "roadmap-cache.json"
@@ -402,24 +350,7 @@ def appelle_gh(args: list[str]) -> str:
 
 
 def normalise(noeud: dict) -> dict:
-    statut = None
-    for it in (noeud.get("projectItems") or {}).get("nodes") or []:
-        if ((it or {}).get("project") or {}).get("title") != PROJECT_TITLE:
-            continue
-        v = (it or {}).get("fieldValueByName")
-        if v and v.get("name"):
-            statut = v["name"]
-            break
-    jalon = noeud.get("milestone")
-    return {
-        "number": noeud["number"], "title": noeud.get("title") or "", "body": noeud.get("body") or "",
-        "state": (noeud.get("state") or "OPEN").lower(), "reason": (noeud.get("stateReason") or "").lower(),
-        "labels": [l["name"] for l in (noeud.get("labels") or {}).get("nodes") or []],
-        "milestone": {"title": jalon["title"], "state": (jalon.get("state") or "OPEN").lower()} if jalon else None,
-        "parent": (noeud.get("parent") or {}).get("number"),
-        "blocked_by": [b["number"] for b in (noeud.get("blockedBy") or {}).get("nodes") or []],
-        "status": statut,
-    }
+    return rm.normalise_node(noeud, PROJECT_TITLE)
 
 
 def lecture_github(proprietaire: str, depot: str) -> tuple[list[dict], dict]:
@@ -484,9 +415,40 @@ def lit_cache_complet():
         return None
 
 
+def lecture_fichier(chemin) -> tuple[list[dict], dict]:
+    """(issues, jalons) du fichier JSON écrit par la sous-commande `list` de l'outil d'écriture (`--sortie`), lu par `--issues-json`
+    (niveau 2 du bac à sable, 7.9 ; R-20261109-12, réponse 1). Aucun appel à gh, aucun instantané lu ni écrit. Fichier absent, illisible ou
+    mal formé : Sortie(2). Un fichier sans jalons les tire des issues, comme l'instantané ancien.
+    Remplace : la lecture de GitHub par gh sous le bac à sable (sans réseau). Retrait : permanent."""
+    try:
+        d = json.loads(Path(chemin).read_text(encoding="utf-8"))
+        issues = d["issues"]
+        if not isinstance(issues, list):
+            raise TypeError
+        # Chaque issue porte les dix clés de normalise_node (un fichier à la main qui en omettrait une ferait lire le reste de travers) : sinon sortie 2.
+        if any(not isinstance(i, dict) or not all(k in i for k in rm.ISSUE_KEYS) for i in issues):
+            raise TypeError
+        jalons = d.get("milestones")
+        if not isinstance(jalons, dict) or not jalons:
+            jalons = {i["milestone"]["title"]: i["milestone"]["state"] for i in issues if i.get("milestone")}
+        return issues, jalons
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise Sortie(2, "usage: --issues-json names a file that is missing or is not the JSON written by the list read") from None
+
+
+def lecture_directe(args, proprietaire: str, depot: str) -> tuple[list[dict], dict]:
+    """Lecture sans instantané : le fichier de --issues-json quand il est donné, sinon GitHub (Injoignable si gh échoue)."""
+    if getattr(args, "issues_json", None):
+        return lecture_fichier(args.issues_json)
+    return lecture_github(proprietaire, depot)
+
+
 def lecture_complete(args, banniere=print) -> tuple[list[dict], dict]:
     """(issues, jalons) en direct (instantané réécrit) ou, GitHub injoignable, depuis l'instantané avec sa ligne d'avertissement
-    (`banniere`, sur la sortie standard par défaut). Le dépôt d'origine est résolu avant toute lecture, du réseau comme de l'instantané."""
+    (`banniere`, sur la sortie standard par défaut). Le dépôt d'origine est résolu avant toute lecture, du réseau comme de l'instantané.
+    Avec `--issues-json` : le fichier, sans origine, sans gh, sans instantané."""
+    if getattr(args, "issues_json", None):
+        return lecture_fichier(args.issues_json)
     proprietaire, depot = depot_origine()
     jour = jour_reel()
     try:
@@ -569,7 +531,7 @@ def analyse_github(issues: list[dict]):
         elif theme not in rm.THEMES:
             pb.append(f"{nom} : labels : thème inconnu {theme}")
         produit = produit_des(labels, nom, pb)
-        if i["milestone"] is None:
+        if i["milestone"] is None and not ouvert:      # une feature ouverte sans jalon est d'un horizon plus lointain (gh-issue-autonomy, D5)
             pb.append(f"{nom} : milestone : jalon absent")
         bloc = None
         try:
@@ -591,7 +553,8 @@ def analyse_github(issues: list[dict]):
             continue
         feats[nom] = {"id": nom, "number": i["number"], "title": titre[1] if titre else i["title"], "open": ouvert,
                       "status": i["status"], "milestone": (i["milestone"] or {}).get("title"), "block": bloc or {},
-                      "blocker_numbers": i["blocked_by"], "issue": i, "product": produit}
+                      "blocker_numbers": i["blocked_by"], "issue": i, "product": produit,
+                      "dropped": not ouvert and i.get("reason") == "not_planned"}
     par_numero = {f["number"]: f for f in feats.values()}
     rangs: dict = collections.defaultdict(list)
     for f in feats.values():
@@ -609,7 +572,7 @@ def analyse_github(issues: list[dict]):
             pb.append(f"{f['id']} : Status : valeur inconnue {s}")
         elif f["open"] and s == "Done":
             pb.append(f"{f['id']} : Status : Done sur une feature ouverte")
-        elif not f["open"] and s != "Done":
+        elif not f["open"] and not f["dropped"] and s != "Done":
             pb.append(f"{f['id']} : Status : Done attendu sur une feature fermée, reçu {s}")
     graphe: dict[str, list[str]] = {}
     for f in feats.values():
@@ -628,9 +591,10 @@ def analyse_github(issues: list[dict]):
     for f in feats.values():
         for b in f["blockers"]:
             bo = feats[b]["open"]
-            if f["open"] and f["status"] in ("Ready", "In progress") and bo:
-                pb.append(f"{f['id']} : Status : {f['status']} alors que {b} est ouverte")
-            if not f["open"] and bo:
+            if f["open"] and f["status"] in ("Ready", "In progress") and (bo or feats[b]["dropped"]):
+                pb.append(f"{f['id']} : Status : {f['status']} alors que {b} est "
+                          + ("ouverte" if bo else "fermée not planned (jamais faite, le blocage reste)"))
+            if not f["open"] and not f["dropped"] and bo:
                 pb.append(f"{f['id']} : state : fermée alors que {b} est ouverte")
     for cycle in cycles(graphe, set(graphe)):
         pb.append(f"{cycle[0]} : blocked_by : cycle {' -> '.join(cycle + [cycle[0]])}")
@@ -649,11 +613,11 @@ def analyse_github(issues: list[dict]):
             pb.append(f"{cle} : parent : une feature est attendue")
         if rm.LABEL_TASK not in labels:
             pb.append(f"{cle} : labels : {rm.LABEL_TASK} attendu")
-        modeles = [l for l in labels if l.startswith("model:")]
+        modeles = [l for l in labels if l.lower().startswith("model:")]  # GitHub ne distingue pas la casse
         for m in modeles:
-            if m not in [rm.label_model(x) for x in rm.MODELS]:
+            if m.lower() not in [rm.label_model(x) for x in rm.MODELS]:
                 pb.append(f"{cle} : labels : modèle inconnu {m}")
-        if len(modeles) + (rm.LABEL_USER in labels) != 1:
+        if len(modeles) + (rm.LABEL_USER in [l.lower() for l in labels]) != 1:
             pb.append(f"{cle} : labels : un seul label model: ou {rm.LABEL_USER}, pas les deux ni aucun")
     for f in feats.values():
         f["sous"] = [i for i in sous if i["parent"] == f["number"]]
@@ -690,17 +654,15 @@ def probleme_release(jalons: dict) -> str | None:
 
 
 def en_job(f: dict) -> dict:
-    """La feature sous la forme d'un job de la vue (`vue`, `page_board`) : l'état se déduit de l'ouverture et du Status (D2)."""
+    """La feature sous la forme d'un job de la vue (`vue`, lue par `status`) : l'état se déduit de l'ouverture et du Status (D2)."""
     b = f["block"]
-    etat = "done" if not f["open"] else {"In progress": "in-progress", "Ready": "ready"}.get(f["status"], "blocked")
+    etat = ("dropped" if f["dropped"] else "done") if not f["open"] else {"In progress": "in-progress", "Ready": "ready"}.get(f["status"], "blocked")
     j = {"id": f["id"], "title": f["title"], "theme": b.get("theme", "outillage"), "depends_on": list(f["blockers"]),
          "conditions": b.get("conditions") or "", "state": etat, "estimate": b.get("estimate", "tbd"),
          "method": b.get("method", "?"), "model": b.get("model", "tbd")}
     for k in ("not_before", "due", "started_on"):
         if k in b:
             j[k] = b[k]
-    if b.get("done_on") not in (None, "unknown"):
-        j["done_on"] = b["done_on"]
     return j
 
 
@@ -712,16 +674,133 @@ def vue_github(feats: list[dict], produit=None) -> dict:
     return vue([j for j in gardes if j["state"] != "done"], [j for j in gardes if j["state"] == "done"], etat_global)
 
 
+def lit_git(*args: str) -> str | None:
+    """Sortie d'une commande Git en lecture seule dans la racine du dépôt (entrée fermée, délai borné) ; None si elle échoue."""
+    try:
+        p = subprocess.run(["git", "-C", str(RACINE), *args], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=DELAI_GIT, cwd=RACINE)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def branches_locales() -> set[str] | None:
+    """Noms des branches locales (`refs/heads/`), sans fetch ; None si Git est illisible (change github-status-lifecycle, D3)."""
+    sortie = lit_git("for-each-ref", "--format=%(refname)", "refs/heads/")
+    if sortie is None:
+        return None
+    return {l.removeprefix("refs/heads/") for l in sortie.splitlines() if l.startswith("refs/heads/")}
+
+
+def changes_sur_main() -> set[str] | None:
+    """Noms des changes dans l'arbre de la ref locale `main` (jamais l'arbre de travail) : les dossiers de `openspec/changes/` hors
+    `archive`, et pour chaque dossier `AAAA-MM-JJ-<change>` de `openspec/changes/archive/` le nom `<change>`. None si illisible (D3)."""
+    base = lit_git("ls-tree", "--name-only", "refs/heads/main", "--", "openspec/changes/")
+    archive = lit_git("ls-tree", "--name-only", "refs/heads/main", "--", "openspec/changes/archive/")
+    if base is None or archive is None:
+        return None
+    noms = {l.rsplit("/", 1)[-1] for l in base.splitlines() if l.strip()} - {"archive"}
+    for l in archive.splitlines():
+        dossier = l.rsplit("/", 1)[-1]
+        m = re.fullmatch(r"\d{4}-\d{2}-\d{2}-(.+)", dossier)    # dossier d'archive d'OpenSpec : AAAA-MM-JJ-<change>
+        if m:
+            noms.add(m.group(1))
+    return noms
+
+
+def nom_de_change_sur(nom) -> bool:
+    """Un nom de change qui nomme un dossier : ni vide, ni `archive`, ni `/` ni `.` (D3)."""
+    return isinstance(nom, str) and bool(nom) and nom != "archive" and "/" not in nom and "." not in nom
+
+
+def branche_ouverte_pour(branches: set[str], ident_feature: str, change) -> bool:
+    """Une branche locale autre que `main` dont le dernier segment est le change, ou qui contient `r<n>` en jeton entier (D3)."""
+    jeton = re.compile(r"(?:^|[/-])r" + re.escape(ident_feature.removeprefix("R-")) + r"(?=-|/|$)")
+    return any(b != "main" and ((nom_de_change_sur(change) and b.rsplit("/", 1)[-1] == change) or jeton.search(b)) for b in branches)
+
+
+def signalements_cycle(feats: list[dict], branches: set[str] | None, changes_main: set[str] | None) -> list[dict]:
+    """Signaux de cycle de vie des features ouvertes, dans l'ordre donné (D4, D5) : `{"id", "kind", "change"}`, kind parmi
+    `in_progress_without_branch`, `ready_change_not_on_main`, `ready_without_change`, ou un seul `{"kind": "git_unreadable"}`."""
+    if branches is None or changes_main is None:
+        return [{"kind": "git_unreadable"}]
+    signaux = []
+    for f in feats:
+        if not f["open"]:
+            continue
+        b = f["block"]
+        change = b.get("change") or None
+        if f["status"] == "In progress":
+            if not branche_ouverte_pour(branches, f["id"], change):
+                signaux.append({"id": f["id"], "kind": "in_progress_without_branch", "change": change})
+        elif f["status"] == "Ready":
+            if change:
+                if not (nom_de_change_sur(change) and change in changes_main):
+                    signaux.append({"id": f["id"], "kind": "ready_change_not_on_main", "change": change})
+            elif b.get("method") == "openspec":
+                signaux.append({"id": f["id"], "kind": "ready_without_change", "change": None})
+    return signaux
+
+
+def a_verifier_par_git(f: dict) -> bool:
+    """Une feature ouverte dont un signal de cycle se lirait dans Git : `In progress`, ou `Ready` avec un change nommé ou la méthode
+    `openspec`. Sans elle, le check ne lit pas Git et n'imprime pas la ligne « illisibles » (D4, lecture : pas de ligne sans objet)."""
+    b = f["block"]
+    return f["open"] and (f["status"] == "In progress" or (f["status"] == "Ready" and bool(b.get("change") or b.get("method") == "openspec")))
+
+
+def lignes_signaux(signaux: list[dict]) -> list[str]:
+    """Les lignes du check pour ces signaux (D4) : seulement des identifiants et des noms de change."""
+    textes = {"in_progress_without_branch": "In progress sans branche ouverte",
+              "ready_without_change": "Ready sans change sur main"}
+    lignes = []
+    for s in signaux:
+        if s["kind"] == "git_unreadable":
+            lignes.append(PREFIXE + "signalement : branches et main illisibles ; aucun signalement de cycle")
+        elif s["kind"] == "ready_change_not_on_main":
+            lignes.append(f"{PREFIXE}signalement : {s['id']} : Status : Ready alors que le change {s['change']} n'est pas sur main")
+        else:
+            lignes.append(f"{PREFIXE}signalement : {s['id']} : Status : {textes[s['kind']]}")
+    return lignes
+
+
 def cmd_check_github(args) -> int:
     issues, jalons = lecture_complete(args)
-    pb = analyse_github(issues)[2]
+    feats, _, pb = analyse_github(issues)
     release = probleme_release(jalons)
     if release:
         pb.append(release)
+    if any(a_verifier_par_git(f) for f in feats):      # sans feature à vérifier, Git n'est pas lu et aucune ligne n'est imprimée
+        signaux = lignes_signaux(signalements_cycle(feats, branches_locales(), changes_sur_main()))
+    else:
+        signaux = []
     if pb:
-        return sortie_invalide(pb)
-    print(PREFIXE + "file valide")
-    return 0
+        code = sortie_invalide(pb)
+    else:
+        code = 0
+    for ligne in signaux:       # un signal ne change jamais le code de sortie (D4)
+        print(ligne)
+    if not pb:
+        print(PREFIXE + "file valide")
+    return code
+
+
+def proposable(f: dict, jour: datetime.date, ouvert: dict) -> str | None:
+    """Genre d'une feature proposable (D5, D11), partagé par `next` et `batch` : `ready`, `todo_direct` (Todo sans spec prévue) ou
+    `todo_framing` (Todo openspec sans change) ; None si elle est fermée, bloquée, pas encore datée ou d'un autre Status.
+    Les règles de jalon, de produit, de budget et de fichiers communs restent à l'appelant."""
+    b = f["block"]
+    if not f["open"] or any(ouvert[x] for x in f["blockers"]) or ("not_before" in b and en_date(b["not_before"]) > jour):
+        return None
+    if f["status"] == "Ready":
+        return "ready"
+    if f["status"] == "Todo" and b.get("change"):   # un Todo dont le bloc nomme un change n'est jamais retenu (D11)
+        return None
+    if f["status"] == "Todo" and b.get("method") == "direct-prompt":
+        return "todo_direct"
+    if f["status"] == "Todo" and b.get("method") == "openspec" and not b.get("change"):
+        return "todo_framing"
+    return None
 
 
 # --- Lot d'un jalon (change batch-milestone, design D2, D3, D5) ----------------------------------------------------
@@ -786,7 +865,7 @@ def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path, produit
     """(retenues, écartées, partagés) : retenues = [(feature, lancement, fichiers connus ou None)], écartées = [(feature, raison)],
     partagés = {chemin: [identifiants]}. `produit` : ne propose que les features de ce produit (les features en cours des autres
     produits comptent toujours pour les fichiers communs, les blocages se calculent sur toute la file)."""
-    ouvert = {f["id"]: f["open"] for f in feats}
+    ouvert = {f["id"]: f["open"] or f["dropped"] for f in feats}      # une fermée not planned reste bloquante
     connus: dict[str, set[str] | None] = {}
     for f in feats:
         nom = f["block"].get("change")
@@ -795,8 +874,7 @@ def lot(feats: list[dict], jalon: str, jour: datetime.date, arbre: Path, produit
     retenues, ecartees = [], []
     for f in feats:
         b = f["block"]
-        if (not f["open"] or f["status"] != "Ready" or f["milestone"] != jalon or any(ouvert[x] for x in f["blockers"])
-                or not du_produit(f, produit) or ("not_before" in b and en_date(b["not_before"]) > jour)):
+        if proposable(f, jour, ouvert) is None or f["milestone"] != jalon or not du_produit(f, produit):
             continue
         nom = b.get("change")
         if nom and connus[f["id"]] is None:
@@ -829,12 +907,14 @@ def release_courante() -> str:
 
 def cmd_batch(args) -> int:
     jour = aujourdhui(args)
-    proprietaire, depot = depot_origine()
+    fichier = bool(getattr(args, "issues_json", None))
+    proprietaire, depot = ("", "") if fichier else depot_origine()
     try:
-        issues, jalons = lecture_github(proprietaire, depot)
+        issues, jalons = lecture_directe(args, proprietaire, depot)
     except Injoignable:
         raise Sortie(5, "GitHub unreachable; a batch needs a live read") from None
-    ecrit_cache(issues, jour_reel(), jalons)
+    if not fichier:
+        ecrit_cache(issues, jour_reel(), jalons)
     if args.milestone not in jalons:
         raise Sortie(2, f"usage: unknown milestone {args.milestone}")
     if jalons[args.milestone] == "closed":
@@ -876,17 +956,14 @@ def cmd_next_github(args, budget: int, jour: datetime.date) -> int:
     feats, _, pb = etat_github(args)
     if pb:
         return sortie_invalide(pb)
-    ouvert = {f["id"]: f["open"] for f in feats}
+    ouvert = {f["id"]: f["open"] or f["dropped"] for f in feats}      # une fermée not planned reste bloquante
     candidats = []
     for f in feats:
-        b = f["block"]
-        if not f["open"] or f["status"] != "Ready" or any(ouvert[x] for x in f["blockers"]):
+        if proposable(f, jour, ouvert) not in ("ready", "todo_direct"):      # `next` ne propose pas les cadrages (D11)
             continue
         if args.milestone and f["milestone"] != args.milestone:
             continue
         if not du_produit(f, getattr(args, "product", None)):
-            continue
-        if "not_before" in b and en_date(b["not_before"]) > jour:
             continue
         candidats.append(en_job(f))
     imprime_next(budget, *selection(candidats, budget))
@@ -901,19 +978,6 @@ def cmd_status_github(args) -> int:
     return 0
 
 
-def cmd_board_github(args) -> int:
-    feats, _, pb = etat_github(args)
-    if pb:
-        return sortie_invalide(pb)
-    sortie = dossier_donnees() / "feuille-de-route.html"
-    sortie.parent.mkdir(parents=True, exist_ok=True)
-    sortie.write_text(page_board(vue_github(feats, getattr(args, "product", None)), aujourdhui(args)), encoding="utf-8")
-    print(f"{PREFIXE}tableau écrit : {sortie.name}")
-    if args.open:
-        ouvre(sortie)
-    return 0
-
-
 def cmd_show(args) -> int:
     feats, _, pb = etat_github(args)
     f = next((x for x in feats if x["id"] == args.id), None)
@@ -925,15 +989,15 @@ def cmd_show(args) -> int:
         return sortie_invalide(mal)
     b = f["block"]
     print(f"{PREFIXE}{f['id']} {rm.SEP} {f['title']}")
-    print(f"{PREFIXE}état : {'ouverte' if f['open'] else 'fermée'} | Status : {f['status']} | jalon : {f['milestone']}")
+    print(f"{PREFIXE}état : {'ouverte' if f['open'] else 'fermée'} | Status : {f['status']} | jalon : {f['milestone'] or 'aucun'}")
     print(f"{PREFIXE}estimation {b['estimate']} | méthode {b['method']} | modèle {b['model']}"
           + (f" | rang {b['rank']}" if "rank" in b else ""))
     print(f"{PREFIXE}conditions : {b['conditions'] or 'aucune'}")
     for k in ("not_before", "due", "started_on", "done_on", "change"):
         if k in b:
             print(f"{PREFIXE}{k} : {b[k]}")
-    ouvert = {x["id"]: x["open"] for x in feats}
-    bloqueurs = [f"{x} ({'ouverte' if ouvert[x] else 'fermée'})" for x in f["blockers"]]
+    etat_de = {x["id"]: "ouverte" if x["open"] else ("fermée not planned" if x["dropped"] else "fermée") for x in feats}
+    bloqueurs = [f"{x} ({etat_de[x]})" for x in f["blockers"]]
     print(f"{PREFIXE}bloquée par : {', '.join(bloqueurs) if bloqueurs else 'aucune'}")
     print(f"{PREFIXE}sous-issues :" + ("" if f["sous"] else " aucune"))
     for s in sorted(f["sous"], key=lambda i: i["number"]):
@@ -1003,7 +1067,8 @@ def cmd_release_notes(args) -> int:
 
 
 def cmd_reminder(args) -> int:
-    """Une ligne lue dans l'instantané, jamais le réseau ; rien sans instantané ; toujours le code 0."""
+    """Une ligne lue dans l'instantané, jamais le réseau ; rien sans instantané ; toujours le code 0. `--session-hook` est accepté mais
+    sans effet : la commande n'a pas d'autre mode (décision de R-122, idée 472)."""
     cache = lit_cache()
     if cache is None:
         return 0
@@ -1020,7 +1085,7 @@ def cmd_reminder(args) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="roadmap.py", description="Lecteur de la file de travail.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for nom in ("check", "next", "batch", "status", "board", "show", "reminder", "release-notes"):
+    for nom in ("check", "next", "batch", "status", "show", "reminder", "release-notes"):
         s = sub.add_parser(nom)
         if nom in ("release-notes", "batch"):
             s.add_argument("--milestone", required=True)
@@ -1029,21 +1094,25 @@ def main(argv=None) -> int:
         if nom == "next":
             s.add_argument("--budget", required=True)
             s.add_argument("--milestone", default=None)
-        if nom in ("next", "batch", "board", "check", "status", "show"):
+        if nom != "reminder":
+            s.add_argument("--issues-json", default=None, metavar="FILE",
+                           help="reads the issues and milestones from this JSON file (written by the list read of the work-queue tool, --sortie); "
+                                "no call to gh, no snapshot read or written")
+        if nom in ("next", "batch", "check", "status", "show"):
             s.add_argument("--today", default=None)
-        if nom in ("next", "batch", "board", "status"):
+        if nom in ("next", "batch", "status"):
             s.add_argument("--product", choices=PRODUITS, default=None,
                            help="mothra : features étiquetées product:mothra ; pmzilla : features sans label product: ; sans option : toute la file")
         if nom == "show":
             s.add_argument("id")
-        if nom == "board":
-            s.add_argument("--open", action="store_true")
         if nom == "reminder":
-            s.add_argument("--session-hook", action="store_true")
+            s.add_argument("--session-hook", action="store_true",
+                           help="sans effet : le rappel est toujours le mode crochet de début de session (instantané seul, code 0) ; "
+                                "l'option marque l'appel du crochet dans .claude/settings.json")
     try:
         args = p.parse_args(argv)
         return {"check": cmd_check, "next": cmd_next, "status": cmd_status,
-                "board": cmd_board, "show": cmd_show, "reminder": cmd_reminder,
+                "show": cmd_show, "reminder": cmd_reminder,
                 "release-notes": cmd_release_notes, "batch": cmd_batch}[args.cmd](args)
     except Usage as e:
         print(PREFIXE + str(e), file=sys.stderr)

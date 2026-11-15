@@ -83,9 +83,24 @@ WATCH_DIR = Path(os.environ.get("VEILLE_LAB_DIR") or watch_paths.lab_dir(WORKSPA
 ARTICLES_DIR = WATCH_DIR / watch_paths.collection_name(WATCH_DIR)   # le nom du dossier devient le nom de la collection
 
 
+COLLECTION_VALIDE = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def valider_collection(valeur) -> None:
+    """Refuse toute valeur « collection » qui n'est pas un seul composant de chemin sûr (motif ^[a-z0-9][a-z0-9-]*$) : la valeur nomme un dossier
+    sous Watch-Lab. Absente ou None : la collection par défaut, rien à valider.
+    Remplace : rien. Retrait : permanent tant que la collection nomme un dossier (R-20261109-19)."""
+    if valeur is None:
+        return
+    if not isinstance(valeur, str) or not COLLECTION_VALIDE.fullmatch(valeur):
+        raise ErreurConfig(f"collection {valeur!r} refusée : un seul nom de dossier, en minuscules, chiffres et tirets "
+                           "(motif ^[a-z0-9][a-z0-9-]*$).")
+
+
 def collection_dir(source: dict) -> Path:
     """Dossier d'une source : la collection de la veille par défaut, ou la collection indiquée (own-articles pour
     vos propres articles : Watch-Lab/own-articles/, source déclarée dans sources.local.yaml)."""
+    valider_collection(source.get("collection"))
     return WATCH_DIR / (source.get("collection") or ARTICLES_DIR.name)
 
 
@@ -447,6 +462,8 @@ def load_sources() -> list[dict]:
         else:
             position[entry["key"]] = len(merged)
             merged.append(entry)
+    for entry in merged:
+        valider_collection(entry.get("collection"))
     return merged
 
 
@@ -910,6 +927,7 @@ def import_medium(args: argparse.Namespace) -> None:
     source = next((s for s in load_sources() if s["key"] == args.source), None) or {
         "key": args.source, "name": args.source}
     source = {**source, "collection": args.collection}
+    valider_collection(args.collection)   # refus de la configuration avant toute ouverture de la base
     store = open_store()       # avant l'export lu et tout fichier écrit
     folder = collection_dir(source)
     folder.mkdir(parents=True, exist_ok=True)

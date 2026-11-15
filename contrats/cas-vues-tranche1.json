@@ -1,0 +1,190 @@
+{
+  "description": "Synthetic cases of the masking of the views served by Mothra (mothra-slices task 15.3): the primary rule, the pairs and the series rule of the lead time and throughput view, the statistics masked with their headcount, the shares masked with their part, their whole and their rest. Invented teams A and B, invented counts, no real data. Each case gives rows (a column left out is NULL), the columns judged (`cells`) and the [row index, column] pairs expected to be masked once every rule is applied. The columns of a view are those of contrats/vues.json. Source of the rules: tools/flow_views.py (masquer_vue); players: the npm suite (mothra/contract/test/masquage.test.ts) and the Python suite (tests/flow_views/test_cas_vues_tranche1.py). A masked count, statistic or share is a masked cell for both players (the statistics and shares are the `maskableColumns` of contrats/vues.json, R-20261030-49).",
+  "version": 1,
+  "players": ["npm", "python"],
+  "cases": [
+    {
+      "id": "V1",
+      "title": "Primary rule at a raised threshold: 9 and 0 and NULL are masked, 10 is shown",
+      "view": "v_team_status",
+      "threshold": 10,
+      "cells": ["tickets"],
+      "rows": [
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 12 },
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Resolved", "tickets": 9 },
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Open", "tickets": 10 },
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Blocked", "tickets": null },
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Review", "tickets": 0 }
+      ],
+      "masked": [[1, "tickets"], [3, "tickets"], [4, "tickets"]]
+    },
+    {
+      "id": "V2",
+      "title": "Primary rule at the floor: 4 is masked, 5 is shown",
+      "view": "v_team_status",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "rows": [
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 4 },
+        { "team": "A", "type": "Story", "status_category": "Done", "status": "Resolved", "tickets": 5 }
+      ],
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "V3",
+      "title": "Statistics follow their headcount: items_lt at 7 masks the lead time statistics, cycle time stays",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 40, "items_lt": 7, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 30, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 10 }
+      ],
+      "masked": [[0, "items_lt"], [0, "lead_median_days"], [0, "lead_p85_days"]]
+    },
+    {
+      "id": "V4",
+      "title": "Pair n = c + g: g at 8 under the threshold masks items_ct (20 - 8 would give it back) and its statistics",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "items_ct", "cycle_median_days", "cycle_p85_days", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 12, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 8 }
+      ],
+      "masked": [[0, "items_ct"], [0, "cycle_median_days"], [0, "cycle_p85_days"], [0, "items_without_commitment"]]
+    },
+    {
+      "id": "V5",
+      "title": "Pair n - m = 5 under the threshold masks items_lt and, with c at 6, the whole cycle time chain",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 15, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 6, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 14 }
+      ],
+      "masked": [[0, "items_lt"], [0, "lead_median_days"], [0, "lead_p85_days"], [0, "items_ct"], [0, "cycle_median_days"], [0, "cycle_p85_days"], [0, "items_without_commitment"]]
+    },
+    {
+      "id": "V6",
+      "title": "At the threshold every statistic is shown; a zero count (items_old) is shown when items_ct is shown (R-20261106-39, R-20261106-43)",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_without_commitment", "items_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 10, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 10, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 10 }
+      ],
+      "masked": []
+    },
+    {
+      "id": "V7",
+      "title": "At the floor nothing more is masked: n 20, m 15, c 9, g 11",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput", "items_lt", "lead_median_days", "items_ct", "cycle_median_days", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 15, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 9, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 11 }
+      ],
+      "masked": []
+    },
+    {
+      "id": "V8",
+      "title": "Series rule: quarters 20, 20, 7 mask the last three quarters of 47, which would give the 7 back by difference (R-20261114-49: three quarters; the year of four was 67)",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "items_ct"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2025-04-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-07-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-10-01", "throughput": 7, "items_lt": 7, "items_ct": 7, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 47, "items_lt": 47, "items_ct": 47, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": [[2, "throughput"], [2, "items_lt"], [2, "items_ct"], [3, "throughput"], [3, "items_lt"], [3, "items_ct"]]
+    },
+    {
+      "id": "V9",
+      "title": "Series rule: three visible quarters leave the last three quarters visible (R-20261114-49: 20 + 20 + 20 = 60; the year of four was 80)",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "items_ct"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2025-04-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-07-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-10-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 60, "items_lt": 60, "items_ct": 60, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": []
+    },
+    {
+      "id": "V10",
+      "title": "A year without the quarters of its own team is entirely masked; another team is not concerned",
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["throughput", "items_lt", "items_ct"],
+      "rows": [
+        { "team": "B", "period": "quarter", "quarter_start": "2025-01-01", "throughput": 20, "items_lt": 20, "items_ct": 20, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 80, "items_lt": 80, "items_ct": 80, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": [[1, "throughput"], [1, "items_lt"], [1, "items_ct"]]
+    },
+    {
+      "id": "V11",
+      "title": "Share of blocked items: a part at 8 masks the part and the share, a rest at 7 masks the part and the share, 12 of 30 shows all",
+      "view": "v_team_blocked_share",
+      "threshold": 10,
+      "cells": ["blocked_n", "blocked", "share_percent"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-01-01", "blocked_n": 30, "blocked": 12, "share_percent": 40.0 },
+        { "team": "A", "quarter_start": "2026-04-01", "blocked_n": 30, "blocked": 8, "share_percent": 26.7 },
+        { "team": "A", "quarter_start": "2026-07-01", "blocked_n": 30, "blocked": 23, "share_percent": 76.7 }
+      ],
+      "masked": [[1, "blocked"], [1, "share_percent"], [2, "blocked"], [2, "share_percent"]]
+    },
+    {
+      "id": "V12",
+      "title": "Share of unplanned items: a whole at 8 and a NULL part are masked with the share",
+      "view": "v_unplanned_share",
+      "threshold": 10,
+      "cells": ["unplanned_n", "unplanned", "share_percent"],
+      "rows": [
+        { "quarter_start": "2026-01-01", "unplanned_n": 30, "unplanned": 12, "share_percent": 40.0 },
+        { "quarter_start": "2026-04-01", "unplanned_n": 8, "unplanned": null, "share_percent": 50.0 },
+        { "quarter_start": "2026-07-01", "unplanned_n": 30, "unplanned": null, "share_percent": 50.0 }
+      ],
+      "masked": [[1, "unplanned_n"], [1, "unplanned"], [1, "share_percent"], [2, "unplanned"], [2, "share_percent"]]
+    },
+    {
+      "id": "V13",
+      "title": "Share of tasks without team at the floor: 5 of 30 shows, 4 is masked with its share",
+      "view": "v_task_without_team_share",
+      "threshold": 5,
+      "cells": ["tasks_done", "tasks_without_team", "share_percent"],
+      "rows": [
+        { "quarter_start": "2026-01-01", "tasks_done": 30, "tasks_without_team": 5, "share_percent": 16.7 },
+        { "quarter_start": "2026-04-01", "tasks_done": 30, "tasks_without_team": 4, "share_percent": 13.3 }
+      ],
+      "masked": [[1, "tasks_without_team"], [1, "share_percent"]]
+    },
+    {
+      "id": "V14",
+      "title": "Ready queue: 9 is masked at a raised threshold, 10 is shown, the team column is never masked",
+      "view": "v_team_ready_queue",
+      "threshold": 10,
+      "cells": ["team", "ready"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-01-01", "ready": 9 },
+        { "team": "A", "quarter_start": "2026-04-01", "ready": 10 }
+      ],
+      "masked": [[0, "ready"]]
+    },
+    {
+      "id": "V15",
+      "title": "Flow in and out: a product line alone in its group (no team line) is masked in both columns, shown at 40 and 40 (audit 629, H-05)",
+      "view": "v_team_flow_inout",
+      "threshold": 5,
+      "cells": ["created", "done"],
+      "rows": [
+        { "team": "(produit)", "quarter_start": "2026-01-01", "type_group": "story", "created": 40, "done": 40 }
+      ],
+      "masked": [[0, "created"], [0, "done"]]
+    }
+  ]
+}

@@ -147,6 +147,23 @@ class MagasinHistoriqueEnBase(aide.AvecBase):
         self.assertEqual(self.magasin().enregistrer(resultats, 0), (0, 0))
         self.assertEqual(self.compte("transitions"), 0)
 
+    def test_t6_l_indicateur_avec_historique_n_est_pose_que_pour_un_ticket_confirme(self):
+        """R-20261113-36, couche 1 : le collecteur ne confie au magasin que les tickets dont l'historique est confirmé (lu dans la réponse
+        groupée ou par le repli par ticket). Un ticket absent des résultats (relecture en échec, lot en erreur) garde l'indicateur
+        faux, qu'il ait ou non déjà des périodes ; seul un ticket confirmé sans transition (« [] » relu) le reçoit."""
+        # une vraie période de PROJ-2 est semée avant (collecte antérieure) ; l'appel suivant, sans PROJ-2, ne doit ni la toucher ni poser l'indicateur
+        self.conn.execute("INSERT INTO flow.issue_version_periods (issue_key, version, added_at, removed_at) "
+                          "VALUES ('PROJ-2', 'V-9', '2026-03-01T09:00:00+02:00', NULL)")
+        self.conn.commit()
+        confirme_sans_transition = {"PROJ-1": {"transitions": [], "etiquettes": None, "versions": []}}
+        self.magasin().enregistrer(confirme_sans_transition, 1)                    # PROJ-2 : relecture en échec, absent des résultats
+        self.conn.rollback()
+        self.assertEqual(self.conn.execute("SELECT key, has_history FROM flow.issues WHERE key IN ('PROJ-1', 'PROJ-2') ORDER BY key").fetchall(),
+                         [("PROJ-1", True), ("PROJ-2", False)])
+        self.assertEqual(self.compte("transitions"), 0)
+        self.assertEqual(self.conn.execute("SELECT issue_key, version, removed_at FROM flow.issue_version_periods").fetchall(),
+                         [("PROJ-2", "V-9", None)])                                # sa période reste intacte
+
     def test_le_role_d_import_ne_lit_rien_hors_de_flow(self):
         connexion = self.magasin().conn
         with self.assertRaises(db.psycopg.errors.InsufficientPrivilege):

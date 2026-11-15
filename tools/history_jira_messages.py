@@ -39,6 +39,8 @@ CATALOGS = {
         "team_no_match": "--team : aucun ticket de la base ne correspond.",
         # collect
         "collect_epics": "épics interrogés : {count}",
+        # R-20261114-108 : table des champs de livraison absente de flux.yaml (sprints et versions non collectés, code de sortie inchangé)
+        "collect_no_delivery_fields": "champs de livraison non configurés (clé delivery_fields absente de flux.yaml) : sprints et versions des actifs non collectés, collecte poursuivie",
         "collect_read": "Tickets lus : {read} ; écartés (types de portefeuille, projets exclus) : {discarded}.",
         "collect_read_team": "Tickets lus : {read} ; écartés (types de portefeuille, projets exclus) : {discarded}"
                              " ; hors équipe demandée : {off_team}.",
@@ -48,6 +50,9 @@ CATALOGS = {
         "mode_bulk": "groupé",
         "mode_single": "ticket par ticket",
         "error_detail_item": "HTTP {code} : {count}",
+        "error_detail_repeated": "pagination répétée : {count}",
+        "repeated_pagination": "pagination répétée",
+        "collect_reread_single": "tickets relus par ticket : {count}",
         "past_retention": "tickets au-delà de la conservation, ignorés : {skipped}",
         "collect_not_found": "tickets introuvables dans Jira : {count}",
         "collect_gone_marked": "tickets introuvables dans Jira, désormais marqués disparus : {count}",
@@ -71,7 +76,23 @@ CATALOGS = {
         "check_retained": "Tickets de la base retenus : {retained} ; sans historique : {missing}.",
         "check_consistency": "Dernier état de l'historique égal à l'état stocké : cohérents {consistent} ; "
                              "incohérents {inconsistent} ; non comparables (aucune transition) {not_comparable}.",
+        "check_split": "Incohérents : livrés {delivered} ; non livrés {not_delivered}.",
+        "check_split_since": "Incohérents : livrés {delivered} (dernière transition avant {date} : {delivered_before}, depuis : "
+                             "{delivered_since}) ; non livrés {not_delivered} (avant : {not_delivered_before}, depuis : {not_delivered_since}).",
+        "check_split_unreadable": "Incohérents dont la date de dernière transition est illisible : {count}.",
+        "check_pairs": "Paires d'incohérents (dernier état de l'historique -> état stocké) : {pairs}.",
+        "check_pairs_none": "aucune",
+        "check_pairs_other": "autres : {count}",
+        "check_stored_seen": "Parmi les incohérents : état stocké déjà traversé : {crossed} ; "
+                             "état stocké jamais vu dans l'historique : {never}.",
+        "check_last_two_same": "Parmi les incohérents : deux dernières transitions au même horodatage : {same} ; "
+                               "mise à jour du ticket postérieure à la fin de l'historique : {updated_later}.",
+        "since_invalid": "--since : « {value} » n'est pas une date au format AAAA-MM-JJ.",
+        "since_with_key": "--since ne s'utilise pas avec --key : --key n'affiche que ce ticket, sans ventilation des incohérents.",
+        "since_future": "Avertissement : --since {date} est postérieure à aujourd'hui ; aucune dernière transition ne peut être "
+                        "« depuis » cette date.",
         "check_buckets": "Transitions par ticket : {buckets}.",
+        "check_same_status": "Transitions d'un statut vers un statut de même nom (écartées des transitions par ticket ci-dessus, sans effet sur les segments) : {count}.",
         "check_delivered": "Tickets livrés (date de résolution) : {delivered} ; "
                            "livrés sans aucune transition : {delivered_without}.",
         "delivered_header": "Tickets livrés ({count}) : lecture de l'historique.",
@@ -84,6 +105,19 @@ CATALOGS = {
         # erreurs de main
         "error_line": "Erreur : {message}",
         "unexpected_error": "Erreur inattendue ({name}).",
+        # client en lecture seule (jira-read-only-client, D3 et D10) : aucune phrase ne nomme un chemin, une clé, un projet ni une valeur
+        "refused_write": "requête Jira refusée : écriture interdite ({method})",
+        "refused_read": "requête Jira refusée : hors de la liste des lectures permises ({method})",
+        "refused_option": "requête Jira refusée : option non permise",
+        "refused_scope": "requête Jira refusée : hors des projets déclarés du périmètre",
+        "refused_setting": "requête Jira refusée : réglage absent, vide ou illisible ({setting})",
+        "refused_setting_unreadable": "requête Jira refusée : réglage illisible ({setting})",
+        "out_of_scope_count": "tickets hors des projets déclarés écartés : {count}",
+        # champs de livraison (jira-delivery-fields, D2 et D12) : des nombres et des noms de genre fixes, jamais une valeur
+        "collect_delivery_events": "événements des champs de livraison gardés : {count}",
+        "collect_delivery_unreadable": "éléments de changelog illisibles (versions visée, livrée et d'épic) : {count}",
+        # R-20261113-36 : affichée seulement quand le nombre n'est pas nul ; jamais une clé ni une date
+        "collect_transitions_unreadable": "transitions de statut à date illisible écartées : {count}",
     },
     "en": {
         "settings_missing": "missing settings in {file}: {names}",
@@ -115,6 +149,7 @@ CATALOGS = {
         "team_no_column": "--team: no team in the database.",
         "team_no_match": "--team: no ticket in the database matches.",
         "collect_epics": "epics queried: {count}",
+        "collect_no_delivery_fields": "delivery fields not configured (delivery_fields key missing from flux.yaml): sprints and asset versions not collected, collection continued",
         "collect_read": "Tickets read: {read}; discarded (portfolio types, excluded projects): {discarded}.",
         "collect_read_team": "Tickets read: {read}; discarded (portfolio types, excluded projects): {discarded}"
                              "; outside the requested team: {off_team}.",
@@ -124,6 +159,9 @@ CATALOGS = {
         "mode_bulk": "bulk",
         "mode_single": "ticket by ticket",
         "error_detail_item": "HTTP {code}: {count}",
+        "error_detail_repeated": "repeated pagination: {count}",
+        "repeated_pagination": "repeated pagination",
+        "collect_reread_single": "tickets re-read one by one: {count}",
         "past_retention": "tickets past retention, skipped: {skipped}",
         "collect_not_found": "tickets not found in Jira: {count}",
         "collect_gone_marked": "tickets not found in Jira, now marked gone: {count}",
@@ -146,7 +184,22 @@ CATALOGS = {
         "check_retained": "Database tickets kept: {retained}; without history: {missing}.",
         "check_consistency": "Last state in the history equal to the stored state: consistent {consistent}; "
                              "inconsistent {inconsistent}; not comparable (no transition) {not_comparable}.",
+        "check_split": "Inconsistent: delivered {delivered}; not delivered {not_delivered}.",
+        "check_split_since": "Inconsistent: delivered {delivered} (last transition before {date}: {delivered_before}, since: "
+                             "{delivered_since}); not delivered {not_delivered} (before: {not_delivered_before}, since: {not_delivered_since}).",
+        "check_split_unreadable": "Inconsistent with an unreadable last-transition date: {count}.",
+        "check_pairs": "Inconsistent pairs (last state in the history -> stored state): {pairs}.",
+        "check_pairs_none": "none",
+        "check_pairs_other": "others: {count}",
+        "check_stored_seen": "Among the inconsistent: stored state already crossed: {crossed}; "
+                             "stored state never seen in the history: {never}.",
+        "check_last_two_same": "Among the inconsistent: last two transitions at the same timestamp: {same}; "
+                               "ticket update later than the end of the history: {updated_later}.",
+        "since_invalid": "--since: \"{value}\" is not a date in the YYYY-MM-DD format.",
+        "since_with_key": "--since cannot be used with --key: --key shows only that ticket, with no split of the inconsistent.",
+        "since_future": "Warning: --since {date} is later than today; no last transition can be \"since\" that date.",
         "check_buckets": "Transitions per ticket: {buckets}.",
+        "check_same_status": "Transitions from a status to a status of the same name (left out of the transitions per ticket above, no effect on segments): {count}.",
         "check_delivered": "Delivered tickets (resolution date): {delivered}; "
                            "delivered with no transition at all: {delivered_without}.",
         "delivered_header": "Delivered tickets ({count}): reading of the history.",
@@ -158,5 +211,15 @@ CATALOGS = {
         "dormants_removed": "--dormants (dormant tickets CSV export) no longer exists: dormant items are inferred from the status history. Use flux_jira.py compute --dormant-from-history.",
         "error_line": "Error: {message}",
         "unexpected_error": "Unexpected error ({name}).",
+        "refused_write": "Jira request refused: write forbidden ({method})",
+        "refused_read": "Jira request refused: outside the list of allowed reads ({method})",
+        "refused_option": "Jira request refused: option not allowed",
+        "refused_scope": "Jira request refused: outside the declared scope projects",
+        "refused_setting": "Jira request refused: setting missing, empty or unreadable ({setting})",
+        "refused_setting_unreadable": "Jira request refused: setting unreadable ({setting})",
+        "out_of_scope_count": "tickets outside the declared projects set aside: {count}",
+        "collect_delivery_events": "delivery field events kept: {count}",
+        "collect_delivery_unreadable": "unreadable changelog elements (target, resolution and epic versions): {count}",
+        "collect_transitions_unreadable": "status transitions with an unreadable date set aside: {count}",
     },
 }

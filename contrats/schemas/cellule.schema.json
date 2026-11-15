@@ -1,0 +1,40 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "value",
+          "type": "string"
+        },
+        "value": {
+          "minimum": 5,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "value"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "masked",
+          "type": "string"
+        },
+        "threshold": {
+          "minimum": 5,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "threshold"
+      ],
+      "type": "object"
+    }
+  ]
+}

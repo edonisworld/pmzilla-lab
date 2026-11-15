@@ -27,13 +27,13 @@ import yaml
 THEMES = ("fiabilite", "veille", "bibliotheque", "base", "cas", "postures", "edition", "outillage")
 MODELS = ("opus", "sonnet", "haiku")
 METHODS = ("openspec", "direct-prompt")
-STATES = ("ready", "in-progress", "blocked", "done")
 STATUSES = ("Todo", "Ready", "In progress", "Done")
 
 LABEL_FEATURE = "type:feature"
 LABEL_TASK = "type:task"
 LABEL_PARALLEL = "parallel"
 LABEL_USER = "owner:user"
+OWNERS = ("user", "agent")      # liste fermée de set-owner et de new-task --owner : user = LABEL_USER, agent = un libellé model:<m> (--model, MODELS) ; étendre ici
 LABEL_EDITION_PUBLIC = "edition:public"     # édition publique (edition-publish-tooling, D19) : posée à la fermeture, jamais retirée
 LABEL_IDEA = "type:idea"     # hors de all_labels() : une idée n'est pas un élément de la file
 PRODUCTS = ("mothra",)       # produits étiquetés (liste fermée) ; l'absence de label `product:` vaut PMZilla, on ne réétiquette pas l'existant
@@ -50,6 +50,48 @@ def repo_from_url(url):
     """propriétaire/dépôt d'après l'URL d'un remote GitHub, ou None."""
     mo = _REMOTE.search((url or "").strip())
     return f"{mo.group(1)}/{mo.group(2)}" if mo else None
+
+
+# --- Lecture GraphQL de la file (niveau 2 du bac à sable, tâches 7.8 et 7.9 ; R-20261109-12, réponse 1) ----------------------------------
+# Une seule requête et une seule mise en forme des noeuds, pour l'outil d'écriture (sous-commandes de lecture `view` et `list`, qui écrivent
+# le JSON dans un fichier) et pour le lecteur (`--issues-json`, qui le relit sans appeler gh). Le lecteur garde ses noms REQUETE et normalise
+# comme alias de ceux-ci.
+# Remplace : la copie de REQUETE et le corps de normalise() dans le lecteur. Retrait : permanent, tant que les deux outils lisent la même file.
+
+GRAPHQL_ISSUES_QUERY = (
+    "query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){"
+    "milestones(first:100){nodes{title state}} "
+    "issues(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){pageInfo{hasNextPage endCursor}"
+    "nodes{number title body state stateReason labels(first:30){nodes{name}} milestone{title state} parent{number} "
+    "blockedBy(first:50){nodes{number}} projectItems(first:20){nodes{project{title} "
+    "fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}}"
+)
+
+
+ISSUE_KEYS = ("number", "title", "body", "state", "reason", "labels", "milestone", "parent", "blocked_by", "status")   # les clés de normalise_node ; source : son retour
+
+
+def normalise_node(noeud, project_title):
+    """Noeud GraphQL d'une issue -> dictionnaire plat lu par le lecteur : number, title, body, state, reason, labels, milestone, parent,
+    blocked_by, status (Status du Project `project_title`)."""
+    statut = None
+    for it in (noeud.get("projectItems") or {}).get("nodes") or []:
+        if ((it or {}).get("project") or {}).get("title") != project_title:
+            continue
+        v = (it or {}).get("fieldValueByName")
+        if v and v.get("name"):
+            statut = v["name"]
+            break
+    jalon = noeud.get("milestone")
+    return {
+        "number": noeud["number"], "title": noeud.get("title") or "", "body": noeud.get("body") or "",
+        "state": (noeud.get("state") or "OPEN").lower(), "reason": (noeud.get("stateReason") or "").lower(),
+        "labels": [l["name"] for l in (noeud.get("labels") or {}).get("nodes") or []],
+        "milestone": {"title": jalon["title"], "state": (jalon.get("state") or "OPEN").lower()} if jalon else None,
+        "parent": (noeud.get("parent") or {}).get("number"),
+        "blocked_by": [b["number"] for b in (noeud.get("blockedBy") or {}).get("nodes") or []],
+        "status": statut,
+    }
 
 
 # --- Réglages de la file (D12) ------------------------------------------------------------------------------------
@@ -214,8 +256,9 @@ _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^R-\d+$")
 REQUIRED = ("id", "theme", "estimate", "method", "model", "conditions")
 DATES = ("not_before", "due", "started_on", "done_on")
-KEYS = REQUIRED + ("rank", "change") + DATES
-_ORDER = ("id", "theme", "estimate", "method", "model", "rank", "conditions", "change") + DATES
+KEYS = REQUIRED + ("rank", "change", "groups") + DATES
+_ORDER = ("id", "theme", "estimate", "method", "model", "rank", "conditions", "change", "groups") + DATES
+_GROUPS = re.compile(r"^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$")
 
 
 def parse_block(body):
@@ -303,6 +346,16 @@ def validate_block(block, *, is_open=True, marker_key=None, theme_label=None):
         pb.append("conditions : texte attendu")
     if "change" in block and not (isinstance(block["change"], str) and block["change"].strip()):
         pb.append("change : texte non vide attendu")
+    if "groups" in block:
+        gr = block["groups"]
+        ok = isinstance(gr, str) and _GROUPS.match(gr) is not None
+        if ok:
+            for part in gr.split(","):
+                lo, _, hi = part.partition("-")
+                if hi and int(lo) > int(hi):
+                    ok = False
+        if not ok:
+            pb.append(f"groups : forme attendue 2-11 ou 2-8,11, reçu {gr!r}")
     for k in DATES:
         if k in block and not (_valid_date(block[k]) or (k == "done_on" and block[k] == "unknown")):
             pb.append(f"{k} : date AAAA-MM-JJ attendue" + (" (ou unknown)" if k == "done_on" else ""))

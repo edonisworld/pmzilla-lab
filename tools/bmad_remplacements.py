@@ -25,8 +25,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lab_paths  # noqa: E402
 
-REGLES_PAR_DEFAUT = Path(".pmzilla") / "remplacements-bmad.tsv"
-
 
 def lire_regles(fichier: Path) -> list[tuple[str, str, str]]:
     regles = []

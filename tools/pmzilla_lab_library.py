@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "numpy", "httpx", "pyyaml", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "numpy", "httpx", "pyyaml", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab — library server.
@@ -38,7 +38,7 @@ Commands:
         list that is missing, unreadable or empty prints "sensitive-names list unavailable: context notes not indexed" once:
         no note is embedded, updated or removed, the books are indexed, exit 1 at the end. Stored per note: note_date, nature,
         source, review_date and, for the map, kind; no author. A note leaves the database only on a run given this option, when
-        its file is gone from the notes folder or is refused for any reason ("removed: <file>"); a run without it keeps every
+        its file is gone from the notes folder or is refused for any reason ("removed: <file>"; a name the name guard refuses, or every note name when the sensitive-names list is unavailable, is shown as "removed: (file name hidden)"); a run without it keeps every
         note unchanged ("context notes kept unchanged (no --context)") and leaves them out of the empty-scan guard. A private collection is embedded on this machine only: before any embedding call of a run that has a note to
         embed, an embedding address that is not loopback stops the whole run, exit 1, nothing indexed. The option goes before
         --recompute.
@@ -113,9 +113,11 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 
 import httpx
@@ -758,10 +760,14 @@ def scan_context(context: Path, found: dict[str, dict]) -> tuple[dict[str, dict]
         problem = context_lab.header_problem(fields)
         if problem is None and path.name in found:
             problem = "name already used by another collection"
+        # Le nom est contrôlé même si l'en-tête est invalide (revue du commit f8cb0ee4) : un nom que la garde refuse n'est jamais écrit
+        # dans la sortie. Remplace : rien. Retrait : permanent, avec la garde du nom (context_lab.Guard.name_problem).
+        name_problem = guard.name_problem(path.name)
         if problem is None:
-            problem = guard.problem(text)
+            problem = guard.problem(text) or name_problem
         if problem:
-            refused.append(f"not indexed: {path.name}: {problem}")
+            shown = context_lab.NAME_HIDDEN if name_problem else path.name
+            refused.append(f"not indexed: {shown}: {problem}")
             continue
         valid[path.name] = {"path": path, "collections": {CONTEXT_COLLECTION}, "note": fields}
     print(f"{len(valid) + len(refused)} context notes found")
@@ -846,9 +852,20 @@ def _index_into(store, found: dict[str, dict], forced: set[str], allow_empty: bo
     else:
         kept_notes = private_known if list_unavailable else present_notes
         removable = (set(known) - private_known - set(found)) | (private_known - kept_notes)
+    # Un nom de note que la garde des noms refuse ne s'écrit jamais dans "removed:" (lot 5, question 2c, option a ; audit #629).
+    # Remplace : l'affichage du nom tel quel dans list et removed:. Retrait : permanent, avec la garde du nom (context_lab.Guard.name_problem).
+    guard = context_guard() if removable & private_known else None
     for file_name in sorted(removable):
         store.delete_book(file_name)
-        print(f"  removed: {file_name}")
+        # Liste des noms indisponible : tous les noms de notes privées sont masqués (échec fermé).
+        # Remplace : l'affichage du nom quand la liste est indisponible. Retrait : permanent, tant que le nom de fichier d'une note est exposé et jugé par la garde des noms (R-20261108-03, question 3 a).
+        hidden = (guard is not None and file_name in private_known
+                  and (guard.unavailable or guard.name_problem(file_name)))
+        if hidden:
+            import context_lab
+            print(f"  removed: {context_lab.NAME_HIDDEN}")
+        else:
+            print(f"  removed: {file_name}")
 
     started = time.time()
     done = skipped = 0
@@ -1054,11 +1071,15 @@ CONTEXT_DESCRIPTION = (f' The collection "{CONTEXT_COLLECTION}" holds the user\'
                        "and nature.")
 
 
-def described_tool(server):
+READ_CONTEXT_DESCRIPTION = (f' A passage of the private collection "{CONTEXT_COLLECTION}" (the organisation context notes) is read only when the '
+                            "call names that collection in `collections`, as search_library does; otherwise the answer is an error object.")
+
+
+def described_tool(server, suffix: str = CONTEXT_DESCRIPTION):
     """Registers a tool like `server.tool()`, after completing its description with the sentence on the context collection, which
     takes the collection name from the code constant (design D3, D5): a docstring cannot hold a constant."""
     def register(function):
-        function.__doc__ = (function.__doc__ or "") + CONTEXT_DESCRIPTION
+        function.__doc__ = (function.__doc__ or "") + suffix
         return server.tool()(function)
     return register
 
@@ -1082,12 +1103,22 @@ def make_cases_reader():
 
 
 def serve() -> None:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     if BACKEND_VARIABLE in os.environ:
         print(f"Warning: {BACKEND_VARIABLE} is ignored: the library is served from PostgreSQL only.", file=sys.stderr)
     library = open_library()
-    server = FastMCP("pmzilla-lab-library")
+    server = MCPServer("pmzilla-lab-library")
+    tool_lock = threading.Lock()
+
+    def one_at_a_time(function):
+        """mcp 2.x runs a sync tool on a worker thread: one call at a time keeps the single database connection (SET LOCAL, rollback) safe, as in 1.x."""
+        @wraps(function)
+        def serialized(*args, **kwargs):
+            with tool_lock:
+                return function(*args, **kwargs)
+        return serialized
+
     def unknown_collections_error(names: list[str]) -> dict | None:
         """The error object for collection names that are not in the index, or None. The former name "veille"
         gets no alias: the error says to use "watch"."""
@@ -1099,6 +1130,7 @@ def serve() -> None:
         return {"error": f"Unknown collections: {unknown}. Known: {list(known)}.{hint}"}
 
     @described_tool(server)
+    @one_at_a_time
     def search_library(
         query: str, collections: list[str] | None = None, limit: int = 8, since: str | None = None,
         types: list[str] | None = None,
@@ -1140,18 +1172,26 @@ def serve() -> None:
         except Exception as error:       # the database layer, after its single reconnection
             return database_error(error)
 
-    @server.tool()
-    def read_passage(passage_id: int, before: int = 1, after: int = 2) -> dict:
+    @described_tool(server, READ_CONTEXT_DESCRIPTION)
+    @one_at_a_time
+    def read_passage(passage_id: int, before: int = 1, after: int = 2, collections: list[str] | None = None) -> dict:
         """Read a passage returned by search_library together with the passages around it in the
         same book (before/after: how many neighbouring passages, up to 5 each). Use it when a
         result is central and you need the full argument, not only the excerpt. Each passage has a
-        `kind` ("texte" or "figure"); a figure passage also has its `ref`."""
+        `kind` ("texte" or "figure"); a figure passage also has its `ref`. Optionally pass
+        `collections` (names from list_collections), the collections the passage is read from."""
         try:
+            if collections:
+                refused = unknown_collections_error(collections)
+                if refused:
+                    return refused
+                return library.read(passage_id, max(0, min(before, 5)), max(0, min(after, 5)), collections=collections)
             return library.read(passage_id, max(0, min(before, 5)), max(0, min(after, 5)))
         except Exception as error:
             return database_error(error)
 
     @server.tool()
+    @one_at_a_time
     def list_collections() -> dict[str, int | str]:
         """List the collections of the library with their number of books."""
         try:
@@ -1160,6 +1200,7 @@ def serve() -> None:
             return database_error(error)
 
     @server.tool()
+    @one_at_a_time
     def list_books(collection: str | None = None) -> list[dict]:
         """List the books in the library with their collections and size. Use it to know what the
         library covers or to pick a collection to search in. An unknown collection name, including the
@@ -1187,6 +1228,7 @@ def serve() -> None:
             return {"error": str(error)}
 
     @server.tool()
+    @one_at_a_time
     def search_cases(query: str, limit: int = 3) -> list[dict] | dict:
         """Search the closed cases (finished experiments, with their outcome) of the personal cases base, which
         is separate from the library. Phrase the query as the problem at hand, in French or English. Returns up
@@ -1195,6 +1237,7 @@ def serve() -> None:
         return cases_answer(lambda reader: reader.search_cases(query, limit), query)
 
     @server.tool()
+    @one_at_a_time
     def search_experiments(query: str, limit: int = 3) -> list[dict] | dict:
         """Search the running experiments of the personal cases base, which is separate from the library.
         Phrase the query as the problem at hand, in French or English. Returns up to `limit` running experiments
@@ -1203,6 +1246,7 @@ def serve() -> None:
         return cases_answer(lambda reader: reader.search_experiments(query, limit), query)
 
     @server.tool()
+    @one_at_a_time
     def list_due_reviews() -> list[dict] | dict:
         """List the configured author's running experiments whose review date has come, oldest first, each with
         its number, problem, review date, number of postponements and whether a decision is required. Takes no

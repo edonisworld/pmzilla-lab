@@ -1,0 +1,117 @@
+{
+  "views": [
+    {
+      "name": "v_team_status",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "tickets"
+      ],
+      "plainColumns": [
+        "team",
+        "type",
+        "status_category",
+        "status"
+      ]
+    },
+    {
+      "name": "v_team_lead_time_throughput",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "throughput",
+        "items_lt",
+        "items_ct",
+        "items_old",
+        "items_without_commitment"
+      ],
+      "plainColumns": [
+        "team",
+        "period",
+        "quarter_start"
+      ],
+      "maskableColumns": [
+        "lead_median_days",
+        "lead_p85_days",
+        "cycle_median_days",
+        "cycle_p85_days",
+        "lead_median_days_excl_old",
+        "lead_p85_days_excl_old",
+        "cycle_median_days_excl_old",
+        "cycle_p85_days_excl_old"
+      ]
+    },
+    {
+      "name": "v_task_without_team_share",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "tasks_done",
+        "tasks_without_team"
+      ],
+      "plainColumns": [
+        "quarter_start"
+      ],
+      "maskableColumns": [
+        "share_percent"
+      ]
+    },
+    {
+      "name": "v_team_ready_queue",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "ready"
+      ],
+      "plainColumns": [
+        "team",
+        "quarter_start"
+      ]
+    },
+    {
+      "name": "v_team_blocked_share",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "blocked_n",
+        "blocked"
+      ],
+      "plainColumns": [
+        "team",
+        "quarter_start"
+      ],
+      "maskableColumns": [
+        "share_percent"
+      ]
+    },
+    {
+      "name": "v_unplanned_share",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "unplanned_n",
+        "unplanned"
+      ],
+      "plainColumns": [
+        "quarter_start"
+      ],
+      "maskableColumns": [
+        "share_percent"
+      ]
+    },
+    {
+      "name": "v_team_flow_inout",
+      "schema": "flow",
+      "roleKind": "flow",
+      "countColumns": [
+        "created",
+        "done"
+      ],
+      "plainColumns": [
+        "team",
+        "quarter_start",
+        "type_group"
+      ]
+    }
+  ]
+}

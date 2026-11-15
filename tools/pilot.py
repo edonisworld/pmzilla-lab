@@ -12,11 +12,23 @@ dossier (relatif au dossier du lab), branche, lien (R-<n> d'après le nom de la 
 l'instantané du lecteur de la file nomme pour ce change), état (propre ou nombre de fichiers modifiés), avance et retard sur main, âge
 du dernier commit, processus qui ont leur dossier courant dans le worktree (occupé, libre, inconnu), « fusionnée, à retirer » et la note
 de passage de relais ; puis le verrou de fin de branche et le dossier d'exécution. Aucun chemin absolu, aucun nom de fichier, aucun
-numéro de processus n'est affiché. Hors ligne : ni réseau, ni `gh`.
+numéro de processus n'est affiché. Hors ligne : ni réseau, ni `gh`. Change autonomous-trains-observe (D9) : sur la ligne d'un worktree dont la
+branche est dans la liste prête, `prête (valide)` ou `prête (écartée : <raison>)` ; après la ligne du verrou de fin, une ligne « train
+automatique » (dernier passage, arrêt actif ou absent). Les deux viennent des fonctions de service de tools/train_ready.py et
+tools/train_auto.py ; sans fichier de train dans le dossier de données, la sortie est inchangée.
 
-`freeze --check` rend 0 quand aucune fin de branche ne tient le verrou (ou quand l'appelant porte son jeton, FINISH_LOCK_TOKEN), 4 sinon.
+`freeze --check` rend 0 quand aucune fin de branche ne tient le verrou, quand l'appelant porte son jeton (FINISH_LOCK_TOKEN) ou quand la liste du
+verrou (gel ciblé, autonomous-trains-merge D18, finish_lock.freeze_scope() par finish_lock.freezes(), règle unique des quatre lecteurs) ne nomme pas
+le worktree du dossier courant (ligne « pilot : fin en cours : <n> worktree(s) gelé(s), main, dossier d'exécution et liste prête ») ; 4 quand un verrou
+vivant sans le jeton de l'appelant nomme son worktree ou n'a pas de liste lisible (échec fermé), et, pendant un train, dans l'espace de travail sur main
+ou en tête détachée (dossier d'exécution), même hors de la liste, avec la même règle stricte que le crochet et le lanceur (finish_lock.writes_protected,
+R-20261107-3). Remplace : le gel général (4 pour tout appelant sans jeton). Retrait : permanent.
 `freeze --wait <minutes>` (1 à 120) répète le contrôle jusqu'à ce que ce soit libre ou que les minutes soient écoulées. Un verrou périmé
 (processus mort, ou plus vieux que PMZILLA_FINISH_LOCK_MAX_AGE secondes, 21600 par défaut) compte comme libre et est signalé.
+`gestes` (R-160, P4) liste en lecture seule les gestes du tableau « En attente » de la file des gestes de l'auteur (`etapes/gestes.md` du
+dossier du lab, hors dépôt, ou le fichier de PILOT_GESTES) : identifiant, geste, commande, ce qu'il débloque, décision ; `status` ajoute
+la ligne « gestes en attente : <n> » quand la file est lisible, rien sinon. Cette lecture remplace la relecture à la main du fichier par la
+session ; condition de retrait : permanente tant que la file des gestes existe (elle tombe avec la décision P4 si la file est abandonnée).
 `note` pose ou retire une ligne par worktree (200 caractères au plus), contrôlée par la garde de l'outil d'écriture GitHub (noms sensibles,
 identifiants personnels, clés de ticket) et rangée dans le dossier `pmzilla-notes` du dossier Git commun (propriétaire seul).
 
@@ -25,12 +37,12 @@ script de fin ni de test.
 
 Codes de sortie : 0 fait ; 2 usage ; 3 hors d'un dépôt du projet ; 4 gel : une fin de branche est en cours ; 5 note refusée par la garde ;
 6 garde impossible (liste des noms absente, vide ou illisible, ou scanneur en échec) ; 7 aucun worktree pour la branche de la note ;
-8 écriture de la note impossible.
+8 écriture de la note impossible ; 9 file des gestes introuvable, illisible ou sans section « En attente » (`gestes` seulement).
 
 Variables : PILOT_NOW (secondes, horloge imposée, tests), PILOT_LSOF (commande qui liste les dossiers courants au format `lsof -F pn`,
 défaut `lsof -w -n -P -d cwd -F pn`), PILOT_POLL_SECONDS (intervalle de `--wait`, 30 par défaut), PILOT_WAIT_UNIT_SECONDS (secondes par
 « minute » de `--wait`, 60 par défaut ; tests), PMZILLA_FINISH_LOCK_MAX_AGE, FINISH_LOCK_TOKEN, PMZILLA_LAB_DATA (instantané),
-PMZILLA_LAB_RUN (dossier d'exécution).
+PMZILLA_LAB_RUN (dossier d'exécution), PILOT_GESTES (fichier de la file des gestes ; tests).
 """
 import argparse
 import json
@@ -54,6 +66,8 @@ from pilot_messages import CATALOGS  # noqa: E402
 NOTES_NAME = "pmzilla-notes"
 SNAPSHOT_NAME = "roadmap-cache.json"
 NOTE_MAX = 200
+GESTES_DIR = "etapes"
+GESTES_NAME = "gestes.md"
 GIT_TIMEOUT = 30
 # Même motif que tools/gh_issue.py (TICKET_KEY) : copié ici pour garder l'outil sans dépendance tierce.
 TICKET_KEY = re.compile(r"(?<![A-Za-z0-9_])[A-Z]{2,}-\d+")
@@ -214,6 +228,49 @@ def note_file(common, branche):
     return common / NOTES_NAME / branche.replace("%", "%25").replace("/", "%2F")
 
 
+TRAIN_FOLDER = "train-auto"
+
+
+def ready_flags(contenu):
+    """branche -> ligne de la liste prête avec sa validité (change autonomous-trains-observe, D9), par la fonction de service de
+    tools/train_ready.py ; vide sans fichier de liste, ou quand elle est illisible (le status ne s'arrête jamais pour cela). Hors réseau."""
+    try:
+        if not (lab_paths.data_folder() / TRAIN_FOLDER / "pretes.tsv").exists():
+            return {}
+        import train_ready
+        return {e["branche"]: e for e in train_ready.list_validity(contenu, lab_paths.run_tree(contenu))}
+    except Exception:
+        return {}
+
+
+def train_line(t):
+    """La ligne « train automatique » (autonomous-trains-merge D20, qui remplace celle d'autonomous-trains-observe D9), ou None quand ni l'état, ni le fichier d'arrêt, ni le
+    fichier d'activation n'existent. Le mode vient de train_auto.activation_state() (observation, fusion automatique ou activation invalide) et la série de
+    train_auto.activation_status() : jamais du formatage. Formatage seulement."""
+    try:
+        dossier = lab_paths.data_folder() / TRAIN_FOLDER
+        if not ((dossier / "etat.json").exists() or (dossier / "arret").exists() or (dossier / "fusion-active").exists()):
+            return None
+        import train_auto
+        from train_auto_messages import decision_label, label
+        etat = train_auto.last_state()
+        arret = t("train_stop_active") if etat["arret"] else t("train_stop_absent")
+        mode = t({"valide": "train_mode_fusion", "invalide": "train_mode_invalid"}.get(train_auto.activation_state(), "train_mode_observation"))
+        try:
+            serie = min(train_auto.activation_status()["series"], train_auto.SERIES_REQUIRED)
+        except Exception:   # journal des trains illisible : la ligne reste, la série est 0
+            serie = 0
+        if etat["illisible"]:   # revue de contrôle 10.2, point A : dit, jamais pris pour « aucun passage »
+            return t("train_line_unreadable", mode=mode, stop=arret, k=serie)
+        r = etat["dernier"]
+        if not r:
+            return t("train_line_none", mode=mode, stop=arret, k=serie)
+        return t("train_line", mode=mode, date=r["paris"], decision=decision_label(r["decision"], t.language), reason=label(r["raison"], t.language),
+                 stop=arret, k=serie)
+    except Exception:
+        return None
+
+
 def cmd_status(args, t):
     common = find_common(t)
     principal = common.parent
@@ -221,6 +278,7 @@ def cmd_status(args, t):
     labo = lab_paths.lab_folder(contenu)
     dossier_exec = os.path.realpath(lab_paths.run_tree(contenu))
     entrees = list_worktrees(principal)
+    pretes = ready_flags(contenu)
     liens = load_changes()
     fusionnes = merged_tips(principal)
     liees = [e for e in entrees[1:] if e["path"] != dossier_exec]
@@ -240,6 +298,13 @@ def cmd_status(args, t):
         if age:
             champs.append(t("last_commit", d=age))
         champs.append(t("unknown") if occupes is None else (t("busy") if e["path"] in occupes else t("free")))
+        if branche and branche in pretes:
+            pret = pretes[branche]
+            if pret["valide"]:
+                champs.append(t("ready_valid"))
+            else:
+                from train_auto_messages import label as reason_label
+                champs.append(t("ready_excluded", label=reason_label(pret["raison"], t.language)))
         if branche and e["head"] in fusionnes:
             champs.append(t("merged"))
         if branche:
@@ -258,7 +323,14 @@ def cmd_status(args, t):
         lignes.append(t("lock_stale", branch=verrou["branch"]))
     else:
         lignes.append(t("lock_held", branch=verrou["branch"], time=clock_text(verrou["start"])))
+    ligne_train = train_line(t)
+    if ligne_train:
+        lignes.append(ligne_train)
     lignes.append(t("run_present") if any(e["path"] == dossier_exec for e in entrees) else t("run_absent"))
+    try:
+        lignes.append(t("gestes_count", n=len(read_gestes(t))))
+    except Stop:   # file absente ou sans section : aucune ligne, jamais d'erreur dans status
+        pass
     print("\n".join(lignes))
     return 0
 
@@ -266,16 +338,25 @@ def cmd_status(args, t):
 # --- freeze -----------------------------------------------------------------------------------------------------------------------
 
 def freeze_state(common):
-    """('libre', None) ; ('perime', verrou) ; ('tenu', verrou). L'appelant qui porte le jeton du verrou est libre."""
-    verrou = read_lock(common)
-    if verrou is None:
-        return "libre", None
-    if verrou["stale"]:
+    """('libre', None) ; ('perime', verrou) ; ('tenu', verrou) ; ('autre', verrou). L'appelant qui porte le jeton du verrou est libre.
+    Gel ciblé (autonomous-trains-merge, D18) : une seule règle, finish_lock.freezes() ; « tenu » quand elle couvre le worktree du dossier courant
+    (il est dans la liste du verrou, ou le verrou n'a pas de liste lisible), « autre » quand un verrou vivant ne le couvre pas.
+    Remplace : le gel général (tout appelant sans jeton était « tenu »). Retrait : permanent."""
+    scope = finish_lock.freeze_scope(common, now())
+    verrou = {"branch": scope["branch"], "start": scope["start"], "token": scope["token"], "worktrees": scope["worktrees"]}
+    if scope["stale"]:
         return "perime", verrou
+    if not scope["held"]:
+        return "libre", None
     jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
-    if jeton and jeton == verrou["token"]:
+    if jeton and jeton == scope["token"]:
         return "libre", verrou
-    return "tenu", verrou
+    code, sortie = git(Path.cwd(), "rev-parse", "--show-toplevel")
+    sommet = sortie.strip() if code == 0 and sortie.strip() else str(Path.cwd())
+    # R-20261108-11 : le scope déjà lu est passé à freezes() (une seule lecture du verrou, décision et message cohérents).
+    if finish_lock.freezes(common, sommet, jeton, protected=True, now=now(), scope=scope) is not None:   # R-20261107-3 : main et tête détachée gelés, règle stricte du crochet
+        return "tenu", verrou
+    return "autre", verrou
 
 
 def freeze_report(etat, verrou, t):
@@ -283,6 +364,9 @@ def freeze_report(etat, verrou, t):
     if etat == "tenu":
         print(t("freeze_running", branch=verrou["branch"], time=clock_text(verrou["start"])), file=sys.stderr)
         return 4
+    if etat == "autre":
+        print(t("freeze_other", n=len(verrou["worktrees"])))
+        return 0
     print(t("freeze_stale") if etat == "perime" else t("freeze_free"))
     return 0
 
@@ -317,7 +401,7 @@ def cmd_freeze(args, t):
 def guard_finds(texte):
     """True si la garde trouve un nom sensible, un identifiant personnel ou une clé de ticket ; Stop(6) si elle ne peut pas tourner."""
     try:
-        noms = sensitive_names.load_names()
+        noms = sensitive_names.load_judged_names()   # liste puis extrait : source unique (A-75, R-20261112-20)
     except sensitive_names.SensitiveNamesUnavailable:
         raise Stop(6, "") from None
     try:
@@ -374,6 +458,52 @@ def cmd_note(args, t):
     return 0
 
 
+# --- gestes de l'auteur (R-160, P4) ---------------------------------------------------------------------------------------------
+
+def gestes_file():
+    voulu = os.environ.get("PILOT_GESTES", "")
+    if voulu:
+        return Path(voulu).expanduser()
+    return lab_paths.lab_folder(lab_paths.content_root()) / GESTES_DIR / GESTES_NAME
+
+
+def read_gestes(t):
+    """Gestes du tableau « En attente » : liste de dicts (id, geste, commande, debloque, decision), ceux dont l'identifiant est barré exclus.
+    Stop(9) si le fichier est absent, illisible ou sans section « En attente »."""
+    try:
+        lignes = gestes_file().read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, lab_paths.LabPathsError):
+        raise Stop(9, t("gestes_missing")) from None
+    dedans, trouve, gestes = False, False, []
+    for ligne in lignes:
+        if re.match(r"##\s+En attente\s*$", ligne):
+            dedans, trouve = True, True
+        elif ligne.startswith("## "):
+            dedans = False
+        elif dedans and ligne.startswith("|") and not re.fullmatch(r"\|[-|: ]+\|?\s*", ligne):
+            cellules = [c.strip() for c in ligne.strip().strip("|").split("|")]
+            if len(cellules) < 5 or cellules[0] == "#" or "~~" in cellules[0]:
+                continue
+            gestes.append({"id": cellules[0], "geste": cellules[1], "commande": " | ".join(cellules[2:-2]).replace("`", ""),
+                           "debloque": cellules[-2], "decision": cellules[-1]})
+    if not trouve:
+        raise Stop(9, t("gestes_format"))
+    return gestes
+
+
+def cmd_gestes(args, t):
+    gestes = read_gestes(t)
+    if not gestes:
+        print(t("gestes_none"))
+        return 0
+    lignes = [t("gestes_header", n=len(gestes))]
+    for g in gestes:
+        lignes += [f"{g['id']} | {g['geste']}", t("gestes_command", text=g["commande"]), t("gestes_unblocks", text=g["debloque"]),
+                   t("gestes_decision", text=g["decision"])]
+    print("\n".join(lignes))
+    return 0
+
+
 # --- ligne de commande ------------------------------------------------------------------------------------------------------------
 
 def build_parser():
@@ -385,6 +515,7 @@ def build_parser():
     g = f.add_mutually_exclusive_group(required=True)
     g.add_argument("--check", action="store_true")
     g.add_argument("--wait", metavar="MINUTES")
+    sub.add_parser("gestes", help="liste les gestes en attente de l'auteur (file hors dépôt, lecture seule)")
     n = sub.add_parser("note", help="pose ou retire la note d'un worktree")
     n.add_argument("branch")
     n.add_argument("text", nargs="?")
@@ -396,7 +527,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     t = Messages(CATALOGS, args.language)
     try:
-        return {"status": cmd_status, "freeze": cmd_freeze, "note": cmd_note}[args.cmd](args, t)
+        return {"status": cmd_status, "freeze": cmd_freeze, "note": cmd_note, "gestes": cmd_gestes}[args.cmd](args, t)
     except Stop as e:
         if e.message:
             print(e.message, file=sys.stderr)

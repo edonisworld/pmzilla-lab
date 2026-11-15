@@ -67,7 +67,7 @@ The system SHALL show, from the watch log, the new articles per day, sources in 
 Source: tests/dashboard/test_dashboard.py
 
 ### Requirement: Library section
-The system SHALL list books without a known author, SHALL list books to re-download one per line without domain codes or explanatory sentences with a total, and SHALL count watch articles lacking an author or site separately from those displayed with a "not stated" author. The book and passage counts of the section SHALL exclude documents of the watch collection (current and former names) and of the personal collection, matched by exact collection name. It SHALL read books, collections and passages from the knowledge schema of the database under the read-only role with a short connection timeout, SHALL show "no data yet" when the database holds no book, and SHALL show "unreadable source" with the error type only, never the error message, when the database does not answer, while still writing the page and exiting with success. It SHALL NOT read the SQLite library index.
+The system SHALL list books without a known author, SHALL list books to re-download one per line without domain codes or explanatory sentences with a total, and SHALL count watch articles lacking an author or site separately from those displayed with a "not stated" author.
 
 Source: tests/dashboard/test_dashboard.py (with a fake database reader; database class run with `tools/dbtest.sh dashboard`)
 
@@ -79,6 +79,11 @@ Source: tests/dashboard/test_dashboard.py (with a fake database reader; database
 - **WHEN** the mapping comments name books
 - **THEN** each appears as a line "Title (Author)", split correctly across "and"-joined and semicolon-separated entries, with the total
 
+### Requirement: Library counts exclude the watch and personal collections
+The book and passage counts of the library section SHALL exclude documents of the watch collection (current and former names) and of the personal collection, matched by exact collection name.
+
+Source: tests/dashboard/test_dashboard.py
+
 #### Scenario: Watch and personal collections excluded
 - **WHEN** the library holds a book, a watch article and an article of the personal collection
 - **THEN** only the book is counted
@@ -87,16 +92,28 @@ Source: tests/dashboard/test_dashboard.py (with a fake database reader; database
 - **WHEN** a book belongs to a collection whose name merely contains the name of an excluded collection
 - **THEN** the book is counted
 
+### Requirement: Library section reads the knowledge schema under the read-only role
+The library section SHALL read books, collections and passages from the knowledge schema of the database under the read-only role with a short connection timeout, SHALL show "no data yet" when the database holds no book, and SHALL show "unreadable source" with the error type only, never the error message, when the database does not answer, while still writing the page and exiting with success. It SHALL NOT read the SQLite library index.
+
+Source: tests/dashboard/test_dashboard.py
+
 #### Scenario: Database does not answer
 - **WHEN** the reader raises a connection error and a SQLite library file exists in the data folder
 - **THEN** the library sections show "unreadable source" with the error type, the SQLite file is not opened, the other sections are unchanged and the exit code is 0
 
 ### Requirement: Quality section from evaluation reports
-The system SHALL draw the pass-rate curve and a cost table from the evaluation reports, using only complete runs, report the number of partial runs excluded, show the commit of the latest run, its cost, the month's total cost including partial runs, and display the number of latest complete runs. A run is complete when its total of verifications equals the total of the most recent report; every other run is partial. The history table SHALL show the models of each run when its report names them and SHALL flag a non-validating run; a non-validating run SHALL stay out of the curve and the case matrix, and its cost SHALL count in the month's total.
+The system SHALL draw the pass-rate curve and a cost table from the evaluation reports, using only complete runs, report the number of partial runs excluded, show the commit of the latest run, its cost, the month's total cost including partial runs, and display the number of latest complete runs.
+
+Source: tests/dashboard/test_dashboard.py; tests/dashboard/test_language.py; tests/dashboard/test_gaps_dashboard.py (PassagePartiel, LecteurReelExperiences)
 
 #### Scenario: Partial run
 - WHEN a report has fewer verifications than complete runs
 - THEN it is excluded from the curve and the table, its commit is not shown, and "1 partial run excluded" appears, but its cost counts in the month's total
+
+### Requirement: Complete and partial evaluation runs
+A run SHALL be complete when its total of verifications equals the total of the most recent report; every other run SHALL be partial.
+
+Source: tests/dashboard/test_dashboard.py; tests/dashboard/test_language.py; tests/dashboard/test_gaps_dashboard.py (PassagePartiel, LecteurReelExperiences)
 
 #### Scenario: Partial criterion
 - WHEN two older reports have fewer verifications than the most recent one and two reports have the same total as it, one of them with failures
@@ -105,6 +122,9 @@ The system SHALL draw the pass-rate curve and a cost table from the evaluation r
 #### Scenario: More verifications than the latest report
 - WHEN an older report has more verifications than the most recent one
 - THEN it is counted as partial and excluded like a report with fewer
+
+### Requirement: Models and non-validating runs in the quality history
+The history table SHALL show the models of each run when its report names them and SHALL flag a non-validating run; a non-validating run SHALL stay out of the curve and the case matrix, and its cost SHALL count in the month's total.
 
 #### Scenario: Non-validating run
 - WHEN a report names a session model other than the usual one and is marked not validating
@@ -136,18 +156,28 @@ The system SHALL render the page in French by default or in English on request, 
 - WHEN no language is given
 - THEN output equals the French option and states French as document language
 
-Source: tests/dashboard/test_language.py; tests/dashboard/test_dashboard.py (test_anciennes_options)
+Source: tests/dashboard/test_language.py; tests/dashboard/test_dashboard.py (test_anciennes_options_refusees_avec_le_nom_actuel)
 
 ### Requirement: Experiments awaiting a result
-The system SHALL list, in the section of experiments awaiting a result, the configured author's running experiments ordered by review date, each with its number, problem, start date, review date, postponement count and a review-due flag, with the counts of running and due experiments in the heading. A review is due when its review date is today or earlier, the same rule as the journal and the MCP tool. It SHALL read them under the cases read-only role with a short connection timeout, SHALL show "no data yet" when no author is configured (without any read) or no experiment is running, SHALL show "unreadable source" with the error type only, never the error message, when the cases database does not answer, SHALL escape the problem text, and SHALL still write the page. The section SHALL come between the to-do section and the watch section.
+The system SHALL list, in the section of experiments awaiting a result, the configured author's running experiments ordered by review date, each with its number, problem, start date, review date, postponement count and a review-due flag, with the counts of running and due experiments in the heading. The section SHALL come between the to-do section and the watch section.
+
+Source: tests/dashboard/test_dashboard.py (Experimentations)
 
 #### Scenario: One due experiment
 - **WHEN** the author has two running experiments, one whose review date is past
 - **THEN** both are listed in review-date order, the past one flagged review due, and the heading counts two running and one due
 
+### Requirement: Experiment review due on or before today
+In the section of experiments awaiting a result, a review SHALL be due when its review date is today or earlier, the same rule as the journal and the MCP tool.
+
+Source: tests/dashboard/test_dashboard.py (Experimentations)
+
 #### Scenario: Review due today
 - **WHEN** a running experiment has today as its review date
 - **THEN** it is listed, flagged review due and counted as due in the heading, like in the journal and the MCP tool
+
+### Requirement: Experiments section reads the cases database read-only
+The system SHALL read the experiments of that section under the cases read-only role with a short connection timeout, SHALL show "no data yet" when no author is configured (without any read) or no experiment is running, SHALL show "unreadable source" with the error type only, never the error message, when the cases database does not answer, SHALL escape the problem text, and SHALL still write the page.
 
 #### Scenario: Database down
 - **WHEN** the cases database does not answer
@@ -156,21 +186,35 @@ The system SHALL list, in the section of experiments awaiting a result, the conf
 Source: tests/dashboard/test_dashboard.py (Experimentations)
 
 ### Requirement: Watch section reads shares, picks and watch counts from the database
-The system SHALL compute the share statistics of the watch section (shares in total and recent, share of shared links that had been proposed since the first recorded pick) from the share and daily-pick tables, and the watch article and indexed passage counts from the knowledge library tables (watch collection matched by exact name), reading under the knowledge read-only role with a short connection timeout. When the database does not answer it SHALL show "unreadable source" with the error type only, never the error message, keep the other sections unchanged, and still write the page with exit code 0. It SHALL NOT open the former watch and triage state files and SHALL NOT write to the database.
+The system SHALL compute the share statistics of the watch section (listed in the scenario Share statistics) from the share and daily-pick tables, reading the database under the knowledge read-only role with a short connection timeout. It SHALL NOT open the former watch and triage state files and SHALL NOT write to the database.
 
 Source: tests/dashboard/test_dashboard_db.py, tests/dashboard/test_dashboard.py
+
+#### Scenario: Share statistics
+- **WHEN** the watch section is built
+- **THEN** its share statistics are the shares in total and recent, and the share of shared links that had been proposed since the first recorded pick
 
 #### Scenario: Shared proposals from the database
 - **WHEN** the injected reader returns two shares since the first pick, one of them picked before its post date
 - **THEN** the page shows "1 of 2" as before this change
 
-#### Scenario: Database down
-- **WHEN** the database does not answer
-- **THEN** the share and count blocks show "unreadable source" with the error type and without the error message, the log-based lines of the watch section are unchanged, and the exit code is 0
+### Requirement: Watch counts come from the knowledge library tables
+The system SHALL compute the watch article and indexed passage counts of the watch section from the knowledge library tables (watch collection matched by exact name), under the same read-only role and short connection timeout.
+
+Source: tests/dashboard/test_dashboard_db.py, tests/dashboard/test_dashboard.py
 
 #### Scenario: Former files present
 - **WHEN** former watch and triage state files exist in the data folder with other counts
 - **THEN** the page shows the database counts and the former files are not opened
+
+### Requirement: Watch database that does not answer
+When the database read by the watch section does not answer, the system SHALL show "unreadable source" with the error type only, never the error message, keep the other sections unchanged, and still write the page with exit code 0.
+
+Source: tests/dashboard/test_dashboard_db.py, tests/dashboard/test_dashboard.py
+
+#### Scenario: Database down
+- **WHEN** the database does not answer
+- **THEN** the share and count blocks show "unreadable source" with the error type and without the error message, the log-based lines of the watch section are unchanged, and the exit code is 0
 
 ### Requirement: Health section
 The system SHALL show, as the first section, the doctor's state file: the check date, one line per check in problem or warning with its level and reason in the page language, or "all good". It SHALL show "no data yet" without the file and "unreadable source" with the error type only when unreadable. It SHALL NOT run the doctor or show a path or branch name. Untested until implemented.
@@ -188,25 +232,40 @@ The system SHALL show, as the first section, the doctor's state file: the check 
 - **THEN** the section shows "no data yet", the other sections are unchanged and the exit code is 0
 
 ### Requirement: Components section
-The system SHALL show, as the last section of the page, the result recorded by the component check in its state file (design.md D13): the date of the last complete check and of the last attempt, an incomplete badge with the number of unreachable sources, the number of components up to date, and a table of novelties with the name, the used and available versions, the nature (update, major version, pre-release, republished tag), the flags (not pinned, requires reindexing) and the suggested job title, with the labels of design.md D13 in the page language. When the last complete check is older than the staleness limit, its date SHALL carry the stale label. It SHALL read only the state file: it SHALL NOT query any network source, run the check or any component command, or write the state. It SHALL show "no data yet" when the state file is absent and "unreadable source" with the error type only when it is unreadable, and SHALL NOT print any address or link in the section. Untested until implemented.
+The system SHALL show, as the last section of the page, the result recorded by the component check in its state file (design.md D13): the date of the last complete check and of the last attempt, an incomplete badge with the number of unreachable sources, the number of components up to date, and a table of novelties, with the labels of design.md D13 in the page language. Untested until implemented.
 
-Source: to be covered by tests/dashboard/test_dashboard.py and tests/dashboard/test_language.py (task 5.1)
+Source: to be covered by tests/dashboard/ (test_dashboard.py, test_language.py; task 5.1)
+
+#### Scenario: English page
+- **WHEN** the English language is chosen
+- **THEN** the section title is "Components" and the labels and suggested job titles are the English ones of design.md D13
+
+### Requirement: Components novelties table
+Each novelty in the table of the components section SHALL show the name, the used and available versions, the nature (update, major version, pre-release, republished tag), the flags (not pinned, requires reindexing) and the suggested job title. Untested until implemented.
+
+Source: to be covered by tests/dashboard/ (test_dashboard.py, test_language.py; task 5.1)
 
 #### Scenario: Novelties
 - **WHEN** the state holds one update and one major version
 - **THEN** the section lists both with their natures and suggested job titles, and counts the other components as up to date
 
+### Requirement: Stale components check date
+When the last complete check is older than the staleness limit, its date in the components section SHALL carry the stale label. Untested until implemented.
+
+Source: to be covered by tests/dashboard/ (test_dashboard.py, test_language.py; task 5.1)
+
 #### Scenario: Incomplete and stale
 - **WHEN** the state's last attempt is incomplete and its last complete check is older than the staleness limit
 - **THEN** the section shows the incomplete badge with the count and the stale label on the date
 
+### Requirement: Components section reads only its state file
+The components section SHALL read only the state file: it SHALL NOT query any network source, run the check or any component command, or write the state. It SHALL show "no data yet" when the state file is absent and "unreadable source" with the error type only when it is unreadable, and SHALL NOT print any address or link in the section. Untested until implemented.
+
+Source: to be covered by tests/dashboard/ (test_dashboard.py, test_language.py; task 5.1)
+
 #### Scenario: No state
 - **WHEN** the state file does not exist
 - **THEN** the section shows "no data yet", the other sections are unchanged and the exit code is 0
-
-#### Scenario: English page
-- **WHEN** the English language is chosen
-- **THEN** the section title is "Components" and the labels and suggested job titles are the English ones of design.md D13
 
 ## Open questions
 

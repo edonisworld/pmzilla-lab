@@ -27,7 +27,7 @@ REFERENCE_EN = ICI / "reference_en.md"
 D = dt.date.fromisoformat
 MOTS_FRANCAIS = re.compile(r"\b(le|la|les|des|du|pour|dans|sur|avec|équipe|semaine|jours|tickets? lus|écartés|"
                            r"aucun|aucune|seulement|selon|plus longs|segment calculé)\b|[éèêàâçùôî]", re.IGNORECASE)
-REGLAGES = "excluded_projects: [EXC]\nportfolio_types: [Initiative]\nwaiting_states: ['Ready for', 'On Hold']\n"
+REGLAGES = "excluded_projects: [EXC]\nportfolio_types: [Initiative]\nwaiting_states: ['Awaiting', 'Blocked']\n"
 _CACHE: dict[tuple, str] = {}
 
 
@@ -69,7 +69,7 @@ def parcours(*extra: str) -> str:
         e = str(a.ecrire())
         blocs.append(lancer(a, "--longest 100, creation and resolution from the segment", e, *T, "--longest", "100", *extra))
         (a.ws / "Flux-Lab" / "flux.yaml").write_text(
-            REGLAGES + "segments:\n  review_verification: ['Ready for Verification','Verification - Ongoing']\n  other: [Foo]\n",
+            REGLAGES + "segments:\n  review_verification: ['Awaiting Testing','Testing - Active']\n  other: [Foo]\n",
             encoding="utf-8")
         blocs.append(lancer(a, "segments set in flux.yaml", e, *T, "--by-state", "--starts", *extra))
     with tempfile.TemporaryDirectory() as tmp:
@@ -91,8 +91,8 @@ def parcours(*extra: str) -> str:
         def passage(projet, i, jour):
             passe = D("2026-05-01") + dt.timedelta(days=jour - 1)
             a.ticket(f"{projet}-{i}", "2026-04-20", base.IMPL, [
-                ("2026-05-01", "Open", base.REVUE), (passe.isoformat(), base.REVUE, "Verification - Ongoing"),
-                ((passe + dt.timedelta(days=20)).isoformat(), "Verification - Ongoing", base.IMPL)])
+                ("2026-05-01", "Open", base.REVUE), (passe.isoformat(), base.REVUE, "Testing - Active"),
+                ((passe + dt.timedelta(days=20)).isoformat(), "Testing - Active", base.IMPL)])
         for i, j in enumerate([11] * 10 + [8] * 7 + [2, 3, 4, 5, 6, 7, 9, 12], 1):
             passage("PPP", i, j)
         for i in range(1, 31):
@@ -102,8 +102,8 @@ def parcours(*extra: str) -> str:
         for i in range(1, 22):                                  # des clés sans projet (pas de tiret)
             passe = D("2026-05-01") + dt.timedelta(days=i % 9)
             a.ticket(f"SANSPROJET{i}", "2026-04-20", base.IMPL, [
-                ("2026-05-01", "Open", base.REVUE), (passe.isoformat(), base.REVUE, "Verification - Ongoing"),
-                ((passe + dt.timedelta(days=20)).isoformat(), "Verification - Ongoing", base.IMPL)])
+                ("2026-05-01", "Open", base.REVUE), (passe.isoformat(), base.REVUE, "Testing - Active"),
+                ((passe + dt.timedelta(days=20)).isoformat(), "Testing - Active", base.IMPL)])
         e = str(a.ecrire())
         blocs.append(lancer(a, "--starts by project", e, *T, "--starts", *extra))
         blocs.append(lancer(a, "--starts with a higher threshold", e, *T, "--starts", "--min-passes", "100", *extra))

@@ -15,7 +15,7 @@ NOMS_EN_TETE = NOMS + ("audit",)
 
 # Éléments qu'un en-tête ne doit jamais pré-approuver (nom de script, option ou variable), et que le corps doit nommer.
 INTERDITS_COMMUNS = ("history_jira", "export_jira_api", "flow_import", "flow_compare", "knowledge_import", "db.py", "db_backup", "db_up",
-                     "psql", "docker", "finish_branch", "PMZILLA_SKIP_GREEN_CHECK", "--source")
+                     "psql", "docker", "finish_branch", "finish_train", "PMZILLA_SKIP_GREEN_CHECK", "--source")   # finish_train s'ajoute (B9, finish-single-b7-b9 : le train est le seul script de fin) ; finish_branch reste interdit en en-tête (plus strict, revue 4.7)
 INTERDITS_LIVRES = ("convert_books", "sort_by_domain", "pmzilla_lab_library")
 INTERDITS_EN_TETE_SEULEMENT = ("git push", "git merge", "--no-verify", "posture_evals")
 # Lanceurs trop larges : pré-approuver « uv run » ou « bash » sans plus lance n'importe quel script.
@@ -23,8 +23,8 @@ LANCEURS_LARGES = re.compile(r"Bash\(\s*(uv run|uv|bash|sh|zsh|python3?|env)?\s*
 BASH_NU = re.compile(r"(^|[\s,])Bash(?![\w(])")
 
 # Le corps doit nommer les actions interdites ; chaque commande en nomme au moins ces éléments.
-CORPS_COMMUNS = ("history_jira", "export_jira_api", "flow_import", "flow_compare", "psql", "finish_branch",
-                 "PMZILLA_SKIP_GREEN_CHECK")
+CORPS_COMMUNS = ("history_jira", "export_jira_api", "flow_import", "flow_compare", "psql", "finish_train",
+                 "PMZILLA_SKIP_GREEN_CHECK")   # finish_branch devient finish_train (B9)
 CORPS_PAR_COMMANDE = {
     "implement": ("--no-verify", "db.py", "--source db", "Push, merge"),
     "close": ("--no-verify", "db.py", "--source db", "Archive with an unticked task"),
@@ -32,9 +32,9 @@ CORPS_PAR_COMMANDE = {
     "next": ("db.py", "--source db"),
     "start": ("--no-verify", "db.py", "--source db", "Push, merge", "implement.md"),
     "doctor": ("--record", "doctor.sh", "launchctl", "security", "docker", "db.py", "--source db"),
-    "batch": ("--no-verify", "db.py", "--source db", "Merge, or push", "finish_worktree"),
+    "batch": ("--no-verify", "db.py", "--source db", "Merge, or push", "finish_train"),
     # R-75 (multi-session-piloting, D8) : /pilot nomme chaque action interdite de l'exigence « launches nothing ».
-    "pilot": ("--no-verify", "db.py", "--source db", "finish_worktree", "Write a note without the user's yes", "Commit, merge, or push",
+    "pilot": ("--no-verify", "db.py", "--source db", "finish_train", "Write a note without the user's yes", "Commit, merge, or push",
               "Remove a worktree", "Write to GitHub", "read a note's file"),
 }
 
@@ -142,7 +142,7 @@ class Commandes(unittest.TestCase):
         corps = lire("start")[1]
         for motif in ("`Ready`", "blocker", "not_before", "conditions", "main", "roadmap.py check", "roadmap.py show",
                       "gh_issue.py status", "gh_issue.py sync-tasks", "gh_issue.py close-feature", "In progress",
-                      "bash tools/finish_worktree.sh", "`change`", "spec-writer"):   # finish-under-lock D7 : la fin en worktree pour tout job
+                      "bash ~/PMZilla-Lab/run/tools/finish_train.sh", "`change`", "spec-writer"):   # finish-under-lock D7 : la fin pour tout job ; le train d'une branche depuis B9
             with self.subTest(motif=motif):
                 self.assertIn(motif, corps)
 
@@ -286,7 +286,7 @@ class Commandes(unittest.TestCase):
     def test_start_nomme_la_regle_de_reprise_d_une_feature_du_batch(self):
         corps = lire("start")[1]
         for motif in ("In progress", "resume", "chore/spec-r", "chore/r", "feat/<change>",
-                      "does not set the Status again", "tools/finish_worktree.sh"):
+                      "does not set the Status again", "tools/finish_train.sh"):
             with self.subTest(motif=motif):
                 self.assertIn(motif, corps)
         self.assertRegex(corps, r"(?i)never run it")
@@ -309,7 +309,7 @@ class Commandes(unittest.TestCase):
 
     def test_batch_en_tete_sans_lancement_interdit_ni_lanceur_large_ni_ecriture(self):
         approuve = pre_approbations(lire("batch")[0])
-        interdits = INTERDITS_COMMUNS + INTERDITS_LIVRES + INTERDITS_EN_TETE_SEULEMENT + ("finish_worktree",)
+        interdits = INTERDITS_COMMUNS + INTERDITS_LIVRES + INTERDITS_EN_TETE_SEULEMENT + ("finish_train",)
         for motif in interdits:
             with self.subTest(motif=motif):
                 self.assertNotIn(motif, approuve)
@@ -322,11 +322,11 @@ class Commandes(unittest.TestCase):
     def test_aucun_en_tete_ne_pre_approuve_le_script_de_fin_de_worktree(self):
         for nom in NOMS_EN_TETE:
             with self.subTest(commande=nom):
-                self.assertNotIn("finish_worktree", pre_approbations(lire(nom)[0]))
+                self.assertNotIn("finish_train", pre_approbations(lire(nom)[0]))
 
     def test_batch_corps_nomme_les_actions_interdites(self):
         corps = lire("batch")[1]
-        for motif in CORPS_COMMUNS + ("--no-verify", "db.py", "--source db", "finish_worktree", "claude", "gh_issue.py", "gh",
+        for motif in CORPS_COMMUNS + ("--no-verify", "db.py", "--source db", "finish_train", "claude", "gh_issue.py", "gh",
                                       "tools/roadmap_settings.yaml", "Terminal", "worktree", "branch"):
             with self.subTest(motif=motif):
                 self.assertIn(motif, corps)
@@ -341,13 +341,13 @@ class Commandes(unittest.TestCase):
 
     def test_batch_bloc_de_lancement_donne_la_commande_de_fin(self):
         corps = lire("batch")[1]
-        self.assertIn("bash tools/finish_worktree.sh <branch>", corps)
+        self.assertIn("bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>", corps)
         self.assertIn('cd <folder> && claude --model <alias> "<prompt>"', corps)
         self.assertRegex(corps, r"(?i)never run")
 
     def test_batch_nomme_chaque_action_de_d9(self):
         corps = lire("batch")[1]
-        for motif in ("Launch a session", "Open a Terminal", "Merge", "push", "tools/finish_branch.sh", "tools/finish_worktree.sh",
+        for motif in ("Launch a session", "Open a Terminal", "Merge", "push", "tools/finish_train.sh",
                       "Remove a worktree", "other than through `tools/gh_issue.py`", "Status other than `In progress`",
                       "`Ready`", "rank", "estimate", "model", "dependency", "condition", "milestone",
                       "tools/roadmap_settings.yaml", "did not retain", "--no-verify", "PMZILLA_SKIP_GREEN_CHECK"):
@@ -388,18 +388,18 @@ class Commandes(unittest.TestCase):
 
     def test_pilot_ne_pre_approuve_ni_note_ni_attente(self):
         approuve = pre_approbations(lire("pilot")[0])
-        for motif in ("note", "--wait", "finish_worktree", "finish_branch", "gh"):
+        for motif in ("note", "--wait", "finish_worktree", "finish_branch", "finish_train", "gh"):   # finish_train s'ajoute (B9) ; les deux anciens noms restent interdits (plus strict, revue 4.7)
             self.assertNotIn(motif, approuve, motif)
 
     def test_pilot_donne_la_commande_de_fin_comme_celle_de_l_utilisateur(self):
         corps = lire("pilot")[1]
-        self.assertIn("bash tools/finish_worktree.sh <branch>", corps)
+        self.assertIn("bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>", corps)
         self.assertIn("labelled as the user's command", corps)
         self.assertIn("Only one finish runs at a time", corps)
 
     def test_la_detection_attrape_une_pre_approbation_interdite(self):
         """Garde du test lui-même : un en-tête fautif serait refusé."""
-        faute = "Bash(uv run tools/knowledge_import.py import:*), Bash(bash tools/finish_branch.sh:*), Bash(uv run:*)"
+        faute = "Bash(uv run tools/knowledge_import.py import:*), Bash(bash tools/finish_train.sh:*), Bash(uv run:*)"
         self.assertTrue(any(m in faute for m in INTERDITS_COMMUNS))
         self.assertIsNotNone(LANCEURS_LARGES.search(faute))
         self.assertIsNotNone(BASH_NU.search("Read, Bash, Edit"))

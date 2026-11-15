@@ -39,6 +39,8 @@
 - id: discovery-cadrage
   question: "On veut ajouter un module de prescription mobile, on commence par quoi ?"
   posture: Discovery
+  verifications:
+    - critic: false   # réponse de cadrage (questions, hypothèses) : Critic ne s'applique pas (CLAUDE.md, étape 4)
   judgements:
     - "Pose des questions sur les utilisateurs concernés et sur le problème à résoudre avant de proposer une solution."
     - "Ne propose ni fonctionnalités ni roadmap pour le module avant d'avoir cadré le problème."

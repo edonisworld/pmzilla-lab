@@ -124,8 +124,8 @@ class Parcours(base.Base):
         for ticket in self.magasin.stock.values():
             ticket["equipes"] = ["Equipe Test"]
             ticket["cree"] = dt.datetime(2024, 1, 1, 9, 0, tzinfo=base.PARIS)
-        self.magasin.transitions["ABC-1"] = parcours_etats("Open", "Definition", "Ready for Implementation", "Implementation", "Done")
-        self.magasin.transitions["ABC-2"] = parcours_etats("Implementation", "Verification", "Done")
+        self.magasin.transitions["ABC-1"] = parcours_etats("Open", "Specification", "Awaiting Development", "Development", "Done")
+        self.magasin.transitions["ABC-2"] = parcours_etats("Development", "Testing", "Done")
         self.magasin.transitions["ABC-3"] = []
         self.magasin.transitions["ABC-4"] = [(dt.datetime.fromisoformat("2026-03-01T10:00:00+02:00"), "Open", "Done")]
         self.magasin.transitions["ABC-5"] = parcours_etats("Open", "Closed")

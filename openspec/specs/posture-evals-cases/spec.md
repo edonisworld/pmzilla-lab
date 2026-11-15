@@ -62,7 +62,7 @@ Source: tests/posture_evals/test_posture_evals.py (Langue, Principal); tests/pos
 - **THEN** every case has a variant with a different question, the same number and kind of criteria, rules of the same shape, and no French fixed formula
 
 ### Requirement: Prerequisites make a case non-evaluable
-The system SHALL check the optional prerequisites of a case against the library database that the case's library server reads (the installation database, or the disposable one of a library case), under the read-only role, and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. Supported prerequisites SHALL be: a book present (title containing the text, case-insensitive), a collection with a minimum number of books (exact collection name), and a topic that must be absent (alternatives separated by uppercase OR, one matching passage is enough; an alternative written between double quotes is an exact expression, its words adjacent and in order, and an alternative without quotes requires all its words anywhere in the passage; case- and accent-insensitive; a passage matching several alternatives counts once). An unreachable library database (reason of design D7) or an unknown rule SHALL count as unmet. The system SHALL NOT open any index file.
+The system SHALL check the optional prerequisites of a case against the library database that the case's library server reads (the installation database, or the disposable one of a library case), under the read-only role, and SHALL mark the case as non-evaluable, without playing it, when a prerequisite is unmet. The system SHALL NOT open any index file.
 
 Source: tests/posture_evals/test_posture_evals.py (Prerequis, with a fake reader; database class run with `tools/dbtest.sh posture_evals`)
 
@@ -70,28 +70,50 @@ Source: tests/posture_evals/test_posture_evals.py (Prerequis, with a fake reader
 - **WHEN** the library has the book, enough books in the collection, and no passage on the absent topic
 - **THEN** no reason is returned
 
+#### Scenario: Rejudge ignores prerequisites
+- **WHEN** a past run is rejudged
+- **THEN** prerequisites are not checked
+
+### Requirement: Supported prerequisite kinds
+Supported prerequisites SHALL be: a book present (title containing the text, case-insensitive), a collection with a minimum number of books (exact collection name), and a topic that must be absent.
+
+Source: tests/posture_evals/test_posture_evals.py (Prerequis)
+
 #### Scenario: Unmet prerequisite
 - **WHEN** a book is missing, a collection is too small, or the topic expected to be absent is present
 - **THEN** the corresponding reason is reported and the case is shown as non-evaluable with the reasons
+
+### Requirement: Matching of a topic that must be absent
+For a topic that must be absent, alternatives SHALL be separated by uppercase OR and one matching passage SHALL be enough; an alternative written between double quotes SHALL be an exact expression, its words adjacent and in order, and an alternative without quotes SHALL require all its words anywhere in the passage. Matching SHALL be case- and accent-insensitive, and a passage matching several alternatives SHALL count once.
+
+Source: tests/posture_evals/test_posture_evals.py (Prerequis)
 
 #### Scenario: Quoted topic is an exact phrase
 - **WHEN** the topic that must be absent is written between double quotes and a passage contains all its words but not adjacent, or adjacent but in another order
 - **THEN** that passage does not count as present, whereas a passage with the words adjacent and in order does, and the same words written without quotes match both
 
+### Requirement: Unreachable database or unknown prerequisite rule counts as unmet
+An unreachable library database (reason of design D7) or an unknown prerequisite rule SHALL count as an unmet prerequisite.
+
+Source: tests/posture_evals/test_posture_evals.py (Prerequis)
+
 #### Scenario: Database unavailable
 - **WHEN** the library database does not answer
 - **THEN** the reason carries the key phrase of design D7 ("base de la bibliothèque injoignable") and no file is opened
 
-#### Scenario: Rejudge ignores prerequisites
-- **WHEN** a past run is rejudged
-- **THEN** prerequisites are not checked
-
 ### Requirement: Command cases with invented files and throwaway library
-The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library built from a given folder, without touching the installation's library. Files SHALL NOT be placed outside the copy. A throwaway library SHALL be indexed into the run's disposable database, whose library tables are emptied before each case that declares one, and the case's library server configuration SHALL name that database through the library database setting of design D7. When the disposable database cannot be created, such a case SHALL be reported as not evaluable here with the reason "throwaway library unavailable". The system SHALL NOT index anything into the installation's library database and SHALL NOT write any index file.
+The system SHALL support cases that place invented files into the temporary copy and that use a throwaway library built from a given folder, without touching the installation's library. Files SHALL NOT be placed outside the copy. The system SHALL NOT index anything into the installation's library database and SHALL NOT write any index file.
 
 #### Scenario: Files placed in the copy only
 - **WHEN** a case declares source and destination files
 - **THEN** the files are copied into the temporary copy; a destination escaping the copy is refused
+
+#### Scenario: Command cases are separate from the standard set
+- **WHEN** the command-case file is read
+- **THEN** its cases have identifiers distinct from the standard cases and every referenced input file exists
+
+### Requirement: Throwaway library indexed into the disposable database
+A throwaway library SHALL be indexed into the run's disposable database, whose library tables are emptied before each case that declares one, and the case's library server configuration SHALL name that database through the library database setting of design D7. When the disposable database cannot be created, such a case SHALL be reported as not evaluable here with the reason "throwaway library unavailable".
 
 #### Scenario: Throwaway library
 - **WHEN** a case declares a library folder
@@ -101,12 +123,16 @@ The system SHALL support cases that place invented files into the temporary copy
 - **WHEN** the disposable database cannot be created and a case declares a library folder
 - **THEN** the case is not evaluable here with the reason "throwaway library unavailable" and nothing is indexed
 
-#### Scenario: Command cases are separate from the standard set
-- **WHEN** the command-case file is read
-- **THEN** its cases have identifiers distinct from the standard cases and every referenced input file exists
-
 ### Requirement: Judge inputs are guarded against unintended change
-The system SHALL provide a permanent check comparing what the judge receives (the French judge prompt and, per case, question, posture, verifications, prerequisites, judged criteria after normalization) with a reference Git state, defaulting to the last pushed state. Added cases and language blocks SHALL NOT count as differences; renamed keys SHALL NOT count as differences; a changed criterion, question, text pattern or removed case SHALL. The check SHALL be skippable only by an explicit environment switch, whose skip reason names the switch and requires the commit message to say so.
+The system SHALL provide a permanent check comparing what the judge receives (the French judge prompt and, per case, question, posture, verifications, prerequisites, judged criteria after normalization) with a reference Git state, defaulting to the last pushed state. What counts as a difference, and the only way to skip the check, SHALL be those of the scenarios "What counts as a difference" and "Explicit skip switch".
+
+#### Scenario: What counts as a difference
+- **WHEN** cases or language blocks are added, keys are renamed, or a criterion, a question or a text pattern is changed or a case removed
+- **THEN** the added cases, the added language blocks and the renamed keys do not count as differences, and the changed criterion, question, text pattern or removed case does
+
+#### Scenario: Explicit skip switch
+- **WHEN** the check is to be skipped
+- **THEN** only an explicit environment switch skips it, its skip reason names the switch, and the commit message is required to say so
 
 #### Scenario: Unchanged inputs
 - WHEN inputs equal those of the reference
@@ -123,9 +149,7 @@ The system SHALL provide a permanent check comparing what the judge receives (th
 Source: tests/posture_evals/test_entrees_juge.py
 
 ### Requirement: Fixed-formula table equals the shared vocabulary
-The system SHALL keep a shared vocabulary file for both languages, with identical keys in both languages, a posture-tag format containing the posture placeholder and distinguishing the languages, and a valid tag pattern. The vocabulary SHALL also hold, once and for both languages, the list of the five posture names. The fixed-formula table of the project instructions SHALL reproduce the formula values exactly, with no regular expression syntax in it, and SHALL include the case-citation formula. The postures table of the project instructions SHALL name exactly the postures of that list.
-
-Source: tests/posture_evals/test_claude_md_vocabulaire.py, tests/posture_evals/test_posture_evals.py (Langue)
+The system SHALL keep a shared vocabulary file for both languages, with identical keys in both languages, a posture-tag format containing the posture placeholder and distinguishing the languages, and a valid tag pattern. The vocabulary SHALL also hold, once and for both languages, the list of the five posture names. The fixed-formula table and the postures table of the project instructions SHALL match the vocabulary as the scenarios below state.
 
 #### Scenario: Both languages complete
 - **WHEN** the vocabulary is loaded
@@ -133,32 +157,18 @@ Source: tests/posture_evals/test_claude_md_vocabulaire.py, tests/posture_evals/t
 
 #### Scenario: Table matches vocabulary
 - **WHEN** the table of fixed formulas is compared with the vocabulary
-- **THEN** each of the seven formulas, the case-citation formula included, equals the vocabulary value in each language
+- **THEN** the table reproduces the formula values exactly, with no regular expression syntax in it, and each of the seven formulas, the case-citation formula included, equals the vocabulary value in each language
 
 #### Scenario: Posture names match
 - **WHEN** the postures table of the project instructions is compared with the vocabulary's posture names
-- **THEN** the names are the same, with the same spelling and case
+- **THEN** the table names exactly the postures of that list, with the same spelling and case
+
+Source: tests/posture_evals/test_claude_md_vocabulaire.py, tests/posture_evals/test_posture_evals.py (Langue)
 
 ### Requirement: Evaluation sessions read only a disposable cases database
-The system SHALL, for a run that plays sessions, create one disposable database in the instance, apply every migration to it, empty its cases tables and reset their numbering before each case, load the case's invented fixture when it has one, and drop the database at the end of the run whatever happens. It SHALL pass the disposable database and an invented author to the session environment and to the library server configuration of every case, so that no session reads the real cases. When the disposable database cannot be created, it SHALL pass a cases database name that does not exist and an empty author. The temporary copy of the workspace SHALL never contain the local author file, so the author of every session comes from the environment only. A fixture path SHALL exist and stay inside the fixtures folder of the evaluation set, and SHALL be checked before any database is created or any session played. A rejudge SHALL create no database. Every replay of a case SHALL empty and reload the database again. When the database cannot be created, the system SHALL print the message of a database connection error (which names where the password is looked for, never a value) and, for any other error, its type only.
+The system SHALL, for a run that plays sessions, create one disposable database in the instance, apply every migration to it, empty its cases tables and reset their numbering before each case, load the case's invented fixture when it has one, and drop the database at the end of the run whatever happens. A rejudge SHALL create no database. Every replay of a case SHALL empty and reload the database again.
 
-Source: tests/posture_evals/test_cases_fixture.py (FixtureDansUnCas, EnvironnementDesSeances, MessageDeBaseIndisponible, BaseJetable, PassageAvecBaseJetable, CopieSansFichierAuteur)
-
-#### Scenario: Case with a fixture
-- **WHEN** a case names a fixture with one case and one running experiment
-- **THEN** before the session the disposable database holds exactly them, numbered from 1, and the session environment and server configuration name the disposable database and the invented author
-
-#### Scenario: Database cannot be created
-- **WHEN** the disposable database cannot be created
-- **THEN** a case with a fixture is reported as not evaluable here with the reason that the cases database is unavailable, and the other cases run with a cases database name that does not exist, never the real one, and with an empty author
-
-#### Scenario: Local author file
-- **WHEN** the workspace holds a local author file and a case is prepared
-- **THEN** the temporary copy does not contain that file
-
-#### Scenario: Fixture outside the folder
-- **WHEN** a fixture path, in a case or in its English block, points outside the fixtures folder or to a missing file
-- **THEN** the case file is refused with an error naming the case, before any database is created
+Source: tests/posture_evals/test_cases_fixture.py (BaseJetable, PassageAvecBaseJetable)
 
 #### Scenario: Cleanup
 - **WHEN** a run ends normally, with an error, or because another run holds the lock
@@ -168,9 +178,53 @@ Source: tests/posture_evals/test_cases_fixture.py (FixtureDansUnCas, Environneme
 - **WHEN** a failing case is replayed
 - **THEN** the database is emptied and the fixture loaded again before the replay
 
+### Requirement: Sessions read the disposable database with an invented author
+The system SHALL pass the disposable database and an invented author to the session environment and to the library server configuration of every case, so that no session reads the real cases. The temporary copy of the workspace SHALL never contain the local author file, so the author of every session comes from the environment only.
+
+Source: tests/posture_evals/test_cases_fixture.py (EnvironnementDesSeances, CopieSansFichierAuteur)
+
+#### Scenario: Case with a fixture
+- **WHEN** a case names a fixture with one case and one running experiment
+- **THEN** before the session the disposable database holds exactly them, numbered from 1, and the session environment and server configuration name the disposable database and the invented author
+
+#### Scenario: Local author file
+- **WHEN** the workspace holds a local author file and a case is prepared
+- **THEN** the temporary copy does not contain that file
+
+### Requirement: Fixture paths are checked before any database or session
+A fixture path SHALL exist and stay inside the fixtures folder of the evaluation set, and SHALL be checked before any database is created or any session played.
+
+Source: tests/posture_evals/test_cases_fixture.py (FixtureDansUnCas)
+
+#### Scenario: Fixture outside the folder
+- **WHEN** a fixture path, in a case or in its English block, points outside the fixtures folder or to a missing file
+- **THEN** the case file is refused with an error naming the case, before any database is created
+
+### Requirement: Disposable cases database that cannot be created
+When the disposable database cannot be created, the system SHALL pass a cases database name that does not exist and an empty author, and SHALL print the message of a database connection error (which names where the password is looked for, never a value) and, for any other error, its type only.
+
+Source: tests/posture_evals/test_cases_fixture.py (MessageDeBaseIndisponible, EnvironnementDesSeances)
+
+#### Scenario: Database cannot be created
+- **WHEN** the disposable database cannot be created
+- **THEN** a case with a fixture is reported as not evaluable here with the reason that the cases database is unavailable, and the other cases run with a cases database name that does not exist, never the real one, and with an empty author
+
 #### Scenario: Error message without secret
 - **WHEN** creating the database fails with an error other than a database connection error
 - **THEN** only the error type is printed, never its message
+
+### Requirement: Session copies survive no interruption
+The system SHALL convert SIGTERM and SIGHUP into the exit path of Ctrl-C, so that the copy of the running case is removed. At the start of a run, under the run lock, it SHALL list the worktrees of the repository located under the trials folder, and remove them only with `--remove-orphans`. It SHALL NOT list or touch a worktree outside that folder, nor the main checkout.
+
+Source: tests/posture_evals/test_copies_orphelines.py
+
+#### Scenario: Killed during a case
+- **WHEN** SIGTERM or SIGHUP arrives while a case copy exists
+- **THEN** the interruption is raised like Ctrl-C and the copy is removed by the case's cleanup
+
+#### Scenario: Orphan copy left by an earlier run
+- **WHEN** a run starts and a worktree remains under the trials folder
+- **THEN** it is listed and kept without the option, removed with `--remove-orphans`, and a worktree elsewhere is neither listed nor touched
 
 ### Requirement: Shipped cases cover the cases module
 The system SHALL ship three cases with invented fixtures, each with exactly one blocking criterion and non-blocking indicators, checking that a close case that worked is presented as a lead cited with its number, author, date and outcome and as a testimony; that a close case that failed is presented as a path already tried, to avoid or adapt; and that the user's running experiment is mentioned for information only with a proposal to add a note to it.

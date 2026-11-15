@@ -36,6 +36,10 @@
 # planifié, réseau absent) : état « reporte », nouvel essai au passage planifié suivant, une seule notification par jour.
 # Codes de sortie : 0, 1 (étape en échec, jour reporté compris), 2 (option inconnue), 3 (lancement manuel refusé : un passage est
 # en cours), 4 (repère impossible à écrire : aucun passage).
+# Heure due 05:00 (R-20261102-5, Q274), pas plus tard que l'heure du calendrier du modèle (07:10) : le rattrapage, lancé au chargement, démarre
+# la veille dès le premier démarrage du jour. Lancement planifié dû pendant une fin de branche (verrou de fin tenu, lu par
+# « uv run tools/pilot.py freeze --check », code 4) : sortie 0 sans rien écrire, nouvel essai au passage horaire (D8, Q278) ; autre code que
+# 0 et 4 : le passage a lieu, avec la ligne « verrou de fin illisible (code <n>) : passage lancé ». Jamais en lancement manuel.
 # Résumé du matin (R-50) : en fin de passage planifié terminé ou en échec, après le tableau de bord et l'écriture finale du repère,
 # « morning_summary.py --notify --failed-steps <étapes> » (variable PMZILLA_SUMMARY_NOTIFY=1), par le lien du dossier du labo. Il envoie
 # l'unique notification du passage, celle d'un échec comprise. S'il rend autre chose que 0 ou ne peut pas être lancé, la notification
@@ -76,7 +80,7 @@ WORKSPACE="$LAB_CONTENT_ROOT"
 export PMZILLA_LAB_WORKSPACE="$WORKSPACE"
 # Dossier de la veille : Watch-Lab, par la même logique que les scripts Python (watch_paths.py) ; sans python3, Watch-Lab.
 # Si seul l'ancien dossier (Veille-Lab) existe, watch_paths.py refuse (message sur stderr : nom actuel et
-# tools/migrate_watch.py) et la veille s'arrête avec le code 1.
+# « renommer à la main ») et la veille s'arrête avec le code 1.
 resoudre_watch_lab() {
   if command -v python3 >/dev/null 2>&1; then
     WATCH_LAB=$(python3 -B "$RACINE_CODE/tools/watch_paths.py" lab "$WORKSPACE") || { echo "=== Veille arrêtée : dossier de la veille à l'ancien nom ==="; exit 1; }
@@ -84,7 +88,9 @@ resoudre_watch_lab() {
   [[ -n "${WATCH_LAB:-}" ]] || WATCH_LAB="$WORKSPACE/Watch-Lab"
 }
 
-HEURE_DUE="07:10"
+# R-20261102-5 (Q274) : heure due pas plus tard que l'heure du modèle du calendrier (07:10) ; le rattrapage, au chargement, lance dès le premier démarrage.
+# Remplace : l'heure due 07:10 égale à l'heure du calendrier. Retrait : permanent tant que la veille et la sauvegarde tournent sur le Mac des fins (D6).
+HEURE_DUE="05:00"
 HEURE_LIMITE="22:00"
 DATA="${PMZILLA_LAB_DATA:-$HOME/.pmzilla-lab}"
 STAMP="$DATA/derniere-indexation"
@@ -182,7 +188,7 @@ verrou_perime() {   # 0 si le verrou existant est périmé (processus mort ou tr
   local pid debut age mtime
   pid=$(cat "$VERROU/pid" 2>/dev/null)
   if [[ "$pid" != <-> ]]; then   # création en cours, ou dossier abandonné
-    mtime=$(stat -f %m "$VERROU" 2>/dev/null)
+    mtime=$(stat -c %Y "$VERROU" 2>/dev/null || stat -f %m "$VERROU" 2>/dev/null)
     [[ "$mtime" == <-> ]] && (( $(date +%s) - mtime > 10 )) && return 0
     return 1
   fi
@@ -191,7 +197,7 @@ verrou_perime() {   # 0 si le verrou existant est périmé (processus mort ou tr
   if [[ "$debut" == <-> ]]; then
     age=$(( MAINTENANT - debut ))
   else
-    mtime=$(stat -f %m "$VERROU" 2>/dev/null)
+    mtime=$(stat -c %Y "$VERROU" 2>/dev/null || stat -f %m "$VERROU" 2>/dev/null)
     [[ "$mtime" == <-> ]] || return 1
     age=$(( $(date +%s) - mtime ))
   fi
@@ -391,11 +397,34 @@ dossier_de_contenu_est_arbre() {
   [[ "$contenu" == "${RACINE_CODE:A}"/* ]]
 }
 
+# Contrôle du gel (D8), lancement planifié dû seulement : « uv run tools/pilot.py freeze --check » depuis le dossier de code, sortie jetée.
+# Code 4 : une fin de branche tient le verrou, sortie 0 sans rien écrire. Code 0 : le passage continue. Autre code ou lancement impossible
+# (uv absent) : le passage continue, avec une ligne au journal. PMZILLA_WATCH_FREEZE_CHECK remplace la commande (tests seulement, jamais posée
+# par un modèle launchd). Remplace : les règles de session « aucune fin entre 06:15 et un état du matin vérifié » et « aucune fin qui traverse
+# 06:45 » (D8). Retrait : permanent tant que la veille et la sauvegarde tournent sur le Mac des fins (D8). PMZILLA_WATCH_FREEZE_CHECK remplace
+# rien : point d'injection pour les tests ; il tombe avec ce contrôle du gel.
+controler_gel() {
+  local code
+  if [[ -n "${PMZILLA_WATCH_FREEZE_CHECK:-}" ]]; then
+    sh -c "$PMZILLA_WATCH_FREEZE_CHECK" </dev/null >/dev/null 2>&1; code=$?
+  else
+    ( cd "$RACINE_CODE" && uv run tools/pilot.py freeze --check ) </dev/null >/dev/null 2>&1; code=$?
+  fi
+  case "$code" in
+    4) exit 0 ;;
+    0) ;;
+    *) echo "verrou de fin illisible (code $code) : passage lancé" ;;
+  esac
+}
+
 # --- Décision : le passage a-t-il lieu ? ---
 lire_repere
 if (( PLANIFIE )); then   # lecture sans sortie ; rien à faire : code 0, rien d'écrit
   [[ "$HEURE" < "$DUE" || "$HEURE" > "$LIMITE" ]] && exit 0
   if repere_du_jour && [[ "$R_ETAT" == (termine|echoue|interrompu) ]]; then exit 0; fi
+  # Morning-guard-light D8 (Q278) : le lancement est dû ; tant qu'une fin de branche tient le verrou de fin, il sort 0 sans rien écrire (le
+  # rattrapage horaire réessaie). Seul contrôle du verrou de fin : l'outil de pilotage, sans jeton, jamais le dossier du verrou.
+  controler_gel
 fi
 resoudre_watch_lab
 repere_inscriptible || refuser_repere

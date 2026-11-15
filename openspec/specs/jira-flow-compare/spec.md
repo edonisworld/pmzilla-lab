@@ -7,9 +7,9 @@ Describes the comparison tool that checks the database route against the CSV rou
 ## Requirements
 
 ### Requirement: Subcommands and exit codes
-The system SHALL offer `reports <report-a> <report-b>`. The exit code SHALL be 0 when there is no difference (with a "no difference" message), 1 when differences exist, and 2 when an input file cannot be read. The retired subcommand `data` SHALL be refused with exit code 2 and the key phrase of design D9, without any database connection or file read.
+The system SHALL offer `reports <report-a> <report-b>`. The exit code SHALL be 0 when there is no difference (with a "no difference" message), 1 when differences exist, and 2 when an input file cannot be read.
 
-Source: tests/flow_compare/test_flow_compare.py (test_main_rapports_codes_de_sortie, test_main_de_bout_en_bout, test_data_refusee_avec_la_phrase_de_la_conception_dans_les_deux_langues, test_data_ne_lit_aucun_fichier_et_n_ouvre_aucune_connexion)
+Source: tests/flow_compare/test_flow_compare.py (test_main_rapports_codes_de_sortie, test_main_de_bout_en_bout)
 
 #### Scenario: Equal reports
 - **WHEN** two reports differ only by their title
@@ -19,14 +19,19 @@ Source: tests/flow_compare/test_flow_compare.py (test_main_rapports_codes_de_sor
 - **WHEN** one line differs, or a file is absent
 - **THEN** the exit code is 1, respectively 2
 
+### Requirement: Retired data subcommand refused
+The retired subcommand `data` SHALL be refused with exit code 2 and the key phrase of design D9, without any database connection or file read.
+
+Source: tests/flow_compare/test_flow_compare.py (test_data_refusee_avec_la_phrase_de_la_conception_dans_les_deux_langues, test_data_ne_lit_aucun_fichier_et_n_ouvre_aucune_connexion)
+
 #### Scenario: Retired data subcommand
 - **WHEN** `data` is run with an export path
 - **THEN** the output holds "data is retired: the CSV route no longer exists", the exit code is 2, and no file or database is opened
 
 ### Requirement: Report comparison
-The system SHALL compare two Markdown reports line by line after normalizing the title, the merge line and the export line (file names versus "database" in either language, while a different count is still a difference), align the lines so one inserted line does not shift the rest, and report the remaining differences as a count per section number, with no content. A list in a different order SHALL be a localized difference.
+The system SHALL compare two Markdown reports line by line after normalizing the title, the merge line and the export line (file names versus "database" in either language, while a different count is still a difference), and report the remaining differences as a count per section number, with no content.
 
-Source: tests/flow_compare/test_flow_compare.py (test_rapports, test_alignement_*, test_ligne_export_*, test_ecarts_restants_*, test_listes_dans_un_autre_ordre_*)
+Source: tests/flow_compare/test_flow_compare.py (test_rapports, test_ligne_export_*, test_ecarts_restants_*)
 
 #### Scenario: Merge line ignored
 - **WHEN** one report adds a merge line and the same lines otherwise
@@ -35,6 +40,19 @@ Source: tests/flow_compare/test_flow_compare.py (test_rapports, test_alignement_
 #### Scenario: Per-section output
 - **WHEN** two sections have differing lines
 - **THEN** the output gives "section 2: 1 line(s) differ" and "section 3: 1 line(s) differ", without text, and never "section 0"
+
+### Requirement: Line alignment in report comparison
+The system SHALL align the lines of the two reports so one inserted line does not shift the rest. A list in a different order SHALL be a localized difference.
+
+Source: tests/flow_compare/test_flow_compare.py (test_alignement_*, test_listes_dans_un_autre_ordre_*)
+
+#### Scenario: One inserted line
+- **WHEN** one report holds one extra line and the same lines otherwise
+- **THEN** the lines after it are not counted as differences
+
+#### Scenario: List in another order
+- **WHEN** a list holds the same entries in a different order
+- **THEN** the difference is reported in that list's section only
 
 ### Requirement: Message catalogs
 The system SHALL keep consistent message catalogs across languages.

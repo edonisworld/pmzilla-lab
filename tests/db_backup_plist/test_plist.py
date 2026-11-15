@@ -63,10 +63,13 @@ class ModelePlist(unittest.TestCase):
         self.assertNotIn("PASSWORD", self.texte.upper())
         self.assertNotIn("security find-generic-password", self.texte)
 
-    def test_pas_de_demarrage_a_la_charge(self):
-        """Un bootstrap ne doit pas lancer une sauvegarde hors horaire ; le rattrapage au réveil vient de StartCalendarInterval."""
+    def test_demarrage_a_la_charge_et_passage_horaire_sans_keep_alive(self):
+        """R-20261102-3 et R-20261102-5 (Q275), réécrit : le modèle démarre à la charge et repasse toutes les heures (3600 s), en gardant
+        son heure du calendrier ; le dossier daté du jour rend les passages suivants sans effet. Toujours aucun KeepAlive."""
         donnees = self.rendu()
-        self.assertNotIn("RunAtLoad", donnees)
+        self.assertIs(donnees["RunAtLoad"], True)
+        self.assertEqual(donnees["StartInterval"], 3600)
+        self.assertEqual(donnees["StartCalendarInterval"], {"Hour": 7, "Minute": 45})
         self.assertNotIn("KeepAlive", donnees)
 
 

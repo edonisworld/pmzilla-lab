@@ -9,7 +9,7 @@ Le script est lancé comme l'utilisateur le lance, avec PMZILLA_LAB_WORKSPACE su
 - le tirage reproductible à graine fixe, et sans recouvrement avec les plus longs ;
 - les plus anciens encore dans le segment ;
 - aucune écriture sur le disque, aucun titre ni nom dans la sortie ;
-- --debuts : passages de Ready for Verification à Verification - Ongoing par projet ;
+- --debuts : passages de Awaiting Testing à Testing - Active par projet ;
 - --par-etat : temps par état (total, part, P50, P85, tickets), détail de l'échantillon, sorties groupées.
 """
 import datetime as dt
@@ -36,8 +36,8 @@ AUJOURDHUI = "2026-10-06"          # période : 2026-04-06 au 2026-10-04
 D = dt.date.fromisoformat
 JOURS = len(es.jours_ouvres(D("2026-04-06"), D("2026-10-04")))      # jours fériés français retirés : 124 et non 130
 ENTETE = "Issue key,Issue Type,Summary,Status,Created,Resolved,Resolution"
-REVUE = "Ready for Verification"
-IMPL = "Implementation - Ongoing"
+REVUE = "Awaiting Testing"
+IMPL = "Development - Active"
 
 
 def iso(jour: str) -> str:
@@ -57,7 +57,7 @@ class Atelier:
         (racine / "Flux-Lab" / "historique").mkdir(parents=True)
         (racine / "Flux-Lab" / "exports").mkdir()
         (racine / "Flux-Lab" / "flux.yaml").write_text(
-            "excluded_projects: [EXC]\nportfolio_types: [Initiative]\nwaiting_states: ['Ready for', 'On Hold']\n",
+            "excluded_projects: [EXC]\nportfolio_types: [Initiative]\nwaiting_states: ['Awaiting', 'Blocked']\n",
             encoding="utf-8")
         self.lignes, self.cache = [], {}
 
@@ -84,11 +84,11 @@ class Atelier:
 
 def construire(a: Atelier) -> None:
     # AAA-1 : deux visites (41 j puis 15 j), la première reste dans le segment en changeant d'état
-    a.ticket("AAA-1", "2026-05-01", "Accepted & Released", [
-        ("2026-05-02", "Open", "Code Review (Impl)"), ("2026-05-10", "Code Review (Impl)", REVUE),
-        ("2026-06-10", REVUE, "Verification - Ongoing"), ("2026-06-20", "Verification - Ongoing", IMPL),
-        ("2026-06-25", IMPL, REVUE), ("2026-07-10", REVUE, "Ready for Acceptance"),
-        ("2026-07-20", "Ready for Acceptance", "Accepted & Released")], resolu="2026-07-20", motif="Accepted & Released")
+    a.ticket("AAA-1", "2026-05-01", "Shipped", [
+        ("2026-05-02", "Open", "Peer Review (Dev)"), ("2026-05-10", "Peer Review (Dev)", REVUE),
+        ("2026-06-10", REVUE, "Testing - Active"), ("2026-06-20", "Testing - Active", IMPL),
+        ("2026-06-25", IMPL, REVUE), ("2026-07-10", REVUE, "Awaiting Acceptance"),
+        ("2026-07-20", "Awaiting Acceptance", "Shipped")], resolu="2026-07-20", motif="Shipped")
     # FFF-1 : résolu depuis le segment (60 j) ; GGG-1 : créé directement dans le segment (30 j)
     a.ticket("FFF-1", "2026-05-01", "Done", [("2026-05-02", "Open", REVUE), ("2026-07-01", REVUE, "Done")],
              resolu="2026-07-01", motif="Done")
@@ -127,15 +127,15 @@ def lignes_de(sortie: str, titre: str) -> list[list[str]]:
 
 
 def ticket_a_l_heure(a: Atelier, cle: str, entree: str, sortie: str, resolu_a: str, motif: str = "Done") -> None:
-    """Ticket qui entre dans « Ready for Verification » le jour `entree`, passe en vérification le lendemain, puis est
+    """Ticket qui entre dans « Awaiting Testing » le jour `entree`, passe en vérification le lendemain, puis est
     résolu depuis le segment le jour `sortie`, à l'heure `resolu_a` (AAAA-MM-JJ HH:MM)."""
     resolu = dt.datetime.strptime(resolu_a, "%Y-%m-%d %H:%M").strftime(FMT)
     cree = D("2026-04-20").strftime(FMT)
     a.lignes.append(f"{cle},Story,TITRE SECRET {cle},Done,{cree},{resolu},{motif}")
     suite = (D(entree) + dt.timedelta(days=1)).isoformat()
     a.cache[cle] = {"termine": True, "transitions": [
-        [iso(entree), "Open", REVUE], [iso(suite), REVUE, "Verification - Ongoing"],
-        [iso(sortie), "Verification - Ongoing", "Done"]]}
+        [iso(entree), "Open", REVUE], [iso(suite), REVUE, "Testing - Active"],
+        [iso(sortie), "Testing - Active", "Done"]]}
 
 
 def construire_lots(a: Atelier) -> None:
@@ -184,7 +184,7 @@ class TestFermeturesEnLot(unittest.TestCase):
         sortie = self.lancer("--exclude-batch-closures")
         entete = sortie.split("## États du segment", 1)[0]
         self.assertIn("Fermetures en lot écartées (--exclude-batch-closures) : 6 tickets sortis du segment, "
-                      "6 passages de « Ready for Verification » à « Verification - Ongoing ».", entete)
+                      "6 passages de « Awaiting Testing » à « Testing - Active ».", entete)
         self.assertNotIn("sans heure de résolution", sortie)
 
     def test_tous_les_calculs_sont_faits_sans_les_tickets_ecartes(self):
@@ -240,7 +240,7 @@ class TestEchantillon(unittest.TestCase):
         sortie = self.lancer("--longest", "100")
         par_cle = {r[0]: r for r in lignes_de(sortie, "## Les ")}
         # colonnes : clé, projet, jours, visites, entrée, sortie, jours de la visite, origine, destination
-        self.assertEqual(par_cle["AAA-1"][1:], ["AAA", "56", "2", "2026-05-10", "2026-06-20", "41", "Code Review (Impl)", IMPL])
+        self.assertEqual(par_cle["AAA-1"][1:], ["AAA", "56", "2", "2026-05-10", "2026-06-20", "41", "Peer Review (Dev)", IMPL])
         self.assertEqual(par_cle["FFF-1"][1:], ["FFF", "60", "1", "2026-05-02", "2026-07-01", "60", "Open", "Done"])
         self.assertEqual(par_cle["GGG-1"][1:5], ["GGG", "30", "1", "2026-06-01"])
         self.assertEqual(par_cle["GGG-1"][7], "(création)")
@@ -258,9 +258,9 @@ class TestEchantillon(unittest.TestCase):
 
     def test_etats_du_segment_et_population(self):
         sortie = self.lancer()
-        for etat in ("Ready for Review (Implementation)", "Ready for Verification", "Verification - On Hold"):
+        for etat in ("Awaiting Review (Development)", "Awaiting Testing", "Testing - Blocked"):
             self.assertIn(f"- {etat}", sortie)
-        self.assertNotIn("- Code Review (Impl)", sortie)
+        self.assertNotIn("- Peer Review (Dev)", sortie)
         self.assertIn("1 sans historique", sortie)
         self.assertIn("(2 écartés)", sortie)                       # EXC-1 (projet) et INI-1 (type)
         # 40 BBB + 3 CCC + AAA-1 + FFF-1 + GGG-1 = 46 tickets sortis pendant la période
@@ -362,8 +362,8 @@ class TestEchantillon(unittest.TestCase):
 
 class TestParEtat(unittest.TestCase):
     """--par-etat : temps par état, détail de l'échantillon, sorties groupées."""
-    ETATS = ["Ready for Review (Implementation)", "Review - Ongoing (Impl.)", "Review - On Hold (Impl.)",
-             "Ready for Verification", "Verification", "Verification - Ongoing", "Verification - On Hold"]
+    ETATS = ["Awaiting Review (Development)", "Review - Active (Dev.)", "Review - Blocked (Dev.)",
+             "Awaiting Testing", "Testing", "Testing - Active", "Testing - Blocked"]
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -386,10 +386,10 @@ class TestParEtat(unittest.TestCase):
         self.assertEqual(list(lignes), self.ETATS)                       # les 7 états, dans l'ordre du réglage
         revue = [*range(1, 41), 200, 190, 180, 46, 60, 30]                # BBB, CCC, AAA-1, FFF-1, GGG-1
         p50, p85 = np.percentile(revue, 50), np.percentile(revue, 85)
-        self.assertEqual(lignes["Ready for Verification"][1:], [
+        self.assertEqual(lignes["Awaiting Testing"][1:], [
             "46", "1526", f"{100 * 1526 / 1536:.1f} %", f"{p50:.0f}", f"{p85:.0f}"])
-        self.assertEqual(lignes["Verification - Ongoing"][1:], ["1", "10", f"{100 * 10 / 1536:.1f} %", "10", "10"])
-        self.assertEqual(lignes["Verification"][1:], ["0", "0", "0.0 %", "-", "-"])
+        self.assertEqual(lignes["Testing - Active"][1:], ["1", "10", f"{100 * 10 / 1536:.1f} %", "10", "10"])
+        self.assertEqual(lignes["Testing"][1:], ["0", "0", "0.0 %", "-", "-"])
         self.assertIn("Total du segment : 1536 j", sortie)
         self.assertEqual(sum(int(r[2]) for r in lignes.values()), 1536)   # les états rendent le temps du segment
 
@@ -403,15 +403,15 @@ class TestParEtat(unittest.TestCase):
         self.assertEqual(detail["DDD-1"][1:], ["encore dans le segment", "219", "-", "-", "-", "219", "-", "-", "-"])
         for cle, ligne_ in detail.items():
             if ligne_[1] == "tiré près de la médiane":
-                self.assertEqual(ligne_[2], ligne_[6])                    # un seul état : total = Ready for Verification
+                self.assertEqual(ligne_[2], ligne_[6])                    # un seul état : total = Awaiting Testing
 
     def test_detail_d_un_ticket_encore_dedans_avec_deux_visites(self):
         a = self.atelier
-        a.ticket("III-1", "2026-04-01", "Verification - On Hold", [
-            ("2026-04-02", "Open", REVUE), ("2026-04-12", REVUE, IMPL), ("2026-05-01", IMPL, "Verification - On Hold")])
+        a.ticket("III-1", "2026-04-01", "Testing - Blocked", [
+            ("2026-04-02", "Open", REVUE), ("2026-04-12", REVUE, IMPL), ("2026-05-01", IMPL, "Testing - Blocked")])
         a.ecrire()
         detail = {r[0]: r for r in lignes_de(self.lancer("--oldest", "10"), "## Détail par état")}
-        # 10 j dans « Ready for Verification », puis 158 j en cours dans « Verification - On Hold » (au 2026-10-06)
+        # 10 j dans « Awaiting Testing », puis 158 j en cours dans « Testing - Blocked » (au 2026-10-06)
         self.assertEqual(detail["III-1"][1:], ["encore dans le segment", "168", "-", "-", "-", "10", "-", "-", "158"])
 
     def test_sorties_groupees(self):
@@ -436,8 +436,8 @@ class TestParEtat(unittest.TestCase):
 
 
 class TestDebuts(unittest.TestCase):
-    """--debuts : passages de Ready for Verification à Verification - Ongoing, par projet."""
-    VERIF = "Verification - Ongoing"
+    """--debuts : passages de Awaiting Testing à Testing - Active, par projet."""
+    VERIF = "Testing - Active"
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -445,7 +445,7 @@ class TestDebuts(unittest.TestCase):
         self.a = a = Atelier(Path(self._tmp.name))
         a.ticket("RRR-1", "2026-03-01", "Done", [("2026-03-05", "Open", IMPL), ("2026-04-08", IMPL, "Done")],
                  resolu="2026-04-08", motif="Done")           # fixe le début de la période (voir construire)
-        # PPP : 25 passages entrés en « Ready for Verification » le 05-01 : 10 le 05-11, 7 le 05-08, 8 jours à 1
+        # PPP : 25 passages entrés en « Awaiting Testing » le 05-01 : 10 le 05-11, 7 le 05-08, 8 jours à 1
         jours = [11] * 10 + [8] * 7 + [2, 3, 4, 5, 6, 7, 9, 12]
         for i, j in enumerate(jours, 1):
             self.passage("PPP", i, j)
@@ -498,8 +498,8 @@ class TestDebuts(unittest.TestCase):
             ("2026-05-01", "Open", REVUE), ("2026-05-05", REVUE, self.VERIF), ("2026-05-10", self.VERIF, IMPL),
             ("2026-05-20", IMPL, REVUE), ("2026-05-23", REVUE, self.VERIF), ("2026-05-30", self.VERIF, IMPL)])
         a.ticket("UUU-2", "2026-04-20", IMPL, [
-            ("2026-05-01", "Open", REVUE), ("2026-05-05", REVUE, "Verification"),
-            ("2026-05-06", "Verification", self.VERIF), ("2026-05-12", self.VERIF, IMPL)])
+            ("2026-05-01", "Open", REVUE), ("2026-05-05", REVUE, "Testing"),
+            ("2026-05-06", "Testing", self.VERIF), ("2026-05-12", self.VERIF, IMPL)])
         a.ecrire()
         ligne = {r[0]: r for r in lignes_de(self.lancer("--min-passes", "1"), "## Passages de")}["UUU"]
         self.assertEqual(ligne[1:5] + ligne[12:], ["2", "2", "1", "50.0 %", "4"])  # attentes 4 et 3 j, P50 3,5 arrondi à 4 ; un jour retenu sur deux
@@ -720,6 +720,67 @@ class TestIndicateurDeReference(unittest.TestCase):
         deux = es.affichage_debuts(self.sortis(self.OUVRES[2::5]) + self.sortis([self.OUVRES[10]] * 40, "QQQ"), 1, self.DEBUT, self.FIN, 42, t)
         avec = [c.strip() for c in next(l for l in deux if l.startswith("| PPP |")).strip("|").split("|")]
         self.assertEqual(seul[5:8], avec[5:8])
+
+
+class TestEtatsDuPassageReglables(unittest.TestCase):
+    """R-20261112-27 : les deux états de --starts viennent de `sample_starts` ; défauts neutres, noms posés fictifs."""
+
+    PERIODES = [("Alpha Wait", D("2026-05-04"), D("2026-05-08")), ("Alpha Run", D("2026-05-08"), D("2026-05-12")),
+                ("Awaiting Testing", D("2026-05-12"), D("2026-05-15")), ("Testing - Active", D("2026-05-15"), D("2026-05-20"))]
+    VISITE = [{"premier": 0, "dernier": 3}]
+
+    def test_defaut_neutre_sans_la_cle(self):
+        self.assertEqual(es.etats_du_passage({}), ("Awaiting Testing", "Testing - Active"))
+        self.assertEqual(es.etats_du_passage({"sample_starts": {"started": "Alpha Run"}}), ("Awaiting Testing", "Alpha Run"))
+        self.assertEqual(es.passages(self.PERIODES, self.VISITE), [(D("2026-05-15"), 3)])
+
+    def test_valeurs_posees_dans_le_yaml(self):
+        import flux_config
+        from yaml_strict import charger
+        reglages = flux_config.to_internal(charger("sample_starts:\n  waiting: ' alpha wait '\n  started: Alpha Run\n"))
+        etats = es.etats_du_passage(reglages)
+        self.assertEqual(etats, ("alpha wait", "Alpha Run"))
+        self.assertEqual(es.passages(self.PERIODES, self.VISITE, etats), [(D("2026-05-08"), 4)])
+
+    def test_cle_mal_formee_refusee(self):
+        import flux_config
+        from yaml_strict import ErreurConfig, charger
+        for texte in ("sample_starts: Alpha\n", "sample_starts:\n  waiting: ''\n", "sample_starts:\n  waiting: 7\n",
+                      "sample_starts:\n  inconnue: Alpha\n", "sample_starts:\n  waiting: Alpha\n  started: ALPHA\n"):
+            with self.assertRaises(ErreurConfig, msg=texte) as c:
+                flux_config.to_internal(charger(texte))
+            self.assertIn("sample_starts", str(c.exception))
+            self.assertNotIn("alpha", str(c.exception).casefold())
+
+    def test_deux_etats_identiques_apres_application_des_defauts_refuses(self):
+        """Une sous-clé seule égale (sans la casse) au défaut de l'autre est refusée : la comparaison suit les défauts."""
+        import flux_config
+        from yaml_strict import ErreurConfig, charger
+        for texte in ("sample_starts:\n  started: ' AWAITING testing '\n", "sample_starts:\n  waiting: testing - active\n"):
+            with self.assertRaises(ErreurConfig, msg=texte) as c:
+                flux_config.to_internal(charger(texte))
+            self.assertIn("sample_starts", str(c.exception))
+        flux_config.to_internal(charger("sample_starts:\n  started: Alpha Run\n"))       # un défaut différent reste admis
+
+    def test_de_bout_en_bout_les_deux_etats_du_yaml_arrivent_a_starts(self):
+        """Deux états fictifs posés dans `sample_starts` et dans `segments` : --starts ne s'arrête pas et l'en-tête les nomme.
+        Sans la transmission du réglage, les défauts (hors du segment fictif) arrêteraient la sortie (starts_states_outside, code 1)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Atelier(Path(tmp))
+            (a.ws / "Flux-Lab" / "flux.yaml").write_text(
+                "excluded_projects: [EXC]\nportfolio_types: [Initiative]\n"
+                "segments:\n  review_verification: [Alpha Wait, Alpha Run]\n"
+                "sample_starts:\n  waiting: Alpha Wait\n  started: Alpha Run\n", encoding="utf-8")
+            a.ticket("RRR-1", "2026-03-01", "Done", [("2026-03-05", "Open", IMPL), ("2026-04-08", IMPL, "Done")],
+                     resolu="2026-04-08", motif="Done")           # fixe le début de la période (voir construire)
+            for i in range(1, 4):
+                a.ticket(f"PPP-{i}", "2026-04-20", IMPL, [
+                    ("2026-05-01", "Open", "Alpha Wait"), (f"2026-05-0{i + 1}", "Alpha Wait", "Alpha Run"),
+                    ("2026-05-25", "Alpha Run", IMPL)])
+            sortie = a.lancer(SCRIPT, str(a.ecrire()), "--today", AUJOURDHUI, "--starts", "--min-passes", "1")
+        self.assertIn("## Passages de « Alpha Wait » à « Alpha Run » par projet", sortie)
+        self.assertEqual([r[0] for r in lignes_de(sortie, "## Passages de")], ["PPP"])
+        self.assertNotIn("Awaiting Testing", sortie)
 
 
 if __name__ == "__main__":

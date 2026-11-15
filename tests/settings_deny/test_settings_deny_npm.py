@@ -50,6 +50,7 @@ from test_settings_deny import motif_en_regex  # noqa: E402
 
 REGLAGES = RACINE / ".claude" / "settings.json"
 SAUT = "règles npm et Node non posées"
+SAUT_NPM_CI = "règles de npm ci encore posées (retrait par le fichier d'étape de l'auteur)"
 ABSENTE = "garde npm : règle absente de .claude/settings.json : "
 JOKER = "garde npm : joker en tête de règle : "
 
@@ -105,8 +106,15 @@ def tetes(commande: str, racines=RACINES_ABSOLUES) -> list:
     return [commande, f"cd * && {commande}", f"cd *; {commande}", f"env *{commande}"] + [f"{r}{commande}" for r in racines]
 
 
+# Change npm-ci-session (design D8, décision R-20261031-53) : ces deux règles ne sont plus déclarées. `npm ci` nu et `cd … && npm ci` nu sont
+# laissés à la garde npm (tools/npm_guard.py), seule barrière de ces deux formes ; les quatorze autres règles de `ci` restent. Source : la garde
+# pour ces deux formes, les règles deny pour toutes les autres ; l'écart se détecte dans tests/npm_guard (test de l'écart, D9). Tombe avec le
+# changement qui retire l'exception de la garde (D11), qui remet ces deux règles.
+REGLES_RETIREES = ("Bash(npm* ci)", "Bash(cd * && npm* ci)")
+
+
 def regles_npm() -> list:
-    return [f"Bash({t} {m})" for t in tetes("npm*") for m in motifs_npm()]
+    return [r for r in (f"Bash({t} {m})" for t in tetes("npm*") for m in motifs_npm()) if r not in REGLES_RETIREES]
 
 
 def regles_npx() -> list:
@@ -131,7 +139,7 @@ def regles_attendues() -> list:
 
 def familles() -> list:
     """Le bloc par famille, une ligne par commande : (commande, têtes, règles) ; la somme des règles est la taille du bloc."""
-    lignes = [(f"npm {m}", 8, 8 * len(motifs_du_mot(m))) for m in MOTS_NPM]
+    lignes = [(f"npm {m}", 8, 8 * len(motifs_du_mot(m)) - (len(REGLES_RETIREES) if m == "ci" else 0)) for m in MOTS_NPM]
     lignes.append(("npx", 8, 8))
     lignes += [(f"node {m.rstrip(' *')}" + (" (avec argument)" if m.endswith(" *") else ""), 8, 16) for m in MOTIFS_NODE]
     for g in GESTIONNAIRES:
@@ -155,6 +163,11 @@ def manquantes_dans(deny: list) -> list:
     if not presentes:
         return []
     return [f"{ABSENTE}{r}" for r in regles_attendues() if r not in deny]
+
+
+def posees_encore(deny: list) -> list:
+    """Les règles retirées de D8 (npm-ci-session) que le fichier de réglages tient encore."""
+    return [r for r in REGLES_RETIREES if r in deny]
 
 
 def deny_de(chemin: Path) -> list:
@@ -230,9 +243,26 @@ LIMITES = (
 )
 
 
+# Change npm-ci-session (D8, D9) : `npm ci` et `cd <dossier> && npm ci` nus ne sont plus refusés par une règle (la garde npm décide) ; une option
+# écrite avant `ci` (`npm --prefix mothra ci`) n'est plus appariée non plus : effet énoncé, refusé par la garde comme forme non admise.
+FORMES_ADMISES = ("npm ci", "cd mothra && npm ci", "cd ~/PMZilla-Lab/worktrees/wt-feat-x/mothra && npm ci")
+EFFETS_LAISSES_A_LA_GARDE = (
+    "npm --prefix mothra ci", "npm -w server ci", "npm --workspace=web ci", "npm --prefix=mothra --loglevel silent ci",
+    "cd mothra && npm --prefix . ci",
+)
+LANCEURS_DE_LA_GARDE = tuple(l for l in LANCEURS_NPM[:7] if "; " not in l)   # les sept premiers sont les têtes `npm*` et `cd * && npm*`
+
+
+def laissee_a_la_garde(commande: str) -> bool:
+    """Vrai pour une commande de la matrice que les deux règles retirées de D8 refusaient seules."""
+    return any(commande == lanceur.format("ci") for lanceur in LANCEURS_DE_LA_GARDE)
+
+
 def refusees():
     """Toutes les commandes que le bloc doit refuser."""
     for lanceur, mot, suite in itertools.product(LANCEURS_NPM, MOTS_NPM, SUITES):
+        if laissee_a_la_garde(lanceur.format(mot + suite)):
+            continue
         yield lanceur.format(mot + suite)
     for lanceur, speciale in itertools.product(LANCEURS_NPM, SPECIALES):
         yield lanceur.format(speciale)
@@ -260,8 +290,19 @@ def refusees_a_tort(moteur: Moteur, commandes) -> list:
 class Declaration(unittest.TestCase):
     def test_comptes(self):
         self.assertEqual(len(motifs_npm()), 13)
-        self.assertEqual((len(regles_npm()), len(regles_npx()), len(regles_node()), len(regles_gestionnaires())), (104, 8, 96, 65))
-        self.assertEqual(len(regles_attendues()), 273)
+        # R-20261031-53 (npm-ci-session D8) : 104 et 273 moins les deux règles de `npm ci` nu et de `cd … && npm ci` nu
+        self.assertEqual((len(regles_npm()), len(regles_npx()), len(regles_node()), len(regles_gestionnaires())), (102, 8, 96, 65))
+        self.assertEqual(len(regles_attendues()), 271)
+
+    def test_les_deux_regles_de_npm_ci_nu_ne_sont_plus_declarees_et_les_quatorze_autres_restent(self):
+        declarees = regles_attendues()
+        for regle in REGLES_RETIREES:
+            self.assertNotIn(regle, declarees)
+        restantes_ci = [r for r in declarees if r.endswith(" ci)") or r.endswith(" ci *)")]
+        self.assertEqual(len(restantes_ci), 14)
+        for regle in ("Bash(npm* ci *)", "Bash(cd * && npm* ci *)", "Bash(cd *; npm* ci)", "Bash(env *npm* ci)",
+                      "Bash(/opt/homebrew/bin/npm* ci)", "Bash(~/.local/share/fnm/aliases/default/bin/npm* ci)"):
+            self.assertIn(regle, declarees)
 
     def test_les_familles_rendent_compte_du_bloc(self):
         self.assertEqual(sum(n for _, _, n in familles()), len(regles_attendues()))
@@ -310,11 +351,30 @@ class MatriceDuBloc(unittest.TestCase):
 
     def test_formes_de_la_spec(self):
         """Les scénarios de la spec validée, mot pour mot."""
-        for commande in ("npm install fastify", "npm i", "npm --prefix mothra install", "cd mothra && npm ci", "npm ci --offline",
+        # R-20261031-53 : "cd mothra && npm ci" n'est plus ici, sa règle est retirée (voir test_npm_ci_nu_laisse_a_la_garde)
+        for commande in ("npm install fastify", "npm i", "npm --prefix mothra install", "cd mothra && npm ci --offline", "npm ci --offline",
                          "env npm update", "/opt/homebrew/bin/npm install", "npx fastify", "cd mothra && npx tsc", "npm exec fastify",
                          'node -e "1"', "node --print 1", "node -pe 1", "node - < script.js", "yarn add fastify", "pnpm install",
                          "bunx fastify", "npm --prefix mothra run install-check"):
             self.assertTrue(self.bloc.interdite(commande), commande)
+
+    def test_npm_ci_nu_laisse_a_la_garde(self):
+        """R-20261031-53 (npm-ci-session D8, D9) : aucune règle du bloc déclaré n'apparie `npm ci` ni `cd <dossier> && npm ci`."""
+        self.assertEqual(refusees_a_tort(self.bloc, FORMES_ADMISES), [])
+
+    def test_option_avant_ci_laissee_a_la_garde_effet_enonce(self):
+        """Effet énoncé (D8) : sans la règle `npm* ci`, une option écrite avant `ci` n'est plus appariée ; la garde la refuse (forme non admise)."""
+        self.assertEqual(refusees_a_tort(self.bloc, EFFETS_LAISSES_A_LA_GARDE), [])
+
+    def test_les_autres_formes_de_ci_restent_refusees(self):
+        for commande in ("cd mothra && npm ci --offline", "npm ci --offline", "npm ci --ignore-scripts", "npm ci fastify", "cd mothra; npm ci",
+                         "env npm ci", "env NODE_ENV=test npm ci", "/opt/homebrew/bin/npm ci", "env /opt/homebrew/bin/npm ci",
+                         f"{ABS_FNM[0]}npm ci", f"{ABS_FNM[1]}npm ci", f"{ABS_FNM[2]}npm ci"):
+            self.assertTrue(self.bloc.interdite(commande), commande)
+
+    def test_la_matrice_ne_garde_pas_les_formes_laissees_a_la_garde(self):
+        for commande in FORMES_ADMISES + EFFETS_LAISSES_A_LA_GARDE:
+            self.assertNotIn(commande, set(refusees()), commande)
 
     def test_commandes_permises_non_refusees(self):
         self.assertEqual(refusees_a_tort(self.bloc, PERMISES), [])
@@ -388,6 +448,35 @@ class DansLeFichierDeReglages(unittest.TestCase):
         manquantes = non_refusees(reel, refusees())
         self.assertEqual(manquantes[:10], [], f"{len(manquantes)} commande(s) non refusée(s) par les règles réelles")
         self.assertEqual(refusees_a_tort(reel, PERMISES), [])
+
+    def test_npm_ci_nu_contre_les_regles_reelles(self):
+        """R-20261031-53 (D9) : tant qu'une des deux règles retirées est encore dans les réglages (retrait par le fichier d'étape de l'auteur),
+        le rejeu saute ; une fois les deux retirées, aucune règle réelle n'apparie `npm ci` ni `cd <dossier> && npm ci`."""
+        if manquantes_dans(self.deny):
+            self.skipTest("pose partielle : voir test_tout_le_bloc_est_pose")
+        if posees_encore(self.deny):
+            self.skipTest(SAUT_NPM_CI)
+        self.assertEqual(refusees_a_tort(Moteur(self.deny), FORMES_ADMISES), [])
+
+
+class RetraitDesDeuxReglesDeNpmCi(unittest.TestCase):
+    """Les trois états du fichier de réglages, sur de faux fichiers : les deux règles encore posées, une seule posée, aucune."""
+
+    def test_posees_encore(self):
+        bloc = regles_attendues()
+        self.assertEqual(posees_encore(bloc), [])
+        self.assertEqual(posees_encore(bloc + list(REGLES_RETIREES)), list(REGLES_RETIREES))
+        self.assertEqual(posees_encore(bloc + [REGLES_RETIREES[1]]), [REGLES_RETIREES[1]])
+
+    def test_la_pose_complete_avec_les_deux_regles_encore_la_ne_manque_rien(self):
+        self.assertEqual(manquantes_dans(regles_attendues() + list(REGLES_RETIREES)), [])
+
+    def test_les_deux_regles_encore_posees_refusent_les_formes_admises(self):
+        moteur = Moteur(regles_attendues() + list(REGLES_RETIREES))
+        self.assertEqual(refusees_a_tort(moteur, FORMES_ADMISES), list(FORMES_ADMISES))
+
+    def test_la_phrase_de_saut(self):
+        self.assertEqual(SAUT_NPM_CI, "règles de npm ci encore posées (retrait par le fichier d'étape de l'auteur)")
 
 
 if __name__ == "__main__":

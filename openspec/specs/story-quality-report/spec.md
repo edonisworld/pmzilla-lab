@@ -23,6 +23,21 @@ The system SHALL write one section per team, in name order. Each section SHALL g
 - **WHEN** the report is written for three teams
 - **THEN** it has three team sections in name order, and the notice "Team results: never a person's evaluation, never a ranking" follows the title
 
+### Requirement: A team has a section only when an audited count is visible
+The Markdown report SHALL write a team section only for the teams that the service result marks with a section. It SHALL sum up the other teams in one line, with no name, ending with their number from the service result, and SHALL write no such line when every team has a section. The masking SHALL stay unchanged.
+
+#### Scenario: Teams with nothing visible
+- **WHEN** two teams show audited counts and a third has all its counts masked
+- **THEN** the report has two team sections and one line "Other teams without a section (not reviewed or under the masking threshold): 1", with no name of the third team, while the JSON still lists three teams
+
+#### Scenario: Every team visible
+- **WHEN** every team shows an audited count
+- **THEN** the report has no "Other teams" line
+
+#### Scenario: French line
+- **WHEN** the report is written in French with one team without a section
+- **THEN** it holds "Autres équipes sans section (non relues ou sous le seuil de masquage) : 1"
+
 ### Requirement: The report states the grid versions and the overlay's effect
 The system SHALL write, after the legend that follows the notice, the grid-versions key phrase of design D14 with the core and overlay versions, or the no-overlay form. When the overlay disables core criteria, it SHALL list their codes with the disabled-criteria key phrase, without the reasons. Every overlay criterion SHALL carry the organisation-rule mark. The report SHALL NOT write the overlay's identifier. Untested until implemented.
 
@@ -42,7 +57,7 @@ The system SHALL read the organisation overlay for the report through the same r
 - **THEN** `report` exits with code 3, its error output holds "organisation overlay refused" without the name, no view is read and no file is written
 
 ### Requirement: The report never compares teams
-The system SHALL NOT write a table, a line or a chart holding figures of two teams. It SHALL NOT give a composite score, a total per team, a ranking, an order by result, a count of teams, a figure across teams other than the product-chain section's product counts, or any figure per person or per PO. The order of the sections SHALL NOT depend on the results. Untested until implemented.
+The system SHALL NOT write a table, a line or a chart holding figures of two teams. It SHALL NOT give a composite score, a total per team, a ranking, an order by result, a count of teams other than the number of teams without a section and the single-team mark, a figure across teams other than the product-chain section's product counts, or any figure per person or per PO. The order of the sections SHALL NOT depend on the results.
 
 #### Scenario: No-comparison guard
 - **WHEN** the report is written for three teams with very different results
@@ -51,6 +66,10 @@ The system SHALL NOT write a table, a line or a chart holding figures of two tea
 #### Scenario: Results swapped
 - **WHEN** the results of two teams are swapped in the fixture
 - **THEN** the section order is unchanged
+
+#### Scenario: Only the allowed counts of teams
+- **WHEN** the report is written for three teams, one of them without a section
+- **THEN** the only number of teams it holds is the one of the "Other teams" line
 
 ### Requirement: Each team section ends with its probable causes in the chain
 The system SHALL end each team's section with the probable-causes sub-section of design D18: its heading and notice, then one line per recurrent defect of that team, giving the criterion's label, its origin mark, the share not met with its denominator and its link label. A defect is recurrent when its share not met reaches the configured threshold. Untested until implemented.
@@ -101,7 +120,7 @@ The system SHALL NOT write the product line of a criterion whose product row the
 - **THEN** the product line for that criterion is written as the view gives it, with no masking recomputed by the report
 
 ### Requirement: The product-chain section names no team and holds no per-team figure
-The system SHALL NOT write in the product-chain section a team name, a figure of one team, a list or count of the teams sharing a defect, or a person. It SHALL NOT compute product figures by summing team cells, and SHALL NOT treat a masked product cell (under five) as recurrent or estimate it. Untested until implemented.
+The system SHALL NOT write in the product-chain section a team name, a figure of one team, a list or count of the teams sharing a defect, or a person; the single-team mark is its only mention of teams. It SHALL NOT compute product figures by summing team cells, and SHALL NOT treat a masked product cell (under five) as recurrent or estimate it.
 
 #### Scenario: No team in the section
 - **WHEN** three teams with distinctive names have recurrent defects that make a product defect
@@ -178,8 +197,41 @@ The system SHALL print, with `report --name <series> --json`, the report data co
 - **THEN** its counts and shares in the JSON are masked-cell objects with the effective threshold, and no number is given for them
 
 ### Requirement: The report data contract has a closed key set
-The system SHALL NOT put in the report data contract a key outside design D15: no rank, score, composite, total per team, order by result, count of teams, ticket key, title, story text, person, coaching value, sample verdict, overlay identifier or disabling reason. Untested until implemented.
+The system SHALL NOT put in the report data contract a key outside design D15 and its version 2: no rank, score, composite, total per team, order by result, count of teams other than `teams_without_section`, ticket key, title, story text, person, coaching value, sample verdict, overlay identifier or disabling reason.
 
 #### Scenario: Closed key set
 - **WHEN** the JSON document is checked against the contract
 - **THEN** no key outside the contract appears, the product chain has no team field, and no distinctive string of the fixture's keys, texts or coaching feedback appears
+
+### Requirement: The service result marks the teams with a section and counts the others
+The report service function SHALL mark each team entry with whether it has a section, that is whether at least one of its audited counts is visible at the effective threshold, and SHALL give the number of team entries without a section, the row of items without a team left out. This number SHALL be one count for the whole report, never per team, never masked and never a masked-cell object. The Markdown SHALL only format these values.
+
+#### Scenario: Number of teams without a section
+- **WHEN** two teams show audited counts, a third has all its counts masked, and the coverage view holds a row of items without a team
+- **THEN** the service result marks the first two with a section, the third without, and gives 1 as the number of teams without a section
+
+#### Scenario: Raised threshold
+- **WHEN** the effective threshold is raised above the audited count of one of two visible teams
+- **THEN** that team has no section and the number of teams without a section grows by one
+
+### Requirement: The product chain says when it rests on one reviewed team
+The report service function SHALL mark the product chain as resting on one team when exactly one team has at least one row in the per-team results view, the row of items without a team left out, reading the presence of rows only. The product-chain section SHALL then write the single-team key phrase under its notice, naming no team. The mark SHALL change no figure, mask nothing and not depend on the effective threshold.
+
+#### Scenario: One reviewed team
+- **WHEN** the per-team view holds rows of one team only, all its cells masked
+- **THEN** the product-chain section holds "This chain rests on one reviewed team only: its lines are that team's results, not the whole product's", with no team name
+
+#### Scenario: Two reviewed teams
+- **WHEN** the per-team view holds rows of two teams
+- **THEN** the product-chain section holds no single-team phrase
+
+#### Scenario: French phrase
+- **WHEN** the report is written in French for one reviewed team
+- **THEN** the product-chain section holds "Cette chaîne ne repose que sur une équipe relue : ses lignes sont les résultats de cette équipe, pas ceux du produit entier"
+
+### Requirement: The report data contract is at version 2
+The report data contract SHALL carry contract version 2. Beyond version 1, it SHALL hold the boolean `section` in each team entry, the integer `teams_without_section` at the top level and the boolean `single_team` in the product chain, as plain values, never masked-cell objects. No other key SHALL be added or removed.
+
+#### Scenario: Version 2 keys
+- **WHEN** `report --name pilot --json` runs on views holding results for one visible team and one fully masked team
+- **THEN** the document has contract version 2, `teams_without_section` 1, `section` true then false in name order, and `single_team` false

@@ -3,13 +3,13 @@ PMZilla Lab : empreinte des fichiers évalués par le jeu d'essai des postures (
 
     python3 tools/posture_eval_fingerprint.py HEAD CLAUDE.md
 
-Arguments : une révision, puis une ou plusieurs spécifications de chemin ; à lancer depuis la racine du dépôt (finish_branch.sh l'appelle avec -I).
+Arguments : une révision, puis une ou plusieurs spécifications de chemin ; à lancer depuis la racine du dépôt (tools/finish_checks.py l'appelle avec -I).
 
 Entrée : l'arbre de la révision et les spécifications de chemin Git (celles de tests/postures/fichiers-evalues.txt, relatives à
 la racine du dépôt, `*` compris). Lignes : « <mode> <identifiant de contenu> <chemin> » de chaque fichier de l'arbre qui
 correspond, triées par chemin ; empreinte : « v1: » suivi du SHA-256 de ces lignes jointes par des sauts de ligne (aucun fichier :
 l'empreinte du texte vide, préfixée). Elle ne contient ni chemin, ni nom, ni contenu en clair. Module partagé par
-tools/posture_evals.py et tools/finish_branch.sh (contrôle 6) : bibliothèque standard seulement, aucune base, aucun réseau.
+tools/posture_evals.py et tools/finish_checks.py (contrôle 6) : bibliothèque standard seulement, aucune base, aucun réseau.
 Sortie du script : l'empreinte seule, code 2 sans chemin ou sur une erreur Git.
 """
 from __future__ import annotations

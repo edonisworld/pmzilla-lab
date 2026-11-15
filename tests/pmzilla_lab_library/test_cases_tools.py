@@ -9,6 +9,8 @@ des cas est une doublure (la fabrique `make_cases_reader` est remplacée). Donn�
 import ast
 import os
 import sys
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -89,8 +91,8 @@ class Cas(unittest.TestCase):
 def serveur(patchs, lecteur=None, fabrique=None):
     """Lance serve() avec un faux FastMCP ; renvoie les outils déclarés et la fabrique de lecteur simulée."""
     modules = {"mcp": types.ModuleType("mcp"), "mcp.server": types.ModuleType("mcp.server"),
-               "mcp.server.fastmcp": types.ModuleType("mcp.server.fastmcp")}
-    modules["mcp.server.fastmcp"].FastMCP = FauxFastMCP
+               "mcp.server.mcpserver": types.ModuleType("mcp.server.mcpserver")}
+    modules["mcp.server.mcpserver"].MCPServer = FauxFastMCP
     fabrique = fabrique or mock.Mock(return_value=lecteur)
     patchs.extend([mock.patch.dict(sys.modules, modules), mock.patch.object(library, "open_library", return_value=FauxBibliotheque()),
                    mock.patch.object(library, "make_cases_reader", fabrique)])
@@ -107,6 +109,40 @@ class Inventaire(Cas):
         outils, _ = self.serveur(lecteur=FauxLecteur())
         self.assertEqual(sorted(outils), ["list_books", "list_collections", "list_due_reviews", "read_passage",
                                           "search_cases", "search_experiments", "search_library"])
+
+    def test_les_sept_outils_s_executent_un_par_un(self):
+        """mcp 2.x lance un outil sync sur un fil de travail : deux appels ne doivent jamais se chevaucher (connexion unique)."""
+        suivi = {"en_cours": 0, "maximum": 0}
+        verrou = threading.Lock()
+
+        def passer(valeur):
+            with verrou:
+                suivi["en_cours"] += 1
+                suivi["maximum"] = max(suivi["maximum"], suivi["en_cours"])
+            time.sleep(0.03)
+            with verrou:
+                suivi["en_cours"] -= 1
+            return valeur
+
+        lecteur = FauxLecteur()
+        lecteur.search_cases = lambda query, limit=3: passer([CAS])
+        lecteur.search_experiments = lambda query, limit=3, author=None: passer([EXPERIENCE])
+        lecteur.list_due_reviews = lambda author=None: passer([REVUE])
+        for nom, valeur in (("collections", {"produit": 2}), ("books", [{"file": "livre.md"}]), ("search", [{"passage_id": 1}]),
+                            ("read", {"passage_id": 1})):
+            patch = mock.patch.object(FauxBibliotheque, nom, lambda self, *a, _valeur=valeur, **k: passer(_valeur))
+            patch.start()
+            self.addCleanup(patch.stop)
+        outils, _ = self.serveur(lecteur=lecteur)
+        appels = [lambda: outils["search_library"]("q"), lambda: outils["read_passage"](1), outils["list_collections"],
+                  outils["list_books"], lambda: outils["search_cases"]("q"), lambda: outils["search_experiments"]("q"),
+                  outils["list_due_reviews"]]
+        fils = [threading.Thread(target=appel) for appel in appels for _ in range(2)]
+        for fil in fils:
+            fil.start()
+        for fil in fils:
+            fil.join()
+        self.assertEqual(suivi["maximum"], 1)
 
     def test_aucun_outil_n_ecrit(self):
         source = Path(library.__file__).read_text(encoding="utf-8")

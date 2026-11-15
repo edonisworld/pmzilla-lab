@@ -1,21 +1,19 @@
 #!/bin/bash
 # Test du script du dossier d'exécution (tools/run_worktree.sh, change run-worktree, R-43) : dépôt de développement Git temporaire,
-# dépôt distant nu temporaire, dossier d'exécution, dossier de données du labo, horloge et fenêtres remplacés par des variables,
+# dépôt distant nu temporaire, dossier d'exécution, dossier de données du labo, horloge remplacés par des variables,
 # faux « uv » qui journalise ses appels. Un test par code de sortie de la décision D3 (0 à 9), les cas du verrou de la veille et des
-# trois repères (D12, D14), de l'état du matin (safe-branch-finish), de la préparation des dépendances, des phrases en français et en anglais.
+# trois repères (D12, D14), l'absence de tout report par l'état du matin (tooling-morning-guard-light D9, R-20261102-3 et R-20261102-5),
+# de la préparation des dépendances, des phrases en français et en anglais.
 # Aucun réseau, aucun vrai uv, ni le vrai dossier du labo, ni le vrai dossier d'exécution, ni le vrai dossier de données.
 # Lancement à la main : bash tests/run_worktree/test_run_worktree.sh (ROUGE tant que tools/run_worktree.sh n'existe pas).
 #
 # Variables que le script doit lire (noms fixés par cette suite) :
 #   PMZILLA_LAB_RUN                 emplacement du dossier d'exécution
 #   PMZILLA_LAB_DATA                dossier de données du labo (verrou et repères)
-#   PMZILLA_RUN_NOW                 horloge en secondes (âge = PMZILLA_RUN_NOW - debut ; heures du matin lues sur l'heure locale de cet instant) ;
+#   PMZILLA_RUN_NOW                 horloge en secondes (âge = PMZILLA_RUN_NOW - debut) ;
 #                                   la lecture de repli (date de modification du dossier) et le délai de 10 s sans pid restent sur l'horloge réelle, comme watch.sh
-#   PMZILLA_RUN_MORNING_START       « HH:MM », début du matin, défaut 06:45 (borne comprise)
-#   PMZILLA_RUN_MORNING_END         « HH:MM », fin de la période du matin, défaut 22:00 (borne comprise ; heure limite de watch.sh)
-#   PMZILLA_RUN_FALLBACK_TIME       « HH:MM », heure de repli quand l'état du matin est illisible, défaut 09:30
-#   DB_BACKUP_SAUVEGARDES           dossier des sauvegardes (la suite le place hors du dossier de données)
-#   (change safe-branch-finish : l'état du matin remplace les deux fenêtres horaires ; PMZILLA_RUN_MORNING_WINDOW et PMZILLA_RUN_BACKUP_WINDOW n'ont plus d'effet)
+#   (R-20261102-3 et R-20261102-5, réécrit : PMZILLA_RUN_MORNING_START, PMZILLA_RUN_MORNING_END, PMZILLA_RUN_FALLBACK_TIME, PMZILLA_RUN_MORNING_WINDOW et
+#   PMZILLA_RUN_BACKUP_WINDOW n'ont plus d'effet ; DB_BACKUP_SAUVEGARDES n'est plus lue par le script)
 #   PMZILLA_WATCH_LOCK_MAX_AGE      âge maximal du verrou veille.verrou (défaut 21600, constante de watch.sh)
 #   PMZILLA_RUN_MARKER_MAX_AGE      âge maximal des repères (défaut 21600, constante partagée avec db_backup.sh et offsite_backup.sh)
 # Option de langue : « --language fr|en » acceptée avant et après la sous-commande.
@@ -68,7 +66,7 @@ construit_modele() { # une seule fois par lancement de la suite : dépôt de dé
     cp "$racine/tools/install_links.sh" tools/install_links.sh 2>/dev/null || echo '# liens' > tools/install_links.sh
     cp "$script" tools/run_worktree.sh 2>/dev/null
     cp "$racine/tools/lab_paths.sh" tools/lab_paths.sh 2>/dev/null   # module partagé : le dossier d'exécution par défaut (R-77)
-    cp "$racine/tools/morning_state.sh" tools/morning_state.sh 2>/dev/null   # module partagé de l'état du matin (morning-guard D1) : sourcé par le script
+    # R-20261102-3 et R-20261102-5 (D9), réécrit : tools/morning_state.sh n'est plus copié ; le script ne le source plus
     en_tete_script tools/composants.py avec; echo lock > tools/composants.py.lock
     en_tete_script tools/flux_jira.py avec; echo lock > tools/flux_jira.py.lock
     en_tete_script tools/watch_lab.py sans
@@ -143,6 +141,7 @@ SORTIE="tools/run_worktree.sh absent"; [ -f "$script" ]; verifie "le script tool
 nouveau; lance --help
 code_et "aide : code 0 et les codes décrits" 0 "reportée"
 [ ! -e "$RUN" ] && [ "$(appels_uv)" -eq 0 ]; verifie "aide : rien n'est créé, uv non appelé" $?
+! contient "passages du matin"; verifie "aide : le code 7 ne parle plus des passages du matin (R-20261102-3 et R-20261102-5)" $?
 
 # --- usage : code 2
 nouveau; lance
@@ -372,7 +371,9 @@ nouveau; cree; avance; lance update
 code_et "dossier de données absent : aucun repère, mise à jour faite" 0 "mis à jour"
 [ ! -e "$DATA" ]; verifie "dossier de données absent : il n'est pas créé" $?
 
-# --- code 7 : état du matin (safe-branch-finish D1 à D4, D8) : le repère du passage du jour de la veille et le dossier daté des sauvegardes
+# --- plus aucun report par l'état du matin (tooling-morning-guard-light D9, R-20261102-3 et R-20261102-5, Q277) : ancien « code 7 : état du matin »
+# (safe-branch-finish D1 à D4, D8), réécrit : la mise à jour passe quand aucun verrou ni repère n'est tenu, quels que soient le repère de la veille,
+# le dossier daté des sauvegardes et l'heure ; aucune phrase du matin n'est écrite
 a_heure() { export PMZILLA_RUN_NOW="$(instant "$1")"; NOW=$PMZILLA_RUN_NOW; }   # heure du jour de test ; les verrous posés ensuite s'en servent
 jour_paris() { TZ=Europe/Paris date -r "$NOW" +%Y-%m-%d; }
 jour_systeme() { date -r "$NOW" +%Y-%m-%d; }
@@ -382,8 +383,13 @@ veille_etat() { # etat [date] : repère du passage du jour, au format de watch.s
 }
 sauvegarde_du_jour() { mkdir -p "$SAUV/db-$(jour_systeme)${1:-}"; }   # dossier daté du jour (suffixe : dossier étiqueté)
 matin_fini() { veille_etat termine; sauvegarde_du_jour; }
+sans_phrase_du_matin() { # description : aucune phrase du matin dans la sortie (français ni anglais)
+  ! contient "passages du matin" && ! contient "morning runs" && ! contient "en attente du repère" && ! contient "waiting for the record" \
+    && ! contient "heure de repli" && ! contient "fallback time" && ! contient "Une fois la veille débloquée" && ! contient "Once the watch is unblocked"
+  verifie "$1" $?
+}
 
-# matin terminé : la mise à jour passe, même dans l'ancienne fenêtre du matin
+# matin terminé : la mise à jour passe
 nouveau; cree; avance; a_heure 07:30; matin_fini; lance update
 code_et "matin terminé (veille et sauvegarde) à 07:30 : la mise à jour passe" 0 "run_worktree : mis à jour"
 [ "$(tete_run)" = "$(tete_dev)" ]; verifie "matin terminé : la tête est au sommet de main" $?
@@ -395,122 +401,82 @@ done
 nouveau; cree; avance; a_heure 12:00; matin_fini; lance --language en update
 code_et "matin terminé (anglais)" 0 "run_worktree: updated"
 
-# une partie manquante : refus nommant la partie
-nouveau; cree; avance; a_heure 07:30; veille_etat termine; mkdir -p "$SAUV"; avant_tete=$(tete_run); lance update
-code_et "veille terminée, sauvegarde du jour absente : code 7 nommant la sauvegarde" 7 "run_worktree : mise à jour reportée, passages du matin pas terminés (sauvegarde)"
-contient_err "bash tools/run_worktree.sh update"; verifie "sauvegarde pas terminée : la commande à relancer est donnée" $?
-[ "$(tete_run)" = "$avant_tete" ] && [ "$(appels_uv)" -eq 0 ]; verifie "sauvegarde pas terminée : tête inchangée, aucune préparation" $?
+# une partie manquante ne retient plus la mise à jour (était : code 7 nommant la partie)
+nouveau; cree; avance; a_heure 07:30; veille_etat termine; mkdir -p "$SAUV"; lance update
+code_et "veille terminée, sauvegarde du jour absente, rien de tenu : la mise à jour passe (était le code 7)" 0 "run_worktree : mis à jour"
+[ "$(tete_run)" = "$(tete_dev)" ]; verifie "sauvegarde du jour absente : la tête est au sommet de main" $?
+sans_phrase_du_matin "sauvegarde du jour absente : aucune phrase du matin"
 lance --language en update
-code_et "sauvegarde pas terminée (anglais)" 7 "run_worktree: update postponed, morning runs not finished (backup)"
+code_et "sauvegarde du jour absente (anglais) : à jour" 0 "run_worktree: up to date"
 nouveau; cree; avance; a_heure 07:30; veille_etat termine; sauvegarde_du_jour "-manuel"; lance update
-code_et "seul un dossier étiqueté du jour : la sauvegarde n'est pas finie" 7 "(sauvegarde)"
+code_et "seul un dossier étiqueté du jour : la mise à jour passe" 0 "mis à jour"
 nouveau; cree; avance; a_heure 07:30; veille_etat termine; mkdir -p "$SAUV/db-2020-01-01"; lance update
-code_et "seul le dossier d'un autre jour : la sauvegarde n'est pas finie" 7 "(sauvegarde)"
+code_et "seul le dossier d'un autre jour : la mise à jour passe" 0 "mis à jour"
 nouveau; cree; avance; a_heure 07:30; sauvegarde_du_jour; veille_etat termine "2020-01-01"; lance update
-code_et "repère d'un autre jour, sauvegarde faite : code 7 nommant la veille" 7 "passages du matin pas terminés (veille)"
-nouveau; cree; avance; a_heure 07:30; veille_etat termine "2020-01-01"; lance update
-code_et "veille et sauvegarde manquantes : la veille est nommée en premier" 7 "(veille)"
-! contient "(sauvegarde)"; verifie "veille et sauvegarde manquantes : seule la veille est nommée" $?
+code_et "repère d'un autre jour, sauvegarde faite : la mise à jour passe" 0 "mis à jour"
+sans_phrase_du_matin "repère d'un autre jour : aucune phrase du matin"
+nouveau; cree; avance; a_heure 08:00; veille_etat termine "2020-01-01"; lance update
+code_et "repère de la veille d'hier et aucune sauvegarde du jour : la mise à jour passe (5.2, run tree)" 0 "mis à jour"
+sans_phrase_du_matin "repère d'hier et aucune sauvegarde : aucune phrase du matin"
+[ "$(tete_run)" = "$(tete_dev)" ]; verifie "repère d'hier et aucune sauvegarde : la tête est au sommet de main" $?
 
-# la veille reportée, commencée ou d'un autre jour : la raison de l'attente et la reprise (fiche Q1)
-for def in "reporte|reporté|reported" "commence|commencé|started"; do
-  IFS='|' read -r etat etat_fr etat_en <<EOF2
-$def
-EOF2
-  nouveau; cree; avance; a_heure 07:30; veille_etat "$etat"; sauvegarde_du_jour; avant_tete=$(tete_run); lance update
-  code_et "veille $etat : code 7 nommant la veille" 7 "run_worktree : mise à jour reportée, passages du matin pas terminés (veille)"
-  contient_err "run_worktree : en attente du repère du passage du jour de la veille, état : $etat_fr"; verifie "veille $etat : la raison de l'attente donne l'état lu" $?
-  contient_err "Une fois la veille débloquée : bash tools/run_worktree.sh update"; verifie "veille $etat : la commande de reprise est donnée" $?
-  ! contient "Pour le relancer plus tard"; verifie "veille $etat : la ligne générique de relance est remplacée" $?
+# la veille reportée ou commencée, sans verrou tenu : la mise à jour passe (était : code 7 nommant la veille)
+for etat in reporte commence; do
+  nouveau; cree; avance; a_heure 07:30; veille_etat "$etat"; sauvegarde_du_jour; lance update
+  code_et "veille $etat sans verrou tenu : la mise à jour passe" 0 "run_worktree : mis à jour"
+  sans_phrase_du_matin "veille $etat : aucune phrase du matin"
   ! contient "veille-du-jour"; verifie "veille $etat : aucun nom de fichier du repère" $?
   ! contient "$cas"; verifie "veille $etat : aucun chemin de la machine" $?
-  [ "$(tete_run)" = "$avant_tete" ] && [ "$(appels_uv)" -eq 0 ]; verifie "veille $etat : tête inchangée, aucune préparation" $?
-  lance --language en update
-  code_et "veille $etat (anglais) : la raison" 7 "run_worktree: waiting for the record of the day's watch run, state: $etat_en"
-  contient_err "Once the watch is unblocked: bash tools/run_worktree.sh update"; verifie "veille $etat (anglais) : la reprise" $?
-  contient "run_worktree: update postponed, morning runs not finished (watch)"; verifie "veille $etat (anglais) : la phrase du matin" $?
+  [ "$(tete_run)" = "$(tete_dev)" ]; verifie "veille $etat : la tête est au sommet de main" $?
 done
-nouveau; cree; avance; a_heure 07:30; veille_etat termine "2020-01-01"; sauvegarde_du_jour; lance update
-contient_err "état : d'un autre jour"; verifie "repère d'un autre jour : l'état lu est dit" $?
-lance --language en update
-contient_err "state: of another day"; verifie "repère d'un autre jour (anglais) : l'état lu est dit" $?
-! contient "$cas"; verifie "repère d'un autre jour : aucun chemin de la machine" $?
 
-# bornes de la période du matin : le début et la fin sont compris ; avant et après, les parties ne sont pas lues
-nouveau; cree; avance; a_heure 06:45; lance update
-code_et "06:45 (début du matin), rien de fait : refus" 7 "passages du matin"
-nouveau; cree; avance; a_heure 22:00; veille_etat reporte; lance update
-code_et "22:00 (fin de la période) : encore reporté" 7 "(veille)"
-nouveau; cree; avance; a_heure 06:44; veille_etat reporte; lance update
-code_et "06:44, avant le début du matin : les parties ne sont pas lues, la mise à jour passe" 0 "mis à jour"
-! contient "illisible"; verifie "avant le début du matin : aucune ligne d'état" $?
-nouveau; cree; avance; a_heure 22:01; veille_etat reporte; lance update
-code_et "22:01, après la fin de la période : la mise à jour passe" 0 "mis à jour"
-nouveau; cree; avance; a_heure 23:59; lance update
-code_et "23:59, rien de lisible : la mise à jour passe sans lire" 0 "mis à jour"
-! contient "illisible"; verifie "après la fin : aucune ligne d'état" $?
-nouveau; cree; avance; a_heure 10:30; export PMZILLA_RUN_MORNING_START=10:00 PMZILLA_RUN_MORNING_END=11:00; veille_etat reporte; lance update
-code_et "début du matin surchargé : 10:30 est dans la période" 7 "(veille)"
-nouveau; cree; avance; a_heure 07:30; export PMZILLA_RUN_MORNING_START=10:00 PMZILLA_RUN_MORNING_END=11:00; veille_etat reporte; lance update
-code_et "début du matin surchargé : 07:30 est avant" 0 "mis à jour"
-nouveau; cree; avance; a_heure 11:30; export PMZILLA_RUN_MORNING_START=10:00 PMZILLA_RUN_MORNING_END=11:00; veille_etat reporte; lance update
-code_et "fin du matin surchargée : 11:30 est après" 0 "mis à jour"
-nouveau; cree; avance; a_heure 07:30; export PMZILLA_RUN_MORNING_START=25:99 PMZILLA_RUN_MORNING_END=abc; veille_etat reporte; lance update
-code_et "valeurs invalides : retour aux défauts (07:30 dans la période)" 7 "(veille)"
+# plus de bornes de période : à toute heure la mise à jour passe (étaient : 06:45 à 22:00 compris reportait, avant et après non)
+for heure in 00:05 06:44 06:45 07:30 12:00 22:00 22:01 23:59; do
+  nouveau; cree; avance; a_heure "$heure"; veille_etat reporte; lance update
+  code_et "$heure, veille reportée, rien de fait : la mise à jour passe" 0 "mis à jour"
+  sans_phrase_du_matin "$heure : aucune phrase du matin"
+done
+nouveau; cree; avance; a_heure 10:30; export PMZILLA_RUN_MORNING_START=10:00 PMZILLA_RUN_MORNING_END=11:00 PMZILLA_RUN_FALLBACK_TIME=23:00; veille_etat reporte; lance update
+code_et "anciennes variables du matin posées : sans effet, la mise à jour passe" 0 "mis à jour"
+sans_phrase_du_matin "anciennes variables du matin : aucune phrase du matin"
 
-# état illisible : reporté jusqu'à l'heure de repli, puis la mise à jour continue avec une ligne d'information
-nouveau; cree; avance; a_heure 08:00; sauvegarde_du_jour; avant_tete=$(tete_run); lance update
-code_et "repère absent à 08:00, avant l'heure de repli : code 7, état illisible" 7 "run_worktree : mise à jour reportée, état des passages du matin illisible, avant 09:30"
-contient_err "bash tools/run_worktree.sh update"; verifie "état illisible : la commande à relancer est donnée" $?
-[ "$(tete_run)" = "$avant_tete" ] && [ "$(appels_uv)" -eq 0 ]; verifie "état illisible : tête inchangée, aucune préparation" $?
-lance --language en update
-code_et "état illisible (anglais)" 7 "run_worktree: update postponed, morning runs state unreadable, before 09:30"
-nouveau; cree; avance; a_heure 09:29; sauvegarde_du_jour; lance update
-code_et "repère absent à 09:29 : encore reporté" 7 "avant 09:30"
-nouveau; cree; avance; a_heure 09:30; sauvegarde_du_jour; lance update
-code_et "repère absent à 09:30 (heure de repli) : la mise à jour passe" 0 "mis à jour"
-contient "run_worktree : état des passages du matin illisible, heure de repli passée"; verifie "après l'heure de repli : la ligne d'information est écrite" $?
-lance --language en update
-contient "run_worktree: morning runs state unreadable, fallback time passed"; verifie "après l'heure de repli (anglais) : la ligne d'information" $?
+# état illisible ou absent : plus d'heure de repli, plus de report, aucune ligne d'information
+nouveau; cree; avance; a_heure 08:00; sauvegarde_du_jour; lance update
+code_et "repère absent à 08:00 : la mise à jour passe (était : code 7 jusqu'à 09:30)" 0 "mis à jour"
+sans_phrase_du_matin "repère absent : aucune phrase du matin ni de repli"
+! contient "illisible"; verifie "repère absent : aucune ligne d'état illisible" $?
+nouveau; cree; avance; a_heure 07:00; lance update
+code_et "repère absent et aucune sauvegarde à 07:00 : la mise à jour passe, aucune heure de repli nommée" 0 "mis à jour"
+sans_phrase_du_matin "repère absent à 07:00 : aucune heure de repli nommée"
 nouveau; cree; avance; a_heure 12:00; sauvegarde_du_jour; mkdir -p "$DATA"; echo "pas du json" > "$DATA/veille-du-jour.json"; lance update
-code_et "repère illisible après l'heure de repli : la mise à jour passe avec la ligne" 0 "heure de repli passée"
+code_et "repère illisible : la mise à jour passe sans ligne" 0 "mis à jour"
+sans_phrase_du_matin "repère illisible : aucune phrase du matin"
 nouveau; cree; avance; a_heure 08:00; sauvegarde_du_jour; mkdir -p "$DATA"; echo '{"date": "x", "etat": "termine"}' > "$DATA/veille-du-jour.json"; lance update
-code_et "repère sans date valide avant le repli : illisible, code 7" 7 "illisible"
-nouveau; cree; avance; a_heure 08:00; sauvegarde_du_jour; mkdir -p "$DATA"; printf '{"date": "%s", "etat": "inconnu"}\n' "$(jour_paris)" > "$DATA/veille-du-jour.json"; lance update
-code_et "repère sans état connu avant le repli : illisible, code 7" 7 "illisible"
-nouveau; cree; avance; a_heure 12:00; veille_etat termine; mkdir -p "$SAUV"; lance update
-code_et "après l'heure de repli, l'autre partie lisible et pas finie reporte encore" 7 "(sauvegarde)"
-nouveau; cree; avance; a_heure 12:00; veille_etat reporte; lance update
-code_et "après l'heure de repli, la veille lisible et pas finie reporte encore" 7 "(veille)"
+code_et "repère sans date valide : la mise à jour passe" 0 "mis à jour"
 nouveau; cree; avance; a_heure 08:00; veille_etat termine; sauvegarde_du_jour; chmod 000 "$SAUV"; lance update
-code_et "dossier des sauvegardes illisible avant le repli : code 7, état illisible" 7 "état des passages du matin illisible, avant 09:30"
+code_et "dossier des sauvegardes inaccessible : la mise à jour passe (le dossier n'est jamais ouvert)" 0 "mis à jour"
 chmod 755 "$SAUV"
-nouveau; cree; avance; a_heure 12:00; veille_etat termine; sauvegarde_du_jour; chmod 000 "$SAUV"; lance update
-code_et "dossier des sauvegardes illisible après le repli : la mise à jour passe avec la ligne" 0 "heure de repli passée"
-chmod 755 "$SAUV"
-nouveau; cree; avance; a_heure 08:00; sauvegarde_du_jour; export PMZILLA_RUN_FALLBACK_TIME=08:30; lance update
-code_et "heure de repli surchargée : 08:00 est avant 08:30" 7 "avant 08:30"
-a_heure 08:30; lance update
-code_et "heure de repli surchargée : 08:30 est l'heure de repli" 0 "mis à jour"
 
-# dossier des sauvegardes absent : la partie sauvegarde ne compte pas ; ni liste ni écriture
+# dossier des sauvegardes absent : ni lu, ni créé
 nouveau; cree; avance; a_heure 07:30; veille_etat termine; [ ! -e "$SAUV" ]; lance update
-code_et "dossier des sauvegardes absent : la partie sauvegarde ne compte pas" 0 "mis à jour"
+code_et "dossier des sauvegardes absent : la mise à jour passe" 0 "mis à jour"
 ! contient "illisible"; verifie "dossier des sauvegardes absent : ce n'est pas un état illisible" $?
 [ ! -e "$SAUV" ]; verifie "dossier des sauvegardes absent : il n'est pas créé" $?
 nouveau; cree; avance; a_heure 07:30; [ ! -e "$SAUV" ]; lance update
-code_et "dossier des sauvegardes absent et veille manquante : la veille retient" 7 "illisible"
-# sans la variable du script de sauvegarde : le dossier des sauvegardes du dossier de données (module partagé)
+code_et "dossier des sauvegardes absent et veille manquante : la mise à jour passe aussi" 0 "mis à jour"
+# sans la variable du script de sauvegarde : le dossier des sauvegardes du dossier de données n'est pas lu non plus
 nouveau; cree; avance; a_heure 07:30; unset DB_BACKUP_SAUVEGARDES; veille_etat termine; mkdir -p "$DATA/sauvegardes"; lance update
-code_et "sans variable : le dossier des sauvegardes du dossier de données est lu" 7 "(sauvegarde)"
-mkdir -p "$DATA/sauvegardes/db-$(jour_systeme)"; lance update
-code_et "sans variable : le dossier daté du jour dans le dossier de données" 0 "mis à jour"
+code_et "sans variable, dossier des sauvegardes du dossier de données sans dossier du jour : la mise à jour passe" 0 "mis à jour"
 
-# verrous et repères d'abord, à toute heure ; la sous-commande status ne lit pas l'état du matin
+# les verrous et repères tenus restent le seul report, à toute heure ; la sous-commande status ne lit rien du matin
 nouveau; cree; avance; a_heure 07:30; matin_fini; vivant; pose veille.verrou "$PID_VIVANT" 60; lance update
 code_et "matin terminé mais verrou de la veille tenu : le verrou refuse" 7 "passage planifié en cours (veille)"
+nouveau; cree; avance; a_heure 03:00; vivant; pose sauvegarde.encours "$PID_VIVANT" 60; lance update
+code_et "repère de la sauvegarde tenu à 03:00 : le repère refuse, à toute heure" 7 "passage planifié en cours (sauvegarde)"
 nouveau; cree; avance; a_heure 07:30; mort; pose veille.verrou "$PID_MORT" 60; lance update
-code_et "verrou périmé le matin sans état lisible : l'état du matin refuse" 7 "passages du matin"
+code_et "verrou périmé le matin sans état lisible : la mise à jour passe (était : l'état du matin refusait, code 7)" 0 "mis à jour"
+sans_phrase_du_matin "verrou périmé : seule la ligne du verrou périmé est écrite, aucune phrase du matin"
+contient "périmé, ignoré (veille)"; verifie "verrou périmé : le verrou périmé est signalé" $?
 nouveau; cree; avance; a_heure 07:30; lance status
 code_et "status ne lit pas l'état du matin" 8 "en retard sur main"
 
@@ -521,20 +487,13 @@ code_et "anciennes variables de fenêtres : sans effet, matin terminé" 0 "mis �
 nouveau; cree; avance; a_heure 07:30; matin_fini; export PMZILLA_RUN_MORNING_WINDOW="06:00-23:00"; lance update
 code_et "ancienne variable du matin : l'ancienne fenêtre ne retient plus" 0 "mis à jour"
 
-# les constantes et les états finaux sont ceux de watch.sh
-fin_script=$(sed -n 's/.*FIN_MATIN=\$(heure_ou "\${PMZILLA_RUN_MORNING_END:-}" "\([0-9:]*\)").*/\1/p' "$script" | head -1)
-limite_watch=$(sed -n 's/^HEURE_LIMITE="\([0-9:]*\)".*/\1/p' "$racine/tools/watch.sh" | head -1)
-SORTIE="run_worktree.sh=$fin_script watch.sh=$limite_watch"
-[ -n "$fin_script" ] && [ "$fin_script" = "$limite_watch" ]; verifie "la fin de la période du matin par défaut égale l'heure limite de watch.sh" $?
-finaux_script=$(sed -n 's/^ETATS_FINAUX="\(.*\)".*/\1/p' "$script" | head -1 | tr ' ' '\n' | sort | tr '\n' ' ')
-finaux_watch=$(grep -v '^[[:space:]]*#' "$racine/tools/watch.sh" | sed -n 's/.*R_ETAT" == (\([a-z|]*\)) ]].*/\1/p' | head -1 | tr '|' '\n' | sort | tr '\n' ' ')
-SORTIE="run_worktree.sh=$finaux_script watch.sh=$finaux_watch"
-[ -n "$finaux_script" ] && [ "$finaux_script" = "$finaux_watch" ]; verifie "les états finaux sont ceux qui terminent le jour dans watch.sh" $?
-defauts=$(grep -c 'PMZILLA_RUN_MORNING_START:-}" "06:45"' "$script"); defauts2=$(grep -c 'PMZILLA_RUN_FALLBACK_TIME:-}" "09:30"' "$script")
-SORTIE="début=$defauts repli=$defauts2"
-[ "$defauts" -eq 1 ] && [ "$defauts2" -eq 1 ]; verifie "défauts : début du matin 06:45, heure de repli 09:30" $?
+# plus de constantes du matin : ni début, ni fin, ni heure de repli, ni états finaux, ni module de l'état du matin (statique, hors commentaires)
+! grep -v '^[[:space:]]*#' "$script" | grep -qE 'PMZILLA_RUN_MORNING_START|PMZILLA_RUN_MORNING_END|PMZILLA_RUN_FALLBACK_TIME|DEBUT_MATIN|FIN_MATIN|HEURE_REPLI|ETATS_FINAUX|garde_matin|morning_state|morning_watch_state|morning_backup_state'; SORTIE="constantes du matin dans le script"
+verifie "statique : le script ne contient plus ni début, fin, heure de repli, états finaux, garde du matin ni appel du module de l'état du matin" $?
 ! grep -v '^[[:space:]]*#' "$script" | grep -q 'PMZILLA_RUN_MORNING_WINDOW\|PMZILLA_RUN_BACKUP_WINDOW'; verifie "le script ne lit plus les anciennes variables de fenêtres" $?
 ! grep -v '^[[:space:]]*#' "$script" | grep -qF 'fenêtre'; verifie "la phrase de fenêtre est retirée du script" $?
+! grep -v '^[[:space:]]*#' "$script" | grep -qiE 'matin|morning'; SORTIE="phrase ou constante du matin dans le script"
+verifie "statique : aucune phrase du matin (matin, morning) dans le code du script, hors commentaires" $?
 
 # --- le script n'emploie aucune commande interdite et ne touche à aucun verrou ni repère
 sans_commentaires=$(grep -v '^[[:space:]]*#' "$script" 2>/dev/null)

@@ -78,27 +78,35 @@ The system SHALL check, for each launchd job template of the repository whose re
 ### Requirement: Watch run of the day
 The system SHALL read the watch run of the day from the run record of the watch (design D2), never from the watch log, and SHALL compare the record's date with today's date in Europe/Paris. It SHALL report, with the reason keys of design D13:
 - a problem when the lab data folder is not writable or the watch's alert marker holds today's date (the record cannot be written);
-- ok when today's record says the run ended without failed step;
+- ok when today's record says the run ended without failed step.
+
+#### Scenario: Done, whatever the log says
+- **WHEN** today's record says done and the watch log is absent or ends with a failed run
+- **THEN** the watch check is ok and the log is not read for it
+
+#### Scenario: Record cannot be written
+- **WHEN** the lab data folder is read-only
+- **THEN** the watch check is a problem with the record-not-writable reason, and no file is created in the data folder or the logs folder
+
+### Requirement: Watch check on a failed, interrupted or running record
+The system SHALL report the watch run of the day, with the reason keys of design D13:
 - a problem when today's record says failed;
 - a problem when today's record says interrupted, or says started while the watch lock does not exist;
-- skipped as running when today's record says started and the watch lock exists;
-- a problem naming the missed day when, after the configurable latest start time, there is no record of today or today's record says postponed;
-- skipped as postponed when today's record says postponed before the latest start time;
-- a problem when no record of today exists after the configurable due time.
-
-Before the due time, with no record of today, the check SHALL be skipped as not due yet. A missing, unreadable or other-day record SHALL count as no record of today. It SHALL NOT run the watch, SHALL NOT write the record or the alert marker, SHALL NOT take or remove the watch lock, and SHALL check the data folder's writability without writing to it.
+- skipped as running when today's record says started and the watch lock exists.
 
 #### Scenario: Failed run
 - **WHEN** today's record says failed
 - **THEN** the watch check is a problem
 
-#### Scenario: Before the due time
-- **WHEN** no record of today exists and the current time is before the due time
-- **THEN** the watch check is skipped as not due yet
+#### Scenario: Interrupted run
+- **WHEN** today's record says started and the watch lock does not exist
+- **THEN** the watch check is a problem with the interrupted reason
 
-#### Scenario: Done, whatever the log says
-- **WHEN** today's record says done and the watch log is absent or ends with a failed run
-- **THEN** the watch check is ok and the log is not read for it
+### Requirement: Watch check on a postponed or missing run of today
+The system SHALL report the watch run of the day, with the reason keys of design D13:
+- a problem naming the missed day when, after the configurable latest start time, there is no record of today or today's record says postponed;
+- skipped as postponed when today's record says postponed before the latest start time;
+- a problem when no record of today exists after the configurable due time.
 
 #### Scenario: Postponed during the day
 - **WHEN** today's record says postponed and the current time is between the due time and the latest start time
@@ -108,17 +116,23 @@ Before the due time, with no record of today, the check SHALL be skipped as not 
 - **WHEN** the current time is after the latest start time and today's record says postponed, or no record of today exists
 - **THEN** the watch check is a problem with the missed-day reason
 
-#### Scenario: Interrupted run
-- **WHEN** today's record says started and the watch lock does not exist
-- **THEN** the watch check is a problem with the interrupted reason
+### Requirement: Watch check before the due time and without a usable record
+Before the due time, with no record of today, the watch check SHALL be skipped as not due yet. A missing, unreadable or other-day record SHALL count as no record of today.
 
-#### Scenario: Record cannot be written
-- **WHEN** the lab data folder is read-only
-- **THEN** the watch check is a problem with the record-not-writable reason, and no file is created in the data folder or the logs folder
+#### Scenario: Before the due time
+- **WHEN** no record of today exists and the current time is before the due time
+- **THEN** the watch check is skipped as not due yet
 
 #### Scenario: Record of yesterday in Paris
 - **WHEN** the record holds the previous day's date and the current time is after the due time
 - **THEN** the watch check is a problem for a missing run of today
+
+### Requirement: The watch check changes nothing
+The watch check SHALL NOT run the watch, SHALL NOT write the record or the alert marker, SHALL NOT take or remove the watch lock, and SHALL check the data folder's writability without writing to it.
+
+#### Scenario: Read-only check
+- **WHEN** the watch check runs, including on a read-only lab data folder
+- **THEN** the watch has not been run, the record, the alert marker and the watch lock are unchanged, and no file has been written to the data folder
 
 ### Requirement: Database backup of the day
 The system SHALL report a problem when today's dated database backup folder is missing after the configurable due time, or holds fewer dumps than schemas, checked by file name and count only. It SHALL NOT open, copy or print the name of any file of the backups folder. Before the due time, it SHALL be skipped.
@@ -211,6 +225,17 @@ The system SHALL report a warning, never a problem, when the main checkout has w
 - **WHEN** the only worktree besides the main checkout is the run tree, detached and with a commit older than the threshold
 - **THEN** the branches check is ok and does not name it
 
+### Requirement: Orphan trial-run session copy
+The system SHALL count in the branches check, as a warning, each worktree located under the trials folder of the data folder while no run holds the run lock `.passage.lock`, probed read-only and released at once. It SHALL name it in the terminal only, count it in the state file, and remove nothing.
+
+#### Scenario: Orphan copy
+- **WHEN** a worktree stands under the trials folder and no run holds the lock
+- **THEN** the branches check is a warning with the count of orphan copies, and the copy is still there
+
+#### Scenario: Run in progress
+- **WHEN** a run holds the lock
+- **THEN** its copies are not reported
+
 ### Requirement: Run worktree on main
 The system SHALL report the run tree, at a configurable location, as ok when it is detached at the tip of main and clean, as a warning when it is behind main by fast-forward, and as a problem when it is missing, on a branch, off the history of main or holding local changes. It SHALL NOT switch, reset, update or fetch that worktree.
 
@@ -271,11 +296,15 @@ The system SHALL NOT invoke the Keychain tool, a database client or a container 
 - **THEN** the calls log never shows the Keychain tool, a database client or a container command
 
 ### Requirement: Local checks only, no versions
-The system SHALL contact only addresses of the local machine, and SHALL NOT compare versions, query a release source or suggest an upgrade; versions belong to the components watch.
+The system SHALL contact only addresses of the local machine, and SHALL NOT compare component versions, query a release source or suggest an upgrade; versions belong to the components watch. The only comparisons are Node against `mothra/.node-version`, Claude Code against the last PreToolUse hook trial, and the `python3` of the automatic train's installed template against the 3.10 minimum (change train-auto-launchd-env, design D11).
 
 #### Scenario: Source scan
 - **WHEN** the script source is scanned
-- **THEN** it holds no non-local network address and no version-comparison call
+- **THEN** it holds no non-local network address and no version-comparison call other than the three allowed comparisons
+
+#### Scenario: Python of the template
+- **WHEN** the check of the installed template reads the version of its `python3`
+- **THEN** it compares it with the 3.10 minimum only, queries no release source and suggests no upgrade
 
 ### Requirement: Testable without real services
 The system SHALL be covered by a test suite that redirects every probe to fakes: data, logs, date, time and home through environment overrides, Ollama through a fake local server, the database port through a local socket, launchd, Git and notification tools through stubs. The suite SHALL NOT need the network, Docker, the Keychain or a real launchd session.
@@ -298,3 +327,83 @@ The system SHALL report in warning, in a check `mothra-npm`, a Node other than `
 #### Scenario: No lock
 - **WHEN** `mothra/package-lock.json` is absent
 - **THEN** the check is skipped with `pas de verrou npm de Mothra`
+
+### Requirement: PreToolUse hook trial check
+The system SHALL report in a last check `pretooluse` the version of `claude --version` against the last trial state `essai-crochet-pretooluse.json`: ok when same version and verdict read; warning with the trial command when the version differs, no trial exists or the state is unreadable; problem with the form A reminder when the verdict is unread; skipped without `claude`. It SHALL NOT run the trial.
+
+#### Scenario: Version changed
+- **WHEN** the fake `claude` answers a version other than the recorded one
+- **THEN** the check is in warning and gives `bash tools/essai_crochet_pretooluse.sh`
+
+#### Scenario: Trial verdict unread
+- **WHEN** the recorded verdict is `non lu` for the installed version
+- **THEN** the check is a problem that recalls the return to form A
+
+### Requirement: Reference-transaction hook check
+The system SHALL report, in a check `crochet-reference-transaction`, whether the Git `reference-transaction` hook of the checked repository is installed as the hooks installer requires: ok when the tracked hook exists and the common repository's hooks folder holds an executable link to it; a problem otherwise, with a reason key and the repair command. It SHALL NOT install, repair or rewrite a hook (R-20261110-42).
+
+#### Scenario: Conforming hook
+- **WHEN** the checked repository's hooks folder holds the executable link to the tracked hook
+- **THEN** the check is ok with the reason key `ok`
+
+#### Scenario: Hook not installed
+- **WHEN** the hooks folder holds no `reference-transaction` hook
+- **THEN** the check is a problem with the reason key `missing`, the doctor exits 1, and the line gives `bash tools/install_hooks.sh`, in French and in English
+
+#### Scenario: Hook not conforming
+- **WHEN** the hook is a regular file, a link to another hook, or a link whose tracked target is not executable
+- **THEN** the check is a problem with the reason key `differs`
+
+#### Scenario: Tracked hook absent or no repository
+- **WHEN** the tracked hook file is absent, respectively the checked folder is not in a Git repository
+- **THEN** the check is a problem with the reason key `source_absent`, respectively `no_repo`
+
+#### Scenario: Linked worktree
+- **WHEN** the checked folder is a linked worktree whose common repository holds the conforming link, respectively holds no hook
+- **THEN** the check reads the common repository's hooks folder and is ok, respectively a problem with `missing`
+
+Source: `tests/doctor/test_crochet_reference_transaction.py` (Verification, DansLeDoctor); `tools/doctor.py` (`verifier_crochet`, `controle_crochet_reference_transaction`). The checked repository is the code root; a test variable names another one, and the automatic train removes it (tooling-autonomous-trains).
+
+### Requirement: A missing third-party module skips one check only
+The system SHALL, when a check fails to import a third-party module, report that check as skipped with the reason key `module_missing` and the line `<check> : ignoré : module <name> absent` (`<check>: skipped: module <name> missing` in English), and SHALL run the other checks. It SHALL NOT skip an import error of a repository module or one without a module name: that error SHALL stop the doctor as before (R-20261110-42, R-20261110-43).
+
+#### Scenario: Doctor without pyyaml
+- **WHEN** the doctor runs where the YAML module cannot be imported
+- **THEN** the JSON output is valid, the `jira` check is skipped with `module_missing`, the line `jira : ignoré : module yaml absent` is printed, the hook check is present, and the exit code is 0 when no other check is in problem
+
+#### Scenario: Repository module missing
+- **WHEN** a check raises an import error naming a module of the repository's tools folder
+- **THEN** the error is raised and no check is reported skipped for it
+
+Source: `tests/doctor/test_crochet_reference_transaction.py` (Verification.test_import_d_un_module_tiers_est_ignore, Verification.test_import_d_un_module_du_depot_n_est_pas_ignore, DansLeDoctor.test_sans_pyyaml_le_doctor_rend_un_json_valide_avec_jira_ignore); `tools/doctor.py` (`lancer_controles`).
+
+### Requirement: Installed template of the automatic train
+The system SHALL report, in a check `train-auto-plist` formatted from `installed_plist_check()` of `train_auto.py`, the automatic train's installed template: skipped when not installed; a problem when it is unreadable, when the `python3` of its first PATH folder is absent or older than 3.10, or when it differs from the tool's model, each problem giving the regeneration command (design D11). It SHALL NOT load, write or regenerate the template.
+
+#### Scenario: Template without PATH
+- **WHEN** the installed template has no `EnvironmentVariables` entry
+- **THEN** the check is a problem that names the differing key and gives `python3 -I <dossier d'exécution>/tools/train_auto.py plist` with the reminder of the 3.10 minimum and of the reload, and no `launchctl` command is called
+
+#### Scenario: Python of the template too old
+- **WHEN** the stub `python3` of the template's first PATH folder answers 3.9
+- **THEN** the check is a problem with the too-old reason and the regeneration command
+
+#### Scenario: Python of the template absent
+- **WHEN** the template's first PATH folder holds no `python3`
+- **THEN** the check is a problem with the absent reason
+
+#### Scenario: Interpreter of ProgramArguments not the template's python3
+- **WHEN** the installed `ProgramArguments` starts with an interpreter whose real path is not that of the `python3` of the template's first PATH folder
+- **THEN** the check is a problem with the different reason naming `ProgramArguments`, and the regeneration command
+
+#### Scenario: Template equal to the model
+- **WHEN** the installed template equals the model rebuilt with its own interpreter folder, and that `python3` answers 3.14
+- **THEN** the check is ok
+
+#### Scenario: Not installed
+- **WHEN** no installed template exists
+- **THEN** the check is skipped as not set up and is not a problem
+
+#### Scenario: State file without a path
+- **WHEN** the doctor records a problem of this check
+- **THEN** the state file holds its identifier, level and reason key, and no path

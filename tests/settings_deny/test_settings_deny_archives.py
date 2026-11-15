@@ -2,8 +2,8 @@
 
 Après les déplacements de l'auteur (D5), l'ancienne table d'équipes vit sous `archives/archives-equipes` et la copie publique sous
 `archives/edition-en`. La session ne lit toujours pas la table, ni avec l'outil Read ni avec un lecteur du terminal, et ne parcourt pas le
-dossier `archives/` entier avec `find`, `tree`, `rsync`, `tar`, `ditto`, `zip`, `cp`. Les règles `archives-equipes` d'avant restent (aucune
-n'est retirée) et la copie publique reste gardée par les règles `edition-en` d'avant, sans règle de plus.
+dossier `archives/` entier avec `find`, `tree`, `rsync`, `tar`, `ditto`, `zip`, `cp`. Les règles `archives-equipes` d'avant restent (seules
+les deux règles Read de l'ancien emplacement sont retirées, désherbage du 2026-10-28, D39) et la copie publique reste gardée par les règles `edition-en` d'avant, sans règle de plus.
 
 Conception (même motif que test_settings_deny_contexte.py) : l'auteur ajoute les 24 règles de REGLES_D6 à .claude/settings.json (tâche 6.1).
 La suite reste VERTE avant et après :
@@ -177,8 +177,8 @@ class ReglesReelles(unittest.TestCase):
 
     def test_aucune_regle_d_avant_n_est_retiree(self):
         existantes = [r for r in self.deny if ARCHIVE in r]
-        self.assertGreaterEqual(len(existantes), 42, "les règles qui nomment archives-equipes (3 Read, 39 commandes) doivent toutes rester")
-        for r in ("Read(~/PMZilla-Lab/archives-equipes/**)", "Read(//**/PMZilla-Lab/archives-equipes/**)", "Read(**/archives-equipes/**)",
+        self.assertGreaterEqual(len(existantes), 42, "les règles qui nomment archives-equipes (1 Read de 19, 39 commandes) doivent toutes rester")
+        for r in ("Read(**/archives-equipes/**)",
                   "Bash(cat *archives-equipes*)", "Bash(cp *archives-equipes*)"):
             self.assertIn(r, self.deny)
 

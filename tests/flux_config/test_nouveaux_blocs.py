@@ -15,7 +15,6 @@ from unittest import mock
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
 import dependencies_jira  # noqa: E402
-import flow_board  # noqa: E402
 import flux_config  # noqa: E402
 import flux_jira  # noqa: E402
 import history_jira  # noqa: E402
@@ -412,7 +411,6 @@ class TestExclusionCarteLecteurs(unittest.TestCase):
             "dependencies_jira": (lambda: dependencies_jira.config(),
                                   mock.patch.object(dependencies_jira, "CONFIG_FILE", self.fichier)),
             "history_jira": (lambda: history_jira.reglages(), mock.patch.object(history_jira, "CONFIG_FILE", self.fichier)),
-            "flow_board": (lambda: flow_board.reglages(), mock.patch.object(flow_board, "CONFIG", self.fichier)),
         }
 
     def test_valeurs_invalides_refusees_par_chaque_lecteur(self):

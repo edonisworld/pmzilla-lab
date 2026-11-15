@@ -1,12 +1,19 @@
 """PMZilla Lab : messages de tools/morning_summary.py par langue (change morning-summary, R-50).
 
 Les phrases clés sont celles de la décision D7 du change (design.md) : les tests les vérifient mot pour mot. Aucun message ne contient
-de titre, de texte de problème, de chemin, de nom ni de secret, et aucun tiret cadratin.
+de titre, de texte de problème, de chemin, de nom ni de secret, et aucun tiret cadratin ; seule exception, la commande de rafraîchissement
+des copies figées (frozen_late), que la note du train donne telle quelle, dans la sortie texte seulement : la notification porte frozen_late_notify, sans chemin.
+Remplace : rien (frozen_late, frozen_late_notify, frozen_unreadable). Retrait : avec le bac à sable (R-20261110-03, -04).
+Remplace : rien (stop_since, stop_unreadable, stop_reason_none : la ligne de l'arrêt du train automatique, change train-auto-launchd-env D8, sans chemin ni nom).
+Retrait : avec le passage automatique (R-166).
 """
 
 CATALOGS = {
     "fr": {
         "title": "PMZilla : résumé du matin",
+        "stop_since": "Train automatique arrêté depuis {date}, raison {code}",
+        "stop_unreadable": "Train automatique arrêté (date et raison illisibles)",
+        "stop_reason_none": "non donnée",
         "watch_done": "Veille : faite, {n} article(s) retenu(s)",
         "watch_done_no_triage": "Veille : faite, pré-tri non fait aujourd'hui",
         "catch_up": " (rattrapage)",
@@ -26,6 +33,9 @@ CATALOGS = {
         "doctor_problems": "Doctor du {date} : {n} problème(s)",
         "doctor_absent": "Doctor : pas encore vérifié",
         "doctor_unreadable": "Doctor : état illisible",
+        "frozen_late": "Copies figées en retard sur main : à rafraîchir par : {command}",
+        "frozen_late_notify": "Copies figées en retard sur main : commande dans le résumé du Terminal",
+        "frozen_unreadable": "Copies figées en retard sur main : note illisible",
         "already_sent": "Résumé du matin déjà envoyé aujourd'hui",
         "notify_failed": "Notification macOS impossible",
         "switched_off": "Résumé du matin désactivé",
@@ -33,6 +43,9 @@ CATALOGS = {
     },
     "en": {
         "title": "PMZilla: morning summary",
+        "stop_since": "Automatic train stopped since {date}, reason {code}",
+        "stop_unreadable": "Automatic train stopped (date and reason unreadable)",
+        "stop_reason_none": "not given",
         "watch_done": "Watch: done, {n} article(s) kept",
         "watch_done_no_triage": "Watch: done, no triage today",
         "catch_up": " (catch-up)",
@@ -52,6 +65,9 @@ CATALOGS = {
         "doctor_problems": "Doctor of {date}: {n} problem(s)",
         "doctor_absent": "Doctor: not checked yet",
         "doctor_unreadable": "Doctor: state unreadable",
+        "frozen_late": "Frozen copies behind main: refresh with: {command}",
+        "frozen_late_notify": "Frozen copies behind main: command in the Terminal summary",
+        "frozen_unreadable": "Frozen copies behind main: note unreadable",
         "already_sent": "Morning summary already sent today",
         "notify_failed": "macOS notification failed",
         "switched_off": "Morning summary switched off",

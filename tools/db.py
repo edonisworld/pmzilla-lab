@@ -12,7 +12,9 @@ PMZilla Lab : couche d'accès unique à la base PostgreSQL et exécuteur de migr
                                               pmzilla_flow_views (lot 6),
                                               pmzilla_knowledge_ro (lot 4), pmzilla_cases_ro et pmzilla_cases (lot 2) et
                                               pmzilla_flow (rôle d'import de flow, export Jira) et
-                                              pmzilla_quality_views (change story-quality-audit) sont acceptés
+                                              pmzilla_quality_views (change story-quality-audit) et
+                                              pmzilla_mothra (stockage propre de Mothra, ADR 0006) et
+                                              pmzilla_mothra_views (lecture des vues de Mothra seules, A-80) sont acceptés
     uv run tools/db.py status                 migrations, rôles qui se connectent et version de pg_search, sans rien modifier
                                               (détail : état de chaque rôle de la liste par une session d'essai, rôles hors
                                               liste qui pourraient se connecter, version de pg_search comparée à celle de
@@ -35,7 +37,11 @@ PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES) y lit et y écrit, sans DDL. Même procé
 seulement, aucun droit ailleurs ; l'export Jira s'y connecte pour écrire la couche brute. Même procédé pour pmzilla_quality_views
 (change story-quality-audit, service pmzilla-lab-db-pmzilla_quality_views) : il ne lit que les trois vues agrégées du schéma quality ;
 les rôles de lecture-écriture et de lecture seule de ce schéma (pmzilla_quality, pmzilla_quality_ro) ne reçoivent jamais de mot de
-passe. Le mot de passe d'un rôle n'est jamais celui du superutilisateur.
+passe. Même procédé pour pmzilla_mothra (mothra-slices tâche 16.1, ADR 0006, service pmzilla-lab-db-pmzilla_mothra) : le rôle d'écriture
+limité au schéma mothra, seul rôle de ce schéma. Même procédé pour pmzilla_mothra_views (audit #629 A-80, service
+pmzilla-lab-db-pmzilla_mothra_views, variable PMZILLA_LAB_DB_PASSWORD_PMZILLA_MOTHRA_VIEWS) : le rôle sous lequel le serveur de Mothra lit les
+sept vues du contrat commun de Mothra et elles seules ; pmzilla_flow_views reste le rôle de tools/flow_views.py. Le mot de passe d'un rôle n'est
+jamais celui du superutilisateur.
 
 Migrations : db/migrations/NNNN_description.sql (quatre chiffres, suite continue à partir de 0001), appliquées dans l'ordre, une
 transaction par migration, suivies dans public.schema_migrations (numéro, nom, empreinte sha256, date). L'exécuteur s'arrête, sans
@@ -78,7 +84,7 @@ FICHIER_COMPOSE = RACINE / "docker-compose.yml"
 ALPHABET_MOT_DE_PASSE = string.ascii_letters + string.digits + "-_"    # aucun caractère à protéger ; les deux derniers ne commencent jamais le mot de passe
 LONGUEUR_MOT_DE_PASSE = 40
 ROLES_AVEC_MOT_DE_PASSE = ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases",
-                           "pmzilla_flow", "pmzilla_quality_views")    # rôles qui peuvent se connecter (vues de flow ; bibliothèque en lecture seule, lot 4 ; cas en lecture, puis en lecture-écriture, lot 2 ; rôle d'import de flow, jira-data-architecture D13 ; vues qualité, story-quality-audit)
+                           "pmzilla_flow", "pmzilla_quality_views", "pmzilla_mothra", "pmzilla_mothra_views")    # rôles qui peuvent se connecter (vues de flow ; bibliothèque en lecture seule, lot 4 ; cas en lecture, puis en lecture-écriture, lot 2 ; rôle d'import de flow, jira-data-architecture D13 ; vues qualité, story-quality-audit ; stockage propre de Mothra, mothra-slices tâche 16.1, ADR 0006 ; vues de Mothra, rôle propre à Mothra, audit #629 A-80, R-20261107-26 décision 3 (a))
 ROLES_SANS_MOT_DE_PASSE = ("pmzilla_owner", "pmzilla_knowledge", "pmzilla_flow_ro", "pmzilla_quality", "pmzilla_quality_ro")    # rôles d'application des migrations qui ne reçoivent jamais de mot de passe (propriétaire, écriture de knowledge, lecture seule de flow, écriture et lecture seule de quality)
 
 
@@ -104,14 +110,54 @@ def url_par_defaut() -> str:
     return f"postgresql://postgres@127.0.0.1:{port}/pmzilla"
 
 
+HOTES_LOCAUX = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+SCHEMAS_URL = ("postgresql://", "postgres://")
+VARIABLES_HOTE_REFUSEES = ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE")    # libpq les lit pour choisir l'hôte ou y renvoyer par un fichier de service
+
+
+def _hote_distant(url: str) -> bool:
+    """Vrai si l'adresse vise un hôte autre que la boucle locale (hôtes de l'autorité, `host`, `hostaddr`, ou PGHOST à défaut).
+    Un dossier de socket (chemin absolu) est local. Garde de l'audit #629 (A-54, complétée par la revue du commit f8cb0ee4) : le mot de
+    passe du rôle, lu dans le Trousseau, ne part jamais vers un hôte distant. Remplace : rien. Retrait : permanent tant que la base est
+    celle du Mac (127.0.0.1)."""
+    morceaux = urlsplit(url)
+    if morceaux.netloc.count("@") > 1:     # deux arobases : libpq et urlsplit peuvent lire un hôte différent
+        return True
+    hotes = (morceaux.hostname or "").split(",")
+    for cle, valeur in parse_qsl(morceaux.query, keep_blank_values=True):
+        if cle.lower() in ("host", "hostaddr"):
+            hotes.extend(valeur.split(","))
+    if not any(hotes):
+        hotes = os.environ.get("PGHOST", "").split(",")
+    return any(h and not h.startswith("/") and h.lower() not in HOTES_LOCAUX for h in hotes)
+
+
 def verifier_url(url: str) -> str:
-    """Refuse une adresse qui porte un mot de passe (dans l'autorité ou en paramètre), sans l'afficher."""
+    """Refuse, sans jamais afficher la valeur : une adresse qui n'est pas une URL postgresql:// ou postgres:// (la forme clé=valeur
+    échappe au contrôle), qui porte un mot de passe (autorité, `password`, `passfile`), un paramètre `service`, un hôte autre que la
+    boucle locale (autorité, `host`, `hostaddr`), ou quand PGHOSTADDR, PGSERVICE ou PGSERVICEFILE sont posées (la variable est nommée,
+    jamais sa valeur). Garde de l'audit #629 (A-54), complétée par la revue du commit f8cb0ee4. Remplace : rien. Retrait : permanent
+    tant que la base est celle du Mac et que psycopg lit l'hôte dans l'adresse ou l'environnement."""
+    if not url.lower().startswith(SCHEMAS_URL):
+        raise ErreurBase(f"{VARIABLE_URL} doit être une URL postgresql:// ou postgres:// (la forme clé=valeur est refusée ; valeur non affichée).")
+    for variable in VARIABLES_HOTE_REFUSEES:
+        if os.environ.get(variable):
+            raise ErreurBase(f"La variable d'environnement {variable} est posée : elle peut rediriger la connexion hors de la boucle locale. "
+                             "Retirez-la avant de lancer la commande (valeur non affichée).")
     try:
         morceaux = urlsplit(url)
         parametres = [cle.lower() for cle, _ in parse_qsl(morceaux.query, keep_blank_values=True)]
         a_mot_de_passe = morceaux.password is not None or "password" in parametres or "passfile" in parametres
+        a_service = "service" in parametres
+        distant = _hote_distant(url)
     except ValueError:
         raise ErreurBase("Adresse de connexion illisible (valeur non affichée).") from None
+    if a_service:
+        raise ErreurBase(f"{VARIABLE_URL} ne doit pas porter de paramètre service : il renvoie à un fichier de connexion hors de contrôle.")
+    if distant:
+        raise ErreurBase(f"{VARIABLE_URL} doit viser la boucle locale (127.0.0.1, ::1 ou localhost) : la base est celle du Mac.")
     if a_mot_de_passe:
         raise ErreurBase(f"{VARIABLE_URL} ne doit pas contenir de mot de passe : il est lu dans le Trousseau "
                          f"(service {SERVICE_TROUSSEAU}) ou dans {VARIABLE_MOT_DE_PASSE}. Retirez-le de l'adresse.")
@@ -160,7 +206,11 @@ def connect(url: str | None = None, *, password: str | None = None, security: st
     if role is not None and role not in ROLES_AVEC_MOT_DE_PASSE:
         raise ErreurBase(f"Rôle non autorisé à se connecter par mot de passe : {role}.")
     secret = password if password is not None else lire_mot_de_passe(security, role)
-    options = {"dbname": dbname} if dbname else {}
+    # Garde de l'audit #629 (A-54) : le serveur doit prouver qu'il authentifie par SCRAM, sinon le client refuse d'envoyer le mot de passe.
+    # Remplace : rien. Retrait : si le geste `uv run tools/db.py status` après la fusion de O4 échoue en authentification (R-20261107-33, 3) ; sinon permanent tant que les rôles et le superutilisateur sont en SCRAM-SHA-256 (verifieur_scram, base en scram).
+    options = {"require_auth": "scram-sha-256"}
+    if dbname:
+        options["dbname"] = dbname
     if role:
         options["user"] = role
     try:

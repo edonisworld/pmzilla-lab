@@ -1,0 +1,3 @@
+Edit(~/.pmzilla-lab/ci/**)
+Edit(//**/.pmzilla-lab/ci/**)
+Bash(*CI_LOCAL_PREUVES*)

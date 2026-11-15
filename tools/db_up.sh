@@ -24,9 +24,9 @@ esac
 
 command -v docker >/dev/null 2>&1 || { echo "Docker est introuvable. Installer : brew install colima docker docker-compose"; exit 1; }
 if command -v colima >/dev/null 2>&1; then
-  colima status >/dev/null 2>&1 || { echo "Colima ne tourne pas. Le démarrer : colima start --cpu 4 --memory 6 (ou brew services start colima)"; exit 1; }
+  colima status >/dev/null 2>&1 || { echo "Colima ne tourne pas. Le démarrer : colima start --cpu 8 --memory 16 (ou brew services start colima)"; exit 1; }
 fi
-docker info >/dev/null 2>&1 || { echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 4 --memory 6)"; exit 1; }
+docker info >/dev/null 2>&1 || { echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 8 --memory 16)"; exit 1; }
 
 if [ "$ACTION" = "down" ]; then
   # Le mot de passe n'est pas nécessaire pour arrêter (docker-compose.yml ne l'exige pas à l'interpolation).

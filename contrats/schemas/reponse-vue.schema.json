@@ -1,0 +1,105 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "rows": {
+      "items": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "state": {
+                  "const": "value",
+                  "type": "string"
+                },
+                "value": {
+                  "minimum": 5,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "state",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "state": {
+                  "const": "value",
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "state",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "state": {
+                  "const": "masked",
+                  "type": "string"
+                },
+                "threshold": {
+                  "minimum": 5,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "state",
+                "threshold"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "properties": {},
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "threshold": {
+      "minimum": 5,
+      "type": "integer"
+    },
+    "view": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "view",
+    "threshold",
+    "columns",
+    "rows",
+    "sources"
+  ],
+  "type": "object"
+}

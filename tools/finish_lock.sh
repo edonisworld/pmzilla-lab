@@ -1,11 +1,12 @@
 # PMZilla Lab : verrou de fin de branche, partie shell (change multi-session-piloting, design D5 et D6).
-# Module SOURCÉ (bash) par tools/finish_branch.sh et tools/finish_worktree.sh ; il ne change ni les options du shell appelant ni son dossier
+# Module SOURCÉ (bash) par tools/finish_train.sh et tools/branch_sync.sh (les fins unitaires qui le sourçaient sont retirées par B9) ; il ne change ni les options du shell appelant ni son dossier
 # courant. Le lecteur Python (outil de pilotage, hook pre-commit) est tools/finish_lock.py ; le lanceur de tests lit le verrou lui-même.
 #
 #     . "$SCRIPT_DIR/finish_lock.sh"
 #     finish_lock_acquire "$dossier_git_commun" "$branche"; code=$?     0 pris ou hérité, 1 tenu par un autre, 2 création impossible
 #     finish_lock_release                                               à appeler à la sortie (piège EXIT)
 #     finish_lock_hhmm <secondes>                                       « HH:MM »
+#     finish_lock_record < lignes                                       gel ciblé : « B <branche> » et « W <dossier> » (design D18)
 #
 # Le verrou est le dossier pmzilla-fin-en-cours du dossier Git commun, créé par mkdir (atomique), propriétaire seul, avec les fichiers pid (celui
 # du script), debut (secondes), branche et jeton (128 bits au hasard, jamais affiché). Prise : un verrou dont le jeton est celui de
@@ -25,7 +26,7 @@ FL_TOKEN=""
 FL_BRANCH=""
 FL_START=""
 
-_fl_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+_fl_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 # 0 si le verrou $1 est périmé, 1 s'il est tenu (même règle que les repères de passage de tools/run_worktree.sh)
 _fl_stale() {
@@ -95,6 +96,23 @@ finish_lock_acquire() {
   FL_OWN=1
   export FINISH_LOCK_TOKEN="$jeton"
   return 0
+}
+
+# Gel ciblé (change autonomous-trains-merge, design D18 point 1) : la liste des branches et des worktrees que le train gèle, écrite sous son
+# jeton, lue par tools/finish_lock.py (freeze_scope). Lignes lues sur l'entrée standard : « B <branche> » ou « W <dossier> ». Le fichier `gel`
+# est écrit à côté puis renommé (complet ou absent) et se termine par la ligne `fin`. Code 0 écrit ; 1 si le verrou n'est pas celui de ce
+# script (hérité) ou si l'écriture échoue : le verrou reste sans liste lisible, que les lecteurs traitent comme « tout gelé » (échec fermé).
+# Remplace : rien (le verrou ne portait pas de liste). Retrait : permanent, tant que le gel est ciblé.
+finish_lock_record() {
+  [ "$FL_OWN" -eq 1 ] || return 1
+  [ "$(cat "$FL_DIR/jeton" 2>/dev/null)" = "$FL_TOKEN" ] || return 1
+  local tmp="$FL_DIR/gel.$$" ligne
+  if ( umask 077; while IFS= read -r ligne; do printf '%s\n' "$ligne"; done; printf 'fin\n' ) > "$tmp" 2>/dev/null \
+     && mv "$tmp" "$FL_DIR/gel" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  return 1
 }
 
 finish_lock_release() {

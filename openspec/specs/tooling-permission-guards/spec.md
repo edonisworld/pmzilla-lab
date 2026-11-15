@@ -186,21 +186,29 @@ The permissions section SHALL hold deny rules and a single allow rule, `Bash(uv 
 Source: tests/settings_deny/test_settings_autres_regles.py
 
 ### Requirement: The hooks section holds the session-start hooks and the pipe-guard entry
-The hooks section SHALL hold the two session-start hooks, the one that lists the due reviews of the cases module and the one that prints the queue reminder line from the reader's cache, and the `PreToolUse` pipe-guard entry of design D9 of change deny-rules-review (chosen by the author on 2026-10-19): matcher `Bash`, a single command naming the pipe-guard tool with `--event pre`, which only reports and never blocks a command; the `PostToolUse` form SHALL make a test fail.
+The hooks section SHALL hold the two session-start hooks, the one that lists the due reviews of the cases module and the one that prints the queue reminder line from the reader's cache, and one `PreToolUse` entry with matcher `Bash` that holds, in this order, the three guards of design D12 of change session-guard-n1, each launched with `python3 -I` from the absolute path of the workspace copy written from `$HOME`: the pipe-guard tool with `--event pre` (design D9 of change deny-rules-review, chosen by the author on 2026-10-19), which only reports and never blocks a command; the npm guard; and the session guard. The npm guard and the session guard SHALL each carry `onFailure: block` and a timeout of 10 seconds (R-20261113-19). A missing guard, another order, a guard launched through the project-folder variable or without `-I`, a mixed form and the `PostToolUse` form SHALL make a test fail; the test SHALL NOT admit the form posed before P2.
 
 #### Scenario: Reminder hook missing
 - **WHEN** the session-start hooks hold only the due-reviews hook
 - **THEN** the test fails and names the queue reminder
 
 #### Scenario: Pipe-guard entry posed
-- **WHEN** the hooks section holds the two session-start hooks and one `PreToolUse` entry with matcher `Bash` running the pipe-guard tool with `--event pre`
+- **WHEN** the hooks section holds the two session-start hooks and one `PreToolUse` entry with matcher `Bash` running, in this order, the pipe-guard tool with `--event pre`, the npm guard and the session guard (the form of design D12), each by `python3 -I` and the absolute workspace path written from `$HOME`, the last two with `onFailure: block` and a timeout of 10
 - **THEN** the test passes
+
+#### Scenario: Form before P2
+- **WHEN** the `PreToolUse` entry launches the pipe guard and the npm guard through the project-folder variable, without `-I` and without the session guard
+- **THEN** the test fails and names the guard
+
+#### Scenario: Mixed form
+- **WHEN** the entry holds the three guards but one of them is launched through the project-folder variable, or the session guard lacks `onFailure: block`
+- **THEN** the test fails and names the guard
 
 #### Scenario: Former PostToolUse form
 - **WHEN** the hooks section holds the pipe-guard entry under `PostToolUse` with `--event post`, alone or beside the `PreToolUse` entry
 - **THEN** the test fails and names form A as not admitted
 
-Source: tests/settings_deny/test_settings_autres_regles.py; tests/settings_deny/test_settings_hook_garde_tubes.py
+Source: tests/settings_deny/test_settings_autres_regles.py; tests/settings_deny/test_settings_hook_garde_tubes.py (strict hook tests changed by tasks 8.3 and 14.1, R-20261113-17 and R-20261113-41)
 
 ### Requirement: The install script is denied to the session
 The system SHALL deny the session every launch of the install script's bootstrap and orchestrator, whatever the launcher and path form. The launchers are the shells, the Python launcher, the Python interpreters and direct execution. The path forms are relative, absolute, home-relative and bare. The deny rules are those of design D6, posed in the settings file by the author; the session SHALL NOT edit the settings file.
@@ -309,13 +317,17 @@ The system SHALL deny the session, with `gh` written bare, by its absolute path 
 Source: tests/settings_deny/test_settings_deny_github.py
 
 ### Requirement: GitHub reading and the queue tools stay allowed
-The system SHALL NOT deny listing and viewing issues, listing labels, the authentication status, the queue reader, the GitHub write tool, reading the tools or running their suites.
+The system SHALL NOT deny, by any deny rule, listing and viewing issues, listing labels, the authentication status, the queue reader, the GitHub write tool, reading the tools or running their suites. The session guard of change session-guard-n1 SHALL still refuse every `gh` command outside `gh issue view`, `gh issue list` and `gh --version`, label listing and the authentication status included, and the GitHub write tool from a copy other than the workspace's. It SHALL NOT refuse the queue reader, the workspace copy of the write tool, reading the tools or running their suites.
 
 #### Scenario: Allowed commands
-- **WHEN** the session lists or views issues, runs the queue reader or the GitHub write tool, or runs their suites
-- **THEN** no deny rule matches
+- **WHEN** the session lists or views issues, runs the queue reader or the workspace copy of the GitHub write tool, or runs their suites
+- **THEN** no deny rule matches it and the session guard lets it through
 
-Source: tests/settings_deny/test_settings_deny_github.py
+#### Scenario: Read outside the closed list
+- **WHEN** the session lists labels or asks for the authentication status
+- **THEN** no deny rule matches it, and the session guard refuses it with `gh hors liste fermée`
+
+Source: tests/settings_deny/test_settings_deny_github.py; the session guard's refusals: untested until implemented (tests/garde_session, task 7.1)
 
 ### Requirement: The roadmap import tool is denied to the session
 The system SHALL deny the session every launch of the one-shot roadmap import tool, its dry run, cross-check and help included, whatever the launcher (Python launcher, Python interpreters, direct execution) and path form (relative, absolute, home-relative, bare). The rules SHALL stay after the tool is removed. The session SHALL NOT edit the settings file.
@@ -430,24 +442,6 @@ Source: tests/settings_deny/test_settings_deny_publication.py; tests/settings_de
 #### Scenario: Push from the private workspace
 - **WHEN** the session pushes from the private workspace, by `git push`, `git -C`, `cd … &&` or `--git-dir`
 - **THEN** a deny rule matches
-
-### Requirement: The watch copy tool is denied to the session
-The system SHALL deny the session every launch of the watch copy tool (copy, dry run, replace, verify, compare and parity), whatever the launcher (shells, the Python launcher, Python interpreters, direct execution) and the path form (relative, absolute, home-relative, bare), because each subcommand reads the real watch and triage data or writes the real database. The deny rules are those of design.md D12, added to the settings file by the author; the session SHALL NOT edit the settings file.
-
-#### Scenario: Launch forms
-- **WHEN** a command launches the copy tool with any supported launcher and path form, with any subcommand, including the dry run
-- **THEN** a deny rule matches it
-
-Source: tests/settings_deny/test_settings_deny_watch_copy_tool.py
-
-### Requirement: Reading and testing the watch copy tool stay allowed
-The system SHALL NOT deny reading the watch copy tool's file, running its test suite directly, or running the test runner, and SHALL NOT deny the collection and pre-triage scripts.
-
-#### Scenario: Allowed commands
-- **WHEN** the session reads the copy tool's file, runs its test suite, or runs the weekly inventory of the pre-triage script
-- **THEN** no deny rule matches
-
-Source: tests/settings_deny/test_settings_deny_watch_copy_tool.py
 
 ### Requirement: The doctor is allowed to the session, its wrapper is not
 The system SHALL let the session run the doctor script in every launch form, with no deny rule matching it, and SHALL deny the session every launch form of the doctor's scheduled wrapper, which regenerates the dashboard and so opens a database session. The author adds the wrapper rules; the session SHALL NOT edit the settings file.
@@ -910,9 +904,7 @@ Source: tests/settings_deny/test_settings_deny_push_merge.py
 - **THEN** no deny rule matches it
 
 ### Requirement: Sessions never merge in the main workspace nor merge a pull request
-The system SHALL deny `gh pr merge` bare, through `env` or an absolute path, and `git merge` in the main workspace: the forms naming its path in the shared settings, the bare form only in its local settings, which worktrees do not carry (design D11). It SHALL NOT put the bare form in the shared settings, nor deny `git merge` in a worktree, `gh pr list` or `gh pr view`.
-
-Source: tests/settings_deny/test_settings_deny_push_merge.py
+The system SHALL deny `gh pr merge` bare, through `env` or an absolute path, and `git merge` in the main workspace: the forms naming its path in the shared settings, the bare form only in its local settings, which worktrees do not carry (design D11). It SHALL NOT put the bare form in the shared settings, nor deny by a deny rule `git merge` in a worktree, `gh pr list` or `gh pr view`. The session guard of change session-guard-n1 SHALL refuse `git merge` everywhere and every `gh pr` command.
 
 #### Scenario: Pull-request merge
 - **WHEN** a command runs `gh pr merge` in any of its four forms
@@ -923,8 +915,14 @@ Source: tests/settings_deny/test_settings_deny_push_merge.py
 - **THEN** a deny rule matches it
 
 #### Scenario: Merge in a worktree
-- **WHEN** a command runs `git merge main` in a worktree, or `gh pr list` or `gh pr view`
-- **THEN** no rule of the shared settings matches it
+- **WHEN** a command runs `git merge main` in a worktree
+- **THEN** no rule of the shared settings matches it, and the session guard refuses it with class A1 and `git merge ou git pull`
+
+#### Scenario: Pull-request reading refused by the session guard
+- **WHEN** a command runs `gh pr list` or `gh pr view`
+- **THEN** no rule of the shared settings matches it, and the session guard refuses it with class B
+
+Source: tests/settings_deny/test_settings_deny_push_merge.py; the session guard's refusals: untested until implemented (tests/garde_session, tasks 7.1 and 7.5; decision R-20261108-01, question 15 (a))
 
 ### Requirement: Push and merge rules declared and pinned
 The system SHALL declare the rules of design D11 in `--json` list functions that pass the shared guard: no `Write(` or `NotebookEdit(` rule, no empty permission key, no duplicate, no bare leading wildcard. Their tests SHALL be skipped before the user's pose and SHALL fail once one rule is posed and another is missing. The six push and merge rules already present SHALL be kept, not duplicated.
@@ -1007,17 +1005,27 @@ Source: tests/settings_deny/test_settings_deny_git_dir.py
 - **THEN** the test fails and names the missing rule
 
 ### Requirement: Sessions never install, update or publish npm packages
-The system SHALL deny to the session, through rules the author poses, the npm subcommands of the reduced block of design D0 of mothra-session-guards, `npm ci --offline` included, in the five forms of design D2. It SHALL NOT deny the allowed commands of D1 (`npm test`, `npm run`, `npm start`), a command that only quotes a denied form, nor a script that runs npm inside, such as the worktree script's `npm ci --offline`.
+The system SHALL deny to the session, through rules the author poses, the npm subcommands of the reduced block of design D0, `npm ci --offline` included, in the five forms of design D2, less the two forms left to the npm guard. It SHALL keep denying `npm ci` with anything more, as the scenario "npm ci with something more" states. It SHALL NOT deny the allowed commands of D1 (`npm test`, `npm run`, `npm start`), a command that only quotes a denied form, nor a script that runs npm inside.
 
-Source: tests/settings_deny/test_settings_deny_npm.py
+#### Scenario: npm ci with something more
+- **WHEN** a command runs `npm ci` with any option or argument after it, after `cd …;`, behind `env` or by an absolute path of npm
+- **THEN** a deny rule matches it
 
 #### Scenario: Install forms
-- **WHEN** a command runs `npm install <paquet>`, `npm i`, `npm --prefix mothra install`, `cd mothra && npm ci`, `npm ci --offline`, `env npm update` or the absolute path of npm followed by `install`
+- **WHEN** a command runs `npm install <paquet>`, `npm i`, `npm --prefix mothra install`, `cd mothra && npm ci --offline`, `npm ci --offline`, `env npm ci`, `env npm update` or the absolute path of npm followed by `install` or `ci`
 - **THEN** a deny rule matches each command
+
+#### Scenario: Forms left to the npm guard
+- **WHEN** a command runs `npm ci` or `cd <dossier> && npm ci`, with nothing after it
+- **THEN** no rule of the declared block matches it, and the npm guard decides
+
+#### Scenario: Option before ci
+- **WHEN** a command runs `npm --prefix mothra ci`
+- **THEN** no rule of the declared block matches it, the test names this case as a stated effect, and the npm guard refuses it as a form not admitted
 
 #### Scenario: Allowed commands
 - **WHEN** a command runs `npm test`, `npm run build`, `npm start`, `npm ls`, `npm audit` or `bash tools/worktree.sh <branche>`
-- **THEN** no deny rule matches it
+- **THEN** no deny rule matches it, the worktree script being a script that runs npm inside (its `npm ci --offline`)
 
 #### Scenario: Quoted form
 - **WHEN** a `grep` or `git grep` command only quotes `npm install`
@@ -1026,6 +1034,8 @@ Source: tests/settings_deny/test_settings_deny_npm.py
 #### Scenario: Stated effect
 - **WHEN** a command runs a script whose name starts with a denied subcommand with options before `run`, such as `npm --prefix mothra run install-check`
 - **THEN** a deny rule matches it and the test names this case as a stated effect
+
+Source: tests/settings_deny/test_settings_deny_npm.py; rules posed by the author; design D0, D1 and D2 of mothra-session-guards; the two forms left to the npm guard and its conditions are those of the two rules of design D8 of npm-ci-session, which matched `npm ci` alone and `cd … && npm ci` alone (decision R-20261031-53).
 
 ### Requirement: Sessions never run a package through npx or npm exec
 The system SHALL deny `npx` and `npm exec` with its alias `x`, with or without arguments, in the five forms of design D2. It SHALL NOT deny a command that only quotes them.
@@ -1063,9 +1073,7 @@ Source: tests/settings_deny/test_settings_deny_npm.py
 - **THEN** a deny rule matches each command
 
 ### Requirement: npm, npx and node rules declared and pinned
-The system SHALL declare the reduced block of design D0 (the forms of design D1 to D4 that #383 and this spec name, 273 rules) in the list function `regles_attendues()` of a settings-deny module with a `--json` entry point, passing the shared guard and the module's checks of design D5. Real-settings tests SHALL be skipped before the pose and fail on a partial pose (design D5). The session SHALL NOT edit the settings file.
-
-Source: tests/settings_deny/test_settings_deny_npm.py
+The system SHALL declare the reduced block of design D0, less the two rules of design D8, in the list function `regles_attendues()` of a settings-deny module with a `--json` entry point, passing the shared guard and the module's checks of design D5. Its real-settings tests and its replay SHALL behave as the scenarios below state. No `Write(` or `NotebookEdit(` rule and no empty permission key SHALL be declared. The session SHALL NOT edit the settings file.
 
 #### Scenario: Before the pose
 - **WHEN** no rule of the block is in the settings
@@ -1075,6 +1083,14 @@ Source: tests/settings_deny/test_settings_deny_npm.py
 - **WHEN** the settings hold some rules of the block and lack another
 - **THEN** the test fails with `garde npm : règle absente de .claude/settings.json : <règle>` naming the missing rule
 
+#### Scenario: npm ci rules not yet removed
+- **WHEN** the settings hold every declared rule and still hold a rule removed by design D8 of npm-ci-session
+- **THEN** the partial-pose test passes and the replay skips the two forms left to the npm guard with `règles de npm ci encore posées (retrait par le fichier d'étape de l'auteur)`
+
+#### Scenario: npm ci rules removed
+- **WHEN** the settings hold every declared rule and neither rule removed by design D8
+- **THEN** the replay asserts that no real rule matches `npm ci` or `cd <dossier> && npm ci`
+
 #### Scenario: Write rule declared
 - **WHEN** the block would hold a `Write(` rule
 - **THEN** the shared guard fails and names the module and the rule
@@ -1082,6 +1098,12 @@ Source: tests/settings_deny/test_settings_deny_npm.py
 #### Scenario: Leading wildcard declared
 - **WHEN** the block would hold a rule such as `Bash(*/npm install*)`
 - **THEN** the module's tests fail and name the rule
+
+#### Scenario: Replay of the forms left to the npm guard
+- **WHEN** the replay against the real rules runs
+- **THEN** it skips the two forms left to the npm guard while the settings still hold either rule removed by design D8, and once both are gone it asserts that no real rule matches them
+
+Source: tests/settings_deny/test_settings_deny_npm.py; design D0 of mothra-session-guards (the forms of design D1 to D4); design D8 of npm-ci-session; real-settings tests skipped before the pose and failing on a partial pose (design D5).
 
 ### Requirement: The story quality grid check runs without a prompt
 The system SHALL hold, posed by the author, the one allow rule `Bash(uv run tools/story_quality.py grid*)` of design D9 of mothra-session-guards, declared in a settings-deny module that passes the shared guard, and no allow rule covering `story_quality.py *`. The deny rules SHALL keep refusing `collect`, `review`, `analyse` and `coach`, alone and chained after `grid`. The session SHALL NOT edit the settings file.
@@ -1222,6 +1244,114 @@ The system SHALL deny the team catalogue's temporary file through three `Read(` 
 - **THEN** no deny rule matches
 
 Source: tests/settings_deny/test_settings_deny_r84_flux_lab.py
+
+### Requirement: The settings file is assembled from deny fragments
+The system SHALL keep the `deny` rules in subject fragments under `.claude/deny/`, listed in order in `ORDRE`, and `tools/settings_assemble.py --check` SHALL report whether assembling them with `.claude/settings.base.json` gives `.claude/settings.json` byte for byte, never printing a rule. It SHALL refuse a duplicate fragment or rule, an empty or unlisted fragment and a `Write(` rule.
+
+#### Scenario: Fragments and settings file agree
+- **WHEN** `--check` runs on the repository
+- **THEN** it exits 0 and writes nothing
+
+#### Scenario: Duplicate rule
+- **WHEN** two fragment lines hold the same rule
+- **THEN** the assembly is refused, naming both fragments and lines
+
+Source: tests/settings_assemble/test_settings_assemble.py
+
+### Requirement: The version photo tool is denied to the session
+The system SHALL deny the session every launch of the photo tool (`reconstruct`, `take`, `adopt-n`, any option) under each launcher and path form, with rules anchored on the launcher, declared by a `--json` list function that passes the shared guard, posed as a deny fragment by the user. It SHALL NOT deny reading the tool or running its tests.
+
+Source: untested until implemented
+
+#### Scenario: Launch forms
+- **WHEN** a command launches `reconstruct` or `take --replace` with any supported launcher and path form
+- **THEN** a deny rule matches it
+
+#### Scenario: Guard and pose
+- **WHEN** the module's `--json` list is checked before the user's pose
+- **THEN** it passes the shared guard, holds no `Write(` or `NotebookEdit(` rule, and the real-settings tests are skipped until the rules are posed
+
+#### Scenario: Allowed commands
+- **WHEN** the session reads the tool, runs its test suite, or reads the photo view through the views reader
+- **THEN** no deny rule matches
+
+### Requirement: The real launch of the definitions load is denied to sessions
+The system SHALL carry one short deny rule in direct form for the real launch of `tools/flow_definitions.py`, in the flow tools fragment of the deny lists, commented "falls with R-164" and exposed through the `--json` list function of the deny lists and the shared guard (change flow-definitions-loader, design D6). It SHALL NOT add a `Write(path)` or `NotebookEdit(path)` rule or an empty permission key.
+
+Source: untested until implemented (tests/settings_deny, task 5.1)
+
+#### Scenario: Rule present after the author's step file
+- **WHEN** the settings are assembled after the author's step file of `.claude/`
+- **THEN** the deny list holds the rule for the real launch of the definitions load
+
+### Requirement: The tool's session refusal is the source of the definitions deny rule
+The system SHALL keep the session refusal of `tools/flow_definitions.py` as the source, and the settings deny tests SHALL classify the command as user-run so that a gap between the rule and the refusal is detected. No session SHALL write the rule under `.claude/`: the author poses it with a step file of `.claude/` only, without a posture evaluation run.
+
+Source: untested until implemented (tests/settings_deny, task 5.1)
+
+#### Scenario: Session launch refused
+- **WHEN** a session tries to launch the definitions load by a form the deny rule does not cover
+- **THEN** the tool refuses it with exit 3 before reading anything
+
+### Requirement: The CLAUDE.md line of the definitions load is deferred
+The system SHALL protect the definitions load, until the step file of `CLAUDE.md` of the single gate D2, by the tool's session refusal (exit 3) and the deny rule only (design D6, R-20261029-14). This change SHALL NOT add a line to `CLAUDE.md`; the line listing the command among the commands the user alone runs goes into that later step file.
+
+Source: untested (review, task 8.1)
+
+#### Scenario: No CLAUDE.md change in this change
+- **WHEN** the branch of this change is reviewed
+- **THEN** `CLAUDE.md` is unchanged, and the session refusal and the deny rule both cover the definitions load
+
+### Requirement: The guards, the hooks and their imports are not editable in the executed copies
+The system SHALL deny the session the Edit tool, which covers Write and NotebookEdit, on the paths of design D7 of change session-guard-n1 in the workspace and the run tree, on `.claude/settings*.json` in every folder and on the user's settings files, through the single fragment `41-protection-gardes.txt`, without a bare relative form. It SHALL NOT deny editing the other files of a worktree. The author poses the fragment; the session SHALL NOT edit the settings file.
+
+#### Scenario: Hook of the workspace
+- **WHEN** the Edit tool targets a file of the workspace's hooks folder or the workspace copy of the npm guard, by absolute or home-relative path
+- **THEN** a deny rule of fragment 41 matches it
+
+#### Scenario: Run tree
+- **WHEN** the Edit tool targets the run tree's copy of the GitHub write tool
+- **THEN** a deny rule of fragment 41 matches it
+
+#### Scenario: Settings file of a worktree
+- **WHEN** the Edit tool targets a worktree's `.claude/settings.json` or the user's settings file
+- **THEN** a deny rule of fragment 41 matches it
+
+#### Scenario: Worktree copy of a guard
+- **WHEN** the Edit tool targets a worktree's copy of the npm guard
+- **THEN** no deny rule of fragment 41 matches it
+
+Source: untested until implemented (tests/settings_deny, task 4.1); first cases from the confirmed reproductions of A-21, A-22 and A-39
+
+### Requirement: Fragment 41 rules are declared and pinned
+The system SHALL declare the rules of fragment 41, `Edit(` rules only, in the list function `regles_attendues()` of a settings-deny module with a `--json` entry point that passes the shared guard, with no `Write(` or `NotebookEdit(` rule and no empty permission key. Its real-settings tests SHALL be skipped before the pose and fail, naming the missing rule, on a partial pose. Level-2 Edit rules SHALL join this list, never a second fragment 41.
+
+#### Scenario: Before the pose
+- **WHEN** no rule of fragment 41 is in the settings
+- **THEN** the real-settings tests are skipped and the declared list passes the shared guard
+
+#### Scenario: Partial pose
+- **WHEN** the settings hold some rules of the list and lack another
+- **THEN** the test fails and names the missing rule
+
+#### Scenario: Rule other than Edit
+- **WHEN** the list would hold a `Bash(` or `Write(` rule
+- **THEN** the module's tests fail and name the rule
+
+Source: untested until implemented (tests/settings_deny, task 4.1)
+
+### Requirement: Every import of the hooks and guards is protected
+The system SHALL hold a static closure test. Starting from the commands of the hooks section and from the hooks of the tracked hooks folder, it follows Python imports, shell `source` and `.`, and scripts launched by path, until no new file appears. It SHALL fail, naming the file, when a file reached this way is not covered by a rule of the fragment 41 list. It SHALL NOT run any hook, guard or module to compute the closure.
+
+#### Scenario: New import of a hook
+- **WHEN** a hook starts importing a module that the list does not cover
+- **THEN** the closure test fails and names the module
+
+#### Scenario: Current tree
+- **WHEN** the closure test runs on the tree of this change
+- **THEN** every file reached is covered and the test passes
+
+Source: untested until implemented (tests/settings_deny, task 4.2)
 
 ## Open questions
 1. The deny rules are enforced by Claude Code, not by this repository; only the matching of rules to sample commands is tested.

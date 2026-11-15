@@ -448,6 +448,13 @@ class DepotReel(unittest.TestCase):
             verdict = mm.juger(copie, cible, LANCEUR, env, delai=300)
         self.assertEqual(verdict, "tue")
 
+    def test_l_interpreteur_des_suites_fournit_requests_avec_sa_raison(self):
+        # tests/db importe tests/story_quality/aide_analyse -> tools/history_jira.py -> requests : sans le paquet, la suite de référence échoue à l'import
+        paires = list(zip(mm.LANCEUR, mm.LANCEUR[1:]))
+        self.assertIn(("--with", "requests"), paires)
+        texte = (RACINE / "tools" / "mutation_masking.py").read_text(encoding="utf-8")
+        self.assertRegex(texte, r"(?m)^#.*requests.*history_jira|^#.*history_jira.*requests")
+
     def test_le_lanceur_de_tests_ne_nomme_pas_l_outil(self):
         self.assertNotIn("mutation_masking.py", (RACINE / "tests" / "run_all.sh").read_text(encoding="utf-8"))
         self.assertEqual([p for p in (RACINE / "tests").rglob("mutation_masking.py")], [])

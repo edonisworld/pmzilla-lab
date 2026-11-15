@@ -14,8 +14,9 @@
 #      pmzilla-lab-rehearsal=1, port publié sur 127.0.0.1 seulement ; le superutilisateur y reçoit son mot de passe par l'environnement ;
 #   3. applique les migrations (uv run tools/db.py migrate, Trousseau neutralisé), sans restaurer, vider ni supprimer aucune donnée :
 #      le schéma flow de la copie est la structure des migrations, sans ligne ;
-#   4. active la connexion des deux rôles (import et vues) dans la copie seulement : ALTER ROLE … LOGIN PASSWORD, SQL envoyé sur l'entrée
-#      standard de psql (jamais dans un argument). L'export, l'import et la reconstruction se connectent
+#   4. active la connexion, dans la copie seulement, de chaque rôle de ROLES_AVEC_MOT_DE_PASSE (lus dans tools/db.py) dont la variable
+#      PMZILLA_LAB_DB_PASSWORD_<ROLE> est posée : ALTER ROLE … LOGIN PASSWORD, SQL envoyé sur l'entrée standard de psql (jamais dans un
+#      argument) ; la fin de `up` dit pour chaque rôle « ouvert » ou « laissé fermé » (noms seulement). L'export, l'import et la reconstruction se connectent
 #      sous le rôle d'import avec le mot de passe de ce rôle (db.connect(role=...)) ; seule la conservation (flow_retention.py) se
 #      connecte en superutilisateur puis fait SET ROLE ;
 #   5. affiche chaque table de flow avec son nombre de lignes (toutes à 0) et compare l'empreinte des migrations (fichiers, copie, vraie
@@ -56,7 +57,7 @@ esac
 # --- Docker ---------------------------------------------------------------------------------------------------------------------
 command -v docker >/dev/null 2>&1 || { echo "Docker est introuvable (brew install colima docker docker-compose)"; exit 2; }
 if ! docker info >/dev/null 2>&1; then
-  echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 4 --memory 6)"; exit 2
+  echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 8 --memory 16)"; exit 2
 fi
 
 # Conteneurs de répétition : étiquette ET préfixe de nom. Une ligne par conteneur : nom|création|ports.
@@ -179,16 +180,30 @@ echo "Migrations :"
 printf '%s\n' "$sortie" | grep -E '^Appliquée : [A-Za-z0-9_.-]+$' | sed 's/^/  /'
 sortie=""
 
-# --- up : connexion des deux rôles, dans la copie seulement -----------------------------------------------------------------------
-# SQL sur l'entrée standard (printf est interne au shell : le mot de passe n'est ni un argument ni dans la liste des processus).
-mdp_flow="${PMZILLA_LAB_DB_PASSWORD_PMZILLA_FLOW//\'/\'\'}"
-mdp_vues="${PMZILLA_LAB_DB_PASSWORD_PMZILLA_FLOW_VIEWS//\'/\'\'}"
-if ! printf "ALTER ROLE pmzilla_flow LOGIN PASSWORD '%s';\nALTER ROLE pmzilla_flow_views LOGIN PASSWORD '%s';\n" "$mdp_flow" "$mdp_vues" \
+# --- up : connexion des rôles à mot de passe, dans la copie seulement ----------------------------------------------------------------
+# Les rôles sont ceux de ROLES_AVEC_MOT_DE_PASSE de tools/db.py (lus dans le fichier, jamais recopiés ici) ; un rôle est ouvert si sa
+# variable PMZILLA_LAB_DB_PASSWORD_<ROLE> est posée, laissé fermé sinon. SQL sur l'entrée standard (printf est interne au shell :
+# le mot de passe n'est ni un argument ni dans la liste des processus).
+ROLES_COPIE="$(sed -n '/^ROLES_AVEC_MOT_DE_PASSE = (/,/)/p' "$RACINE/tools/db.py" | sed 's/#.*//' | grep -oE '"[a-z_]+"' | tr -d '"')"
+if [ -z "$ROLES_COPIE" ]; then echo "ÉCHEC : la liste des rôles à mot de passe est illisible dans tools/db.py"; exit 1; fi
+APOS="'"; SQL_ROLES=""; BILAN_ROLES="Rôles de la copie :"
+for role in $ROLES_COPIE; do
+  variable_role="PMZILLA_LAB_DB_PASSWORD_$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
+  if [ -n "${!variable_role:-}" ]; then
+    mdp_role="${!variable_role}"; mdp_role="${mdp_role//$APOS/$APOS$APOS}"   # apostrophe doublée (variable : portable entre versions de bash)
+    SQL_ROLES="${SQL_ROLES}ALTER ROLE $role LOGIN PASSWORD '$mdp_role';"$'\n'
+    BILAN_ROLES="$BILAN_ROLES"$'\n'"  $role ouvert"
+  else
+    BILAN_ROLES="$BILAN_ROLES"$'\n'"  $role laissé fermé (variable absente)"
+  fi
+done
+mdp_role=""
+if ! printf '%s' "$SQL_ROLES" \
      | docker exec -i "$NOM" psql -U postgres -d pmzilla -v ON_ERROR_STOP=1 -q >/dev/null 2>&1; then
-  mdp_flow=""; mdp_vues=""
+  SQL_ROLES=""
   echo "ÉCHEC : la connexion des rôles n'a pas pu être activée dans la copie"; exit 1
 fi
-mdp_flow=""; mdp_vues=""
+SQL_ROLES=""
 
 # --- up : tables de flow, toutes vides --------------------------------------------------------------------------------------------
 REQUETE_COMPTES="select schemaname || '.' || tablename || '|' || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text from pg_tables where schemaname = 'flow' order by 1"
@@ -226,4 +241,5 @@ CONTENEUR=""
 echo "copie de répétition prête : $NOM (127.0.0.1:$PORT_COPIE), schéma flow vide"
 echo "adresse : postgresql://postgres@127.0.0.1:$PORT_COPIE/pmzilla (sans mot de passe)"
 echo "$TABLES"
+echo "$BILAN_ROLES"
 exit 0

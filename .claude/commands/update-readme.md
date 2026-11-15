@@ -50,4 +50,4 @@ For **`docs/pmzilla/installation.md`**, only if a script, a command, an option, 
 - Reread the diff of the README and of `installation.md`. Check that every cited command exists in the scripts' help, that no internal link in the table of contents is broken (anchors of both files included).
 - Display the list of the gaps handled (one line each) and those you left, with the reason.
 - If neither the README nor `installation.md` has a gap, change nothing and commit nothing: just say so.
-- Otherwise, commit only these two files, without touching what is already staged elsewhere: `git commit -m "README : <summary in a few words>" -- README.md docs/pmzilla/installation.md`, then `git push`. Tell the user about the other uncommitted changes you saw.
+- Otherwise, commit only these two files, without touching what is already staged elsewhere: `git commit -m "README : <summary in a few words>" -- README.md docs/pmzilla/installation.md`. Do not push: the branch finish pushes. Tell the user about the other uncommitted changes you saw.

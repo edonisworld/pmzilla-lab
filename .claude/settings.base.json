@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "deny": [],
+    "allow": [
+      "Bash(uv run tools/story_quality.py grid*)",
+      "Bash(bash tests/run_all.sh)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run tools/journal_lab.py experiment due --session-hook"
+          },
+          {
+            "type": "command",
+            "command": "uv run tools/roadmap.py reminder --session-hook"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$HOME/PMZilla-Lab/workspace/tools/pipe_guard.py\" --event pre"
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"$HOME/PMZilla-Lab/workspace/tools/npm_guard.py\"",
+            "onFailure": "block",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"$HOME/PMZilla-Lab/workspace/tools/garde_session.py\"",
+            "onFailure": "block",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

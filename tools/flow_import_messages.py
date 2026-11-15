@@ -2,7 +2,25 @@
 
 Aucun message ne contient de clé de ticket, de nom d'équipe, d'étiquette, de version ni de valeur de champ : seulement des effectifs et
 des noms d'options. Les erreurs de la base (db.ErreurBase) sont affichées telles quelles, sans être passées par ce catalogue.
+
+Message « absent_share_exceeded » (R-20261114-69 et -70) : il dit le seuil, le nombre de tickets qui deviendraient absents, le nombre de
+tickets stockés (dénominateur du calcul) et leur part. Remplace : la même phrase sans chiffres, qui ne disait que le seuil. Retrait :
+permanent, tant que le seuil --max-absent-percent existe.
 """
+
+class Part(float):
+    """Une part en pourcentage, nombre et jamais chaîne : le message la met en forme avec `{share:.1f}` (une décimale). En français
+    (`virgule`), la décimale est une virgule. Une chaîne à la place échoue à la construction du message (spécificateur `f` refusé)."""
+
+    def __new__(cls, valeur: float, virgule: bool = False):
+        objet = super().__new__(cls, valeur)
+        objet.virgule = virgule
+        return objet
+
+    def __format__(self, spec: str) -> str:
+        texte = float.__format__(self, spec)
+        return texte.replace(".", ",") if self.virgule else texte
+
 
 CATALOGS = {
     "fr": {
@@ -18,6 +36,7 @@ CATALOGS = {
                        "sans --query",
         "empty_export": "export vide : --mark-absent refusé",
         "absent_share_exceeded": "trop de tickets absents du dernier passage (plus de {percent} % des tickets stockés) : "
+                                 "{absent:d} tickets sur {stored:d} stockés deviendraient absents ({share:.1f} %) ; "
                                  "--mark-absent refusé, rien n'est écrit ; pour relancer volontairement (élargissement d'une "
                                  "requête, par exemple), relever --max-absent-percent",
         "export_files_retired": "les fichiers d'export ne sont plus lus : l'import part de la couche brute",
@@ -44,6 +63,9 @@ CATALOGS = {
         "rebuild_field_team": "équipe",
         "rebuild_field_teams": "équipes",
         "rebuild_field_links": "liens",
+        "rebuild_field_versions": "versions",
+        "rebuild_field_delivery": "champs de livraison",
+        "versions_without_ticket": "versions sans ticket de version : {n}",
     },
     "en": {
         "dry_run_notice": "Dry run (--dry-run): counts computed in the database, nothing is written.",
@@ -57,6 +79,7 @@ CATALOGS = {
         "partial_run": "last export run limited to one query (--query): run a complete export first, without --query",
         "empty_export": "empty export: --mark-absent refused",
         "absent_share_exceeded": "too many tickets absent from the last run (more than {percent}% of stored tickets): "
+                                 "{absent:d} of {stored:d} stored tickets would become absent ({share:.1f}%); "
                                  "--mark-absent refused, nothing is written; to rerun on purpose (a query was widened, for "
                                  "example), raise --max-absent-percent",
         "export_files_retired": "export files are no longer read: the import derives from the raw layer",
@@ -82,5 +105,8 @@ CATALOGS = {
         "rebuild_field_team": "team",
         "rebuild_field_teams": "teams",
         "rebuild_field_links": "links",
+        "rebuild_field_versions": "versions",
+        "rebuild_field_delivery": "delivery fields",
+        "versions_without_ticket": "versions without version ticket: {n}",
     },
 }

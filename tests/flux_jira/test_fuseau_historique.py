@@ -27,15 +27,15 @@ PARIS = ZoneInfo("Europe/Paris")
 UTC = dt.timezone.utc
 # (ticket, instant UTC, départ, arrivée) : la transition vers l'acceptation tombe à 23:30 UTC, soit 00:30 le lendemain à Paris
 TRANSITIONS = [
-    ("PROJ-1", dt.datetime(2026, 3, 5, 23, 30, 12, 345000, tzinfo=UTC), "Ready for Verification", "Ready for Acceptance"),
-    ("PROJ-1", dt.datetime(2026, 3, 10, 12, 0, tzinfo=UTC), "Ready for Acceptance", "Done"),
+    ("PROJ-1", dt.datetime(2026, 3, 5, 23, 30, 12, 345000, tzinfo=UTC), "Awaiting Testing", "Awaiting Acceptance"),
+    ("PROJ-1", dt.datetime(2026, 3, 10, 12, 0, tzinfo=UTC), "Awaiting Acceptance", "Done"),
 ]
 TICKET = {"cle": "PROJ-1", "etat": "Done", "cree": dt.date(2026, 3, 1), "resolu": dt.date(2026, 3, 10)}
 
 
 def jours_en_acceptation(histoire: list) -> int:
     periodes = fj.chronologie(TICKET, histoire, dt.date(2026, 3, 31))
-    segment_de = {"ready for acceptance": "acceptation", "ready for verification": "revue_verification", "done": "fin"}
+    segment_de = {"awaiting acceptance": "acceptation", "awaiting testing": "revue_verification", "done": "fin"}
     return sum(v["jours"] for v in fj.visites(periodes, segment_de, ouvert=False) if v["segment"] == "acceptation")
 
 

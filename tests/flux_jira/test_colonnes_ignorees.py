@@ -65,9 +65,6 @@ class ColonnesIgnorees(unittest.TestCase):
         avec = self.comparer()
         self.assertGreater(avec["json"]["termines"], 0)         # le rapport n'est pas vide : la comparaison ne passe pas à vide
 
-    def test_rapport_identique_avec_les_points_d_age(self):
-        self.comparer(("--points",))
-
     def test_ni_etiquette_ni_version_dans_le_rapport(self):
         avec = rapports(True, self.lignes)
         texte = avec["md"] + json.dumps(avec["json"])

@@ -53,6 +53,8 @@ def executer(args, environ, t, taille) -> int:
     magasin = engine.ouvrir_magasin()
     try:
         engine.verifier_surcouche(contexte, magasin)
+        if essai:                                 # un essai n'est jamais bloqué (D6) : il dit seulement que la porte est fermée
+            contexte.suspendue = not engine.porte_ouverte(magasin, contexte.etiquettes)
         for cle in contexte.infos:
             print(t(cle))
         elements = engine.base(magasin.elements)
@@ -72,6 +74,10 @@ def executer(args, environ, t, taille) -> int:
             return 0
         textes = engine.base(magasin.textes, [e["key"] for e in lot]) if lot else {}
         lot = [e for e in lot if e["key"] in textes]      # texte disparu entre la sélection et la lecture : rien n'est envoyé
+        lot = engine.ecarter_retenus(contexte, lot, textes, t)       # D8 : données de patient détectées, jamais envoyées
+        if not lot and not essai:
+            print(t("sample_done" if taille else "analysis_done", n=0, u=0))
+            return 0
         if not engine.annoncer_et_confirmer(contexte, lot, textes, False, essai, t):
             return 0
         engine.enregistrer_surcouche(contexte, magasin)

@@ -109,6 +109,23 @@ class FausseConnexion:
             self.derniere = [(v["key"], nom) for v in self.vivants for nom in v["teams"]]
         elif sql == flow_raw.SQL_LIENS_VIVANTS:
             self.derniere = [(v["key"], *lien) for v in self.vivants for lien in sorted(v["links"], key=str)]
+        elif sql == flow_raw.SQL_DERNIERES_VERSIONS:          # change flow-version-share
+            self.derniere = list(getattr(self, "versions_instantanes", {}).items())
+        elif sql == flow_raw.SQL_VERSIONS_VIVANTES:
+            # (genre, nom) ou, depuis le change version-release-date, (genre, nom, date de sortie, drapeau) : complété par des nuls
+            self.derniere = [(v["key"], *(tuple(version) + (None,) * (4 - len(version))))
+                             for v in self.vivants for version in sorted(v.get("versions") or (), key=str)]
+        elif sql == flow_raw.SQL_DERNIERES_LIVRAISONS:          # change jira-delivery-fields : lectures des champs de livraison (aucune par défaut)
+            self.derniere = list(getattr(self, "livraisons_instantanees", {}).items())
+        elif sql in dict(flow_raw.CLES_LIVRAISON).values():
+            genre = next(g for g, requete in flow_raw.CLES_LIVRAISON if requete == sql)
+            self.derniere = list(getattr(self, "livraison_vivante", {}).get(genre, []))
+        elif sql == flow_raw.SQL_DERNIERES_VERSIONS_BRUTES:
+            self.derniere = list(getattr(self, "versions_brutes", []))
+        elif sql == flow_raw.SQL_REFERENCES_VIVANTES:
+            self.derniere = list(getattr(self, "references_vivantes", []))
+        elif sql == flow_raw.SQL_VERSIONS_SANS_TICKET:
+            self.derniere = [(getattr(self, "versions_sans_ticket", 0),)]
         elif sql.startswith("SELECT name, id FROM flow.teams"):
             self.derniere = [(nom, i) for i, nom in enumerate(self.equipes_connues, 1)]
         elif sql.startswith("SELECT DISTINCT issue_key FROM flow.raw_issue_snapshots"):

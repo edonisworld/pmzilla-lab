@@ -52,8 +52,11 @@ class EtapeCheck(CasDeBase):
     def test_affiche_sans_lancer_les_commandes_longues(self):
         p = self.lancer()
         texte = p.texte
-        for morceau in ("run_all.sh", "wake.py", "echarts.sha256"):
+        for morceau in ("run_all.sh", "wake.py"):
             self.assertIn(morceau, texte)
+        # R-146 : la somme de contrôle de la bibliothèque de graphiques n'existe plus (tools/vendor/ retiré)
+        for retire in ("echarts", "shasum", "tools/vendor"):
+            self.assertNotIn(retire, texte)
         self.assertFalse(any("run_all" in a or "wake.py" in a or "shasum" in a for a in p.appels), p.appels)
 
     def test_seconde_passe_rejoue_les_controles(self):

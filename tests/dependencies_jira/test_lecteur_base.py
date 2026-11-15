@@ -136,9 +136,10 @@ class ExclusionAvecLaBase(Base):
 
     def rapport_db(self, *extra: str) -> dict:
         export = self.csv(self.TICKETS, nom="base.csv")
-        donnees = chargeur.lire_export_dependances(Path(export), dj.config())
-        magasin = types.SimpleNamespace(lire_dependances=lambda settings: dict(donnees))
         racine = self.ws / "Flux-Lab"
+        with mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"):       # jamais le flux.yaml réel de l'auteur
+            donnees = chargeur.lire_export_dependances(Path(export), dj.config())
+        magasin = types.SimpleNamespace(lire_dependances=lambda settings: dict(donnees))
         with mock.patch.dict(sys.modules, {"flow_store": magasin}), mock.patch.dict(os.environ), \
                 mock.patch.object(dj, "FLUX_DIR", racine), mock.patch.object(dj, "CONFIG_FILE", racine / "flux.yaml"), \
                 mock.patch.object(dj, "REPORT_DIR", racine / "rapports"), contextlib.redirect_stdout(io.StringIO()):

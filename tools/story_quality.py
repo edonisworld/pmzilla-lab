@@ -13,6 +13,12 @@ sous-commande, chargé seulement quand elle est lancée :
                                                                                                tools/story_quality_engine.py
     uv run tools/story_quality.py report --name <série> [--json] [--language fr|en]           tools/story_quality_report.py
     uv run tools/story_quality.py grid [--show [--json]] [--language fr|en]                    (ici)
+    uv run tools/story_quality.py patient-scan [--json] [--language fr|en]                     tools/story_quality_patient.py
+    uv run tools/story_quality.py patient-lift [--accept <code>]... [--language fr|en]         tools/story_quality_patient.py
+
+`patient-scan` et `patient-lift` (change patient-data-detection) sont réservées à l'utilisateur comme `collect` : refusées dans une session
+(code 3) avant toute lecture. La première compte localement les données de patient du texte stocké et n'écrit que des effectifs masqués ;
+la seconde lève la suspension de l'analyse, que `analyse` et `coach` (hors essai et hors `coach --show`) respectent par le code 3.
 
 Tant que le module d'une sous-commande n'est pas écrit, elle répond « pas encore disponible » avec le code 2. `collect`, `review`,
 `analyse` et `coach`, essai compris, sont réservées à l'utilisateur, dans le Terminal : dans une session Claude Code (variable CLAUDECODE),
@@ -34,7 +40,10 @@ Codes : 0 fait ; 1 erreur (Jira, base, moteur injoignable, réglages illisibles)
 champ de personne configuré, socle absent ou invalide, surcouche invalide ou portant un nom sensible ou un identifiant personnel, liste des
 noms sensibles indisponible, bloc de réglages absent, plafond absent ou invalide ; pour `analyse` et `coach` aussi : clé d'analyse
 absente, contenu de la surcouche changé sans nouvelle version, pas de terminal pour la confirmation, tous les éléments du lot bloqués
-faute de relecture d'équipe).
+faute de relecture d'équipe) ; 5 requête Jira refusée par la liste des lectures permises du client en lecture seule (`collect`) ; 6 requête
+ou réglage refusé par la garde du périmètre (`collect` : projets déclarés, projets refusés, ces deux réglages absents, vides ou illisibles ;
+aucun appel à Jira dans ce dernier cas). Les codes 5 et 6 n'ont aucun autre motif ; la phrase fixe est écrite en entier sur la sortie d'erreur
+et rien n'est écrit dans le schéma quality.
 """
 from __future__ import annotations
 
@@ -60,7 +69,9 @@ NAMES_VARIABLE = "PMZILLA_LAB_SENSITIVE_NAMES"
 SESSION_VARIABLE = "CLAUDECODE"                 # posée par Claude Code dans ses terminaux
 
 SOUS_COMMANDES = ("collect", "review", "analyse", "coach", "report", "grid")
-RESERVEES_A_L_UTILISATEUR = ("collect", "review", "analyse", "coach")
+# change patient-data-detection (D12) : deux sous-commandes de plus, réservées à l'utilisateur, dans le module tools/story_quality_patient.py
+SOUS_COMMANDES_PATIENT = ("patient-scan", "patient-lift")
+RESERVEES_A_L_UTILISATEUR = ("collect", "review", "analyse", "coach") + SOUS_COMMANDES_PATIENT
 # un module par sous-commande (grid reste ici). Un module écrit est importé par son nom dans `charger_module` (import statique, vu par
 # le contrôle des dépendances de tests/script_dependencies) ; un module pas encore écrit passe par importlib et rend « pas encore
 # disponible ». Quand un bloc écrit le sien, il remplace sa ligne d'importlib par un import statique.
@@ -99,7 +110,11 @@ def read_arguments(argv):
     grid = sub.add_parser("grid", help="valide le socle et la surcouche ; --show écrit les critères effectifs")
     grid.add_argument("--show", action="store_true")
     grid.add_argument("--json", action="store_true", help="avec --show : le contrat de la grille effective en JSON sur la sortie standard")
-    for sous in (collect, review, analyse, coach, report, grid):
+    scan = sub.add_parser("patient-scan", help="détection locale de données de patient dans le texte stocké, effectifs masqués (utilisateur seul)")
+    scan.add_argument("--json", action="store_true", help="le contrat patient_data_scan en JSON sur la sortie standard")
+    lift = sub.add_parser("patient-lift", help="lève la suspension de l'analyse, catégorie par catégorie (utilisateur seul)")
+    lift.add_argument("--accept", action="append", help="code d'une catégorie trouvée et acceptée (P1 à P9), à répéter")
+    for sous in (collect, review, analyse, coach, report, grid, scan, lift):
         sous.add_argument("--language", choices=LANGUAGES, default="fr")
     args = parser.parse_args(argv)
     if args.command == "grid" and args.json and not args.show:
@@ -112,6 +127,9 @@ def charger_module(commande: str):
     if commande == "collect":
         import story_quality_collect
         return story_quality_collect
+    if commande in SOUS_COMMANDES_PATIENT:
+        import story_quality_patient
+        return story_quality_patient
     if commande == "report":
         import story_quality_report
         return story_quality_report
@@ -137,7 +155,7 @@ def read_overlay(core: dict, environ, identifiers):
         return None
     text = overlay_module.read_overlay_file(path)
     try:
-        names = sensitive_names.load_names(environ.get(NAMES_VARIABLE) or None)
+        names = sensitive_names.load_judged_names(environ.get(NAMES_VARIABLE) or None)
     except sensitive_names.SensitiveNamesUnavailable:
         raise overlay_module.OverlayError("names_unavailable") from None
     if identifiers is None:

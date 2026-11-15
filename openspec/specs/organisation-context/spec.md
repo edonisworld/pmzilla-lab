@@ -1,7 +1,7 @@
 # organisation-context Specification
 
 ## Purpose
-TBD - created by archiving change organisation-context. Update Purpose after archive.
+Describes the organisation context space: dated notes distilled from the user's organisation, kept outside every Git work tree, each with a mandatory header (title, date, declarative or measured nature, source, review date), written only through the context tool or the `/context` command after a confidentiality check and the user's explicit validation, and searched through a private library collection. At most one note is the context map, written by roles and generic designations, which each posture's wake script prints as its starting context. No tool reads the originals folder or prints the body of a note other than the map, no note may hold a personal identifier, a sensitive name or a team name of the extract, and the private collections are kept off any sending outside the Mac, guarded by a tripwire test.
 
 ## Requirements
 

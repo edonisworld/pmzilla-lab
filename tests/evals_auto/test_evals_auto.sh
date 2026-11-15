@@ -2,6 +2,7 @@
 # Test de tools/evals_auto.sh : faux HOME, dépôt temporaire, faux uv, claude, curl et osascript qui notent leurs appels.
 # Aucun appel à Claude, à Ollama, au réseau ni à une vraie notification. Lancement à la main : sh tests/evals_auto/test_evals_auto.sh
 set -u
+unset CLAUDECODE   # le marqueur de session n'est pas hérité : les cas de session le posent eux-mêmes
 script="$(cd "$(dirname "$0")/../../tools" && pwd)/evals_auto.sh"
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
@@ -81,6 +82,22 @@ verifie "--readme avec installation.md modifié : refusé" $(dit "modifications 
 lance
 verifie "sans --readme, des modifications du README ne gênent pas" $(appele "posture_evals.py"; [ $? -eq 0 ] && ! dit "modifications non commitées"; echo $?)
 git checkout -q docs/pmzilla/installation.md
+
+# session Claude Code (marqueur posé, même vide) : le jeu d'essai est payant et reste à l'auteur ; code 6, message clair, rien lancé
+export CLAUDECODE=1
+lance
+verifie "session : code 6" $([ "$code" -eq 6 ]; echo $?)
+verifie "session : message clair (payant, réservé à l'auteur)" $(dit "payant, réservé à l'auteur"; echo $?)
+verifie "session : aucun appel (ni uv, ni claude, ni tableau de bord)" $([ ! -f "$journal" ]; echo $?)
+verifie "session : aucun verrou posé" $([ ! -d "$HOME/.pmzilla-lab/essais/en-cours.lock" ]; echo $?)
+lance --readme
+verifie "session, --readme : code 6 et aucun appel" $([ "$code" -eq 6 ] && [ ! -f "$journal" ]; echo $?)
+export CLAUDECODE=
+lance
+verifie "session, marqueur vide : code 6 et aucun appel" $([ "$code" -eq 6 ] && [ ! -f "$journal" ]; echo $?)
+unset CLAUDECODE
+lance
+verifie "hors session : le jeu d'essai est rejoué comme avant" $([ "$code" -eq 0 ] && appele "posture_evals.py"; echo $?)
 
 lance --bidon
 verifie "option inconnue : code 2 et aucun appel" $([ "$code" -eq 2 ] && [ ! -f "$journal" ]; echo $?)

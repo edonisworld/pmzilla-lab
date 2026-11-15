@@ -21,7 +21,7 @@ LECTEURS = ("cat", "head -n 5", "tail -f", "less", "more", "grep -r secret", "aw
 FORMES = ("Flux-Lab/{f}", "./Flux-Lab/{f}", "/Users/quelquun/PMZilla-Lab/workspace/Flux-Lab/{f}",
           "~/PMZilla-Lab/workspace/Flux-Lab/{f}", "$HOME/PMZilla-Lab/workspace/Flux-Lab/{f}", "{f}")
 CATALOGUE = "equipes-jira.yaml"
-# Les 25 autres lecteurs courants (section B bis de etapes/r81-regles-deny.md), chacun avec un argument réaliste avant le chemin.
+# Les 25 autres lecteurs courants (section B bis du fichier de règles deny de l'auteur), chacun avec un argument réaliste avant le chemin.
 LECTEURS_ETENDUS = ("rg team", "bat", "nl", "tac", "rev", "strings", "xxd", "od", "hexdump", "cut -d: -f1", "sort -u", "uniq -c",
                     "diff README.md", "cmp README.md", "base64", "view", "vi", "vim", "nano", "rsync -a", "ditto",
                     "tar -cf /tmp/archive.tar", "zip /tmp/archive.zip", "ln -s", "mv")
@@ -61,8 +61,10 @@ class CatalogueDesEquipes(Base):
     """Exigence « Team sources denied to the session » (tâche 2.1) : rouge jusqu'à la tâche 2.2 (règles de l'auteur)."""
 
     def test_lecture_par_l_outil_read(self):
+        # Désherbage du 2026-10-28 (D38) : les formes exactes sont remplacées par les formes `*` finales (fragment 33), qui couvrent le nom
+        # exact et ses copies ; l'une ou l'autre forme suffit, avant comme après.
         for forme in (f"./Flux-Lab/{CATALOGUE}", f"//**/Flux-Lab/{CATALOGUE}", f"~/**/Flux-Lab/{CATALOGUE}"):
-            self.assertIn(f"Read({forme})", self.deny)
+            self.assertTrue(f"Read({forme})" in self.deny or f"Read({forme}*)" in self.deny, forme)
 
     def test_lecture_par_les_lecteurs_du_terminal_sous_chaque_forme_de_chemin(self):
         for lecteur, forme in itertools.product(LECTEURS, FORMES):
@@ -92,11 +94,12 @@ class CatalogueDesEquipes(Base):
         """Aucune forme `Grep(...)` n'existe dans les réglages : la documentation de Claude Code applique les règles `Read(...)` aux
         outils qui lisent des fichiers, Grep compris. Ce test vérifie la règle qui doit le faire (les trois formes de chemin du
         catalogue, sans restriction de motif de contenu) ; le comportement réel de l'outil Grep ne se teste pas par unittest :
-        vérification manuelle décrite dans le message final du change (faux dossier Flux-Lab dans /tmp, faux equipes-jira.yaml)."""
+        vérification manuelle décrite dans le message final du change (faux dossier Flux-Lab dans /tmp, faux equipes-jira.yaml).
+
+        Désherbage du 2026-10-28 (D38) : la forme exacte est remplacée par la forme `*` finale (fragment 33) ; elle couvre le nom exact
+        (un faux fichier du même nom est couvert) comme ses copies. L'assertion « aucun joker dans la règle » figeait la forme exacte retirée."""
         for forme in (f"./Flux-Lab/{CATALOGUE}", f"//**/Flux-Lab/{CATALOGUE}", f"~/**/Flux-Lab/{CATALOGUE}"):
-            regle = f"Read({forme})"
-            self.assertIn(regle, self.deny)
-            self.assertNotIn("*", regle.split("Flux-Lab/")[1])       # le nom exact : un faux fichier du même nom est couvert
+            self.assertTrue(f"Read({forme})" in self.deny or f"Read({forme}*)" in self.deny, forme)
         self.assertEqual([d for d in self.deny if d.startswith("Grep(") and CATALOGUE in d], [])
 
     def test_git_grep_du_nom_du_catalogue_dans_la_documentation_reste_permis(self):
@@ -116,7 +119,7 @@ class CatalogueDesEquipes(Base):
             for lecteur, forme in itertools.product(LECTEURS, FORMES):
                 commande = f"{lecteur} {forme.format(f=fichier)}"
                 self.assertTrue(self.interdite(commande), commande)
-        self.assertIn("Read(./Flux-Lab/organisation.yaml)", self.deny)
+        self.assertTrue("Read(./Flux-Lab/organisation.yaml)" in self.deny or "Read(./Flux-Lab/organisation.yaml*)" in self.deny)   # D38
         self.assertIn("Read(./Flux-Lab/equipes-assets.yaml)", self.deny)
 
 

@@ -139,6 +139,8 @@ Already collected and finished (not queried again): 0; to query: 5.
 Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 history written: 10 transitions added, 0 periods written
 ```
 
@@ -150,6 +152,8 @@ Already collected and finished (not queried again): 4; to query: 1.
 Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 history written: 0 transitions added, 0 periods written
 ```
 
@@ -160,6 +164,8 @@ Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 5; status transitions: 10; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 history written: 0 transitions added, 0 periods written
 ```
 
@@ -171,6 +177,8 @@ Already collected and finished (not queried again): 2; to query: 1.
 Finished tickets queried again (updated since the last collection): 0.
 tickets past retention, skipped: 0
 Mode: bulk. Tickets processed: 1; status transitions: 2; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 history written: 0 transitions added, 0 periods written
 ```
 
@@ -187,6 +195,8 @@ Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Everything is queried again (--refresh): to query: 4.
 tickets past retention, skipped: 1
 Mode: bulk. Tickets processed: 4; status transitions: 8; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 history written: 0 transitions added, 0 periods written
 ```
 
@@ -197,6 +207,8 @@ Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
 Mode: ticket by ticket. Tickets processed: 4; status transitions: 8; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 tickets not found in Jira: 1
 history written: 0 transitions added, 0 periods written
 ```
@@ -208,6 +220,8 @@ Tickets read: 5; discarded (portfolio types, excluded projects): 0.
 Everything is queried again (--refresh): to query: 5.
 tickets past retention, skipped: 0
 Mode: ticket by ticket. Tickets processed: 0; status transitions: 0; errors: 0.
+delivery field events kept: 0
+unreadable changelog elements (target, resolution and epic versions): 0
 Stopped: HTTP 401 (access denied: check the token and its permissions). Nothing is written to the database.
 ```
 
@@ -228,14 +242,19 @@ Error: --team: no team in the database.
 ```
 Database tickets kept: 6; without history: 1.
 Last state in the history equal to the stored state: consistent 3; inconsistent 1; not comparable (no transition) 1.
+Inconsistent: delivered 0; not delivered 1.
+Inconsistent pairs (last state in the history -> stored state): Closed -> Open 1.
+Among the inconsistent: stored state already crossed: 1; stored state never seen in the history: 0.
+Among the inconsistent: last two transitions at the same timestamp: 0; ticket update later than the end of the history: 0.
 Transitions per ticket: 0: 1; 1: 2; 2-4: 2; 5-9: 0; 10 or more: 0.
+Transitions from a status to a status of the same name (left out of the transitions per ticket above, no effect on segments): 0.
 Delivered tickets (resolution date): 4; delivered with no transition at all: 1.
 
 Delivered tickets (4): reading of the history.
-  Starting state of the first known transition: Open 2; Implementation 1.
+  Starting state of the first known transition: Open 2; Development 1.
   Transitions per delivered ticket: 0: 1; 1: 1; 2-4: 2; 5-9: 0; 10 or more: 0.
   Segments crossed (delivered tickets that went through the segment): definition 1; ready 1; implementation 2; review_verification 1; (no segment) 1.
-  States crossed (delivered tickets): Done 3; Implementation 2; Open 2; Definition 1; Ready for Implementation 1; Verification 1.
+  States crossed (delivered tickets): Done 3; Development 2; Open 2; Awaiting Development 1; Specification 1; Testing 1.
 ```
 
 ## check, --team (exit 0)
@@ -243,14 +262,19 @@ Delivered tickets (4): reading of the history.
 ```
 Database tickets kept: 6; without history: 1.
 Last state in the history equal to the stored state: consistent 3; inconsistent 1; not comparable (no transition) 1.
+Inconsistent: delivered 0; not delivered 1.
+Inconsistent pairs (last state in the history -> stored state): Closed -> Open 1.
+Among the inconsistent: stored state already crossed: 1; stored state never seen in the history: 0.
+Among the inconsistent: last two transitions at the same timestamp: 0; ticket update later than the end of the history: 0.
 Transitions per ticket: 0: 1; 1: 2; 2-4: 2; 5-9: 0; 10 or more: 0.
+Transitions from a status to a status of the same name (left out of the transitions per ticket above, no effect on segments): 0.
 Delivered tickets (resolution date): 4; delivered with no transition at all: 1.
 
 Delivered tickets (4): reading of the history.
-  Starting state of the first known transition: Open 2; Implementation 1.
+  Starting state of the first known transition: Open 2; Development 1.
   Transitions per delivered ticket: 0: 1; 1: 1; 2-4: 2; 5-9: 0; 10 or more: 0.
   Segments crossed (delivered tickets that went through the segment): definition 1; ready 1; implementation 2; review_verification 1; (no segment) 1.
-  States crossed (delivered tickets): Done 3; Implementation 2; Open 2; Definition 1; Ready for Implementation 1; Verification 1.
+  States crossed (delivered tickets): Done 3; Development 2; Open 2; Awaiting Development 1; Specification 1; Testing 1.
 ```
 
 ## check, --dormants removed (exit 1)
@@ -263,9 +287,9 @@ Error: --dormants (dormant tickets CSV export) no longer exists: dormant items a
 
 ```
 abc-2: 2 status transition(s) in the database.
-  start             Implementation
-  2026-03-01 09:00:00+0100  Implementation  ->  Verification
-  2026-03-02 09:00:00+0100  Verification  ->  Done
+  start             Development
+  2026-03-01 09:00:00+0100  Development  ->  Testing
+  2026-03-02 09:00:00+0100  Testing  ->  Done
   stored status: Done
 ```
 

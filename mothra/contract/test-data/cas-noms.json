@@ -1,0 +1,33 @@
+{
+  "description": "Parity cases of the distinctive-name filter and of the extract reader (design D20): played against tools/sensitive_names.py (tests/sensitive_names/test_parite_texte.py) and against contract/src/noms.ts (contract/test/noms.test.ts). Invented labels only.",
+  "distinctive": [
+    { "label": "Zorglub", "expected": true },
+    { "label": "Quentin Duval", "expected": true },
+    { "label": "Platform Team", "expected": false },
+    { "label": "Équipe Données", "expected": false },
+    { "label": "Zorg", "expected": false },
+    { "label": "  abcde  ", "expected": false },
+    { "label": "Core-Zorglub", "expected": true },
+    { "label": "Support Services", "expected": false }
+  ],
+  "extract": {
+    "text": "referential_teams:\n  - name: Zorglub\n  - name: \"Quentin Duval\"\n  - name: 'Platform Team'\n  - name: Zorglub\n  - name: Generique Alpha\ncatalogue_teams:\n  - name: Nebula Crew\nother_section:\n  - name: Ignored Name\n",
+    "generic": "# invented\ngenerique alpha\n",
+    "expected": ["Zorglub", "Quentin Duval", "Nebula Crew"]
+  },
+  "parse": [
+    { "name": "CRLF", "text": "A\r\nB\r\n", "expected": ["A", "B"] },
+    { "name": "a lone carriage return", "text": "A\rB\r", "expected": ["A", "B"] },
+    { "name": "a byte-order mark, a comment, an empty line", "text": "﻿A\n# comment\n\nB", "expected": ["A", "B"] },
+    { "name": "two byte-order marks at the start", "text": "﻿﻿A\nB", "expected": ["A", "B"] },
+    { "name": "spaces and no-break spaces at the ends", "text": "  Zorglub  \n Nebula \n", "expected": ["Zorglub", "Nebula"] },
+    { "name": "a vertical tab and a form feed cut lines", "text": "A\u000bB\u000cC", "expected": ["A", "B", "C"] }
+  ],
+  "extracts": [
+    { "name": "CRLF", "text": "referential_teams:\r\n  - name: Zorglub\r\n  - name: Nebula Crew\r\n", "generic": "", "expected": ["Zorglub", "Nebula Crew"] },
+    { "name": "a lone carriage return", "text": "referential_teams:\r  - name: Zorglub\r  - name: Nebula Crew\r", "generic": "", "expected": ["Zorglub", "Nebula Crew"] },
+    { "name": "a byte-order mark", "text": "﻿referential_teams:\n  - name: Zorglub\n", "generic": "", "expected": ["Zorglub"] },
+    { "name": "case folding: the sharp s meets SS", "text": "referential_teams:\n  - name: Straße Crew\n  - name: Zorglub\n", "generic": "STRASSE CREW\n", "expected": ["Zorglub"] },
+    { "name": "the generic list read with CRLF", "text": "referential_teams:\n  - name: Nebula Crew\n  - name: Zorglub\n", "generic": "nebula crew\r\n", "expected": ["Zorglub"] }
+  ]
+}

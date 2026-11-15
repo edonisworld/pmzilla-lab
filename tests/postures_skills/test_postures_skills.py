@@ -567,5 +567,44 @@ class Reveil(unittest.TestCase):
         self.assertEqual(fait.stderr, "")
 
 
+class DefinitionDeCritic(unittest.TestCase):
+    """Écart R-105 : la définition de l'agent Critic (.claude/agents/pmzilla-critic.md) est lue par un test."""
+
+    @classmethod
+    def setUpClass(cls):
+        texte = (RACINE / ".claude" / "agents" / "pmzilla-critic.md").read_text(encoding="utf-8")
+        _, entete, cls.corps = texte.split("---", 2)
+        # l'en-tête n'est pas du YAML strict (la description contient « : ») : une clé par ligne, coupée au premier « : »
+        cls.entete = dict(l.split(": ", 1) for l in entete.strip().splitlines())
+        cls.vocabulaire = yaml.safe_load((RACINE / "tests" / "postures" / "vocabulaire.yaml").read_text(encoding="utf-8"))
+
+    def test_nom_et_outils_limites_a_la_bibliotheque(self):
+        self.assertEqual(self.entete["name"], "pmzilla-critic")
+        self.assertEqual(set(self.entete["tools"].split(", ")),
+                         {"mcp__pmzilla-library__search_library", "mcp__pmzilla-library__read_passage"})
+
+    def test_la_description_suit_la_regle_de_claude_md(self):
+        """Critic sur un livrable, jamais sur une réponse de cadrage ni informative ; au premier plan, sans le raisonnement."""
+        description = self.entete["description"]
+        for morceau in ("deliverable", "Not on a framing answer", "informative answer", "foreground", "never the reasoning"):
+            self.assertIn(morceau, description)
+
+    def test_les_titres_de_section_cites_sont_reconnus_par_le_miroir(self):
+        """Les titres que la définition fait écrire à Critic sont ceux que tools/critic_mirror.py reconnaît, par langue."""
+        for langue, titres in (("fr", ("Ce que Critic conteste", "Objections de Critic", "Revue de Critic")),
+                               ("en", ("What Critic challenges", "Critic's objections", "Critic's review"))):
+            motifs = [re.compile(m, re.IGNORECASE) for m in self.vocabulaire[langue]["critic_plain_start"]]
+            for titre in titres:
+                with self.subTest(titre):
+                    self.assertIn(f'"{titre}"', self.corps)
+                    self.assertTrue(any(m.match(titre) for m in motifs), titre)
+
+    def test_les_formules_de_source_sont_celles_du_vocabulaire(self):
+        for langue in ("fr", "en"):
+            valeurs = self.vocabulaire[langue]
+            for formule in (valeurs["source_separation"][1], valeurs["hypothesis"], valeurs["out_of_library"]):
+                self.assertIn(f'"{formule}"', self.corps)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -140,15 +140,25 @@ class PostgresLibrary:
                 shaped["stale"] = True
         return shaped
 
-    def read(self, passage_id: int, before: int, after: int) -> dict:
+    def read(self, passage_id: int, before: int, after: int, collections: list[str] | None = None) -> dict:
+        # Un identifiant inconnu et un passage privé non nommé rendent exactement le même message (revue du commit f8cb0ee4) : l'erreur
+        # ne dit pas qu'un identifiant existe. Remplace : rien. Retrait : permanent, avec le refus de la collection privée ci-dessous.
+        inconnu = {"error": f"Unknown passage_id {passage_id}. Use an id returned by search_library."}
         rows = self._query("SELECT book_id, position FROM knowledge.chunks WHERE id = %s", (passage_id,))
         if not rows:
-            return {"error": f"Unknown passage_id {passage_id}. Use an id returned by search_library."}
+            return inconnu
         book_id, position = rows[0]
         ids = [row[0] for row in self._query(
             "SELECT id FROM knowledge.chunks WHERE book_id = %s AND position BETWEEN %s AND %s ORDER BY position, id",
             (book_id, position - before, position + after))]
         described = self._describe_many(ids)
+        # Décision R-20261107-33 (audit #629) : comme la recherche (D5), un passage d'une collection privée ne se lit que si l'appel nomme
+        # cette collection. Les voisins sont du même livre, donc des mêmes collections ; la vérification porte sur tous les passages rendus
+        # et le refus ne rend aucun texte, titre ni en-tête. Remplace : rien. Retrait : permanent tant que `contexte` est une collection privée.
+        named = set(collections or ())
+        for described_row in described.values():
+            if not (set(described_row["names"]) & private_collections.PRIVATE_COLLECTIONS) <= named:
+                return inconnu
         passages = [self._mark_stale(self._shape(described[i])) for i in ids]
         context = "review_date" in passages[0]          # une note de contexte : ses champs d'en-tête, sans auteur ni URL
         return {
@@ -171,11 +181,13 @@ class PostgresLibrary:
             f"SELECT b.title, b.file_name, {NAMES_SQL}, count(c.id), count(c.id) FILTER (WHERE c.kind = 'figure') "
             "FROM knowledge.books b LEFT JOIN knowledge.chunks c ON c.book_id = b.id "
             "GROUP BY b.id ORDER BY b.title COLLATE \"C\"")
+        # Garde de l'audit #629 (A-73), comme la recherche (D5) : sans collection nommée, les collections privées restent hors de la liste.
+        # Remplace : rien. Retrait : permanent tant que `contexte` est une collection privée (private_collections).
         return [
             {"book": title, "file": file_name, "collections": sorted(set(names)),
              "passages": passages, "figures": figures}
             for title, file_name, names, passages, figures in rows
-            if not collection or collection in set(names)
+            if (collection in set(names) if collection else private_collections.shareable(names))
         ]
 
     # -- aides ----------------------------------------------------------------

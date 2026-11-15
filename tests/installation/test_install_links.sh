@@ -20,6 +20,7 @@ lancer() { HOME="$HOME_FAUX" zsh "$LAB/workspace/tools/install_links.sh" "$@"; }
 cp "$LAB/workspace/tools/flux_jira.py" "$LAB/flux_jira.py"
 print "# copie ancienne" > "$LAB/watch_lab.py"
 print "vieux" > "$LAB/pmzilla_lab_library.py.avant-veille"
+ln -s run/tools/history_common.py "$LAB/history_common.py"      # ancien lien : un reliquat, rangé comme les copies
 
 lancer --verify >/dev/null 2>&1; code=$?
 verifier "--verify sort en erreur avec des liens manquants" '[[ $code -ne 0 ]]'
@@ -35,6 +36,7 @@ sauv=("$LAB"/copies-avant-liens-*(N))
 verifier "une sauvegarde est créée" '[[ ${#sauv} -eq 1 ]]'
 verifier "la copie différente est dans la sauvegarde" 'grep -q "copie ancienne" "$sauv[1]/watch_lab.py"'
 verifier "le reliquat est rangé" '[[ -f "$sauv[1]/pmzilla_lab_library.py.avant-veille" && ! -e "$LAB/pmzilla_lab_library.py.avant-veille" ]]'
+verifier "l'ancien lien history_common.py est un reliquat rangé, pas un lien du tableau" '[[ -L "$sauv[1]/history_common.py" && ! -e "$LAB/history_common.py" && ! -L "$LAB/history_common.py" ]]'
 verifier "watch.sh reste exécutable par le lien" '[[ -x "$LAB/watch.sh" ]]'
 
 sortie=$(lancer 2>&1)

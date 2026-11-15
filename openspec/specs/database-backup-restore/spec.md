@@ -7,21 +7,40 @@ Daily per-schema backups with rotation and notification, the scheduled job templ
 ## Requirements
 
 ### Requirement: Backup writes one dump file per schema, outside the repository
-The system SHALL write, for each backed-up schema, one custom-format dump file in a dated backup folder named by the day, using the database client inside the container, with no password read or required. Only the knowledge, cases and flow schemas SHALL be backed up as whole schemas: never the default schema, hence never the migration tracking table (the restore test recreates it by applying the migrations), and never the `quality` schema as a whole, which holds the story content and is kept only in the live database (design D10 of change story-quality-audit). Beside the three schema dumps, the backup SHALL write the partial quality dump of requirement "Backup writes a partial quality dump without story text", which names its three tables one by one (design D10, amendment of 2026-10-18); no other dump SHALL target a single table. The default schema lists of the backup script and of the restore test SHALL NOT name `quality`. The output SHALL contain only paths and sizes.
+The system SHALL write, for each backed-up schema, one custom-format dump file in a dated backup folder named by the day, using the database client inside the container, with no password read or required. The output SHALL contain only paths and sizes.
 
-Source: tests/db_scripts/test_db_scripts.sh (db_backup : dossier créé, un fichier par schéma, plus le dump partiel quality-sans-texte, aucun mot de passe, sortie; aucun dump de public ni de suivi des migrations; pg_dump seulement pour knowledge, cases et flow; quatre pg_dump, aucun ne vise le schéma quality entier; une seule commande vise des tables; seul le fichier quality-sans-texte.dump porte le nom quality; listes par défaut des deux scripts sans quality)
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : dossier créé, un fichier par schéma, plus le dump partiel quality-sans-texte, aucun mot de passe, sortie)
 
 #### Scenario: Nominal backup
 - **WHEN** the backup runs for a given date
 - **THEN** a folder for that date exists with exactly three schema dump files (knowledge, cases, flow), each holding its schema's dump, and the partial quality dump `quality-sans-texte`; the keychain is not queried and the output does not contain a secret
 
+### Requirement: Only the knowledge, cases and flow schemas are backed up as whole schemas
+Only the knowledge, cases and flow schemas SHALL be backed up as whole schemas: never the default schema, hence never the migration tracking table (the restore test recreates it by applying the migrations).
+
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : aucun dump de public ni de suivi des migrations; pg_dump seulement pour knowledge, cases et flow)
+
 #### Scenario: Default schema excluded
 - **WHEN** the dump commands of a backup are inspected
 - **THEN** each schema dump targets one of the three schemas by name, the only command that targets tables is the partial quality dump with its three tables, none targets the default schema or the migration tracking table, and no dump file is named after them
 
+### Requirement: The quality schema is never backed up as a whole
+The backup SHALL never back up the `quality` schema as a whole, which holds the story content and is kept only in the live database (design D10 of change story-quality-audit). The default schema lists of the backup script and of the restore test SHALL NOT name `quality`.
+
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : quatre pg_dump, aucun ne vise le schéma quality entier; listes par défaut des deux scripts sans quality)
+
 #### Scenario: Quality schema excluded
 - **WHEN** the dump commands of a backup and the default schema lists of both scripts are inspected
 - **THEN** none targets the `quality` schema as a whole, neither list names it, and the only dump file that refers to it is `quality-sans-texte`
+
+### Requirement: The partial quality dump is the only dump that targets tables
+Beside the three schema dumps, the backup SHALL write the partial quality dump of requirement "Backup writes a partial quality dump without story text", which names its three tables one by one (design D10, amendment of 2026-10-18); no other dump SHALL target a single table.
+
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : une seule commande vise des tables; seul le fichier quality-sans-texte.dump porte le nom quality)
+
+#### Scenario: One table-level dump
+- **WHEN** the dump commands of a backup are inspected
+- **THEN** the only command that targets tables is the partial quality dump naming its three tables, and `quality-sans-texte.dump` is the only file named after `quality`
 
 ### Requirement: Backups are private to the owner
 The system SHALL create backup folders readable only by the owner and dump files readable and writable only by the owner, even when the launcher's umask is permissive.
@@ -42,9 +61,9 @@ Source: tests/db_scripts/test_db_scripts.sh (db_backup : le dossier du jour n'es
 - THEN it says the backup exists, exits 0, makes no Docker call and sends no notification
 
 ### Requirement: Rotation keeps only the most recent dated backups
-The system SHALL, after a successful backup, keep a configurable number of most recent date-named backup folders (with a default), delete older ones while listing each deleted folder, and announce how many are present and kept. A folder with a label suffix after the date SHALL be neither counted nor deleted. An invalid retention setting (zero, negative, non-numeric) SHALL be refused with exit code 2, creating and deleting nothing.
+The system SHALL, after a successful backup, keep a configurable number of most recent date-named backup folders (with a default), delete older ones while listing each deleted folder, and announce how many are present and kept. A folder with a label suffix after the date SHALL be neither counted nor deleted.
 
-Source: tests/db_scripts/test_db_scripts.sh (db_backup : rotation, étiquette, DB_BACKUP_GARDER)
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : rotation, étiquette)
 
 #### Scenario: Retention exceeded
 - WHEN more dated folders exist than the retention allows
@@ -53,6 +72,11 @@ Source: tests/db_scripts/test_db_scripts.sh (db_backup : rotation, étiquette, D
 #### Scenario: Labeled folder
 - WHEN a folder named with a date and a label exists
 - THEN it is kept and not counted, and is not mentioned in the output
+
+### Requirement: An invalid retention setting is refused
+An invalid retention setting (zero, negative, non-numeric) SHALL be refused with exit code 2, creating and deleting nothing.
+
+Source: tests/db_scripts/test_db_scripts.sh (db_backup : DB_BACKUP_GARDER)
 
 #### Scenario: Invalid retention
 - WHEN the retention is 0, -1 or "abc"
@@ -107,44 +131,51 @@ Source: tests/db_scripts/test_db_scripts.sh (db_backup : notification macOS)
 - WHEN a schema is absent under the scheduler
 - THEN exit code 1 is reported in the notification
 
-### Requirement: The scheduled-job template runs the backup daily after the watch collection
-The system SHALL provide a launchd job template that runs the backup script every day (no weekday restriction) at a time later than the watch collection job's time, with output and errors going to the same log file, notifications enabled, no secret and no keychain access, no run at load and no keep-alive.
-
-Source: tests/db_backup_plist/test_plist.py
+### Requirement: The scheduled-job template runs the backup at load, hourly and daily after the watch collection
+The system SHALL provide a launchd job template that runs the backup script at load, every 3600 seconds and every day at a time later than the watch job's time (morning-guard-light D6), with output and errors to one log file, notifications enabled, no secret, no keychain access and no keep-alive. Today's dated folder SHALL keep a later pass of the day from writing anything. Replaces "no run at load"; removal: permanent while launchd schedules the backup.
 
 #### Scenario: Well-formed template
-- WHEN the template is parsed
-- THEN it is valid XML, has the expected label, and has a daily schedule later than the watch job's schedule
+- **WHEN** the template is parsed
+- **THEN** it is valid XML, has the expected label, and has a daily schedule later than the watch job's schedule
 
 #### Scenario: Rendering
-- WHEN the home placeholder is substituted
-- THEN the program arguments are the shell and the backup script under the home directory, the log path is under the home directory and shared by stdout and stderr, and no placeholder remains
+- **WHEN** the home placeholder is substituted
+- **THEN** the program arguments are the shell and the backup script under the home directory, the log path is under the home directory and shared by stdout and stderr, and no placeholder remains
 
 #### Scenario: No real paths, no secret
-- WHEN the raw template is read
-- THEN it contains no absolute user path other than the placeholder and system shell paths, no password mention and no keychain command, and the notifier variable is enabled
+- **WHEN** the raw template is read
+- **THEN** it contains no absolute user path other than the placeholder and system shell paths, no password mention and no keychain command, and the notifier variable is enabled
 
 #### Scenario: Not started at bootstrap
-- WHEN the rendered template is read
-- THEN it has neither run-at-load nor keep-alive (missed runs are caught up through the calendar schedule at wake)
+- **WHEN** the rendered template is read
+- **THEN** it now has run-at-load and a periodic interval of 3600 seconds (Q275), and still no keep-alive
+
+#### Scenario: Hourly pass after the day's backup
+- **WHEN** the backup runs again under the scheduler on a day whose dated folder exists, with Docker unreachable
+- **THEN** it says the backup exists, exits 0, makes no Docker call and sends no notification
 
 ### Requirement: The restore test uses a disposable container, never the real database
-The system SHALL restore a backup into a uniquely named disposable container started from the same pinned image as the compose file, publish its port on the loopback interface only with a Docker-chosen port by default, refuse port 5432 or the real database's configured port (exit 2), and refuse (exit 1, container removed, nothing restored) if Docker nevertheless publishes the standard port. It SHALL run compose commands against the real database only for process listing, readiness and read-only queries, SHALL never run a restore, an up/down or a write statement there, and SHALL NOT read the keychain.
+The system SHALL restore a backup into a uniquely named disposable container started from the same pinned image as the compose file, publish its port on the loopback interface only with a Docker-chosen port by default, refuse port 5432 or the real database's configured port (exit 2), and refuse (exit 1, container removed, nothing restored) if Docker nevertheless publishes the standard port.
 
-Source: tests/db_scripts/test_db_restore_test.sh (jamais la vraie base; refus de viser la vraie base; hygiène du script)
+Source: tests/db_scripts/test_db_restore_test.sh (jamais la vraie base; refus de viser la vraie base)
 
 #### Scenario: Container configuration
 - WHEN the restore test runs
 - THEN the container uses the compose image, a unique prefixed name distinct from the real one and a loopback-only port, and a throwaway random password is passed through the environment, not as an argument
 
-#### Scenario: Real-database safety
-- WHEN the command log is inspected
-- THEN compose commands are limited to listing, readiness and psql, none is a write or a restore, and the keychain was not called
-
 #### Scenario: Port refusal
 - WHEN the port option is the standard port or the real configured port
 - THEN the exit code is 2, a "refused" message mentions the real database and no container starts
 - AND WHEN a free port is given, it is published on loopback only
+
+### Requirement: The restore test only reads the real database and never the keychain
+The restore test SHALL run compose commands against the real database only for process listing, readiness and read-only queries, SHALL never run a restore, an up/down or a write statement there, and SHALL NOT read the keychain.
+
+Source: tests/db_scripts/test_db_restore_test.sh (jamais la vraie base; hygiène du script)
+
+#### Scenario: Real-database safety
+- WHEN the command log is inspected
+- THEN compose commands are limited to listing, readiness and psql, none is a write or a restore, and the keychain was not called
 
 ### Requirement: The restore test selects the latest plain dated backup
 The system SHALL restore the most recent date-named backup folder, ignoring folders with a label, unless a specific backup folder is given; it SHALL refuse with exit code 2 when none exists (pointing to the backup script) or when the given folder is not found.
@@ -165,13 +196,18 @@ Source: tests/db_scripts/test_db_restore_test.sh (aide et usage; aucune sauvegar
 - AND an unknown option exits 2
 
 ### Requirement: The restore test restores each schema, applies migrations and compares to the real database
-The system SHALL restore the three schemas into the disposable container, run the migrations against it (without the keychain), restore the partial quality dump into the empty `quality` tables (requirement "The partial quality dump restores coherently"), compare per-table row counts and the migration fingerprints with the real database, and print "restore OK" with exit 0 when they match. A table missing after restoration SHALL give exit 1 naming the table. A row-count gap SHALL be displayed with its value, flagged as possibly expected, with exit 0. A fingerprint difference, or a migration absent from the real database, SHALL give exit 1 with the differing migrations listed.
+The system SHALL restore the three schemas into the disposable container, run the migrations against it (without the keychain), restore the partial quality dump into the empty `quality` tables (requirement "The partial quality dump restores coherently"), compare per-table row counts and the migration fingerprints with the real database, and print "restore OK" with exit 0 when they match.
 
-Source: tests/db_scripts/test_db_restore_test.sh (succès; les trois schémas et le dump partiel de quality sont restaurés, quatre pg_restore; le dump partiel se restaure en données seulement, sans --clean, après les trois schémas; écart de lignes; table manquante; empreinte des migrations)
+Source: tests/db_scripts/test_db_restore_test.sh (succès; quatre pg_restore; dump partiel)
 
 #### Scenario: Identical counts
 - **WHEN** restored and real counts are identical, on a backup holding the partial quality dump
 - **THEN** each table line is marked OK, "identical counts" is stated, and four restores were issued: the three schemas and the partial quality dump
+
+### Requirement: The restore test reports missing tables, row gaps and fingerprint differences
+A table missing after restoration SHALL give exit 1 naming the table. A row-count gap SHALL be displayed with its value, flagged as possibly expected, with exit 0. A fingerprint difference, or a migration absent from the real database, SHALL give exit 1 with the differing migrations listed.
+
+Source: tests/db_scripts/test_db_restore_test.sh (écart de lignes; table manquante; empreinte des migrations)
 
 #### Scenario: Row gap
 - **WHEN** a table has fewer restored rows than live rows
@@ -225,17 +261,22 @@ Source: tests/db_scripts/test_db_restore_test.sh (nettoyage après échec; inter
 - THEN it exits non-zero, removes the container and reports the removal
 
 ### Requirement: The start script starts and stops the database without exposing or deleting anything
-The system SHALL start the database container and wait until healthy, passing the password to compose only through the environment of that one command, never as an argument, never displayed, with no persistent export and no shell tracing. It SHALL read the password from the keychain first, then from an environment fallback; when neither exists, it SHALL exit non-zero, print the command to create the keychain entry without running it, and not start compose.
+The system SHALL start the database container and wait until healthy, passing the password to compose only through the environment of that one command, never as an argument, never displayed, with no persistent export and no shell tracing.
+
+Source: tests/db_scripts/test_db_scripts.sh (db_up)
+
+#### Scenario: Keychain entry
+- WHEN the keychain provides a password
+- THEN compose up is run detached and waiting, the password is in the command's environment only, not in any argument, and not in the output
+
+### Requirement: The start script reads the password from the keychain, then from an environment fallback
+The start script SHALL read the password from the keychain first, then from an environment fallback; when neither exists, it SHALL exit non-zero, print the command to create the keychain entry without running it, and not start compose.
 
 Source: tests/db_scripts/test_db_scripts.sh (db_up)
 
 #### Scenario: No keychain entry
 - WHEN the keychain has no entry and no fallback is set
 - THEN exit non-zero, a message gives the creation command, no creation is executed and compose up is not run
-
-#### Scenario: Keychain entry
-- WHEN the keychain provides a password
-- THEN compose up is run detached and waiting, the password is in the command's environment only, not in any argument, and not in the output
 
 #### Scenario: Environment fallback
 - WHEN the keychain has none and the fallback variable is set
@@ -334,7 +375,16 @@ Source: untested until implemented (tests/db_scripts/test_db_rehearsal.sh, task 
 - **THEN** compose commands are limited to listing, readiness and a read-only fingerprint query, and the keychain command was never called
 
 ### Requirement: The rehearsal copy takes its passwords from the caller's environment only
-The system SHALL read the copy's superuser password and the per-role passwords of the flow import role and the views role from the caller's environment, using the variable names of `tools/db.py`. It SHALL enable the login of these two roles in the copy only. A missing variable SHALL give exit 2 naming it, with no container started. A password SHALL NOT appear in an argument, an output line or a file.
+The system SHALL read the copy's superuser password and the passwords of the flow import role and the views role (`pmzilla_flow`, `pmzilla_flow_views`, mandatory) from the caller's environment, using the variable names of `tools/db.py`. It SHALL enable their login in the copy only (other roles: requirement on roles whose variable is set). A password SHALL NOT appear in an argument, an output line or a file.
+
+Source: untested until implemented (tests/db_scripts/test_db_rehearsal.sh, task 4.1)
+
+#### Scenario: Passwords not exposed
+- **WHEN** `up` runs with sentinel passwords
+- **THEN** no sentinel appears in the output, in the arguments of the Docker log or in any file written by the script
+
+### Requirement: A missing rehearsal password variable stops the start
+A missing password variable of the rehearsal copy SHALL give exit 2 naming it, with no container started.
 
 Source: untested until implemented (tests/db_scripts/test_db_rehearsal.sh, task 4.1)
 
@@ -342,9 +392,14 @@ Source: untested until implemented (tests/db_scripts/test_db_rehearsal.sh, task 
 - **WHEN** `up` runs without the views role's password variable
 - **THEN** the exit code is 2, the missing-variable phrase names the variable without any value, and no container starts
 
-#### Scenario: Passwords not exposed
-- **WHEN** `up` runs with sentinel passwords
-- **THEN** no sentinel appears in the output, in the arguments of the Docker log or in any file written by the script
+### Requirement: The rehearsal copy opens every role whose password variable is set
+The system SHALL open the login, in the copy only, of each role of `ROLES_AVEC_MOT_DE_PASSE` (read in `tools/db.py`) whose `PMZILLA_LAB_DB_PASSWORD_<ROLE>` variable is set, through SQL on the standard input of psql, and SHALL say for each role of the list whether it was opened or left closed, with role names only.
+
+Source: tests/db_scripts/test_db_rehearsal.sh
+
+#### Scenario: One variable missing
+- **WHEN** `up` runs with the variables of all roles except one
+- **THEN** that role is reported as left closed, the others as opened, and no password appears in an argument or the output
 
 ### Requirement: Only one rehearsal copy exists at a time
 The system SHALL make `up` refuse, with exit code 2 and the copy-present phrase naming the existing container and the `down` command, when a container carrying the rehearsal label already exists. It SHALL NOT start a second copy or reuse the existing one.
@@ -471,3 +526,26 @@ The system SHALL make the restore test apply the migrations, then restore the pa
 - **THEN** the restore test names the dump and exits with code 1
 
 Source: tests/db_scripts/test_db_restore_test.sh (schéma quality), tests/db/test_quality_dump_coherence.py
+
+### Requirement: A scheduled backup pass is skipped while a finish runs
+The system SHALL, in a scheduled pass, after its argument and today's-folder checks and before its marker and any Docker call, run the pilot tool's freeze check (morning-guard-light D8): on 4, print the skip line of D8 and exit 0; on 0, go on; on another code, print the unreadable-lock line and go on. It SHALL NOT notify or create its marker when it skips, read the finish lock itself, nor check in a manual pass. Replaces the 06:15 and 06:45 session rules.
+
+#### Scenario: Finish running at the hourly pass
+- **WHEN** a scheduled pass (notifier variable at 1) runs with no folder of today and the fake freeze check exits 4
+- **THEN** the output holds `sauvegarde planifiée sautée : une fin de branche est en cours ; nouvel essai au passage horaire`, the exit code is 0, no folder is created, no marker exists, no Docker call is made and no notification is sent
+
+#### Scenario: Next pass after the finish
+- **WHEN** the next scheduled pass finds that the fake freeze check exits 0
+- **THEN** the backup runs as before and writes today's folder
+
+#### Scenario: Freeze check impossible
+- **WHEN** a scheduled pass finds that the fake freeze check exits 2
+- **THEN** the output holds `verrou de fin illisible (code 2) : passage lancé` and the backup runs as before
+
+#### Scenario: Manual pass during a finish
+- **WHEN** the backup runs without the notifier variable while the fake freeze check would exit 4
+- **THEN** the freeze check is not called and the backup runs as before
+
+#### Scenario: Day already backed up
+- **WHEN** today's folder exists and the fake freeze check would exit 4
+- **THEN** the freeze check is not called, the output says the backup exists, and the exit code is 0

@@ -144,8 +144,22 @@ class TestCheck(Base):
         self.assertIn("title", sortie)
         self.assertIn("R-2 : marker", sortie)
 
-    def test_jalon_absent(self):
+    def test_feature_ouverte_sans_jalon_est_valide(self):
+        # gh-issue-autonomy (D5, R-20261103-22 Q2) : une feature d'un horizon lointain n'a pas de jalon ; le contrôle ne le lui reproche pas
         self.depot(feature(1, milestone=None))
+        code, sortie, _ = self.lance("check")
+        self.assertEqual(code, 0, sortie)
+        self.assertNotIn("milestone", sortie)
+
+    def test_show_feature_sans_jalon_dit_aucun(self):
+        self.depot(feature(1, milestone=None))
+        code, sortie, _ = self.lance("show", "R-1")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("jalon : aucun", sortie)
+        self.assertNotIn("None", sortie)
+
+    def test_feature_fermee_sans_jalon_reste_signalee(self):
+        self.depot(feature(1, state="CLOSED", status="Done", milestone=None, bloc={"done_on": "2026-10-01"}))
         code, sortie, _ = self.lance("check")
         self.assertEqual(code, 1)
         self.assertIn("R-1 : milestone", sortie)
@@ -282,6 +296,216 @@ class TestCheck(Base):
         self.assertNotIn("cache of", sortie)
 
 
+class TestSignauxCycle(Base):
+    """Signaux de cycle de vie du check (change github-status-lifecycle, design D3 à D5) : lecteurs Git remplacés, jamais d'écriture."""
+
+    SIG_SANS_BRANCHE = "roadmap : signalement : R-1 : Status : In progress sans branche ouverte"
+
+    def git(self, branches=frozenset(), sur_main=frozenset()):
+        for nom, valeur in (("branches_locales", branches), ("changes_sur_main", sur_main)):
+            q = mock.patch.object(roadmap, nom, (lambda v: (lambda: None if v is None else set(v)))(valeur))
+            q.start()
+            self.addCleanup(q.stop)
+
+    def check(self, *noeuds):
+        self.depot(*noeuds)
+        return self.lance("check")
+
+    def test_en_cours_sans_branche_file_valide_et_code_0(self):
+        self.git({"main", "feat/autre"})
+        code, sortie, _ = self.check(feature(1, status="In progress"))
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(sortie.splitlines(), [self.SIG_SANS_BRANCHE, "roadmap : file valide"])
+
+    def test_ready_change_absent_de_main(self):
+        self.git({"main"}, set())
+        code, sortie, _ = self.check(feature(2, bloc={"method": "openspec", "change": "mon-change"}))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("roadmap : signalement : R-2 : Status : Ready alors que le change mon-change n'est pas sur main", sortie.splitlines())
+
+    def test_ready_openspec_sans_change(self):
+        self.git({"main"}, set())
+        code, sortie, _ = self.check(feature(2, bloc={"method": "openspec"}))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("roadmap : signalement : R-2 : Status : Ready sans change sur main", sortie.splitlines())
+
+    def test_ready_direct_prompt_sans_change_sans_signal(self):
+        self.git({"main"}, set())
+        code, sortie, _ = self.check(feature(2))
+        self.assertEqual((code, sortie), (0, "roadmap : file valide\n"))
+
+    def test_branche_nommee_d_apres_le_change(self):
+        self.git({"main", "feat/c"})
+        code, sortie, _ = self.check(feature(1, status="In progress", bloc={"method": "openspec", "change": "c"}))
+        self.assertEqual((code, sortie), (0, "roadmap : file valide\n"))
+
+    def test_jeton_d_identifiant(self):
+        self.git({"main", "chore/r650-x"})
+        _, sortie, _ = self.check(feature(65, status="In progress"))
+        self.assertIn("roadmap : signalement : R-65 : Status : In progress sans branche ouverte", sortie.splitlines())
+        self.git({"main", "chore/r65-fixes"})
+        _, sortie, _ = self.check(feature(65, status="In progress"))
+        self.assertEqual(sortie, "roadmap : file valide\n")
+
+    def test_change_sur_une_branche_de_spec_seulement(self):
+        # le change existe dans l'arbre de travail (cas d'un check lancé sur la branche de spec) mais pas dans l'arbre de main
+        (self.dir / "openspec" / "changes" / "c").mkdir(parents=True)
+        q = mock.patch.object(roadmap, "ARBRE", self.dir)
+        q.start()
+        self.addCleanup(q.stop)
+        self.git({"main", "spec/c"}, set())
+        _, sortie, _ = self.check(feature(2, bloc={"method": "openspec", "change": "c"}))
+        self.assertIn("Ready alors que le change c n'est pas sur main", sortie)
+
+    def test_change_archive_sur_main(self):
+        self.git({"main"}, {"c"})       # le lecteur range les dossiers d'archive sous leur nom de change (voir TestLecteursGit)
+        code, sortie, _ = self.check(feature(2, bloc={"method": "openspec", "change": "c"}))
+        self.assertEqual((code, sortie), (0, "roadmap : file valide\n"))
+
+    def test_git_illisible(self):
+        self.git(None, None)
+        code, sortie, _ = self.check(feature(1, status="In progress"), feature(2, bloc={"method": "openspec"}))
+        self.assertEqual(code, 0, sortie)
+        self.assertEqual(sortie.splitlines(), ["roadmap : signalement : branches et main illisibles ; aucun signalement de cycle",
+                                               "roadmap : file valide"])
+
+    def test_rien_a_verifier_git_n_est_pas_lu(self):
+        def interdit():
+            raise AssertionError("Git lu sans feature à vérifier")
+        for nom in ("branches_locales", "changes_sur_main"):
+            q = mock.patch.object(roadmap, nom, interdit)
+            q.start()
+            self.addCleanup(q.stop)
+        code, sortie, _ = self.check(feature(1), feature(2, status="Todo", bloc={"method": "openspec"}))
+        self.assertEqual((code, sortie), (0, "roadmap : file valide\n"))
+
+    def test_un_signal_ne_change_pas_le_code_d_un_probleme(self):
+        self.git({"main"})
+        code, sortie, _ = self.check(feature(1, status="In progress"), feature(2, bloc={"zzz": 1}))
+        self.assertEqual(code, 1)
+        lignes = sortie.splitlines()
+        self.assertTrue(any("R-2 : zzz" in l for l in lignes), sortie)
+        self.assertLess(max(i for i, l in enumerate(lignes) if "R-2 : zzz" in l), lignes.index(self.SIG_SANS_BRANCHE))
+        self.assertNotIn("roadmap : file valide", sortie)
+
+    def test_signaux_dans_l_ordre_du_rang(self):
+        self.git({"main"})
+        _, sortie, _ = self.check(feature(1, status="In progress", bloc={"rank": 20}), feature(2, status="In progress", bloc={"rank": 10}))
+        signaux = [l for l in sortie.splitlines() if "signalement" in l]
+        self.assertEqual([l.split(" : ")[2] for l in signaux], ["R-2", "R-1"])
+
+    def test_features_fermees_et_idees_ignorees(self):
+        self.git({"main"})
+        _, sortie, _ = self.check(feature(1, status="Done", state="CLOSED", milestone="Tarasque", milestone_state="CLOSED"))
+        self.assertEqual(sortie, "roadmap : file valide\n")
+
+    def test_hors_ligne_signaux_apres_la_banniere(self):
+        self.git({"main"})
+        self.depot(feature(1, status="In progress"))
+        self.lance("check")
+        os.environ["FAKE_GH_MODE"] = "offline"
+        code, sortie, _ = self.lance("check")
+        lignes = sortie.splitlines()
+        self.assertEqual(code, 0, sortie)
+        self.assertTrue(lignes[0].startswith("GitHub unreachable; read from the cache of"))
+        self.assertEqual(lignes[1:], [self.SIG_SANS_BRANCHE, "roadmap : file valide"])
+
+    def test_aucun_nom_de_branche_titre_ni_corps_imprime(self):
+        self.git({"main", "secret/branche-privee"})
+        _, sortie, _ = self.check(feature(1, titre="TITRE-PRIVE", status="In progress", texte="CORPS-PRIVE"))
+        for interdit in ("secret/branche-privee", "TITRE-PRIVE", "CORPS-PRIVE"):
+            self.assertNotIn(interdit, sortie)
+
+    def test_lecture_seule_gh_et_git(self):
+        vus = []
+        reel = subprocess.run
+
+        def faux(cmd, *a, **kw):
+            if cmd[0] == "git":
+                vus.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return reel(cmd, *a, **kw)
+        self.depot(feature(1, status="In progress"), feature(2, bloc={"method": "openspec", "change": "c"}))
+        with mock.patch.object(subprocess, "run", faux):
+            code, sortie, _ = self.lance("check")
+        self.assertEqual(code, 0, sortie)
+        self.assertTrue(vus)
+        for cmd in vus:
+            self.assertIn(cmd[3], ("for-each-ref", "ls-tree"), cmd)
+        for a in self.appels():
+            self.assertEqual(a[:2], ["api", "graphql"])
+            self.assertFalse(any("mutation" in x.lower() for x in a), a)
+
+
+class TestLecteursGit(Base):
+    """`branches_locales` et `changes_sur_main` (design D3) : Git en lecture seule, entrée fermée, délai borné."""
+
+    def faux_git(self, reponses):
+        """Remplace subprocess.run : `reponses` associe la sous-commande (et le dernier argument) à (code, sortie)."""
+        vus = []
+
+        def faux(cmd, *a, **kw):
+            vus.append((cmd, kw))
+            code, sortie = reponses(cmd)
+            return subprocess.CompletedProcess(cmd, code, sortie, "")
+        return vus, mock.patch.object(subprocess, "run", faux)
+
+    def test_branches_locales(self):
+        vus, p = self.faux_git(lambda cmd: (0, "refs/heads/main\nrefs/heads/feat/c\nrefs/heads/chore/r65-x\n"))
+        with p:
+            self.assertEqual(roadmap.branches_locales(), {"main", "feat/c", "chore/r65-x"})
+        cmd, kw = vus[0]
+        self.assertEqual((cmd[0], cmd[3]), ("git", "for-each-ref"))
+        self.assertEqual(kw.get("stdin"), subprocess.DEVNULL)
+        self.assertEqual(kw.get("timeout"), roadmap.DELAI_GIT)
+
+    def test_branches_locales_illisibles(self):
+        _, p = self.faux_git(lambda cmd: (128, ""))
+        with p:
+            self.assertIsNone(roadmap.branches_locales())
+        with mock.patch.object(subprocess, "run", mock.Mock(side_effect=subprocess.TimeoutExpired("git", 1))):
+            self.assertIsNone(roadmap.branches_locales())
+        with mock.patch.object(subprocess, "run", mock.Mock(side_effect=OSError("pas de git"))):
+            self.assertIsNone(roadmap.branches_locales())
+
+    def reponses_main(self, cmd):
+        assert cmd[3] == "ls-tree" and "refs/heads/main" in cmd, cmd
+        if cmd[-1] == "openspec/changes/":
+            return 0, "openspec/changes/archive\nopenspec/changes/mon-change\nopenspec/changes/autre\n"
+        if cmd[-1] == "openspec/changes/archive/":
+            return 0, "openspec/changes/archive/2026-01-01-vieux-change\n"
+        raise AssertionError(cmd)
+
+    def test_changes_sur_main_non_archives_et_archives(self):
+        vus, p = self.faux_git(self.reponses_main)
+        with p:
+            noms = roadmap.changes_sur_main()
+        self.assertTrue({"mon-change", "autre", "vieux-change"} <= noms, noms)
+        self.assertNotIn("change", noms)        # seul le nom après la date d'archive, jamais un suffixe
+        self.assertNotIn("archive", noms)
+        self.assertNotIn("not-a-change", noms)
+        for cmd, kw in vus:
+            self.assertEqual(kw.get("stdin"), subprocess.DEVNULL)
+            self.assertEqual(kw.get("timeout"), roadmap.DELAI_GIT)
+
+    def test_changes_sur_main_illisible_sans_ref_main(self):
+        _, p = self.faux_git(lambda cmd: (128, ""))
+        with p:
+            self.assertIsNone(roadmap.changes_sur_main())
+
+    def test_changes_sur_main_sans_dossier_d_archive(self):
+        _, p = self.faux_git(lambda cmd: (0, "openspec/changes/mon-change\n" if cmd[-1] == "openspec/changes/" else ""))
+        with p:
+            self.assertEqual(roadmap.changes_sur_main(), {"mon-change"})
+
+    def test_lecture_reelle_du_depot(self):
+        """Sans remplacement : le lecteur lit le vrai dépôt, en lecture seule (ses refs locales contiennent au moins la branche courante)."""
+        branches = roadmap.branches_locales()
+        self.assertTrue(branches is None or isinstance(branches, set))
+        noms = roadmap.changes_sur_main()
+        self.assertTrue(noms is None or isinstance(noms, set))
+
+
 class TestNext(Base):
     def next(self, budget, *noeuds, extra=()):
         self.depot(*noeuds)
@@ -312,7 +536,8 @@ class TestNext(Base):
         self.assertIn("R-2 |", sortie)
 
     def test_jamais_un_travail_non_ready_ou_bloque(self):
-        _, sortie, _ = self.next("8h", feature(1, status="Todo"), feature(2, status="In progress"),
+        # R-20261104-23 : un Todo direct-prompt est maintenant proposé ; seul un Todo openspec ne l'est pas (scénario « Not ready or blocked »)
+        _, sortie, _ = self.next("8h", feature(1, status="Todo", bloc={"method": "openspec"}), feature(2, status="In progress"),
                                  feature(3, status="Todo", blocked_by=[101]), feature(4, status="Done", state="CLOSED", milestone="Tarasque"))
         self.assertIn("jobs proposés : aucun", sortie)
         self.assertIn("total 0min", sortie)
@@ -350,8 +575,36 @@ class TestNext(Base):
         self.addCleanup(os.environ.pop, "ROADMAP_TODAY", None)
         self.assertIn("R-1 |", self.lance("next", "--budget", "2h")[1])
 
+    # change github-status-lifecycle, design D11 (R-20261104-23, O3)
+    def test_todo_direct_prompt_propose(self):
+        code, sortie, _ = self.next("2h", feature(1, status="Todo"))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("proposés :\n  R-1 |", sortie)
+        self.assertIn("total 1h", sortie)
+        for a in self.appels():
+            self.assertEqual(a[:2], ["api", "graphql"])
 
-class TestShowStatusBoard(Base):
+    def test_todo_openspec_jamais_propose(self):
+        _, sortie, _ = self.next("8h", feature(1, status="Todo", bloc={"method": "openspec"}),
+                                 feature(2, status="Todo", bloc={"method": "openspec", "change": "c"}))
+        self.assertIn("jobs proposés : aucun", sortie)
+        self.assertIn("total 0min", sortie)
+
+    def test_todo_direct_prompt_bloque_ou_pas_encore_jamais_propose(self):
+        _, sortie, _ = self.next("8h", feature(1, status="Todo"), feature(2, status="Todo", blocked_by=[101]),
+                                 feature(3, status="Todo", bloc={"not_before": "2026-10-13"}))
+        self.assertIn("proposés :\n  R-1 |", sortie)
+        self.assertNotIn("R-2 |", sortie)
+        self.assertNotIn("R-3 |", sortie)
+
+    def test_todo_direct_prompt_suit_le_budget_et_le_jalon(self):
+        _, sortie, _ = self.next("1h", feature(1, status="Todo", bloc={"estimate": "2h"}), feature(2, status="Todo", milestone="Namazu"),
+                                 extra=("--milestone", "Hydra"))
+        self.assertIn("trop long pour le temps restant :\n  R-1 |", sortie)
+        self.assertNotIn("R-2 |", sortie)
+
+
+class TestShowStatus(Base):
     def setUp(self):
         super().setUp()
         self.depot(feature(1, status="Done", state="CLOSED", milestone="Tarasque", milestone_state="CLOSED",
@@ -384,15 +637,6 @@ class TestShowStatusBoard(Base):
         self.assertIn("R-3 | Travail | attend R-2", sortie)
         self.assertIn("R-4 | Travail | estimation 1h", sortie)
 
-    def test_board_ecrit_dans_le_dossier_de_donnees(self):
-        code, sortie, _ = self.lance("board", "--today", "2026-10-12")
-        self.assertEqual(code, 0, sortie)
-        page = self.dir / "data" / "feuille-de-route.html"
-        self.assertTrue(page.is_file())
-        texte = page.read_text(encoding="utf-8")
-        self.assertIn("R-2", texte)
-        self.assertIn("2026-10-05", texte)
-
     def test_status_file_invalide(self):
         self.depot(feature(1, bloc={"method": "x"}))
         self.assertEqual(self.lance("status")[0], 1)
@@ -419,7 +663,7 @@ class TestHorsLigne(Base):
         self.depot(feature(1))
         self.lance("check", "--today", "2026-10-11")
         os.environ["FAKE_GH_MODE"] = "offline"
-        for cmd in (["check"], ["status"], ["board"], ["show", "R-1"], ["next", "--budget", "1h"]):
+        for cmd in (["check"], ["status"], ["show", "R-1"], ["next", "--budget", "1h"]):
             with self.subTest(cmd=cmd):
                 code, sortie, _ = self.lance(*cmd)
                 self.assertEqual(code, 0, sortie)
@@ -427,7 +671,7 @@ class TestHorsLigne(Base):
 
     def test_hors_ligne_sans_cache(self):
         os.environ["FAKE_GH_MODE"] = "offline"
-        for cmd in (["check"], ["status"], ["board"], ["show", "R-1"], ["next", "--budget", "1h"]):
+        for cmd in (["check"], ["status"], ["show", "R-1"], ["next", "--budget", "1h"]):
             with self.subTest(cmd=cmd):
                 code, sortie, erreur = self.lance(*cmd)
                 self.assertEqual(code, 5)
@@ -513,13 +757,6 @@ class TestCorrectionsRevue(Base):
         self.lance("check")
         self.assertIn("project{title}", " ".join(self.appels()[0]))
 
-    def test_board_n_imprime_pas_de_chemin_absolu(self):
-        self.depot(feature(1))
-        _, sortie, _ = self.lance("board")
-        self.assertNotIn(str(self.dir), sortie)
-        self.assertNotIn(str(Path.home()), sortie)
-        self.assertIn("feuille-de-route.html", sortie)
-
 
 class TestRappel(Base):
     def test_ligne_de_comptes_sans_reseau(self):
@@ -533,6 +770,15 @@ class TestRappel(Base):
         self.assertEqual(code, 0)
         self.assertEqual(sortie, "roadmap: 2 ready, 1 in progress (cache of 2026-10-12)\n")
         self.assertFalse(self.journal.exists(), "le rappel ne doit pas lancer gh")
+
+    def test_l_option_session_hook_ne_change_rien(self):
+        self.depot(feature(1), feature(2, status="In progress"))
+        self.lance("check", "--today", "2026-10-12")
+        avec = self.lance("reminder", "--session-hook")
+        sans = self.lance("reminder")
+        self.assertEqual(avec[:2], sans[:2])
+        self.assertEqual(avec[0], 0)
+        self.assertEqual(len(avec[1].splitlines()), 1)
 
     def test_sans_cache_rien_et_code_0(self):
         code, sortie, erreur = self.lance("reminder", "--session-hook")
@@ -550,6 +796,21 @@ class TestRappel(Base):
         _, sortie, _ = self.lance("reminder", "--session-hook")
         self.assertNotIn("secret", sortie)
         self.assertEqual(len(sortie.splitlines()), 1)
+
+
+class TestBoardRetire(Base):
+    """`board` n'existe plus (R-145) : erreur d'usage d'argparse, aucun appel gh, aucune page écrite."""
+
+    def test_board_refuse_avec_ou_sans_options(self):
+        self.depot(feature(1))
+        for cmd in (["board"], ["board", "--open"], ["board", "--product", "mothra"]):
+            with self.subTest(cmd=cmd):
+                code, sortie, erreur = self.lance(*cmd)
+                self.assertEqual(code, 2)
+                self.assertIn("invalid choice", erreur)
+                self.assertIn("board", erreur)
+                self.assertEqual(self.appels(), [], "aucun appel de gh")
+                self.assertFalse((self.dir / "data" / "feuille-de-route.html").exists())
 
 
 class TestModeFichierRetire(Base):
@@ -591,7 +852,7 @@ class TestDepotDOrigine(Base):
         self.lance("check")                      # écrit un instantané
         self.journal.unlink()
         for origin in ("", "https://example.org/a/b"):
-            for cmd in (["check"], ["status"], ["board"], ["show", "R-1"], ["next", "--budget", "1h"]):
+            for cmd in (["check"], ["status"], ["show", "R-1"], ["next", "--budget", "1h"]):
                 with self.subTest(origin=origin, cmd=cmd):
                     self.origin = origin
                     code, sortie, erreur = self.lance(*cmd)
@@ -842,7 +1103,9 @@ class TestBatch(Base):
         self.assertNotIn("installation.md | ", sortie)
 
     def test_hors_lot(self):
-        self.depot(feature(1, milestone="Namazu"), feature(2, status="Todo"), feature(3, status="Todo"),
+        # R-20261104-23 : un Todo direct-prompt est maintenant retenu ; un Todo dont le change est nommé ne l'est pas (scénario « Feature not proposable »)
+        self.depot(feature(1, milestone="Namazu"), feature(2, status="Todo", bloc={"method": "openspec", "change": "c2"}),
+                   feature(3, status="Todo", bloc={"method": "openspec", "change": "c3"}),
                    feature(4, status="Todo", blocked_by=[103]), feature(5, bloc={"not_before": "2026-12-01"}),
                    feature(6, status="Done", state="CLOSED", milestone="Hydra"))
         code, sortie, _ = self.lance("batch", "--milestone", "Hydra", "--today", "2026-10-13")
@@ -896,3 +1159,35 @@ class TestBatch(Base):
         for a in appels:
             self.assertEqual(a[:2], ["api", "graphql"])
             self.assertFalse(any("mutation" in x.lower() for x in a), a)
+
+    # change github-status-lifecycle, design D11 (R-20261104-23, O3 (a) avec (c))
+    def test_todo_direct_prompt_retenue_en_execution_sans_ecriture(self):
+        code, sortie, _ = self.batch(feature(1, status="Todo"))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("  R-1 | Travail | méthode direct-prompt | modèle sonnet | branche chore/r1-travail | session sonnet | exécution | fichiers inconnus", sortie)
+        for a in self.appels():
+            self.assertEqual(a[:2], ["api", "graphql"])
+            self.assertFalse(any("mutation" in x.lower() for x in a), a)
+
+    def test_todo_openspec_sans_change_retenue_en_cadrage(self):
+        code, sortie, _ = self.batch(feature(1, status="Todo", bloc={"method": "openspec"}))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("  R-1 | Travail | méthode openspec | modèle sonnet | branche chore/spec-r1 | session opus | cadrage | fichiers inconnus", sortie)
+
+    def test_todo_openspec_avec_change_ni_retenue_ni_ecartee(self):
+        code, sortie, _ = self.batch(self.os_feature(1, "c1", "`tools/a.py`", status="Todo"),
+                                     feature(2, status="Todo", bloc={"method": "openspec", "change": "absent"}))
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("retenues : aucune", sortie)
+        self.assertNotIn("écartées", sortie)
+        self.assertNotIn("R-1 |", sortie)
+        self.assertNotIn("R-2 |", sortie)
+
+    def test_todo_non_proposable_ni_retenue_ni_ecartee(self):
+        _, sortie, _ = self.batch(feature(1, status="Todo", blocked_by=[102]), feature(2, status="Todo"),
+                                  feature(3, status="Todo", bloc={"not_before": "2026-12-01"}),
+                                  feature(4, status="Todo", bloc={"method": "openspec"}, milestone="Namazu"))
+        self.assertIn("  R-2 | Travail | méthode direct-prompt", sortie)
+        for x in ("R-1 |", "R-3 |", "R-4 |"):
+            self.assertNotIn(x, sortie)
+        self.assertNotIn("écartées", sortie)

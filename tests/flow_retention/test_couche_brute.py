@@ -73,8 +73,9 @@ class Purge(Espace):
     def test_purge_supprime_instantanes_et_visites_avant_les_tickets_dans_une_transaction(self):
         code, sortie, erreur, base = self.appliquer(FausseBase(1, jours_avant(400), brute=2))
         self.assertEqual(code, 0, erreur)
-        tables = [re.search(r"flow\.(raw_\w+|issues)", r[0]).group(1) for r in base.requetes if r[0].upper().startswith("DELETE")]
-        self.assertEqual(tables, ["raw_issue_snapshots", "raw_run_sightings", "issues"])
+        # jira-delivery-fields, R-20261102-16 à -36 : la suppression des sprints sans ticket (D10) suit celle des tickets dans la même transaction
+        tables = [re.search(r"flow\.(raw_\w+|issues|sprints)", r[0]).group(1) for r in base.requetes if r[0].upper().startswith("DELETE")]
+        self.assertEqual(tables, ["raw_issue_snapshots", "raw_run_sightings", "issues", "sprints"])
         self.assertEqual((base.commits, base.rollbacks), (1, 0))
         for _, parametres in base.suppressions_brutes():
             self.assertEqual(parametres, (jours_avant(365), jours_avant(AGE_MAX), jours_avant(365)))

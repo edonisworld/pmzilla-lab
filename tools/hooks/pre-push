@@ -4,17 +4,19 @@
 #
 # Pour chaque référence poussée vers refs/heads/main :
 #   - l'empreinte complète égale l'arbre du commit poussé : le push passe, sans lancer de test ;
-#   - sinon, l'empreinte allégée (pmzilla-light-ok, écrite par tools/finish_branch.sh après un passage allégé vert, change light-spec-finish D5)
-#     égale l'arbre poussé ET le hook revérifie par tools/light_finish.sh : les chemins que le commit poussé change depuis son premier parent
-#     sont tous des fichiers ordinaires sous openspec/, et l'arbre du premier parent est enregistré comme validé (pmzilla-main-validated,
-#     moins de 8 jours, même signature d'environnement, calculée par tools/finish_env.sh --main-signature ; un calcul impossible refuse l'empreinte allégée) : le push passe, sans lancer de test. Le hook n'écrit jamais
-#     ni l'une ni l'autre de ces deux fiches ;
-#   - sinon, si l'arbre de travail est propre et que HEAD est le commit poussé : le hook lance lui-même le lanceur complet
+#   - sinon, la preuve du conteneur (ci-local-runner, D8) : `python3 -I tools/preuve_arbre.py <arbre> --worktree <racine>` rend `complete` ou `conteneur` (ci/preuves
+#     du dossier de données avec les trois phases ET pmzilla-run-mac-ok du dossier Git commun, écrite par `run_all.sh --mac`) : le push passe ; `ciblee` (empreinte
+#     de branche) ne passe jamais ; un appel en échec n'accepte pas (le hook continue vers le repli, puis le refus). Remplace : rien (voie neuve). Retrait : la
+#     voie tombe si le train cesse d'écrire ces fichiers ;
+#   - sinon, si l'arbre de travail est propre (fichiers non suivis sous _bmad-output/ ignorés : espace_propre, R-20261102-37 Q314) et que HEAD est le commit poussé : le hook lance lui-même le lanceur complet
 #     (bash tests/run_all.sh) et accepte seulement s'il réussit ;
 #   - sinon : refus « pre-push : main exige une exécution complète réussie de l'arbre poussé ».
 # Les autres références (branches de travail, étiquettes) passent sans ce contrôle des tests ; la suppression de main aussi.
 # Contournement, réservé à l'utilisateur (jamais à l'assistant) : PMZILLA_SKIP_GREEN_CHECK=1 git push ...
 # Le hook ne lance jamais de test sur un arbre autre que celui qui est poussé.
+# Voie allégée retirée (change finish-single-b7-b9, B9, design D8 et D10) : l'empreinte allégée pmzilla-light-ok n'est plus lue ; seule l'empreinte complète,
+# la preuve du conteneur ou le lancement complet du hook lui-même laissent partir main. Remplace : l'acceptation de l'empreinte allégée revérifiée par
+# tools/light_finish.sh (retiré). Retrait : permanent.
 # PRE_PUSH_RUNNER remplace la commande du lanceur (tests de ce hook).
 #
 # Contrôle des noms dans les messages qui partent (fix/sorties-et-masquage, décision de l'auteur du 2026-10-21, point 3), avant celui des
@@ -41,27 +43,31 @@ lignes_outil() {   # sortie de l'outil -> seules ses lignes, préfixe du crochet
 avertissements_outil() {   # code 0 : seulement l'avertissement de la liste vide, s'il y en a un
   printf '%s\n' "$1" | sed -n 's/^commit_names_scan : \(garde-fou.*\)$/pre-push : \1/p' >&2
 }
-# Le module de la décision allégée est à côté de ce hook (lien relatif : tools/hooks/pre-push -> tools/light_finish.sh) ; absent, l'empreinte allégée n'est pas acceptée.
+# Les outils du hook (commit_names_scan.py, preuve_arbre.py) sont dans tools/, à côté du dossier de ce hook (lien relatif : tools/hooks/pre-push).
 chemin_hook=$0
 while [ -L "$chemin_hook" ]; do
   cible=$(readlink "$chemin_hook")
   case "$cible" in /*) chemin_hook=$cible ;; *) chemin_hook=$(dirname "$chemin_hook")/$cible ;; esac
 done
-LIGHT_FINISH_DIR=$(cd "$(dirname "$chemin_hook")/.." 2>/dev/null && pwd)
-module_leger=0
-if [ -n "$LIGHT_FINISH_DIR" ] && [ -f "$LIGHT_FINISH_DIR/light_finish.sh" ]; then
-  . "$LIGHT_FINISH_DIR/light_finish.sh" && module_leger=1
-fi
+OUTILS_DIR=$(cd "$(dirname "$chemin_hook")/.." 2>/dev/null && pwd)
+# Repli du lanceur complet : l'arbre de travail doit être propre. Décision de l'auteur R-20261102-37 (Q314), même règle que le train (R-20261102-6) : un fichier
+# NON SUIVI sous _bmad-output/ est ignoré ; tout le reste refuse (suivi modifié ou indexé, non suivi ailleurs, échec de Git). Remplace : « git status
+# --porcelain » vide. Retrait avec la règle de R-20261102-6 (quand les livrables de posture quittent l'espace de travail). Les chemins à caractères
+# spéciaux ou à espace sont cités par Git entre guillemets : les deux formes du préfixe sont reconnues.
+espace_propre() {
+  etat=$(git status --porcelain 2>/dev/null) || return 1
+  [ -z "$(printf '%s\n' "$etat" | grep -v -e '^?? _bmad-output/' -e '^?? "_bmad-output/')" ]
+}
 while read -r ref_locale sha_local ref_distante sha_distant; do
   [ "$sha_local" = "$zero" ] && continue   # suppression : rien ne part, aucun contrôle
-  if [ -z "$LIGHT_FINISH_DIR" ] || [ ! -f "$LIGHT_FINISH_DIR/commit_names_scan.py" ]; then
+  if [ -z "$OUTILS_DIR" ] || [ ! -f "$OUTILS_DIR/commit_names_scan.py" ]; then
     echo "pre-push : outil de contrôle des noms introuvable (tools/commit_names_scan.py)" >&2; refuse_noms=1
   else
     set -- "$sha_local" --not
     [ "$distant_nomme" -eq 1 ] && set -- "$@" --remotes="$distant"
     if [ "$sha_distant" != "$zero" ] && git cat-file -e "$sha_distant^{commit}" 2>/dev/null </dev/null; then set -- "$@" "$sha_distant"; fi
     [ "$distant_nomme" -eq 0 ] && echo "pre-push : distant donné par adresse (aucune référence de suivi) : seul le sommet distant connu est exclu, sinon tout l'historique du commit poussé est relu" >&2
-    sortie_noms=$(python3 "$LIGHT_FINISH_DIR/commit_names_scan.py" -- "$@" 2>&1 </dev/null); code_noms=$?
+    sortie_noms=$(python3 "$OUTILS_DIR/commit_names_scan.py" -- "$@" 2>&1 </dev/null); code_noms=$?
     case $code_noms in
       0) avertissements_outil "$sortie_noms" ;;
       1|2) lignes_outil "$sortie_noms"; refuse_noms=1 ;;
@@ -70,7 +76,7 @@ while read -r ref_locale sha_local ref_distante sha_distant; do
     esac
     if [ "$(git cat-file -t "$sha_local" 2>/dev/null </dev/null)" = tag ]; then   # étiquette annotée : son propre message part aussi
       court=$(git rev-parse --short "$sha_local" </dev/null)
-      sortie_etiquette=$(git cat-file tag "$sha_local" </dev/null | sed '1,/^$/d' | python3 "$LIGHT_FINISH_DIR/commit_names_scan.py" --message - --sans-ciseaux 2>&1)
+      sortie_etiquette=$(git cat-file tag "$sha_local" </dev/null | sed '1,/^$/d' | python3 "$OUTILS_DIR/commit_names_scan.py" --message - --sans-ciseaux 2>&1)
       code_etiquette=$?
       case $code_etiquette in
         0) ;;
@@ -85,16 +91,14 @@ while read -r ref_locale sha_local ref_distante sha_distant; do
   arbre=$(git rev-parse "$sha_local^{tree}" 2>/dev/null) || { refuse=1; continue; }
   fichier=$(git rev-parse --git-path pmzilla-run-all-ok)
   if [ -f "$fichier" ] && [ "$(cat "$fichier")" = "$arbre" ]; then continue; fi
-  if [ "$module_leger" -eq 1 ]; then   # empreinte allégée revérifiée : même arbre, openspec/ seulement, premier parent validé
-    fichier_leger=$(git rev-parse --git-path pmzilla-light-ok)
-    if [ -f "$fichier_leger" ] && [ "$(cat "$fichier_leger")" = "$arbre" ]; then
-      premier_parent=$(git rev-parse -q --verify "$sha_local^1" 2>/dev/null) \
-        && light_paths_ok "$premier_parent" "$sha_local" \
-        && [ "$(main_validated "$(git rev-parse "$premier_parent^{tree}")")" = ok ] \
-        && continue
-    fi
+  # preuve du conteneur (ci-local-runner, D8, Q217) : après l'empreinte complète, avant le repli. tools/preuve_arbre.py (à côté de ce hook) rend
+  # `complete` ou `conteneur` (ci/preuves avec les trois phases ET pmzilla-run-mac-ok) : le push passe ; `ciblee`, `aucune`, un appel en échec (code non nul,
+  # outil absent, sortie autre) ne sont pas une preuve : le hook continue vers le repli, puis le refus. Le hook n'écrit rien.
+  if [ -n "$OUTILS_DIR" ] && [ -f "$OUTILS_DIR/preuve_arbre.py" ]; then
+    preuve_conteneur=$(python3 -I "$OUTILS_DIR/preuve_arbre.py" "$arbre" --worktree "$(pwd)" 2>/dev/null </dev/null) \
+      && case "$preuve_conteneur" in complete|conteneur) continue ;; esac
   fi
-  if [ -z "$(git status --porcelain)" ] && [ "$(git rev-parse HEAD)" = "$sha_local" ]; then
+  if espace_propre && [ "$(git rev-parse HEAD)" = "$sha_local" ]; then
     racine=$(git rev-parse --show-toplevel)
     echo "pre-push : aucune empreinte complète pour l'arbre poussé : lancement complet des tests" >&2
     if (cd "$racine" && env -u PMZILLA_NO_EVALS sh -c "${PRE_PUSH_RUNNER:-bash tests/run_all.sh}" >&2); then continue; fi

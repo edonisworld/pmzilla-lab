@@ -29,10 +29,10 @@ class FauxFastMCP:
 
 
 def modules_mcp() -> dict:
-    """Les modules `mcp.server.fastmcp` remplacés par FauxFastMCP (à passer à mock.patch.dict(sys.modules, ...))."""
+    """Les modules `mcp.server.mcpserver` remplacés par FauxFastMCP (à passer à mock.patch.dict(sys.modules, ...))."""
     modules = {"mcp": types.ModuleType("mcp"), "mcp.server": types.ModuleType("mcp.server"),
-               "mcp.server.fastmcp": types.ModuleType("mcp.server.fastmcp")}
-    modules["mcp.server.fastmcp"].FastMCP = FauxFastMCP
+               "mcp.server.mcpserver": types.ModuleType("mcp.server.mcpserver")}
+    modules["mcp.server.mcpserver"].MCPServer = FauxFastMCP
     return modules
 
 

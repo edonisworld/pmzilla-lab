@@ -9,12 +9,15 @@ PMZilla Lab : veille des composants (change components-watch, R-41).
     uv run tools/composants.py check [--if-due] [--only NOM] [--timeout SECONDES]
 
 `inventory` lit l'inventaire docs/pmzilla/composants.yaml, résout la version utilisée de chaque composant là où elle est fixée
-(verrous des scripts, .python-version, docker-compose.yml, manifeste BMAD, fichier de version de tools/vendor, constante de l'outil
+(verrous des scripts, .python-version, docker-compose.yml, manifeste BMAD, constante de l'outil
 de bibliothèque, configuration par défaut du pré-tri) et affiche une ligne par composant : nom · genre · version · où elle est fixée.
 Le Node de Mothra (genre node-runtime) est lu dans mothra/.node-version : trois segments numériques, sinon « version de Node de
-Mothra invalide » (code 1). Aucun réseau, aucune écriture. `--verify` reconstitue en plus la liste des composants utilisés depuis les sources du dépôt (en-têtes
+Mothra invalide » (code 1). Les genres npm-runtime (npm, version = engines.npm de mothra/package.json) et npm-package (une entrée par
+dépendance directe de la racine et des trois paquets de mothra/, version lue dans mothra/package-lock.json, absent toléré tant que
+l'auteur n'a pas lancé npm install) sont contrôlés par --verify : dépendance non épinglée, engines.node différent de mothra/.node-version,
+engines.npm non exact, verrou en désaccord. Aucun réseau, aucune écriture. `--verify` reconstitue en plus la liste des composants utilisés depuis les sources du dépôt (en-têtes
 PEP 723 et verrous de tools/, .python-version, docker-compose.yml, modèles Ollama, prérequis d'installation, manifeste BMAD,
-configuration OpenSpec, tools/vendor/, dépendances du lanceur de tests, images et CLI OpenSpec de ci/Dockerfile) et nomme ce qu'il
+configuration OpenSpec, dépendances du lanceur de tests, images et CLI OpenSpec de ci/Dockerfile) et nomme ce qu'il
 faut ajouter ou retirer ; il contrôle aussi que l'étiquette de l'image et l'empreinte notée en commentaire vont ensemble, et que
 ci/Dockerfile épingle chaque image par étiquette et empreinte sha256, la CLI OpenSpec à version exacte et le Python de .python-version
 (une valeur marquée A_REMPLIR est nommée « Valeur à remplir par l'auteur dans ci/Dockerfile »), et que l'étiquette de la base Node
@@ -24,9 +27,11 @@ l'outil est présent ; quand l'un manque (édition publique), un paquet de l'inv
 
 `check` compare chaque composant à la dernière version publiée (PyPI, registre npm, API de Homebrew, publications GitHub, étiquettes
 de Docker Hub, registre d'Ollama ; `uv python list` pour Python ; version locale par --version pour un outil non épinglé ; empreinte
-locale d'un modèle par l'API locale d'Ollama, en lecture) et range les nouveautés : mise à jour, version majeure, préversion,
-étiquette republiée. Il lance `uv lock --script <copie> --upgrade` (à blanc si uv le permet) sur des copies temporaires de chaque
-script et de son verrou. Il n'installe, ne met à jour, ne tire et ne démarre rien, n'écrit aucun fichier du dépôt, n'envoie aucune
+locale d'un modèle par l'API locale d'Ollama, en lecture) et range les nouveautés : mise à jour, version majeure, étiquette
+republiée. Une préversion (.dev, a, b, rc, drapeau prerelease) n'est jamais une nouveauté : rien n'en est affiché ni proposé.
+Seules les nouveautés pas encore notifiées sont affichées et proposées en job, avec le compte des déjà notifiées ; l'état date
+chaque paire notifiée (notified_dates). Il lance `uv lock --script <copie> --upgrade` (à blanc si uv le permet) sur des copies
+temporaires de chaque script et de son verrou. Il n'installe, ne met à jour, ne tire et ne démarre rien, n'écrit aucun fichier du dépôt, n'envoie aucune
 authentification et ne relance aucune requête ; une source injoignable rend le composant incomplet, jamais la veille en échec.
 Résultat : fichier d'état $PMZILLA_LAB_DATA/composants-etat.json (défaut ~/.pmzilla-lab ; droits du seul propriétaire, écriture
 atomique), lu par le tableau de bord. --if-due : seulement si aucune tentative aujourd'hui et si c'est le jour hebdomadaire ou que la
@@ -81,10 +86,15 @@ NODE_MOTHRA = "mothra/.node-version"                  # Node de Mothra, une vers
 NOM_NODE_MOTHRA = "node-mothra"
 MOTIF_NODE_MOTHRA = re.compile(r"^\d+\.\d+\.\d+$")
 APERCU_NODE_MOTHRA = 40                               # caractères cités d'un fichier de version invalide
+NPM_PACKAGE = "mothra/package.json"                   # espace de travail npm de Mothra : engines.npm et dépendances directes
+NPM_VERROU = "mothra/package-lock.json"               # verrou npm, créé par le npm install de l'auteur (absent toléré avant)
+NOM_NPM = "npm"
+PAQUETS_NPM_MOTHRA = ("contract", "server", "front")  # espaces de travail par défaut (champ workspaces du package.json racine)
+MOTIF_NPM_EXACT = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+RUBRIQUES_NPM = ("dependencies", "devDependencies", "optionalDependencies")
 IMAGE_NODE = "library/node"                           # base Node de ci/Dockerfile, nom rendu par _nom_image
 MANIFESTE_BMAD = "_bmad/_config/manifest.yaml"
 CONFIG_OPENSPEC = "openspec/config.yaml"
-VENDOR = "tools/vendor"
 LANCEUR = "tests/run_all.sh"
 INSTALL_SH = "tools/install_lab.sh"
 INSTALL_PREREQS = "tools/install_lab_prereqs.py"
@@ -97,12 +107,13 @@ A_REMPLIR = "A_REMPLIR"                               # valeur laissée à l'aut
 DEPOTS_GITHUB = {"ghcr.io/astral-sh/uv": "astral-sh/uv"}   # image publiée au rythme des publications GitHub de son outil
 
 # Outils du dépôt privé seulement (le manifeste de l'édition les exclut) : leurs dépendances ne comptent que s'ils sont là.
-PRIVES = {"build_edition", "publish_edition", "migrate_watch"}
+PRIVES = {"build_edition", "publish_edition"}
 
 CHAMPS = ("name", "kind", "pinned_in", "channel", "upstream", "procedure", "flags")
 OBLIGATOIRES = ("name", "kind", "pinned_in", "upstream", "procedure")
-GENRES = ("python-package", "python-runtime", "node-runtime", "tool", "docker-image", "ollama-model", "bmad-module", "vendored")
-LIEUX = ("lock files", ".python-version", NODE_MOTHRA, "docker-compose.yml", "BMAD manifest", "vendor version file",
+GENRES = ("python-package", "python-runtime", "node-runtime", "npm-package", "npm-runtime", "tool", "docker-image", "ollama-model",
+          "bmad-module")
+LIEUX = ("lock files", ".python-version", NODE_MOTHRA, NPM_PACKAGE, NPM_VERROU, "docker-compose.yml", "BMAD manifest",
          "library tool constant", "sorting configuration", LIEU_CI, "not pinned")
 CANAUX = ("Homebrew formula", "Homebrew cask", "official installer", "npm registry", "Xcode Command Line Tools", "fnm")
 SOURCES = ("PyPI", "uv Python list", "npm registry", "Homebrew API", "GitHub releases", "Docker Hub tags", "Ollama registry",
@@ -222,6 +233,116 @@ def node_mothra(racine: Path) -> tuple[str | None, str | None]:
     if apercu != texte:
         apercu += " …"
     return None, f"version de Node de Mothra invalide : {apercu} (attendu MAJEUR.MINEUR.CORRECTIF)"
+
+
+def json_npm(racine: Path, relatif: str) -> tuple[dict | None, bool]:
+    """(contenu, illisible) d'un fichier JSON de l'espace npm : (None, False) s'il est absent, (None, True) s'il n'est pas un objet JSON."""
+    texte = lire(racine, relatif)
+    if texte is None:
+        return None, False
+    try:
+        donnees = json.loads(texte)
+    except ValueError:
+        return None, True
+    return (donnees, False) if isinstance(donnees, dict) else (None, True)
+
+
+def fichiers_npm(racine: Path) -> list[str]:
+    """Chemins des package.json de l'espace de travail : la racine, puis les espaces de travail déclarés (noms simples) ou ceux par défaut."""
+    racine_json, _ = json_npm(racine, NPM_PACKAGE)
+    declares = racine_json.get("workspaces") if racine_json else None
+    noms = [w for w in declares if isinstance(w, str) and re.fullmatch(r"[\w.-]+", w)] if isinstance(declares, list) else []
+    return [NPM_PACKAGE] + [f"mothra/{n}/package.json" for n in (noms or PAQUETS_NPM_MOTHRA)]
+
+
+def dependances_npm(racine: Path) -> list[tuple[str, str, str]]:
+    """[(paquet, plage déclarée, package.json)] des dépendances directes (dependencies, devDependencies, optionalDependencies) de la
+    racine et des espaces de travail, sans les paquets de l'espace lui-même, dans l'ordre des fichiers."""
+    fichiers = [(f, json_npm(racine, f)[0]) for f in fichiers_npm(racine)]
+    internes = {d.get("name") for _, d in fichiers if d}
+    trouvees = []
+    for fichier, donnees in fichiers:
+        for rubrique in RUBRIQUES_NPM:
+            bloc = (donnees or {}).get(rubrique)
+            for nom, plage in (bloc.items() if isinstance(bloc, dict) else []):
+                if nom not in internes:
+                    trouvees.append((nom, str(plage), fichier))
+    return trouvees
+
+
+def verrou_npm_chemins(racine: Path) -> tuple[dict[str, str] | None, bool, list[str]]:
+    """({chemin du verrou: version installée} des paquets téléchargés, illisible, liens refusés) ; (None, False, []) sans verrou.
+    Un lien (`link`) n'est accepté que s'il pointe un espace de travail de Mothra (`resolved` égal à contract, server ou front) ;
+    sinon son paquet est refusé, comme un paquet hors du registre public."""
+    donnees, illisible = json_npm(racine, NPM_VERROU)
+    if donnees is None:
+        return None, illisible, []
+    paquets = donnees.get("packages")
+    versions, refuses = {}, []
+    for chemin, entree in (paquets.items() if isinstance(paquets, dict) else []):
+        if "node_modules/" not in chemin or not isinstance(entree, dict):
+            continue
+        if entree.get("link"):
+            if entree.get("resolved") not in PAQUETS_NPM_MOTHRA:
+                refuses.append(chemin[chemin.rindex("node_modules/") + len("node_modules/"):])
+        elif entree.get("version"):
+            versions[chemin] = str(entree["version"])
+    return versions, False, refuses
+
+
+def verrou_npm_versions(racine: Path) -> tuple[dict[str, str] | None, bool]:
+    """({paquet: version installée} des paquets de la racine du verrou npm, illisible) ; (None, False) sans verrou. Les liens
+    d'espace de travail et les paquets imbriqués sont ignorés."""
+    versions, illisible, _ = verrou_npm_chemins(racine)
+    if versions is None:
+        return None, illisible
+    return {c.removeprefix("node_modules/"): v for c, v in versions.items() if c.startswith("node_modules/") and c.count("node_modules/") == 1}, False
+
+
+def version_du_verrou(versions: dict[str, str], fichier: str, nom: str) -> str | None:
+    """Version installée d'une dépendance déclarée dans `fichier` : sous l'espace de travail (`<espace>/node_modules/<nom>`) d'abord,
+    puis sous la racine (`node_modules/<nom>`) ; une dépendance de la racine se lit sous la racine seule."""
+    reste = fichier.removeprefix("mothra/").removesuffix("/package.json")
+    espace = reste if fichier != NPM_PACKAGE else None
+    chemins = ([f"{espace}/node_modules/{nom}"] if espace else []) + [f"node_modules/{nom}"]
+    return next((versions[c] for c in chemins if c in versions), None)
+
+
+def controle_npm(racine: Path) -> list[str]:
+    """Contrôles de l'espace npm de Mothra (tâche 2.4, ADR 0005 point 4) : dépendance directe non épinglée, engines.node égal à
+    mothra/.node-version, engines.npm exact, verrou d'accord avec les versions déclarées (absent toléré tant que l'auteur n'a pas lancé
+    npm install). Les versions déclarées ne sont jamais recopiées dans les messages, sauf celles de engines et du verrou."""
+    if not (racine / NPM_PACKAGE).is_file():
+        return []
+    lignes = [f"{f} illisible" for f in fichiers_npm(racine) if (racine / f).is_file() and json_npm(racine, f)[1]]
+    donnees = json_npm(racine, NPM_PACKAGE)[0]
+    if donnees is not None:
+        engines = donnees.get("engines") if isinstance(donnees.get("engines"), dict) else {}
+        version, _ = node_mothra(racine)
+        if not engines.get("node"):
+            lignes.append(f"engines.node de {NPM_PACKAGE} absent")
+        elif version is not None and str(engines["node"]) != version:
+            lignes.append(f"engines.node de {NPM_PACKAGE} différent de {NODE_MOTHRA} : {engines['node']} contre {version}")
+        if not engines.get("npm"):
+            lignes.append(f"engines.npm de {NPM_PACKAGE} absent")
+        elif not MOTIF_NPM_EXACT.match(str(engines["npm"])):
+            lignes.append(f"engines.npm de {NPM_PACKAGE} non exact : {engines['npm']}")
+    directes = dependances_npm(racine)
+    for nom, plage, fichier in directes:
+        if not MOTIF_NPM_EXACT.match(plage):
+            lignes.append(f"Dépendance npm non épinglée : {nom} ({fichier})")
+    versions, illisible, refuses = verrou_npm_chemins(racine)
+    if illisible:
+        lignes.append(f"{NPM_VERROU} illisible")
+    elif versions is not None:
+        lignes.extend(f"registre non public : {nom}" for nom in refuses)
+        for nom, plage, fichier in directes:
+            installee = version_du_verrou(versions, fichier, nom)
+            if installee is None:
+                lignes.append(f"Dépendance absente du verrou npm : {nom}")
+            elif MOTIF_NPM_EXACT.match(plage) and installee != plage:
+                lignes.append(f"Verrou npm différent de package.json : {nom} ({installee} contre {plage})")
+    return lignes
 
 
 def images_compose(racine: Path) -> list[tuple[str, str | None]]:
@@ -354,6 +475,10 @@ def sources_utilisees(racine: Path) -> dict[str, tuple[str, str]]:
         ajouter("python", "python-runtime", PYTHON_VERSION)
     if (racine / NODE_MOTHRA).is_file():
         ajouter(NOM_NODE_MOTHRA, "node-runtime", NODE_MOTHRA)
+    if (racine / NPM_PACKAGE).is_file():
+        ajouter(NOM_NPM, "npm-runtime", NPM_PACKAGE)
+        for nom, _, fichier in dependances_npm(racine):
+            ajouter(nom, "npm-package", fichier)
     for nom, _ in images_compose(racine):
         ajouter(nom, "docker-image", COMPOSE)
     if modele := modele_bibliotheque(racine):
@@ -373,9 +498,6 @@ def sources_utilisees(racine: Path) -> dict[str, tuple[str, str]]:
                 ajouter(str(module["name"]), "bmad-module", MANIFESTE_BMAD)
     if (racine / CONFIG_OPENSPEC).is_file():
         ajouter("openspec", "tool", CONFIG_OPENSPEC)
-    if (racine / VENDOR).is_dir():
-        for fichier in sorted((racine / VENDOR).glob("*.version")):
-            ajouter(fichier.stem, "vendored", f"{VENDOR}/{fichier.name}")
     for nom, _, _ in images_ci(racine):
         ajouter(nom, "docker-image", DOCKERFILE_CI)
     if openspec_ci(racine) is not None:
@@ -492,6 +614,11 @@ class Resolveur:
             return texte.strip() if texte else None
         if c.pinned_in == NODE_MOTHRA:
             return node_mothra(self.racine)[0]
+        if c.pinned_in == NPM_PACKAGE:
+            engines = (json_npm(self.racine, NPM_PACKAGE)[0] or {}).get("engines")
+            return str(engines["npm"]) if isinstance(engines, dict) and engines.get("npm") else None
+        if c.pinned_in == NPM_VERROU:
+            return (verrou_npm_versions(self.racine)[0] or {}).get(c.name)
         if c.pinned_in == "docker-compose.yml":
             return next((etiquette for nom, etiquette in images_compose(self.racine) if nom == c.name), None)
         if c.pinned_in == "BMAD manifest":
@@ -500,9 +627,6 @@ class Resolveur:
                 return str((bmad.get("installation") or {}).get("version") or "") or None
             module = next((m for m in bmad.get("modules") or [] if isinstance(m, dict) and m.get("name") == c.name), None)
             return str(module.get("version")) if module and module.get("version") else None
-        if c.pinned_in == "vendor version file":
-            texte = lire(self.racine, f"{VENDOR}/{c.name}.version")
-            return texte.strip() if texte else None
         if c.pinned_in in ("library tool constant", "sorting configuration"):
             modele = modele_bibliotheque(self.racine) if c.pinned_in == "library tool constant" else modele_tri(self.racine)
             if modele and separer_modele(modele)[0] == c.name:
@@ -545,6 +669,7 @@ def differences(racine: Path, composants: list[Composant]) -> list[str]:
     lignes += controle_image(racine)
     lignes += controle_ci(racine)
     lignes += controle_node_image(racine)[0]
+    lignes += controle_npm(racine)
     return lignes
 
 
@@ -676,17 +801,17 @@ def lire_version(ecosysteme: str, texte: str, drapeau_preversion: bool = False) 
 
 @dataclass
 class Nouveaute:
-    nature: str        # update, major, pre-release, republished
+    nature: str        # update, major, republished
     utilisee: str
     disponible: str
 
 
-NATURES_FR = {"update": "mise à jour", "major": "version majeure", "pre-release": "préversion", "republished": "étiquette republiée"}
+NATURES_FR = {"update": "mise à jour", "major": "version majeure", "republished": "étiquette republiée"}
 
 
 def classer(ecosysteme: str, utilisee: str, candidates: list[tuple[str, bool]]) -> list[Nouveaute]:
-    """Nouveautés d'un composant : mise à jour (même majeure), version majeure, préversion plus récente que la stable ; jamais
-    une préversion comptée comme mise à jour ni une majeure fondue dans une mise à jour. Une version illisible est ignorée."""
+    """Nouveautés d'un composant : mise à jour (même majeure), version majeure ; une préversion n'est jamais une nouveauté
+    (décision de l'auteur, #457) et une majeure n'est jamais fondue dans une mise à jour. Une version illisible est ignorée."""
     u = lire_version(ecosysteme, utilisee)
     if u is None:
         return []
@@ -702,14 +827,6 @@ def classer(ecosysteme: str, utilisee: str, candidates: list[tuple[str, bool]]) 
     majeures = [v for v in stables if v.majeure > u.majeure]
     if majeures:
         resultat.append(Nouveaute("major", utilisee, max(majeures, key=lambda v: v.cle).texte))
-    # une image ne compare ses préversions qu'aux étiquettes de sa ligne PostgreSQL
-    plancher = max([v.cle for v in stables if ecosysteme != "docker" or v.majeure[0] == u.majeure[0]] + [u.cle])
-    if ecosysteme == "docker":
-        pres_lignes = [v for v in versions if v.preversion and v.majeure[0] == u.majeure[0] and v.cle > plancher]
-        return resultat + ([Nouveaute("pre-release", utilisee, max(pres_lignes, key=lambda v: v.cle).texte)] if pres_lignes else [])
-    pres = [v for v in versions if v.preversion and v.cle > plancher]
-    if pres:
-        resultat.append(Nouveaute("pre-release", utilisee, max(pres, key=lambda v: v.cle).texte))
     return resultat
 
 
@@ -1061,14 +1178,14 @@ def verifier_composant(c: Composant, racine: Path, resolveur: Resolveur, lecteur
             distante = empreinte_registre_ollama(lecteur, c.name, utilisee)
             if distante != locale:
                 r.nouveautes = [Nouveaute("republished", f"{utilisee}@{locale[:12]}", f"{utilisee}@{distante[:12]}")]
+        elif c.kind in ("npm-package", "npm-runtime"):
+            r.nouveautes = classer("semver", utilisee, candidates_npm(lecteur, c.name))
         elif c.kind == "bmad-module":
             paquet = paquet_bmad(racine, c.name)
             if paquet is None:
                 r.suit = INSTALLATION_BMAD                        # module intégré : il suit l'installation
                 return r
             r.nouveautes = classer("semver", utilisee, candidates_npm(lecteur, paquet))
-        elif c.kind == "vendored":
-            r.nouveautes = classer("semver", utilisee, candidates_npm(lecteur, c.name))
         elif c.kind == "tool":
             if c.upstream == "Homebrew API":
                 r.nouveautes = classer("homebrew", utilisee, candidates_homebrew(lecteur, c.name, c.channel == "Homebrew cask"))
@@ -1139,12 +1256,18 @@ def commande_check(racine: Path, si_due: bool, seulement: str | None, option_del
 
     nouveautes = [(r, n) for r in resultats for n in r.nouveautes]
     incomplets = [r for r in resultats if r.incomplet]
-    deja = {tuple(p) for p in etat.get("notified", []) if isinstance(p, list) and len(p) == 2}
-    nouvelles = [(r.composant.name, n.disponible) for r, n in nouveautes if (r.composant.name, n.disponible) not in deja]
+    # paires (composant, version) déjà notifiées ; un état ancien n'a que `notified`, sans date (#397)
+    dates_notifiees = {(p[0], p[1]): p[2] for p in etat.get("notified_dates", [])
+                       if isinstance(p, list) and len(p) == 3 and all(isinstance(x, str) for x in p)}
+    deja = {tuple(p) for p in etat.get("notified", []) if isinstance(p, list) and len(p) == 2} | set(dates_notifiees)
+    a_signaler = [(r, n) for r, n in nouveautes if (r.composant.name, n.disponible) not in deja]
+    connues = len(nouveautes) - len(a_signaler)
+    nouvelles = [(r.composant.name, n.disponible) for r, n in a_signaler]
+    texte_connues = f"{connues} nouveauté(s) déjà notifiée(s)"
 
-    if nouveautes:
-        print(f"Veille des composants : {len(nouveautes)} nouveauté(s)")
-        for r, n in nouveautes:
+    if a_signaler:
+        print(f"Veille des composants : {len(a_signaler)} nouveauté(s)" + (f", {texte_connues}" if connues else ""))
+        for r, n in a_signaler:
             print(f"{r.composant.name} {n.utilisee} → {n.disponible} ({NATURES_FR[n.nature]})")
     for nom, s in sorted(scripts.items()):
         if s.get("to_update"):
@@ -1153,9 +1276,11 @@ def commande_check(racine: Path, si_due: bool, seulement: str | None, option_del
         print(f"{r.composant.name} : source injoignable ({r.incomplet})")
     if incomplets:
         print(f"Veille des composants incomplète : {len(incomplets)} source(s) injoignable(s)")
-    elif not nouveautes:
-        print("Veille des composants : rien de nouveau")
-    for r, n in nouveautes:
+        if connues and not a_signaler:
+            print(f"Veille des composants : {texte_connues}")
+    elif not a_signaler:
+        print("Veille des composants : rien de nouveau" + (f" ({texte_connues})" if connues else ""))
+    for r, n in a_signaler:
         marques = "".join(f", {m}" for m in r.composant.flags)
         print(f"Job proposé : {titre_job(r.composant.name, n)} (procédure : {r.composant.procedure}{marques})")
 
@@ -1188,6 +1313,9 @@ def commande_check(racine: Path, si_due: bool, seulement: str | None, option_del
                           for n in r.nouveautes]} for r in resultats},
         "scripts": scripts,
         "notified": sorted([list(p) for p in deja | set(nouvelles)]),
+        # date de première notification par paire, gardée d'un passage à l'autre ; aucune date inventée pour un état ancien
+        "notified_dates": sorted([[nom, version, jour_notif] for (nom, version), jour_notif in
+                                  {**{p: aujourdhui.isoformat() for p in nouvelles}, **dates_notifiees}.items()]),
     }
     try:
         ecrire_etat(chemin, nouvel_etat)

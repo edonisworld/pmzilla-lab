@@ -11,6 +11,7 @@ Deux contrôles :
     si uv ne peut pas résoudre les paquets (pas de réseau ni de cache).
 """
 import ast
+import os
 import re
 import shutil
 import subprocess
@@ -23,7 +24,11 @@ RACINE = Path(__file__).resolve().parents[2]
 TOOLS = RACINE / "tools"
 
 # scripts exécutables du lot 6 (et ceux qu'il a modifiés)
-SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "publish_edition", "install_lab", "flow_monthly", "book_usage", "epic_statuses", "flow_retention", "doctor", "manual", "composants", "morning_summary", "story_quality", "context_lab")
+SCRIPTS = ("flow_import", "flow_compare", "flow_views", "db", "flux_jira", "dependencies_jira", "export_jira_api", "journal_lab", "cases_calibration", "posture_evals", "build_edition", "publish_edition", "install_lab", "flow_monthly", "book_usage", "epic_statuses", "flow_retention", "doctor", "manual", "composants", "morning_summary", "story_quality", "context_lab", "version_photo", "flow_definitions", "suite_order")   # suite_order : run-all-faster-and-guarded (D1), bibliothèque standard seulement, comme install_lab : « dependencies = [] », donc aucun .lock (un lock serait orphelin)
+SCRIPTS = SCRIPTS + ("train_auto", "train_ready")   # autonomous-trains-observe (R-166) : bibliothèque standard seulement, bloc « dependencies = [] », donc pas de .lock
+SCRIPTS = SCRIPTS + ("preuve_arbre",)   # ci-local-runner (D8) : bibliothèque standard seulement, bloc « dependencies = [] », lancé sous python3 -I par pre-push, donc pas de .lock
+SCRIPTS = SCRIPTS + ("train_record",)   # autonomous-trains-merge (tâche 3.1, R-20261106-28) : bibliothèque standard seulement, bloc « dependencies = [] », lancé sous python3 -I par le piège de sortie de finish_train.sh, donc pas de .lock
+SCRIPTS = SCRIPTS + ("garde_session",)   # session-guard-n1 (D2), R-20261108-01 question 14 : classé comme train_record (R-20261106-28), pas dans EXEMPTES, qui est la classe des scripts en bibliothèque standard seulement (R-75) et non celle des scripts d'entrée ; bloc « dependencies = [] », lancé sous python3 -I par chemin absolu, donc pas de .lock ; accepte --help (le test AideSansWith le lance)
 # nom du module importé -> nom du paquet à déclarer
 PAQUETS = {"yaml": "pyyaml", "numpy": "numpy", "psycopg": "psycopg", "requests": "requests", "httpx": "httpx", "mcp": "mcp", "jsonschema": "jsonschema",
            "feedparser": "feedparser", "bs4": "beautifulsoup4", "markdownify": "markdownify", "trafilatura": "trafilatura",
@@ -32,7 +37,7 @@ ERREURS_RESEAU = ("failed to fetch", "network", "offline", "dns", "connection", 
 
 
 # Outils du dépôt privé seulement : le manifeste de l'édition les exclut, les contrôles ne les exigent donc pas dans l'arbre généré.
-PRIVES = {"build_edition", "publish_edition", "migrate_watch"}
+PRIVES = {"build_edition", "publish_edition"}
 
 
 def presents(noms):
@@ -115,15 +120,18 @@ class Declaration(unittest.TestCase):
 
 # Scripts d'entrée de tools/ (avec « if __name__ == "__main__" ») qui ne sont pas dans SCRIPTS : ils ne sont pas contrôlés par les tests
 # ci-dessus. La liste est un cliquet : un nouveau script d'entrée doit être classé (ajouté à SCRIPTS ou ici) pour que le test passe.
-EXEMPTES = {"caption_diagnostic", "convert_books", "critic_mirror", "dashboard", "final_messages_check", "flow_board", "history_jira",
-            "outside_library", "library_parity", "migrate_watch", "pmzilla_lab_library", "roadmap", "gh_issue",
+EXEMPTES = {"caption_diagnostic", "convert_books", "critic_mirror", "dashboard", "final_messages_check", "history_jira",
+            "outside_library", "library_parity", "pmzilla_lab_library", "roadmap", "gh_issue",
             "segment_sample", "watch_lab", "watch_triage", "identifiants_personnels", "journal_lab_messages", "sanctum_refresh",
             "select_suites", "sensitive_names", "sort_by_domain", "mapping_lab", "bmad_remplacements", "sorting_exclusions", "watch_paths", "lab_paths",
-            "pilot", "pipe_guard", "light_validate"}   # R-75, deny-rules-review : bibliothèque standard seulement, aucun paquet tiers à déclarer ni à verrouiller
+            "pilot", "pipe_guard", "npm_guard"}   # R-75, deny-rules-review, R-133 (light_validate retiré par B9, finish-single-b7-b9) : bibliothèque standard seulement, aucun paquet tiers à déclarer ni à verrouiller
 
 
 EXEMPTES = EXEMPTES | {"posture_eval_fingerprint"}   # posture-evals-on-branch-tip : bibliothèque standard seulement (ligne à part pour ne pas heurter la ligne commune à la fusion)
 EXEMPTES = EXEMPTES | {"secret_scan"}   # pre-commit-secret-scan (D1) : bibliothèque standard seulement, importé par le crochet pre-commit sous python3 nu
+EXEMPTES = EXEMPTES | {"finish_lock"}   # autonomous-trains-merge (D18) : bibliothèque standard seulement, lancé sous python3 -I par le lanceur de tests et ci_local.sh (ligne à part)
+EXEMPTES = EXEMPTES | {"finish_checks"}   # finish-train-foundations (D9) : bibliothèque standard seulement, lancé sous python3 -I
+EXEMPTES = EXEMPTES | {"npm_lock_check"}   # mothra-slices (D9) : bibliothèque standard seulement, lancé par tests/run_all.sh sous python3 -I
 
 
 def scripts_d_entree() -> set[str]:
@@ -134,6 +142,10 @@ def scripts_d_entree() -> set[str]:
 EXEMPTES = EXEMPTES | {"mutation_masking"}
 # fix/sorties-et-masquage (point 3) : bibliothèque standard seulement, lancé par les crochets commit-msg et pre-push sous python3 nu
 EXEMPTES = EXEMPTES | {"commit_names_scan"}
+# R-137 (deny-fragments) : assembleur des règles deny, bibliothèque standard seulement
+EXEMPTES = EXEMPTES | {"settings_assemble"}
+# R-148 (finish-train-foundations, groupe 2) : scan d'une plage de commits, bibliothèque standard seulement, lancé sous python3 -I
+EXEMPTES = EXEMPTES | {"range_scan"}
 
 
 class Decouverte(unittest.TestCase):
@@ -156,7 +168,7 @@ class Decouverte(unittest.TestCase):
 
 # Règle « pas de version épinglée » (décision du 2026-10-10) : noms de paquets nus, sauf la borne documentée du SDK MCP ; ni manifeste de
 # projet ni fichier de verrou à la racine. Un changement de cette règle est une nouvelle décision : il passe par ces constantes.
-BORNE_MCP = "mcp>=1.2,<2"
+BORNE_MCP = "mcp>=2,<3"
 MANIFESTES_INTERDITS = ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile", "uv.lock", "poetry.lock", "Pipfile.lock",
                         "pdm.lock", "package.json", "package-lock.json")
 
@@ -223,9 +235,11 @@ class SansVersionEpinglee(unittest.TestCase):
 @unittest.skipUnless(shutil.which("uv"), "uv absent")
 class AideSansWith(unittest.TestCase):
     def test_help_dans_un_environnement_propre(self):
+        # sans le marqueur de session : posture_evals.py refuse tout lancement dans une session Claude Code (code 6), même --help
+        environnement = {cle: valeur for cle, valeur in os.environ.items() if cle != "CLAUDECODE"}
         for script in presents(SCRIPTS):
             r = subprocess.run(["uv", "run", "--isolated", f"tools/{script}.py", "--help"], cwd=RACINE, capture_output=True,
-                               text=True, timeout=300)
+                               text=True, timeout=300, env=environnement)
             sortie = (r.stdout + r.stderr)
             if r.returncode != 0 and any(m in sortie.lower() for m in ERREURS_RESEAU) and "ModuleNotFoundError" not in sortie:
                 self.skipTest(f"uv ne peut pas résoudre les paquets ici ({script}) : {sortie.strip().splitlines()[-1][:120]}")
@@ -259,7 +273,7 @@ class VersionsFigees(unittest.TestCase):
                 continue
             manifeste = tomllib.loads(verrou.read_text(encoding="utf-8")).get("manifest", {})
             noms = {r["name"].lower() for r in manifeste.get("requirements", [])}
-            if noms != {d for d in dependances_declarees(TOOLS / f"{s}.py") if d}:     # « mcp>=1.2,<2 » laisse un morceau vide
+            if noms != {d for d in dependances_declarees(TOOLS / f"{s}.py") if d}:     # « mcp>=2,<3 » laisse un morceau vide
                 perimes.append(s)
         self.assertEqual(perimes, [], f"lock à régénérer (uv lock --script tools/<script>.py) : {perimes}")
 

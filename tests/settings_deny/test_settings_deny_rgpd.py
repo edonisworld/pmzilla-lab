@@ -2,7 +2,8 @@
 
 La session ne lance jamais : l'outil de conservation tools/flow_retention.py (toute sous-commande), tools/epic_statuses.py, le script de
 vérification check_stored_fields.py, ni la sous-commande `cycles` de tools/flux_jira.py (elle lit toujours la base). Elle ne lit pas non
-plus Flux-Lab/organisation.yaml (outil Read et lecteurs du terminal). Elle peut lire le code de ces outils, lancer leurs suites de tests,
+plus Flux-Lab/organisation.yaml (outil Read et lecteurs du terminal). Désherbage du 2026-10-28 (D38) : les trois formes Read exactes
+d'organisation.yaml sont remplacées par les formes `*` finales du fragment 33. Elle peut lire le code de ces outils, lancer leurs suites de tests,
 lire un rapport de Flux-Lab/rapports/, lire Flux-Lab/flux.yaml et lancer `flux_jira.py compute` sur des CSV.
 
 Conception : l'utilisateur n'ajoute les règles à .claude/settings.json qu'à l'étape 15.9. La suite reste donc VERTE avant et après :
@@ -52,14 +53,20 @@ def regles_de_lancement(commande: str, prefixes: tuple) -> list:
 
 
 # Le bloc que l'utilisateur copie dans permissions.deny de .claude/settings.json (étape 15.9) : une chaîne JSON par règle.
+# Désherbage du 2026-10-28 (D38) : les formes Read `*` finales d'organisation.yaml (fragment 33, présentes avant comme après) remplacent les trois
+# formes exactes.
 REGLES_D18 = (
     regles_de_lancement("flow_retention.py", PREFIXES_TOOLS)
     + regles_de_lancement("epic_statuses.py", PREFIXES_TOOLS)
     + regles_de_lancement("check_stored_fields.py", PREFIXES_VERIFICATION)
     + regles_de_lancement("flux_jira.py cycles", PREFIXES_TOOLS)
-    + ["Read(./Flux-Lab/organisation.yaml)", "Read(//**/Flux-Lab/organisation.yaml)", "Read(~/**/Flux-Lab/organisation.yaml)"]
+    + ["Read(./Flux-Lab/organisation.yaml*)", "Read(//**/Flux-Lab/organisation.yaml*)", "Read(~/**/Flux-Lab/organisation.yaml*)"]
     + [f"Bash({lecteur} *organisation.yaml*)" for lecteur in LECTEURS_TERMINAL]
 )
+
+# Les trois formes Read exactes d'organisation.yaml, retirées par le désherbage (D38) : présentes avant, absentes après ; exclues des « règles
+# d'avant » pour que le résultat soit le même dans les deux états.
+READ_ORGANISATION_EXACTES = ("Read(./Flux-Lab/organisation.yaml)", "Read(//**/Flux-Lab/organisation.yaml)", "Read(~/**/Flux-Lab/organisation.yaml)")
 
 # Formes de lancement à refuser.
 LANCEURS = ("uv run", "uv run --isolated", "uv run python", "uv run python3", "uv run --with pyyaml", "uv run -q",
@@ -232,7 +239,7 @@ class ReglesExistantes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         deny = json.loads(REGLAGES.read_text(encoding="utf-8"))["permissions"]["deny"]
-        cls.moteur = Moteur([r for r in deny if r not in REGLES_D18 and r not in REGLES_COMPLEMENT])
+        cls.moteur = Moteur([r for r in deny if r not in REGLES_D18 and r not in REGLES_COMPLEMENT and r not in READ_ORGANISATION_EXACTES])
 
     def test_commandes_permises_non_refusees_par_les_regles_d_avant(self):
         refusees = {c for c in COMMANDES_PERMISES_TERMINAL if self.moteur.interdite(c)}

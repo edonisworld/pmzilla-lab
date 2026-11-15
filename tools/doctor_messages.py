@@ -73,7 +73,8 @@ CATALOGS = {
         # branches
         "raison_branches_ok": "aucune branche ni worktree à ranger",
         "raison_branches_stale": ("{merged_worktrees} worktree(s) fusionné(s), {stale_worktrees} worktree(s) inactif(s), "
-                                  "{merged_branches} branche(s) fusionnée(s) non supprimée(s), {prunable} worktree(s) à élaguer : {noms}"),
+                                  "{merged_branches} branche(s) fusionnée(s) non supprimée(s), {prunable} worktree(s) à élaguer, "
+                                  "{trial_orphans} copie(s) de séance du jeu d'essai orpheline(s) (posture_evals.py --remove-orphans) : {noms}"),
         # run-worktree
         "raison_run_worktree_ok": "le worktree d'exécution est détaché au sommet de main et propre",
         "raison_run_worktree_wrong_branch": "le worktree d'exécution est sur une branche : il doit être détaché",
@@ -89,6 +90,63 @@ CATALOGS = {
         "raison_mothra_npm_node_unpinned": "mothra/.node-version absent : version de Node non vérifiée",
         "raison_mothra_npm_modules_missing": "node_modules absent dans mothra/",
         "raison_mothra_npm_modules_stale": "node_modules périmé : verrou plus récent ou différent",
+        # pretooluse (idée 399)
+        "raison_pretooluse_ok": "Claude Code est à la version du dernier essai conforme du crochet PreToolUse",
+        "raison_pretooluse_claude_missing": "commande claude introuvable",
+        "raison_pretooluse_claude_version_unreadable": "version de claude illisible",
+        "raison_pretooluse_no_trial": ("aucun essai du crochet PreToolUse enregistré pour Claude Code {version} : "
+                                       "lance bash tools/essai_crochet_pretooluse.sh dans le Terminal"),
+        "raison_pretooluse_state_unreadable": ("état de l'essai du crochet PreToolUse illisible : "
+                                               "relance bash tools/essai_crochet_pretooluse.sh dans le Terminal"),
+        "raison_pretooluse_version_changed": ("Claude Code {version}, dernier essai conforme du crochet PreToolUse avec {tried} : "
+                                              "relance bash tools/essai_crochet_pretooluse.sh dans le Terminal"),
+        "raison_pretooluse_not_read": ("le dernier essai (Claude Code {tried}) n'a pas lu le contexte d'un crochet PreToolUse : "
+                                       "reviens à la forme A, PostToolUse (changement de l'entrée seule, design D9 de deny-rules-review)"),
+        # ci-container (R-20261103-6, Q9)
+        "raison_ci_container_ok": "Colima tourne et l'image de CI de la clé courante existe",
+        "raison_ci_container_colima_missing": "commande colima introuvable",
+        "raison_ci_container_colima_stopped": "Colima ne tourne pas : lance colima start --cpu 8 --memory 16 dans le Terminal",
+        "raison_ci_container_image_absent": ("image de CI absente pour la clé courante : "
+                                             "lance bash tools/ci_local.sh up dans le Terminal, depuis le worktree de la branche"),
+        "raison_ci_container_image_unreadable": "état de l'image de CI illisible : bash tools/ci_local.sh cle n'a pas répondu",
+        # sandbox (change bash-sandbox-n2, design D8) : les lignes du design, caractère pour caractère
+        "raison_sandbox_ok": "bac à sable : fichier géré conforme",
+        "raison_sandbox_absent": "bac à sable : fichier géré absent (non posé)",
+        "raison_sandbox_differs": "bac à sable : fichier géré différent de sa source",
+        "raison_sandbox_unprotected": "bac à sable : fichier géré non protégé (propriétaire ou droits)",
+        "raison_sandbox_version_low": "bac à sable : version de Claude Code inférieure au minimum",
+        "raison_sandbox_frozen_differs": "bac à sable : outil figé différent de son relevé : {noms}",
+        "raison_sandbox_claude_missing": "commande claude introuvable",
+        "raison_sandbox_claude_version_unreadable": "version de claude illisible",
+        # interpreteur_crochets (R-20261108-10)
+        "raison_interpreteur_crochets_ok": "interpréteur des crochets conforme (root, inscriptible par root seulement)",
+        "raison_interpreteur_crochets_missing": ("interpréteur des crochets absent ou illisible : les crochets risquent de ne plus démarrer ; "
+                                                 "vérifie le lien et sa cible avec ls -lL dans le Terminal"),
+        "raison_interpreteur_crochets_outside": ("l'interpréteur des crochets pointe hors des CommandLineTools : les crochets risquent de "
+                                                 "ne plus démarrer ; vérifie la cible du lien avec ls -lL dans le Terminal"),
+        "raison_interpreteur_crochets_owner": ("interpréteur des crochets non détenu par root : les crochets risquent de ne plus démarrer ; "
+                                               "vérifie le propriétaire du lien, de sa cible et de leurs dossiers avec ls -ld"),
+        "raison_interpreteur_crochets_writable": ("interpréteur des crochets inscriptible par le groupe ou les autres : les crochets risquent "
+                                                  "de ne plus démarrer ; vérifie les droits du lien, de sa cible et de leurs dossiers avec ls -ld"),
+        "raison_interpreteur_crochets_not_mac": "sans objet hors du Mac",
+        # crochet-reference-transaction (R-20261110-42) : la commande de réparation est dans chaque raison de problème, sans chemin
+        "raison_crochet_reference_transaction_ok": "crochet reference-transaction installé et conforme",
+        "raison_crochet_reference_transaction_no_repo": "dépôt Git introuvable : crochet reference-transaction non vérifié ; lance bash tools/install_hooks.sh --verify dans l'espace de travail",
+        "raison_crochet_reference_transaction_source_absent": "fichier suivi tools/hooks/reference-transaction absent ; restaure-le depuis Git, puis lance bash tools/install_hooks.sh dans l'espace de travail",
+        "raison_crochet_reference_transaction_wrong_dir": "dossier des hooks inattendu (core.hooksPath ?) ; vérifie-le, puis lance bash tools/install_hooks.sh dans l'espace de travail",
+        "raison_crochet_reference_transaction_missing": "crochet reference-transaction non installé ; lance bash tools/install_hooks.sh dans l'espace de travail",
+        "raison_crochet_reference_transaction_differs": "crochet reference-transaction différent du lien attendu ou non exécutable ; lance bash tools/install_hooks.sh dans l'espace de travail",
+        "raison_module_missing": "module {module} absent",
+        # train-auto-plist (R-20261110-14) : la commande de régénération et le rappel sont dans chaque raison de problème, sans chemin
+        "raison_train_auto_plist_ok": "modèle launchd du train automatique conforme à celui de train_auto.py plist",
+        "raison_train_auto_plist_unreadable": ("modèle launchd du train automatique illisible ; régénère-le avec python3 -I <dossier d'exécution>/tools/train_auto.py plist "
+                                               "(python3 3.10 ou plus requis), puis recharge-le dans launchd"),
+        "raison_train_auto_plist_python_absent": ("pas de python3 dans le premier dossier du PATH du modèle du train automatique ; régénère-le avec python3 -I "
+                                                  "<dossier d'exécution>/tools/train_auto.py plist (python3 3.10 ou plus requis), puis recharge-le dans launchd"),
+        "raison_train_auto_plist_python_old": ("python3 du modèle du train automatique plus ancien que 3.10 ou version illisible ; régénère-le avec python3 -I "
+                                               "<dossier d'exécution>/tools/train_auto.py plist (python3 3.10 ou plus requis), puis recharge-le dans launchd"),
+        "raison_train_auto_plist_different": ("modèle du train automatique différent de celui de train_auto.py plist ({keys}) ; régénère-le avec python3 -I "
+                                              "<dossier d'exécution>/tools/train_auto.py plist (python3 3.10 ou plus requis), puis recharge-le dans launchd"),
     },
     "en": {
         "ligne": "{check}: {level}: {reason}",
@@ -147,7 +205,8 @@ CATALOGS = {
         "raison_jira_unreadable": "expiry date unreadable or malformed",
         "raison_branches_ok": "no branch or worktree to tidy",
         "raison_branches_stale": ("{merged_worktrees} merged worktree(s), {stale_worktrees} inactive worktree(s), "
-                                  "{merged_branches} merged branch(es) not deleted, {prunable} prunable worktree(s): {noms}"),
+                                  "{merged_branches} merged branch(es) not deleted, {prunable} prunable worktree(s), "
+                                  "{trial_orphans} orphaned trial-run session copy(ies) (posture_evals.py --remove-orphans): {noms}"),
         "raison_run_worktree_ok": "the run worktree is detached at the tip of main and clean",
         "raison_run_worktree_wrong_branch": "the run worktree is on a branch: it must be detached",
         "raison_run_worktree_behind": "the run worktree is behind main (update postponed or refused)",
@@ -161,5 +220,61 @@ CATALOGS = {
         "raison_mothra_npm_node_unpinned": "mothra/.node-version missing: Node version not checked",
         "raison_mothra_npm_modules_missing": "node_modules missing in mothra/",
         "raison_mothra_npm_modules_stale": "stale node_modules: lock newer or different",
+        "raison_pretooluse_ok": "Claude Code is at the version of the last conforming PreToolUse hook trial",
+        "raison_pretooluse_claude_missing": "claude command not found",
+        "raison_pretooluse_claude_version_unreadable": "claude version unreadable",
+        "raison_pretooluse_no_trial": ("no PreToolUse hook trial recorded for Claude Code {version}: "
+                                       "run bash tools/essai_crochet_pretooluse.sh in the Terminal"),
+        "raison_pretooluse_state_unreadable": ("PreToolUse hook trial state unreadable: "
+                                               "run bash tools/essai_crochet_pretooluse.sh again in the Terminal"),
+        "raison_pretooluse_version_changed": ("Claude Code {version}, last conforming PreToolUse hook trial with {tried}: "
+                                              "run bash tools/essai_crochet_pretooluse.sh again in the Terminal"),
+        "raison_pretooluse_not_read": ("the last trial (Claude Code {tried}) did not read a PreToolUse hook's context: "
+                                       "go back to form A, PostToolUse (change of the entry only, design D9 of deny-rules-review)"),
+        # ci-container (R-20261103-6, Q9)
+        "raison_ci_container_ok": "Colima is running and the CI image of the current key exists",
+        "raison_ci_container_colima_missing": "colima command not found",
+        "raison_ci_container_colima_stopped": "Colima is not running: run colima start --cpu 8 --memory 16 in the Terminal",
+        "raison_ci_container_image_absent": ("CI image missing for the current key: "
+                                             "run bash tools/ci_local.sh up in the Terminal, from the branch's worktree"),
+        "raison_ci_container_image_unreadable": "CI image state unreadable: bash tools/ci_local.sh cle did not answer",
+        # sandbox (change bash-sandbox-n2, design D8): the design's lines, character for character
+        "raison_sandbox_ok": "sandbox: managed file conforms",
+        "raison_sandbox_absent": "sandbox: managed file absent (not posed)",
+        "raison_sandbox_differs": "sandbox: managed file differs from its source",
+        "raison_sandbox_unprotected": "sandbox: managed file not protected (owner or mode)",
+        "raison_sandbox_version_low": "sandbox: Claude Code version below the minimum",
+        "raison_sandbox_frozen_differs": "sandbox: frozen tool differs from its record: {noms}",
+        "raison_sandbox_claude_missing": "claude command not found",
+        "raison_sandbox_claude_version_unreadable": "claude version unreadable",
+        # interpreteur_crochets (R-20261108-10)
+        "raison_interpreteur_crochets_ok": "hooks interpreter conforms (root, writable by root only)",
+        "raison_interpreteur_crochets_missing": ("hooks interpreter absent or unreadable: the hooks may no longer start; "
+                                                 "check the link and its target with ls -lL in the Terminal"),
+        "raison_interpreteur_crochets_outside": ("the hooks interpreter points outside the CommandLineTools: the hooks may no longer "
+                                                 "start; check the target of the link with ls -lL in the Terminal"),
+        "raison_interpreteur_crochets_owner": ("hooks interpreter not owned by root: the hooks may no longer start; "
+                                               "check the owner of the link, its target and their folders with ls -ld"),
+        "raison_interpreteur_crochets_writable": ("hooks interpreter writable by the group or others: the hooks may no longer start; "
+                                                  "check the mode of the link, its target and their folders with ls -ld"),
+        "raison_interpreteur_crochets_not_mac": "not applicable outside the Mac",
+        # crochet-reference-transaction (R-20261110-42): the repair command is in every problem reason, without a path
+        "raison_crochet_reference_transaction_ok": "reference-transaction hook installed and conforming",
+        "raison_crochet_reference_transaction_no_repo": "Git repository not found: reference-transaction hook not checked; run bash tools/install_hooks.sh --verify in the workspace",
+        "raison_crochet_reference_transaction_source_absent": "tracked file tools/hooks/reference-transaction absent; restore it from Git, then run bash tools/install_hooks.sh in the workspace",
+        "raison_crochet_reference_transaction_wrong_dir": "unexpected hooks folder (core.hooksPath?); check it, then run bash tools/install_hooks.sh in the workspace",
+        "raison_crochet_reference_transaction_missing": "reference-transaction hook not installed; run bash tools/install_hooks.sh in the workspace",
+        "raison_crochet_reference_transaction_differs": "reference-transaction hook differs from the expected link or is not executable; run bash tools/install_hooks.sh in the workspace",
+        "raison_module_missing": "module {module} missing",
+        # train-auto-plist (R-20261110-14) : la commande de régénération et le rappel sont dans chaque raison de problème, sans chemin
+        "raison_train_auto_plist_ok": "automatic train launchd template matches the model of train_auto.py plist",
+        "raison_train_auto_plist_unreadable": ("automatic train launchd template unreadable; regenerate it with python3 -I <run folder>/tools/train_auto.py plist "
+                                               "(python3 3.10 or newer required), then reload it in launchd"),
+        "raison_train_auto_plist_python_absent": ("no python3 in the first PATH folder of the automatic train template; regenerate it with python3 -I "
+                                                  "<run folder>/tools/train_auto.py plist (python3 3.10 or newer required), then reload it in launchd"),
+        "raison_train_auto_plist_python_old": ("python3 of the automatic train template older than 3.10 or version unreadable; regenerate it with python3 -I "
+                                               "<run folder>/tools/train_auto.py plist (python3 3.10 or newer required), then reload it in launchd"),
+        "raison_train_auto_plist_different": ("automatic train template differs from the model of train_auto.py plist ({keys}); regenerate it with python3 -I "
+                                              "<run folder>/tools/train_auto.py plist (python3 3.10 or newer required), then reload it in launchd"),
     },
 }

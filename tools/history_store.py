@@ -23,6 +23,9 @@ LOT = 2000
 LOT_TRANSITIONS = 5000
 
 TABLES_PERIODES = {"etiquettes": ("flow.issue_label_periods", "label"), "versions": ("flow.issue_version_periods", "version")}
+# jira-delivery-fields D3 : nature -> (table, colonnes de la valeur) ; une valeur d'actif est « genre:identifiant d'objet »
+TABLES_LIVRAISON = {"sprints": ("flow.issue_sprint_periods", ("sprint_id",)),
+                    "actifs": ("flow.issue_asset_version_periods", ("kind", "object_id"))}
 
 SQL_TICKETS = """
 SELECT i.key, i.project, i.type, i.created_at, i.resolved_at, i.updated_at, i.has_history,
@@ -81,7 +84,7 @@ class MagasinHistorique:
         cur = self.conn.cursor()
         try:
             ajoutees = self._transitions(cur, resultats)
-            periodes = self._periodes(cur, resultats)
+            periodes = self._periodes(cur, resultats) + self._periodes_livraison(cur, resultats)
             self._suivi(cur, suivi or {})
             cur.execute("INSERT INTO flow.raw_runs (kind, queries_searched, all_queries, errors, not_found) "
                         "VALUES ('history', 0, false, %s, %s)", (max(0, int(erreurs)), max(0, int(introuvables))))
@@ -159,6 +162,47 @@ class MagasinHistorique:
                             f"SELECT * FROM unnest(%s::text[], %s::text[], %s::timestamptz[], %s::timestamptz[]) "
                             f"ON CONFLICT (issue_key, {colonne}, added_at) DO UPDATE SET removed_at = EXCLUDED.removed_at",
                             ([k[0] for k, _ in lot], [k[1] for k, _ in lot], [k[2] for k, _ in lot], [fin for _, fin in lot]))
+            ecrites += len(a_ecrire)
+        return ecrites
+
+    @staticmethod
+    def _periodes_livraison(cur, resultats: dict[str, dict]) -> int:
+        """Périodes de sprint et de version d'actif (change jira-delivery-fields, D2, D3), comme celles des versions correctives : pour un ticket
+        dont l'ensemble est connu (`resultat["sprints"]` ou `resultat["actifs"]` non nul), l'ensemble construit fait foi. Une valeur d'actif est
+        « genre:identifiant d'objet ». Rend le nombre de périodes écrites ou modifiées. Remplace : rien. Retrait : permanent tant que les
+        mesures de glissement lisent ces périodes."""
+        stockees = {cle.upper(): cle for (cle,) in cur.execute("SELECT key FROM flow.issues").fetchall()}
+        ecrites = 0
+        for nature, (table, colonnes) in TABLES_LIVRAISON.items():
+            voulu: dict[tuple, dt.datetime | None] = {}
+            complets: set[str] = set()
+            for cle, resultat in resultats.items():
+                vrai = stockees.get(cle.upper())
+                periodes = resultat.get(nature)
+                if vrai is None or periodes is None:
+                    continue
+                complets.add(vrai)
+                for valeur, debut, fin in periodes:
+                    voulu[(vrai, valeur, debut)] = fin
+            if not complets:
+                continue
+            existant: dict[tuple, dt.datetime | None] = {}
+            for lot in _par_lots(sorted(complets), LOT):
+                for ligne in cur.execute(f"SELECT issue_key, {', '.join(colonnes)}, added_at, removed_at FROM {table} "
+                                         f"WHERE issue_key = ANY(%s::text[])", (lot,)).fetchall():
+                    existant[(ligne[0], ":".join(ligne[1:-2]), ligne[-2])] = ligne[-1]
+            a_retirer = [k for k in existant if k not in voulu]
+            a_ecrire = [(k, fin) for k, fin in voulu.items() if k not in existant or existant[k] != fin]
+            cle_sql = " AND ".join(f"{c} = %s" for c in colonnes)
+            for cle, valeur, debut in a_retirer:
+                cur.execute(f"DELETE FROM {table} WHERE issue_key = %s AND {cle_sql} AND added_at = %s",
+                            (cle, *valeur.split(":", len(colonnes) - 1), debut))
+            colonnes_sql = ", ".join(colonnes)
+            marques = ", ".join(["%s"] * (len(colonnes) + 3))
+            for (cle, valeur, debut), fin in a_ecrire:
+                cur.execute(f"INSERT INTO {table} (issue_key, {colonnes_sql}, added_at, removed_at) VALUES ({marques}) "
+                            f"ON CONFLICT (issue_key, {colonnes_sql}, added_at) DO UPDATE SET removed_at = EXCLUDED.removed_at",
+                            (cle, *valeur.split(":", len(colonnes) - 1), debut, fin))
             ecrites += len(a_ecrire)
         return ecrites
 

@@ -27,14 +27,34 @@ The system SHALL give each schema a read-write role and a read-only role; a read
 Source: tests/db/test_db.py (TestAvecBase.test_droits_des_roles); tests/db/test_flow_schema.py (test_droits_des_roles_sur_flow)
 
 ### Requirement: Flow tables hold tickets, teams, teams per ticket, transitions and links, with no personal or textual fields
-The system SHALL provide flow tables for teams, issues, issue-team membership, status transitions, issue links, declared label periods and fix version periods, and SHALL define no column named like a title, summary, description, assignee, reporter, creator, author, comment, product owner or person name, and no column holding personal data (design D3, D20). A label SHALL be stored only in the declared label periods table; no other table SHALL have a label column.
+The system SHALL provide flow tables for teams, issues, issue-team membership, status transitions, issue links, declared label periods and fix version periods, and SHALL define no column named like a title, summary, description, assignee, reporter, creator, author, comment, product owner or person name, and no column holding personal data. The rules on label columns and on declared labels are stated in the scenarios below.
+
+#### Scenario: Label columns
+
+- **WHEN** the tables of the flow schema are inspected
+- **THEN** a label text appears only in the declared label periods table and in the cycle referential's declared labels table (`flow.ref_labels`), which holds no ticket (author's decision of 2026-10-28, R-20261028-91; change cycle-referential-schema, design D7), no other table has a label column, and the three flow definition tables of change flow-definitions-referential (author's decision of 2026-10-29, R-20261029-09) hold no label column and no ticket
+
+#### Scenario: Undeclared label refused
+
+- **WHEN** a referential holds a label that is not declared in the flow settings
+- **THEN** the referential's declared labels table does not accept it: the referential validation function refuses it with the code `label_undeclared` and does not print the label's value, and the writing function does not write the referential
 
 #### Scenario: Schema inspection
 
 - **WHEN** the flow schema's tables and columns are listed after migration
-- **THEN** exactly ten tables exist (the seven flow tables and the three raw-layer tables of the requirement "Raw layer tables in the flow schema"), no forbidden column name appears, a label column exists only in the declared label periods table, and no table has a PO or other personal column
+- **THEN** the tables are exactly the seven flow tables, the three raw-layer tables of the requirement "Raw layer tables in the flow schema", the photo store tables, the five cycle referential tables and the three flow definition tables, no forbidden column name appears, a label column exists only in the declared label periods table and in `flow.ref_labels`, and no table has a PO or other personal column
 
-Source: tests/db/test_flow_schema.py (test_tables_vues_et_colonnes, test_aucune_colonne_po_ni_personnelle_et_etiquette_dans_une_seule_table); tests/db/test_flow_gdpr.py (ColonneEtTables, SansBase)
+#### Scenario: Only declared labels are accepted
+
+- **WHEN** a referential whose labels all belong to the declared label set is validated
+- **THEN** the validation function returns no `label_undeclared` finding
+
+#### Scenario: Planted undeclared label
+
+- **WHEN** an otherwise valid referential holds one label absent from the declared label set, and the writing function is called with it
+- **THEN** it raises `référentiel des cycles invalide : label_undeclared`, the message does not hold the planted label's text, and no statement is sent to the connection
+
+Source: design D3, D20; tests/db/test_flow_schema.py (test_tables_vues_et_colonnes, test_aucune_colonne_po_ni_personnelle_et_etiquette_dans_une_seule_table); tests/db/test_flow_gdpr.py (ColonneEtTables, SansBase). The three flow definition tables untested until implemented (change flow-definitions-referential, tasks 2.4 and 2.5)
 
 ### Requirement: An issue records its identity, lifecycle and history flag
 An issue SHALL record its identity, classification, lifecycle instants, team and parent, whether history was collected for it, and the optional out-of-export instant. The history flag SHALL be a non-null boolean that is false for an issue inserted without it, SHALL be settable to true, and SHALL refuse a null value; its migration SHALL add it without inserting data.
@@ -97,7 +117,7 @@ The system SHALL reject a transition duplicating an existing one (same ticket, s
 Source: tests/db/test_flow_schema.py (test_contraintes_et_doublons)
 
 ### Requirement: Only aggregated team views are exposed, without ticket keys
-The system SHALL expose exactly four aggregated flow views to the views role (status by team, weekly resolved by team, open ticket age by team, dependencies between teams), the two team-name views (requirement "Team-name views for the views role") and, in addition, only the teams-seen view of the catalogue review (requirement "Teams-seen view for the catalogue review, readable by the flow read-only role only"), so seven flow views in total; no view SHALL expose a column whose name contains "key".
+The system SHALL expose exactly four aggregated flow views to the views role (status by team, weekly resolved by team, open ticket age by team, dependencies between teams), the two team-name views and, in addition, only the teams-seen view of the catalogue review (each with its own requirement below), so seven flow views in total; no view SHALL expose a column whose name contains "key".
 
 #### Scenario: View listing
 
@@ -330,12 +350,17 @@ The system SHALL leave out of the four aggregated views the issues carrying an o
 Source: tests/db/test_flow_gdpr.py (VuesSansTicketsMarques)
 
 ### Requirement: Knowledge schema stores the watch and pre-triage state
-The system SHALL provide, through a migration of the knowledge schema, tables for: collected watch articles (one per cleaned address, with a flag telling whether its cited links were extracted), the last collection attempt of each source, the links cited by each article, the pre-triage references, the article scores, the manual rescues, the manual exclusions, the user's shares, the daily picks (one per day and article), the shadow scores (one per article address and language) and the calibration (one entry per article, holding the values shown at the last export and the user's opinion).
+The system SHALL provide, through a migration of the knowledge schema, tables for: collected watch articles, the last collection attempt of each source, the links cited by each article, the pre-triage references, the article scores, the manual rescues, the manual exclusions, the user's shares, the daily picks, the shadow scores and the calibration.
 
 #### Scenario: Fresh migration
 
 - **WHEN** all migrations are applied to a throwaway database
 - **THEN** the eleven watch and pre-triage tables exist in the knowledge schema, owned by the owner role, and are empty
+
+Source: tests/db/test_watch_schema.py
+
+### Requirement: Watch tables keep one row per article, pick, shadow score and calibration entry
+The collected watch articles table SHALL hold one row per cleaned address, with a flag telling whether its cited links were extracted; the daily picks SHALL hold one row per day and article, the shadow scores one per article address and language, and the calibration one entry per article, holding the values shown at the last export and the user's opinion.
 
 #### Scenario: Uniqueness
 
@@ -773,6 +798,153 @@ The system SHALL end each of the three quality views with the core grid version 
 - **THEN** the last two columns of each view are the core grid version and the overlay version, with these values, and no column names the overlay identifier
 
 Source: tests/db/test_quality_masking.py (AvecBase.test_les_versions_de_la_paire_courante_et_jamais_l_identifiant_de_surcouche)
+
+### Requirement: The photo store holds aggregates only
+The flow schema SHALL hold photo runs, photo rows, a version register and a register of N with no ticket key, title or person and no foreign key to the tickets. They SHALL be written by the import role only and read directly by no other role, the views roles included.
+
+Source: untested until implemented
+
+#### Scenario: Direct read refused
+- **WHEN** the flow views role or the read-only role queries the photo rows or the version register directly
+- **THEN** the database refuses for insufficient privilege
+
+### Requirement: The photo identity sequences are reserved to the import role
+The identity sequences of the version register, of the photo runs and of the register of N SHALL be usable by the import role only, the read-only role and the flow views role holding no right on them.
+
+Source: untested until implemented
+
+#### Scenario: Sequence refused
+- **WHEN** the read-only role or the flow views role queries or advances one of the three identity sequences
+- **THEN** the database refuses for insufficient privilege
+
+### Requirement: The register of N keeps every adoption
+The import role SHALL be able to insert into the register of N and SHALL NOT be able to update or delete a row of it, so that N never changes without a trace.
+
+Source: untested until implemented
+
+#### Scenario: Update refused
+- **WHEN** the import role tries to update or delete an adoption of N
+- **THEN** the database refuses for insufficient privilege
+
+### Requirement: One live photo per week in the store
+The store SHALL refuse a second live photo run for the same week, and a reconstructed week already held by a live photo, through a uniqueness rule. It SHALL NOT refuse photos of different weeks.
+
+Source: untested until implemented
+
+#### Scenario: Duplicate live week
+- **WHEN** a second live run of the same week is inserted without removing the first
+- **THEN** the insertion fails on the uniqueness rule
+
+#### Scenario: Second reconstruction run
+- **WHEN** a second run of source "reconstructed" is inserted while one exists
+- **THEN** the insertion is accepted (no uniqueness rule on reconstructed runs; the weeks of two reconstructed runs may differ), and a live week is still refused twice
+
+### Requirement: Photo views granted to the flow views role only
+The views `v_version_quality_photo` and `v_team_fix_version_lag` SHALL be granted to the flow views role and revoked from the other roles, and SHALL run with their owner's rights. They SHALL NOT expose a version name or a key.
+
+Source: untested until implemented
+
+#### Scenario: Views role reads the views
+- **WHEN** the flow views role reads both views
+- **THEN** the rows are returned without version name or key, and a direct query of the version register under the same role is refused
+
+### Requirement: Cycle referential tables in the flow schema
+The system SHALL provide in the flow schema, through one migration, the cycle referential of design D2: cycles, declared labels and their role, workflow columns, mapped statuses, and a state row with the mapping's validation date. It SHALL NOT hold a ticket key, a title, a person, a count, a version name or a reference to the tickets; the migration SHALL NOT write a row, set a password or touch a role.
+
+Source: untested (tests/db/test_flow_referential.py, task 2.2)
+
+#### Scenario: Migration file
+- **WHEN** the referential migration is read without a database
+- **THEN** its first line is the "schema touched" comment naming the flow schema, it switches to the owner role before its first statement, and it holds no insert, update, delete or copy statement, no password, no role creation and no role alteration
+
+#### Scenario: Empty after migration
+- **WHEN** all migrations are applied to a throwaway database
+- **THEN** the five referential tables exist, are owned by the owner role and hold no row
+
+#### Scenario: No ticket data
+- **WHEN** the columns of the referential tables are listed
+- **THEN** none is named like a ticket key, a title, a summary, a description, a person, a count or a version, and none references the tickets table (the neutral cycle key is the only key column)
+
+### Requirement: Cycle referential rights
+The system SHALL let the flow import role read, insert and delete referential rows, SHALL let the flow read-only role only read them, and SHALL refuse every right on them to the flow views role and to every role of another schema (design D4). The import role SHALL NOT update a referential row in place, and no application role SHALL create, alter or drop a referential table.
+
+Source: untested until implemented (tests/db/test_flow_referential.py, task 2.2)
+
+#### Scenario: Import role
+- **WHEN** the import role inserts a cycle, reads it, deletes it, then updates a cycle
+- **THEN** the insert, read and delete succeed and the update is refused for insufficient privilege
+
+#### Scenario: Read-only role
+- **WHEN** the flow read-only role selects from each referential table, then inserts a cycle
+- **THEN** the selects succeed and the insert is refused for insufficient privilege
+
+#### Scenario: Views role and other schemas
+- **WHEN** the flow views role, the quality views role, a cases role or a knowledge role selects from a referential table
+- **THEN** each statement is refused for insufficient privilege
+
+### Requirement: Cycle referential constraints
+The system SHALL refuse, in the database, every referential row that breaks a constraint of design D2: cycle key form and dates, label role and its cycle key or meaning, single domain and Ready labels, single start and Ready columns, a Ready column never active, a status in one declared column only, one state row. It SHALL NOT deduce a cycle key from a label's text.
+
+Source: untested until implemented (tests/db/test_flow_referential.py, task 2.2)
+
+#### Scenario: Cycle key form
+- **WHEN** a cycle is inserted with a key written as a version number
+- **THEN** a check violation is raised
+
+#### Scenario: Cycle key on a label
+- **WHEN** a label of the Epic Review role is inserted with a cycle key, then a cycle label with a key absent from the cycles
+- **THEN** the first raises a check violation and the second a foreign-key violation
+
+#### Scenario: Confirmation meaning
+- **WHEN** a confirmation label is inserted without a meaning, then a Ready label with a meaning
+- **THEN** both raise a check violation
+
+#### Scenario: Single labels and columns
+- **WHEN** a second domain label, a second start column or a Ready column marked active is inserted
+- **THEN** each raises a uniqueness or check violation
+
+#### Scenario: One state row
+- **WHEN** a second state row is inserted
+- **THEN** a uniqueness violation is raised
+
+### Requirement: Flow definition tables in the flow schema
+The system SHALL provide in the flow schema, through one migration, the three flow definition tables of design D2: statuses with segment and flags, unplanned types with kind, blocking link types with direction. They SHALL NOT hold a ticket key, a title, a person, a count, a version name, a label or a reference to the tickets; the migration SHALL NOT write a row, set a password or touch a role.
+
+Source: untested until implemented (tests/db/test_flow_definitions.py, task 2.2)
+
+#### Scenario: Migration file
+- **WHEN** the definitions migration is read without a database
+- **THEN** its first line is the "schema touched" comment naming the flow schema, it switches to the owner role before its first statement, and it holds no insert, update, delete or copy statement, no password, no role creation and no role alteration
+
+#### Scenario: Empty after migration
+- **WHEN** all migrations are applied to a throwaway database
+- **THEN** the three definition tables exist, are owned by the owner role and hold no row
+
+### Requirement: Flow definition rights
+The system SHALL let the flow import role read, insert and delete flow definition rows, SHALL let the flow read-only role only read them, and SHALL refuse every right on them to the flow views role and to every role of another schema (design D6). The import role SHALL NOT update a definition row in place, and no application role SHALL create, alter or drop a definition table.
+
+Source: untested until implemented (tests/db/test_flow_definitions.py, task 2.2)
+
+#### Scenario: Import and read-only roles
+- **WHEN** the import role inserts a flow status, reads it, deletes it, then updates one, and the read-only role selects from each definition table, then inserts a link type
+- **THEN** the insert, reads and delete succeed, and the update and the read-only insert are refused for insufficient privilege
+
+#### Scenario: Views role and other schemas
+- **WHEN** the flow views role, the quality views role, a cases role or a knowledge role selects from a definition table
+- **THEN** each statement is refused for insufficient privilege
+
+### Requirement: Flow definition constraints
+The system SHALL refuse, in the database, every definition row that breaks a constraint of design D2: a blank name, a status, issue type or link type given twice without regard to case and surrounding spaces, a segment, kind or direction outside its closed list, a flag on a status of the to-do or done segment. It SHALL NOT rely on the database for the per-segment rules, which the validation function holds.
+
+Source: untested until implemented (tests/db/test_flow_definitions.py, task 2.2)
+
+#### Scenario: Status twice in another case
+- **WHEN** a status is inserted, then the same status in upper case with surrounding spaces
+- **THEN** the second insert raises a uniqueness violation
+
+#### Scenario: Closed lists and flags
+- **WHEN** a status with an unknown segment, a done status with the commitment flag, an unplanned type with an unknown kind or a link type with an unknown direction is inserted
+- **THEN** each insert raises a check violation
 
 ## Open questions
 

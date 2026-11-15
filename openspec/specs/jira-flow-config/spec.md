@@ -7,9 +7,18 @@ Describes how the flow tools read the settings file (`flux.yaml`): strict YAML l
 ## Requirements
 
 ### Requirement: Duplicate keys refused
-The system SHALL load configuration YAML files (the flow settings file and the other YAML configuration files of the project, including the watch sources file) so that a key written twice at the same level is refused rather than silently keeping the last one. The error SHALL name the file, the full dotted path of the key, and both line numbers, ask to remove one of the lines, and never show a value. A key quoted in one place and unquoted in another SHALL count as the same key; the same key name in different blocks or in different list items SHALL be allowed; a repeated value SHALL NOT be a key; a merge override SHALL NOT be a duplicate.
+The system SHALL load configuration YAML files (the flow settings file and the other YAML configuration files of the project, including the watch sources file) so that a key written twice at the same level is refused rather than silently keeping the last one.
 
 Source: tests/flux_config/test_yaml_strict.py (CleEcriteDeuxFois); tests/flux_config/test_lecteurs.py
+
+#### Scenario: Other configuration file
+- **WHEN** a key is written twice at the same level of the watch sources file
+- **THEN** the file is refused rather than keeping the last value
+
+### Requirement: Duplicate key error message
+The duplicate-key error SHALL name the file, the full dotted path of the key, and both line numbers, ask to remove one of the lines, and never show a value.
+
+Source: tests/flux_config/test_yaml_strict.py (CleEcriteDeuxFois)
 
 #### Scenario: Top-level duplicate
 - **WHEN** a setting appears on lines 1 and 3
@@ -18,6 +27,19 @@ Source: tests/flux_config/test_yaml_strict.py (CleEcriteDeuxFois); tests/flux_co
 #### Scenario: Nested duplicate
 - **WHEN** a key repeats inside a block or inside a series item
 - **THEN** the message uses the dotted path (for example block.key) and both lines
+
+### Requirement: What counts as a duplicate key
+A key quoted in one place and unquoted in another SHALL count as the same key; the same key name in different blocks or in different list items SHALL be allowed; a repeated value SHALL NOT be a key; a merge override SHALL NOT be a duplicate.
+
+Source: tests/flux_config/test_yaml_strict.py (CleEcriteDeuxFois)
+
+#### Scenario: Quoted and unquoted
+- **WHEN** a key is written once quoted and once unquoted at the same level
+- **THEN** it is refused as written twice
+
+#### Scenario: Same name in different blocks
+- **WHEN** the same key name appears in two different blocks or list items
+- **THEN** no error is raised
 
 #### Scenario: Merge override
 - **WHEN** a mapping overrides a key it inherits by merge
@@ -31,36 +53,6 @@ Source: tests/flux_config/test_yaml_strict.py (MemeResultatQueSafeLoad)
 #### Scenario: Syntax error
 - **WHEN** the file has an unclosed list
 - **THEN** a YAML error is raised, not a configuration error
-
-### Requirement: Every reader of the settings refuses duplicates
-The system SHALL apply the same refusals in the flow report, dependency report, history collector and dashboard readers: a key written twice SHALL stop the program with both line numbers, and a former setting name, alone or beside its new name, SHALL stop it with the line of the former name and the current name.
-
-Source: tests/flux_config/test_lecteurs.py
-
-#### Scenario: Four readers
-- **WHEN** a duplicate key is present
-- **THEN** each of the four readers refuses it with "written twice (L1 and L3)"
-
-#### Scenario: Former and new name together
-- **WHEN** a setting is written on line 1 under its former name and on line 2 under its new name
-- **THEN** each of the four readers refuses the file, naming line 1, the former name and the current name
-
-#### Scenario: Valid file
-- **WHEN** the file is correct
-- **THEN** each reader reads it
-
-### Requirement: Settings migration
-The system SHALL rewrite a settings text to English names while preserving comments, end-of-line comments, values, unchanged keys and keys of other blocks that happen to carry a former name; the result SHALL be read without any message (the former file being refused) and be idempotent (second run no change).
-
-Source: tests/flux_config/test_flux_config.py (Migration, MigrationDeConflits)
-
-#### Scenario: Keys of another block untouched
-- **WHEN** a map of project names uses a key named like a former column role
-- **THEN** only the block name is renamed
-
-#### Scenario: Same key in two series
-- **WHEN** two dashboard series use the same former key
-- **THEN** both are renamed and each change is listed with its line
 
 ### Requirement: Migration change list
 The system SHALL list the changes of a settings migration as "line: old -> new" with full dotted paths, plus value migrations, and SHALL put no value of the file in that list.
@@ -90,9 +82,7 @@ Source: tests/flux_config/test_flux_config.py (MigrationDeFichier)
 - **THEN** the dry run writes nothing, the real run keeps the former file beside it with a suffix, and the second run changes nothing
 
 ### Requirement: Retired settings refused
-The system SHALL refuse a settings file holding the retired date-format setting (under either name) or a French column alias (matched without case or surrounding spaces), naming the setting or alias, never the value; other column names SHALL be kept. The flow and dependency tools SHALL stop on such a file and SHALL NOT ignore it with a warning.
-
-Source: tests/flux_config/test_flux_config.py (AnciensReglagesRefuses)
+The system SHALL refuse a settings file holding the retired date-format setting (under either name), the retired board block (`boards`, or its former French name) or a French column alias (matched without case or surrounding spaces), naming the setting or alias and its line, never the value; other column names SHALL be kept. The flow and dependency tools and the history collector SHALL stop on such a file and SHALL NOT ignore it with a warning.
 
 #### Scenario: Retired date format
 - **WHEN** a date-format setting is present
@@ -101,6 +91,12 @@ Source: tests/flux_config/test_flux_config.py (AnciensReglagesRefuses)
 #### Scenario: French aliases
 - **WHEN** the columns list holds a French alias beside an English name
 - **THEN** the file is refused naming the alias, while a list of non-French names is read without any message
+
+#### Scenario: Retired board block
+- **WHEN** the settings hold the `boards` block, or the same block under its former French name
+- **THEN** each reader stops with "retired setting: boards" (or the former name) and the line, in the bilingual phrase of design D5, and no value of the block is echoed
+
+Source: design D5 of change remove-flow-board (retired board block); tests/flux_config/test_flux_config.py (AnciensReglagesRefuses)
 
 ### Requirement: Former setting names and options refused
 The system SHALL refuse a settings file that uses a former setting name, column role, segment name or value, and a command line that uses a former option name, with an error that names the current name and exits with a non-zero code, in every reader of the settings. A value or a longer option name that merely starts with a former name SHALL NOT be refused, and nothing after a double dash SHALL be examined.
@@ -138,13 +134,18 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestCycles, TestPatches, TestD
 - **THEN** they are read without warning and the mapping is marked validated
 
 ### Requirement: Retention settings added by the GDPR alignment
-The system SHALL accept in the flow settings, read with the strict loader and validated before any call to Jira, any database connection and any file write, the `retention` block: retention period, maximum file age of the ageing-points files, labelled-backup lifetime, pre-purge label, off-site flow age. The maximum file age SHALL keep its setting name; it SHALL NOT apply to the files left from the CSV route, which are out of rule whatever their age (jira-flow-retention).
+The system SHALL accept in the flow settings, read with the strict loader and validated before any call to Jira, any database connection and any file write, the `retention` block: retention period, maximum file age of the ageing-points files, labelled-backup lifetime, pre-purge label, off-site flow age.
 
-Source: tests/flux_config/test_nouveaux_blocs.py (TestRetention, test_le_nom_du_reglage_de_l_age_maximal_est_inchange)
+Source: tests/flux_config/test_nouveaux_blocs.py (TestRetention)
 
 #### Scenario: Defaults and given values
 - **WHEN** the block is absent, or holds every key
 - **THEN** defaults apply, respectively the given values are read
+
+### Requirement: Maximum file age setting name kept
+The maximum file age SHALL keep its setting name; it SHALL NOT apply to the files left from the CSV route, which are out of rule whatever their age (jira-flow-retention).
+
+Source: tests/flux_config/test_nouveaux_blocs.py (test_le_nom_du_reglage_de_l_age_maximal_est_inchange)
 
 #### Scenario: Unchanged setting name
 - **WHEN** a settings file written before this change holds the maximum file age
@@ -173,7 +174,7 @@ Source: tests/flux_jira/test_cycles_commande.py (SortiesSansValeurDistinctive); 
 - **THEN** no fix version or label of the settings appears in the console or the report
 
 ### Requirement: PO field setting refused
-The system SHALL refuse the setting `export_po_field`, whatever its value, in every reader of the flow settings, with exit code 1 and the unsupported-setting key phrase of design D19, before any call to Jira, any database connection and any file write, because the PO in charge is not stored in this change (design D3). The refusal SHALL name the key and its line and SHALL NOT echo the value. The system SHALL NOT ignore the setting silently and SHALL NOT request any user field because of it.
+The system SHALL refuse the setting `export_po_field`, whatever its value, in every reader of the flow settings, with exit code 1 and the unsupported-setting key phrase of design D19, before any call to Jira, any database connection and any file write, because the PO in charge is not stored in this change (design D3).
 
 Source: tests/flux_config/test_nouveaux_blocs.py (TestPoField); tests/export_jira_api/test_garde_champs.py (no PO column). The export-level scenario is not run end to end.
 
@@ -184,6 +185,15 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestPoField); tests/export_jir
 #### Scenario: Setting absent
 - **WHEN** the flow settings do not hold `export_po_field`
 - **THEN** the readers run without that refusal
+
+### Requirement: PO field refusal message
+The refusal of `export_po_field` SHALL name the key and its line and SHALL NOT echo the value. The system SHALL NOT ignore the setting silently and SHALL NOT request any user field because of it.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestPoField); tests/export_jira_api/test_garde_champs.py (no PO column)
+
+#### Scenario: Refusal without value
+- **WHEN** the flow settings hold `export_po_field` with a value
+- **THEN** the refusal names the key and its line, the value does not appear, and no user field is requested
 
 ### Requirement: New readers refuse duplicates
 The system SHALL apply the duplicate-key and former-name refusals of this capability in the readers added by this change: the retention tool, the epic statuses tool, the import (for the declared labels and the export queries), the cycles report and the organisation referential reader.
@@ -242,6 +252,62 @@ Source: tests/flux_config/test_nouveaux_blocs.py (task 14.4)
 #### Scenario: Invalid value
 - **WHEN** the key holds 0 or a text
 - **THEN** the reader stops with exit code 1, the output holds "invalid setting: history_not_found_limit" with its line, the value does not appear, and Jira is not called
+
+### Requirement: The three settings readers refuse duplicates
+The system SHALL apply the same refusals in the flow report, dependency report and history collector readers: a key written twice SHALL stop the program with both line numbers, and a former setting name, alone or beside its new name, SHALL stop it with the line of the former name and the current name. It SHALL NOT keep a dashboard reader among them.
+
+Source: tests/flux_config/test_lecteurs.py
+
+#### Scenario: Three readers
+- **WHEN** a duplicate key is present
+- **THEN** each of the three readers refuses it with "written twice (L1 and L3)"
+
+#### Scenario: Former and new name together
+- **WHEN** a setting is written on line 1 under its former name and on line 2 under its new name
+- **THEN** each of the three readers refuses the file, naming line 1, the former name and the current name
+
+#### Scenario: Valid file
+- **WHEN** the file is correct
+- **THEN** each reader reads it
+
+### Requirement: Settings migration to English names
+The system SHALL rewrite a settings text to English names while preserving comments, end-of-line comments, values, unchanged keys and keys of other blocks that happen to carry a former name; the result SHALL be read without any message (the former file being refused) and be idempotent (second run no change). It SHALL NOT rename or list the retired board block, under either name.
+
+Source: tests/flux_config/test_flux_config.py (Migration, MigrationDeConflits)
+
+#### Scenario: Keys of another block untouched
+- **WHEN** a map of project names uses a key named like a former column role
+- **THEN** only the block name is renamed
+
+#### Scenario: Retired board block left as written
+- **WHEN** a file holding the board block under its former French name is migrated
+- **THEN** the block is neither renamed nor listed as a change, and the readers still refuse it as a retired setting
+
+### Requirement: The commitment point default is read through one shared reader
+The system SHALL read the commitment point through one shared reader whose default is the flow report's default, held by one constant that the flow report's default settings refer to (change flow-definitions-loader, design D2). The flow report's results SHALL NOT change. No tool SHALL hold its own copy of the commitment point default.
+
+Source: untested until implemented (task 2.3)
+
+#### Scenario: Default
+- **WHEN** the shared reader is called on settings without a commitment point
+- **THEN** it returns the constant, and the flow report's default settings hold that same constant
+
+#### Scenario: Setting given
+- **WHEN** the settings give a commitment point
+- **THEN** the shared reader returns it
+
+### Requirement: The link type defaults are read through one shared reader
+The system SHALL read the blocking and waiting link types through one shared reader whose defaults are held by two constants that the dependency report's defaults refer to (design D2). The reader SHALL return the blocking types first, then the waiting types not already blocking, each without case-insensitive duplicates. The dependency report's output SHALL NOT change, and no tool SHALL hold its own copy of the link type defaults.
+
+Source: untested until implemented (task 2.3)
+
+#### Scenario: Defaults shared
+- **WHEN** the shared reader is called on settings without link type keys
+- **THEN** it returns the two default lists, and the dependency report's defaults hold those same constants
+
+#### Scenario: Overlap
+- **WHEN** the settings give one link type in both lists
+- **THEN** the reader returns it once, as blocking
 
 ## Open questions
 

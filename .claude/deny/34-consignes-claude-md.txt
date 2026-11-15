@@ -1,0 +1,8 @@
+Edit(./mothra/CLAUDE.md)
+Edit(//**/mothra/CLAUDE.md)
+Edit(~/**/mothra/CLAUDE.md)
+Edit(./CLAUDE.md)
+Edit(//**/PMZilla-Lab/*/CLAUDE.md)
+Edit(//**/PMZilla-Lab/worktrees/*/CLAUDE.md)
+Edit(~/PMZilla-Lab/*/CLAUDE.md)
+Edit(~/PMZilla-Lab/worktrees/*/CLAUDE.md)

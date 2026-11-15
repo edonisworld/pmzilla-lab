@@ -11,8 +11,8 @@ Language: this command is written in English, but serve the user in THEIR langua
 ## 1. Read and check the job (write nothing yet)
 
 1. Without an identifier, ask for one and do nothing else.
-2. Run `uv run --with pyyaml python tools/roadmap.py check`. If the queue is invalid, report each problem line and stop.
-3. Run `uv run --with pyyaml python tools/roadmap.py show <id>`: the feature's Status, blockers, `roadmap` block (estimate, method, model, `conditions`, `change`, `not_before`) and free-text brief. Nothing else is read for the queue: the queue lives in GitHub issues.
+2. Read the queue first: `uv run tools/gh_issue.py list --sortie <file in the scratchpad folder>`; stop on any non-zero code and report its line. Then run `uv run --with pyyaml python tools/roadmap.py check --issues-json <that file>`. If the queue is invalid, report each problem line and stop.
+3. Run `uv run --with pyyaml python tools/roadmap.py show <id> --issues-json <that file>`: the feature's Status, blockers, `roadmap` block (estimate, method, model, `conditions`, `change`, `not_before`) and free-text brief. Nothing else is read for the queue: the queue lives in GitHub issues.
 4. Refuse to start, and say why, when the feature is unknown, its Status is not `Ready` (`Todo`, `In progress` or `Done`), it has an open blocker, or its `not_before` date is later than today. Write nothing, on GitHub or in the repository. Never change a Status or a relation to make it startable.
    When the refusal is only because the Status is `Todo`, end the refusal with the exact command that sets it to Ready, for the user to approve: `uv run tools/gh_issue.py status <id> Ready` (with the feature's key in place of `<id>`, e.g. `R-19`). Print it as text; never run it yourself, and never run it on the user's behalf without their explicit approval. For `In progress` or `Done`, or any other refusal reason (blocker, `not_before`), print no such command.
    Exception, the resume of a batch: an `In progress` feature is accepted when the current branch is the one `/batch` names for it (`git branch --show-current`): `chore/r<n>-<slug>` for a `direct-prompt` job, `chore/spec-r<n>` for an `openspec` job without a `change`, `feat/<change>` for an `openspec` job with a `change`, the slug being the one the reader prints. On any other branch an `In progress` feature is still refused. On resume, blockers, `not_before`, conditions and model (steps 4 to 6) are checked as for a `Ready` feature.
@@ -52,7 +52,7 @@ Permanent rules, for every method:
 
 ## 5. Hand over
 
-One single final message: what was done, by commit; what remains and why; the commands reserved to the user; then the finishing command for the user to type in the Terminal, for every job: `bash tools/finish_worktree.sh <branch>`, to run from the workspace once the session has ended (from the worktree, the direct finishing script would stop with exit 12). Never run it.
+One single final message: what was done, by commit; what remains and why; the commands reserved to the user; then the finishing command for the user to type in the Terminal, for every job: `bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>` (the one-branch train), to run from the run tree once the session has ended. Never run it.
 
 ## GitHub write without an answer
 
@@ -60,8 +60,8 @@ When a `tools/gh_issue.py` command ends with exit code 8 (state unknown): stop, 
 
 ## Never
 
-- Write to GitHub other than through `tools/gh_issue.py`; use any `gh` command to write; pre-approve either in a header.
-- Push, merge, or run the branch-finishing scripts (`tools/finish_branch.sh`, `tools/finish_worktree.sh`).
+- Read or write GitHub other than through `tools/gh_issue.py`; use any `gh` command, a read included; pre-approve either in a header.
+- Push, merge, or run the branch-finishing script (`tools/finish_train.sh`).
 - Use `--no-verify` or the owner bypass variable (`PMZILLA_SKIP_GREEN_CHECK`).
 - Change a rank, an estimate, a model or a dependency, or start a job the checks of step 1 refuse.
 - Edit `CLAUDE.md`, unless the job says so and the posture evaluation cost was announced and accepted.

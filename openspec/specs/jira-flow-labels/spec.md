@@ -6,21 +6,54 @@ Describes the declared Jira labels and fix versions: how they are declared in th
 ## Requirements
 
 ### Requirement: Declared labels in the flow settings
-The system SHALL read the declared labels from the `declared_labels` block of the flow settings, organised by role (`up_merge`, `cycle`, `epic_review`, `pilot_domain`, `ready`, `confirmation`), each role giving a prefix and its declared labels, every declared label starting with its role's prefix; the up-merge role SHALL declare exactly the legal and the hotfix label; the `pilot_domain` role SHALL declare exactly one label; the `ready` role SHALL declare at most one label, an empty or absent value being read as not configured without message; each confirmation label SHALL declare its meaning, taken in or not taken in; each cycle label MAY name the cycle key of the `cycles` block that it plans (design D4b of the epic flow report change). The block SHALL be read with the strict loader; an unknown role, a label outside its prefix, a label declared twice, an up-merge role without both labels, a `pilot_domain` role without exactly one label, a `ready` role with more than one label, a confirmation label without its meaning or a cycle key that the `cycles` block does not declare SHALL stop the reading tool with exit code 1, naming the key path and line, never a value. Without the block, the system SHALL read and store no label. The system SHALL NOT deduce a cycle key from the text of a label.
+The system SHALL read the declared labels from the `declared_labels` block of the flow settings, organised by role (`up_merge`, `cycle`, `epic_review`, `pilot_domain`, `ready`, `confirmation`), each role giving a prefix and its declared labels, every declared label starting with its role's prefix.
 
-Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees); tests/export_jira_api/test_referentiel_et_etiquettes.py (test_sans_bloc_aucune_colonne_d_etiquette_meme_si_le_ticket_en_porte). New roles untested until implemented.
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees). New roles untested until implemented.
 
-#### Scenario: Label outside its prefix
-- **WHEN** a cycle label does not start with the cycle prefix
-- **THEN** the tool stops with exit code 1, names the key path and line, and does not echo the label
+#### Scenario: Labels by role
+- **WHEN** the block declares a cycle role with its prefix and two labels starting with that prefix
+- **THEN** the two labels are read as declared labels of the cycle role
+
+### Requirement: No declared-labels block, no label
+Without the `declared_labels` block, the system SHALL read and store no label.
+
+Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (test_sans_bloc_aucune_colonne_d_etiquette_meme_si_le_ticket_en_porte)
 
 #### Scenario: No block
 - **WHEN** the settings have no declared-labels block
 - **THEN** the export requests no label and writes no declared-label column
 
+### Requirement: Number of labels per declared role
+The up-merge role SHALL declare exactly the legal and the hotfix label; the `pilot_domain` role SHALL declare exactly one label; the `ready` role SHALL declare at most one label, an empty or absent value being read as not configured without message.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees). New roles untested until implemented.
+
 #### Scenario: Ready label not chosen yet
 - **WHEN** the `ready` role holds an empty value
 - **THEN** the block is read without message and the Ready label is not configured
+
+### Requirement: Confirmation meanings and cycle keys of labels
+Each confirmation label SHALL declare its meaning, taken in or not taken in; each cycle label MAY name the cycle key of the `cycles` block that it plans (design D4b of the epic flow report change). The system SHALL NOT deduce a cycle key from the text of a label.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees). New roles untested until implemented.
+
+#### Scenario: Cycle label without a cycle key
+- **WHEN** a cycle label names no cycle key, and its text contains a string that looks like a cycle key
+- **THEN** the label is read without a cycle key
+
+### Requirement: Malformed declared-labels block stops the reading tool
+The system SHALL read the declared-labels block with the strict loader; an unknown role, a label outside its prefix or a label declared twice SHALL stop the reading tool with exit code 1, naming the key path and line, never a value.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees)
+
+#### Scenario: Label outside its prefix
+- **WHEN** a cycle label does not start with the cycle prefix
+- **THEN** the tool stops with exit code 1, names the key path and line, and does not echo the label
+
+### Requirement: Declared-label rule broken stops the reading tool
+An up-merge role without both labels, a `pilot_domain` role without exactly one label, a `ready` role with more than one label, a confirmation label without its meaning or a cycle key that the `cycles` block does not declare SHALL stop the reading tool with exit code 1, naming the key path and line, never a value.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees). New roles untested until implemented.
 
 #### Scenario: Two domain labels
 - **WHEN** the `pilot_domain` role declares two labels
@@ -31,17 +64,31 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestEtiquettesDeclarees); test
 - **THEN** the tool stops with exit code 1, names the key path and line, and echoes neither the label nor the key
 
 ### Requirement: Only declared labels are stored
-The system SHALL keep, from the labels of a ticket read through the API, only the declared ones: the export SHALL NOT request the labels field (design D5 of the database-only change), the history collection SHALL keep only the add and remove events and the current values of declared labels, and SHALL store only periods of declared labels. Undeclared labels SHALL be discarded in memory after counting. The system SHALL NOT write all the labels of a ticket to a file or the database, and SHALL NOT print a label.
+The system SHALL keep, from the labels of a ticket read through the API, only the declared ones: the history collection SHALL keep only the add and remove events and the current values of declared labels, and SHALL store only periods of declared labels.
 
-Source: tests/export_jira_api/test_export_jira_api.py (NouveauxComportements.test_champs_demandes_sans_etiquette_ni_version); tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
-
-#### Scenario: Mixed labels
-- **WHEN** a ticket carries one declared cycle label and two undeclared labels
-- **THEN** the export requests no label, the history collection stores a period for the declared label alone, and neither the database nor the console holds the two others
+Source: tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
 
 #### Scenario: Cache events
 - **WHEN** the changelog adds an undeclared label and removes a declared one
 - **THEN** the stored periods reflect only the removal of the declared label, with its instant
+
+### Requirement: Export requests no labels field
+The export SHALL NOT request the labels field (design D5 of the database-only change).
+
+Source: tests/export_jira_api/test_export_jira_api.py (NouveauxComportements.test_champs_demandes_sans_etiquette_ni_version)
+
+#### Scenario: Requested fields
+- **WHEN** the export queries the Jira API
+- **THEN** the requested fields hold no labels field
+
+### Requirement: Undeclared labels discarded, never written or printed
+Undeclared labels SHALL be discarded in memory after counting. The system SHALL NOT write all the labels of a ticket to a file or the database, and SHALL NOT print a label.
+
+Source: tests/export_jira_api/test_export_jira_api.py (NouveauxComportements.test_champs_demandes_sans_etiquette_ni_version); tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py
+
+#### Scenario: Mixed labels
+- **WHEN** a ticket carries one declared cycle label and two undeclared labels
+- **THEN** the export requests no label, the history collection stores a period for the declared label alone, and neither the database nor the console holds the two others
 
 ### Requirement: Look-alike labels counted, never listed
 The system SHALL count, at export, the distinct undeclared labels that start with a declared prefix and the tickets carrying them, and print the look-alike key phrase of design D19 with the count. It SHALL NOT print, write or store those labels.
@@ -66,13 +113,22 @@ Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (JiraSeulement);
 - **THEN** its label section is titled with "Jira labels"
 
 ### Requirement: Fix versions stored with their periods
-The system SHALL read, in the history collection, the add and remove events and the current fix versions of each ticket it queries, and store in the database the version periods of each ticket; the export SHALL NOT request the fix versions (design D5 of the database-only change). The system SHALL NOT print a version name and SHALL NOT write a version name in a report: reports use the cycle key of the jira-flow-cycles capability.
+The system SHALL read, in the history collection, the add and remove events and the current fix versions of each ticket it queries, and store in the database the version periods of each ticket; the export SHALL NOT request the fix versions (design D5 of the database-only change).
 
 Source: tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
 
 #### Scenario: Version moved
 - **WHEN** a ticket's fix version is changed from one version to another
 - **THEN** the database holds a closed period for the first and an open period for the second, and the console shows counts only
+
+### Requirement: Version names never printed nor reported
+The system SHALL NOT print a version name and SHALL NOT write a version name in a report: reports use the cycle key of the jira-flow-cycles capability.
+
+Source: tests/history_jira/test_collecte_etendue.py; tests/history_jira/test_magasin_base.py (skipped without the disposable database)
+
+#### Scenario: Report on a versioned ticket
+- **WHEN** a report covers a ticket that has a fix version
+- **THEN** the report names the cycle key, never the version name, and the console prints no version name
 
 ### Requirement: Exactly one up-merge label
 The system SHALL count the tickets that carry both declared up-merge labels at the same time, at export (current labels) and in the cycles report (per cycle), and print the two-labels key phrase of design D19 with the count. It SHALL NOT list the tickets, SHALL NOT pick one of the two labels for them, and SHALL leave them out of the up-merge share with the count stated.
@@ -84,13 +140,27 @@ Source: tests/export_jira_api/test_referentiel_et_etiquettes.py; tests/flux_jira
 - **THEN** the console prints "up-merge items with two labels: 1" and no key, and the cycles report counts it apart
 
 ### Requirement: Epic Review submissions, passes and rejections
-The system SHALL compute in the cycles report, per cycle, from the declared Epic Review label periods of epics, in the convention of design D6 (label removed on pass and on rejection): the number of submissions, each add of the label counting one submission. Only when the Discovery Workflow mapping is validated, it SHALL classify each removal by the status the epic holds at the end of the removal day, the day and its end being read in the export time zone (the configured zone of the jira-flow-export capability), never in UTC: a pass when that status maps to a review-passed column of the mapping, a rejection when it maps to another column, and "status not mapped" when it maps to no column. Without a validated mapping, the section SHALL give the submissions only, with the not-validated key phrase of design D19, and SHALL compute neither passes nor rejections. The section labels SHALL be those of design D19. The system SHALL NOT count a removal as a pass by itself, SHALL NOT infer a pass or a rejection from anything other than the epic's status, and SHALL NOT name an epic, a team or a person in that section.
+The system SHALL compute in the cycles report, per cycle, from the declared Epic Review label periods of epics, in the convention of design D6 (label removed on pass and on rejection): the number of submissions, each add of the label counting one submission. The section labels SHALL be those of design D19.
+
+Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
+
+#### Scenario: Submissions counted
+- **WHEN** three adds of the Epic Review label fall in a cycle
+- **THEN** the section gives three submissions for that cycle
+
+### Requirement: Epic Review submissions only without a validated mapping
+Without a validated Discovery Workflow mapping, the Epic Review section SHALL give the submissions only, with the not-validated key phrase of design D19, and SHALL compute neither passes nor rejections.
 
 Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
 
 #### Scenario: Mapping not validated
 - **WHEN** the settings hold a mapping without a validation date and three adds and two removals fall in a cycle
 - **THEN** the section gives three submissions, holds "Discovery Workflow mapping not validated: submissions only", and gives no pass and no rejection count
+
+### Requirement: Epic Review removals classified by status
+Only when the Discovery Workflow mapping is validated, the system SHALL classify each removal of the Epic Review label by the status the epic holds at the end of the removal day: a pass when that status maps to a review-passed column of the mapping, a rejection when it maps to another column, and "status not mapped" when it maps to no column.
+
+Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
 
 #### Scenario: Pass and rejection
 - **WHEN** the mapping is validated, one removal is followed the same day by a status of a review-passed column and another by a status of another column
@@ -100,9 +170,23 @@ Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
 - **WHEN** the mapping is validated and the epic's status at the end of the removal day is in no column
 - **THEN** that removal is counted under "status not mapped", neither as a pass nor as a rejection
 
+### Requirement: Epic Review removal day in the export time zone
+The system SHALL read the removal day of the Epic Review label and its end in the export time zone (the configured zone of the jira-flow-export capability), never in UTC.
+
+Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
+
 #### Scenario: Removal day in the export time zone
 - **WHEN** the mapping is validated, the export time zone is two hours ahead of UTC, the label is removed at 20:00 local time, the epic moves to a review-passed column at 21:00 local time, then to another mapped column at 01:00 local time the next day (23:00 UTC on the removal day)
 - **THEN** the status read at the end of the local removal day is the review-passed one and the removal is counted as a pass, not as the rejection a UTC reading would give
+
+### Requirement: Epic Review passes inferred from the status only
+The system SHALL NOT count a removal of the Epic Review label as a pass by itself, SHALL NOT infer a pass or a rejection from anything other than the epic's status, and SHALL NOT name an epic, a team or a person in the Epic Review section.
+
+Source: tests/flux_jira/test_cycles_calcul.py (EpicReview)
+
+#### Scenario: Removal followed by another column
+- **WHEN** the mapping is validated and the label is removed from an epic whose status at the end of the removal day maps to a column that is not review-passed
+- **THEN** the removal is counted as a rejection, not as a pass, and the section names no epic, team or person
 
 ### Requirement: Delay to Epic Review
 The system SHALL compute in the cycles report the delay to Epic Review, from the start point of design D6 (first entry into the start column of the validated mapping) to the first add of the Epic Review label, only when the Discovery Workflow mapping is validated. Without a validated mapping it SHALL NOT compute the delay and SHALL NOT take the epic creation or the cycle label as a substitute start.

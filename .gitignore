@@ -75,3 +75,7 @@ __pycache__/
 .claude/settings.local.json
 
 /.claude/worktrees/
+
+# Mothra : dépendances installées et bundle du front, jamais suivis (le verrou npm, lui, l'est)
+/mothra/**/node_modules/
+/mothra/front/dist/

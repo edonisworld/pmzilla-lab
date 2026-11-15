@@ -39,7 +39,6 @@ TOP = {
     "motifs_fermetures_groupees": "batch_closure_resolutions",
     "serie_par_defaut": "default_series",
     "noms_projets": "project_names",
-    "tableaux": "boards",
     "jira_jeton": "jira_token_type",
     "export_champ_equipe": "export_team_field",
     "export_entete_equipe": "export_team_header",
@@ -66,15 +65,34 @@ INCHANGEES = {"jira_site", "jira_email", "jql_export", "jql_exports", "export_po
               # R-58 : identifiant cloud, échéance du jeton, étiquettes déclarées, cycles, patches, Discovery Workflow, conservation
               "jira_cloud_id", "jira_token_expires", "jira_token_warning_days", "declared_labels", "cycles", "patches",
               "discovery_workflow", "retention", "epic_types",
+              # version-quality-photo D4 : types de tickets comptés comme défauts (outil des photos de qualité par version ; sans défaut)
+              "defect_types",
+              # patient-data-detection D10 : étiquettes facultatives d'identifiant de patient propres à l'organisation (jamais affichées)
+              "patient_id_labels",
               # R-72 : projets exclus de la carte des dépendances seule (le rapport de flux ne le lit pas)
               "dependency_excluded_projects",
               # database-only D15 : passages consécutifs en 404 après lesquels la collecte de l'historique ne réinterroge plus un ticket
               "history_not_found_limit",
               # story-quality-audit D16 : bloc de la qualité des stories (lu strictement, `_valider_story_quality`)
-              "story_quality"}
+              "story_quality",
+              # jira-read-only-client D11 : projets refusés par le client Jira (liste lue et validée par le client, jamais ici)
+              "forbidden_projects",
+              # jira-delivery-fields D4 : clé du projet de référence des versions (une seule recherche de forme fixe ; lue et validée par le
+              # client Jira et par l'export, jamais ici ; absent : attributs des versions ignorés)
+              "version_reference_project",
+              # R-20261112-27 : états du passage suivi par `segment_sample.py --starts` (bloc waiting / started ; défauts neutres dans l'outil).
+              # Remplace : les états écrits en dur. Retrait : permanent (R-20261112-27)
+              "sample_starts",
+              # R-20261114-108 (même logique que A-92) : table des champs de livraison de Jira (identifiants `customfield_…` du Jira de
+              # l'organisation, hors Git ; lue par flow_delivery.configurer, validée par `_valider_delivery_fields`).
+              # Remplace : la table écrite en dur dans flow_delivery.py. Retrait : permanent (aucun identifiant réel dans le dépôt)
+              "delivery_fields"}
 # réglage refusé dans tous les lecteurs (le PO responsable n'est pas stocké, conception D3) : le message porte la phrase clé
 # de la conception D19 dans les deux langues (ErreurConfig n'a pas de langue)
 REGLAGE_REFUSE = "export_po_field"
+# bloc des tableaux retiré avec le tableau visuel des flux (R-146, décision de l'auteur du 2026-10-26) : refusé, avec la clé telle
+# qu'écrite, pour que le message nomme exactement ce qu'il faut supprimer
+BLOCS_RETIRES = ("boards", "tableaux")
 
 COLUMNS = {"type": "type", "etat": "status", "categorie": "category", "cle": "key", "cree": "created",
            "resolu": "resolved", "motif": "resolution", "debut": "category_changed", "equipe": "team",
@@ -82,13 +100,11 @@ COLUMNS = {"type": "type", "etat": "status", "categorie": "category", "cle": "ke
 SEGMENTS = {"definition": "definition", "pret": "ready", "implementation": "implementation",
             "revue_verification": "review_verification", "acceptation": "acceptance"}
 UNCOUNTED = {"a_faire": "todo", "termine": "done"}
-BOARDS = {"series": "series"}
-BOARD = {"nom": "name", "dependances": "dependencies", "dependances_projets": "project_dependencies", "base": "baseline"}
 # valeurs renommées : réglage interne -> {ancienne valeur: nouvelle valeur}
 VALEURS = {"point_engagement": SEGMENTS, "jira_jeton": {"scopes": "scoped", "classique": "classic"}}
 
 # sous-clés d'un réglage : (réglage interne, niveau) -> table
-SOUS_TABLES = {"colonnes": COLUMNS, "segments": SEGMENTS, "segments_hors_calcul": UNCOUNTED, "tableaux": BOARDS}
+SOUS_TABLES = {"colonnes": COLUMNS, "segments": SEGMENTS, "segments_hors_calcul": UNCOUNTED}
 
 # Options renommées communes à plusieurs scripts (plan 7.5) : ancien nom -> nouveau nom
 OPTIONS_COMMUNES = {"--nom": "--name", "--perimetre": "--scope", "--semaines": "--weeks", "--historique": "--history",
@@ -160,6 +176,11 @@ def _vers_interne(raw: dict | None, source: str) -> dict:
             ligne = lignes.get(cle)
             raise ErreurConfig(f"{source} : {f'L{ligne} : ' if ligne else ''}réglage non pris en charge : {REGLAGE_REFUSE} "
                                f"/ setting not supported: {REGLAGE_REFUSE}")
+        if cle in BLOCS_RETIRES:
+            ligne = lignes.get(cle)
+            raise ErreurConfig(f"{source} : {f'L{ligne} : ' if ligne else ''}réglage retiré : {cle}, le tableau visuel des flux "
+                               f"n'existe plus ; supprimer le bloc / retired setting: {cle}, the visual flow dashboard no longer "
+                               "exists; delete the block")
         if cle in REGLAGES_IGNORES:
             raise _refus(source, lignes, cle, "", f"« {cle} » n'existe plus : l'export de l'API a un format de date fixe ; "
                          "supprimer la ligne")
@@ -172,8 +193,6 @@ def _vers_interne(raw: dict | None, source: str) -> dict:
             sous_lignes = getattr(valeur, "lignes", {})
             for sous, contenu in valeur.items():
                 nom = _cle_interne(sous, table, f"{cle}.", source, sous_lignes)
-                if interne == "tableaux" and nom == "series" and isinstance(contenu, list):
-                    contenu = [_serie_interne(s, source, f"{cle}.{sous}.") for s in contenu]
                 convertie[nom] = contenu
             valeur = _sans_alias_francais(convertie, source, sous_lignes) if interne == "colonnes" else convertie
         else:
@@ -195,13 +214,6 @@ def _sans_alias_francais(colonnes: dict, source: str, lignes: dict) -> dict:
     return colonnes
 
 
-def _serie_interne(serie, source: str, chemin: str):
-    if not isinstance(serie, dict):
-        return serie
-    lignes = getattr(serie, "lignes", {})
-    return {_cle_interne(k, BOARD, chemin, source, lignes): v for k, v in serie.items()}
-
-
 def to_public(interne: dict) -> dict:
     """Réglages internes -> noms anglais (écriture du fichier de réglages par défaut)."""
     sortie: dict = {}
@@ -209,9 +221,7 @@ def to_public(interne: dict) -> dict:
         nouveau = TOP.get(cle, cle)
         if cle in SOUS_TABLES and isinstance(valeur, dict):
             table = SOUS_TABLES[cle]
-            valeur = {table.get(k, k): (([{BOARD.get(a, a): b for a, b in s.items()} if isinstance(s, dict) else s
-                                          for s in v] if cle == "tableaux" and isinstance(v, list) else v))
-                      for k, v in valeur.items()}
+            valeur = {table.get(k, k): v for k, v in valeur.items()}
         elif cle in VALEURS and isinstance(valeur, str):
             valeur = VALEURS[cle].get(valeur, valeur)
         sortie[nouveau] = valeur
@@ -245,8 +255,7 @@ def migrate_analysis(texte: str) -> tuple[str, list[str], list[str]]:
     changements: list[str] = []
     conflits: list[str] = []
     pile: list[tuple[int, str, str, int]] = []        # (colonne de la clé, nom interne, nom écrit, numéro de ligne)
-    vus: dict[tuple, dict[str, tuple[int, str]]] = {}   # bloc -> {nom après migration: (ligne, nom écrit)}
-    item = 0                                           # ligne du dernier « - » (entrée d'une liste de séries)
+    vus: dict[int, dict[str, tuple[int, str]]] = {}   # bloc -> {nom après migration: (ligne, nom écrit)}
     interne_de = {**{v: k for k, v in TOP.items()}, **{k: k for k in TOP}}
     for numero, ligne in enumerate(texte.split("\n"), start=1):
         m = None if ligne.lstrip().startswith("#") else LIGNE_CLE.match(ligne)
@@ -259,8 +268,6 @@ def migrate_analysis(texte: str) -> tuple[str, list[str], list[str]]:
         chemin = tuple(nom for _, nom, _, _ in pile)
         ecrit = ".".join(nom for _, _, nom, _ in pile)
         cle = m["cle"]
-        if m["tiret"]:
-            item = numero
         nouveau, interne, connue = cle, cle, False
         if not chemin:
             interne = ANCIENS_ALIAS.get(interne_de.get(cle, cle), interne_de.get(cle, cle))
@@ -271,12 +278,8 @@ def migrate_analysis(texte: str) -> tuple[str, list[str], list[str]]:
             interne = {**_inverse(table), **{k: k for k in table}}.get(cle, cle)
             connue = cle in table or cle in table.values()
             nouveau = table.get(interne, cle)
-        elif chemin == ("tableaux", "series"):
-            interne = {**_inverse(BOARD), **{k: k for k in BOARD}}.get(cle, cle)
-            connue = cle in BOARD or cle in BOARD.values()
-            nouveau = BOARD.get(interne, cle)
         if connue:
-            bloc = (pile[-1][3] if pile else 0, item if chemin == ("tableaux", "series") else 0)
+            bloc = pile[-1][3] if pile else 0
             deja = vus.setdefault(bloc, {}).get(nouveau)
             if deja:
                 memes = deja[1] == cle
@@ -413,8 +416,91 @@ def _valider_nouveaux_blocs(interne: dict, source: str, lignes: dict) -> None:
         if not (isinstance(valeur, list) and valeur and all(isinstance(t, str) and t.strip() for t in valeur)):
             raise _refus_reglage(source, interne_lignes(lignes), "epic_types", "epic_types",
                                  "doit être une liste non vide de types de tickets (chaînes)")
+    if "defect_types" in interne:
+        valeur = interne["defect_types"]
+        if not (isinstance(valeur, list) and valeur and all(isinstance(t, str) and t.strip() for t in valeur)):
+            raise _refus_reglage(source, interne_lignes(lignes), "defect_types", "defect_types",
+                                 "doit être une liste non vide de types de tickets (chaînes)")
+    if "patient_id_labels" in interne:
+        valeur = interne["patient_id_labels"]
+        if not (isinstance(valeur, list) and valeur and all(isinstance(t, str) and t.strip() for t in valeur)):
+            # jamais la valeur : une étiquette de la liste n'est ni affichée ni écrite
+            raise _refus_reglage(source, interne_lignes(lignes), "patient_id_labels", "patient_id_labels",
+                                 "doit être une liste non vide d'étiquettes (chaînes)")
     if "story_quality" in interne:
         _valider_story_quality(interne["story_quality"], source, lignes)
+    if "sample_starts" in interne:
+        _valider_sample_starts(interne["sample_starts"], source, lignes)
+    if "delivery_fields" in interne:
+        _valider_delivery_fields(interne["delivery_fields"], source, lignes)
+
+
+# Schéma de `delivery_fields` (R-20261114-108) : SOURCE UNIQUE des noms (flow_delivery.configurer et la table factice des tests la
+# reprennent ; test_delivery_fields.py détecte un écart). Aucun identifiant ici : les valeurs viennent de flux.yaml, hors Git.
+# Remplace : les constantes d'identifiants de flow_delivery.py. Retrait : permanent.
+DELIVERY_FIELDS_SCALAIRES = ("sprint", "rank")
+DELIVERY_FIELDS_GROUPES = {
+    "assets": ("target", "resolution", "epic_a", "epic_b"),
+    "defect_assets": ("detected", "affected"),
+    "multi_options": ("category_nature", "workflow_option"),
+    "single_options": ("release_target", "verification_required", "product_safety", "isp", "code_review_status"),
+    "flags": ("customer_commitment", "source_commitment", "strategic_objective"),
+    "defect_options": ("detection_phase", "detected_by", "installed_base"),
+    "version_tickets": ("asset", "released", "started", "short_name"),
+}
+IDENTIFIANT_CHAMP_PERSONNALISE = re.compile(r"customfield_[0-9]+")
+
+
+def _valider_delivery_fields(bloc, source: str, lignes: dict) -> None:
+    """delivery_fields : bloc facultatif qui nomme les identifiants des champs de livraison (sprint, rank, puis les groupes de
+    DELIVERY_FIELDS_GROUPES). Toute clé est facultative : un champ absent n'est pas lu. Chaque valeur est un identifiant
+    `customfield_<chiffres>`, jamais deux fois le même dans la table. Jamais la valeur dans un message."""
+    bloc = _bloc_dict(bloc, source, lignes, "delivery_fields", "delivery_fields")
+    lignes_bloc = getattr(bloc, "lignes", {})
+    vus: set[str] = set()
+
+    def identifiant(parent, cle, chemin: str) -> None:
+        valeur = parent[cle]
+        if not (isinstance(valeur, str) and IDENTIFIANT_CHAMP_PERSONNALISE.fullmatch(valeur.strip())):
+            raise _refus_reglage(source, parent, cle, chemin, "doit être un identifiant de champ Jira (customfield_ suivi de chiffres)")
+        if valeur.strip() in vus:
+            raise _refus_reglage(source, parent, cle, chemin, "reprend un identifiant déjà donné à un autre champ de la table")
+        vus.add(valeur.strip())
+
+    permises = DELIVERY_FIELDS_SCALAIRES + tuple(DELIVERY_FIELDS_GROUPES)
+    for cle in bloc:
+        if cle not in permises:
+            raise _refus_reglage(source, bloc, cle, f"delivery_fields.{cle}", f"n'existe pas (clés : {', '.join(permises)})")
+        if cle in DELIVERY_FIELDS_SCALAIRES:
+            identifiant(bloc, cle, f"delivery_fields.{cle}")
+            continue
+        groupe = _bloc_dict(bloc[cle], source, lignes_bloc, cle, f"delivery_fields.{cle}")
+        for sous in groupe:
+            if sous not in DELIVERY_FIELDS_GROUPES[cle]:
+                raise _refus_reglage(source, groupe, sous, f"delivery_fields.{cle}.{sous}",
+                                     f"n'existe pas (clés : {', '.join(DELIVERY_FIELDS_GROUPES[cle])})")
+            identifiant(groupe, sous, f"delivery_fields.{cle}.{sous}")
+
+
+CHAMPS_SAMPLE_STARTS = ("waiting", "started")
+# États par défaut (neutres) de `sample_starts` : source unique, segment_sample.py les reprend (ETAT_ATTENTE, ETAT_DEBUT).
+# Remplace : deux constantes écrites dans segment_sample.py ; retrait : permanent (R-20261112-29).
+SAMPLE_STARTS_DEFAUTS = {"waiting": "Awaiting Testing", "started": "Testing - Active"}
+
+
+def _valider_sample_starts(bloc, source: str, lignes: dict) -> None:
+    """sample_starts : bloc facultatif {waiting, started}, deux noms d'états (chaînes non vides, différents sans tenir compte de la
+    casse). Une clé absente garde le défaut de l'outil. Jamais la valeur dans un message."""
+    bloc = _bloc_dict(bloc, source, lignes, "sample_starts", "sample_starts")
+    for sous in bloc:
+        if sous not in CHAMPS_SAMPLE_STARTS:
+            raise _refus_reglage(source, bloc, sous, f"sample_starts.{sous}",
+                                 f"n'existe pas (clés : {', '.join(CHAMPS_SAMPLE_STARTS)})")
+        if not _texte_non_vide(bloc[sous]):
+            raise _refus_reglage(source, bloc, sous, f"sample_starts.{sous}", "doit être un nom d'état (chaîne non vide)")
+    complet = {**SAMPLE_STARTS_DEFAUTS, **bloc}              # la comparaison se fait après application des défauts
+    if complet["waiting"].strip().casefold() == complet["started"].strip().casefold():
+        raise _refus_reglage(source, bloc, "started", "sample_starts.started", "doit différer de sample_starts.waiting")
 
 
 def interne_lignes(lignes: dict):
@@ -843,9 +929,58 @@ def discovery_workflow(interne: dict) -> dict | None:
             "active_columns": list(bloc.get("active_columns", []))}
 
 
+def delivery_fields(interne: dict) -> dict:
+    """Table des champs de livraison de `delivery_fields` (déjà validée), ou un dictionnaire vide sans réglage : aucun repli sur un
+    identifiant écrit en dur (R-20261114-108), les champs de livraison ne sont alors pas lus."""
+    return dict(interne.get("delivery_fields") or {})
+
+
 def epic_types(interne: dict) -> list[str]:
     """Types de tickets « épic » (outil des statuts d'épics) ; ["Epic"] sans réglage."""
     return [t.strip() for t in interne.get("epic_types", ["Epic"])]
+
+
+def defect_types(interne: dict) -> list[str]:
+    """Types de tickets comptés comme défauts (outil des photos de qualité par version, D4). Liste vide sans réglage : aucun repli sur un
+    nom de type écrit en dur, l'outil refuse alors de photographier."""
+    return [t.strip() for t in interne.get("defect_types", [])]
+
+
+# Types de liens qui comptent comme dépendance (comparés sans casse) : défauts uniques du rapport des dépendances et du chargeur des
+# définitions de flux (change flow-definitions-loader, conception D2). Permanents tant qu'un rapport a un défaut de code.
+TYPES_BLOQUANTS_PAR_DEFAUT = ("Blocks", "Bloque", "Blocage", "Prerequisite", "Prérequis")
+TYPES_ATTENTE_PAR_DEFAUT = ("Depends", "Dependance", "Dépendance", "Dependency")
+
+
+def _sans_doublons(types) -> list[str]:
+    vus, sortie = set(), []
+    for nom in types:
+        nom = nom.strip() if isinstance(nom, str) else nom
+        cle = nom.casefold() if isinstance(nom, str) else nom
+        if cle not in vus:
+            vus.add(cle)
+            sortie.append(nom)
+    return sortie
+
+
+def types_liens(interne: dict) -> tuple[list[str], list[str]]:
+    """(types bloquants, types d'attente) : les listes des réglages, ou les défauts communs quand la clé manque. Chaque liste est sans
+    doublon de casse (première occurrence gardée) ; un type des deux listes n'est gardé que parmi les bloquants, comme le fait `role` de
+    dependencies_jira.py (le sens bloquant l'emporte)."""
+    bloquants = interne.get("types_bloquants")
+    attente = interne.get("types_attente")
+    bloquants = _sans_doublons(TYPES_BLOQUANTS_PAR_DEFAUT if bloquants is None else bloquants)
+    deja = {b.casefold() for b in bloquants if isinstance(b, str)}
+    attente = [a for a in _sans_doublons(TYPES_ATTENTE_PAR_DEFAUT if attente is None else attente)
+               if not (isinstance(a, str) and a.casefold() in deja)]
+    return bloquants, attente
+
+
+def patient_id_labels(interne: dict) -> list[str] | None:
+    """Étiquettes facultatives d'identifiant de patient (patient-data-detection D10), ou None quand la liste est absente : jamais une erreur.
+    Les valeurs ne sont jamais affichées, journalisées ni écrites."""
+    valeur = interne.get("patient_id_labels")
+    return [t.strip() for t in valeur] if valeur else None
 
 
 def retention(interne: dict) -> dict:

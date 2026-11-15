@@ -121,7 +121,8 @@ def effective_grid(core: dict, overlay: dict | None, language: str = "en") -> di
 # par différence avec `audited`. Il refait aussi à ce seuil le masquage secondaire de la chaîne du produit contre les lignes d'équipe.
 
 REPORT_CONTRACT = "story_quality_report"
-REPORT_CONTRACT_VERSION = 1
+REPORT_CONTRACT_VERSION = 2                                  # R-128 : `section`, `teams_without_section`, `single_team` (design D5)
+NO_TEAM = "(sans équipe)"                                    # la valeur des vues pour les éléments sans équipe (migration 0016) : jamais une équipe
 COUNT_COLUMNS = ("met", "not_met", "not_applicable", "undetermined")      # les quatre comptes du contrat (D15) ; `audited` ne sert qu'au dénominateur
 COVERAGE_COLUMNS = ("collected", "audited", "empty_acceptance_criteria")
 MASK_FLOOR = 5
@@ -192,21 +193,31 @@ def _line_order(row: dict) -> tuple:
     return LINKS.index(row["link"]) if row["link"] in LINKS else len(LINKS), row["code"]
 
 
+def _has_section(team: dict) -> bool:
+    """Vrai si au moins un compte audité de l'équipe est visible au seuil effectif (cellules déjà construites) : couverture, ou dénominateur
+    d'une part. Le test de R-124, déplacé du Markdown (R-128, D4)."""
+    if any(c["audited"]["state"] == "value" for c in team["coverage"].values()):
+        return True
+    return any(p["state"] == "value" for kind in KINDS for criterion in team["criteria"][kind]
+               for p in (criterion["share_met"], criterion["share_not_met"]))
+
+
 def _cause_line(kind: str, code: str, label: str, row: dict, share: dict) -> dict:
     return {"kind": kind, "code": code, "label": label, "origin": row["origin"], "link": row["link"], "share_not_met": share}
 
 
 def report_data(team_rows, coverage_rows, product_rows, grid: dict, *, threshold, disabled=(), min_cell: int = MASK_FLOOR,
                 language: str = "en") -> dict:
-    """Fonction de service du rapport (design D15, M1 (a)) : le contrat `story_quality_report`, version 1. Elle reçoit les lignes (dicts
+    """Fonction de service du rapport (design D15, M1 (a)) : le contrat `story_quality_report`, version 2. Elle reçoit les lignes (dicts
     colonne -> valeur, None pour une cellule masquée par la vue) des trois vues `quality_by_team`, `quality_coverage_by_team` et
     `quality_by_product`, la grille effective (`effective_grid`: versions et libellés), les codes du socle que la surcouche désactive, le
     seuil de récurrence `threshold` (une part ; None : aucun défaut n'est récurrent) et le seuil de masquage effectif `min_cell`. Elle ne
     lit ni base, ni fichier. Le Markdown et le JSON du rapport mettent en forme son résultat et ne calculent rien.
 
     Ordres : équipes par nom, critères par code, lignes de causes par maillon puis code ; jamais d'après un résultat. Le résultat ne dépend
-    pas de l'ordre des lignes reçues. Pas de rang, de score, de total par équipe ni de nombre d'équipes ; la chaîne du produit n'a aucun
-    champ d'équipe. Le masquage (complémentaire, et secondaire de D18) vient des vues au plancher, et il est refait au seuil
+    pas de l'ordre des lignes reçues. Pas de rang, de score ni de total par équipe, et aucun nombre d'équipes sauf deux (R-128) :
+    `teams_without_section` (un entier pour tout le rapport, jamais masqué) et `product_chain.single_team` (vrai si une seule équipe a des
+    lignes dans la vue par équipe) ; `section` dit si une équipe a une section. La chaîne du produit n'a aucun nom d'équipe. Le masquage (complémentaire, et secondaire de D18) vient des vues au plancher, et il est refait au seuil
     relevé : une ligne de produit que la vue masque n'a aucune
     part lisible, elle n'est donc jamais récurrente et n'apparaît pas dans la chaîne."""
     t = Messages(CATALOGS, language)
@@ -256,14 +267,17 @@ def report_data(team_rows, coverage_rows, product_rows, grid: dict, *, threshold
                     causes.append(_cause_line(kind, row["criterion_code"], label(row["criterion_code"]),
                                               {"origin": row["origin"], "link": row["link"], "code": row["criterion_code"]}, share_not_met))
         causes.sort(key=_line_order)
-        teams.append({
+        entry = {
             "team": team,
+            "section": False,
             "single_po": single_po.get(team, False),
             "single_po_notice": t("single_po_notice") if single_po.get(team, False) else None,
             "coverage": {kind: coverage[team][kind] for kind in KINDS if kind in coverage.get(team, {})},
             "criteria": criteria,
             "probable_causes": {"notice": notice("probable_causes_notice"), "lines": causes},
-        })
+        }
+        entry["section"] = _has_section(entry)
+        teams.append(entry)
 
     def secondary_masked(row: dict) -> bool:
         """Règle secondaire de la vue produit (D18, migration 0016) refaite au seuil relevé : pour une colonne où la cellule du produit est
@@ -295,5 +309,9 @@ def report_data(team_rows, coverage_rows, product_rows, grid: dict, *, threshold
         "grid": {"core_version": grid["core_version"], "overlay_version": grid["overlay_version"], "disabled_codes": list(disabled)},
         "notice": notice("team_results_notice"),
         "teams": teams,
-        "product_chain": {"notice": notice("product_chain_notice"), "lines": chain},
+        # R-128 (D1, D2) : un entier pour tout le rapport, jamais masqué, la ligne des éléments sans équipe écartée
+        "teams_without_section": sum(1 for entry in teams if entry["team"] != NO_TEAM and not entry["section"]),
+        # R-128 (D3) : la seule présence de lignes dans la vue par équipe, jamais une cellule : ni seuil ni masquage n'y changent rien
+        "product_chain": {"notice": notice("product_chain_notice"), "lines": chain,
+                          "single_team": len({team for team in by_team if team != NO_TEAM}) == 1},
     }

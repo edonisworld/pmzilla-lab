@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "numpy", "httpx", "pyyaml", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "numpy", "httpx", "pyyaml", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab : garde de la recherche de la bibliothèque, par instantané des résultats PostgreSQL.

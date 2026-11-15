@@ -1017,14 +1017,14 @@ class CritereJugeNonBloquant(Base):
         self.assertEqual(len(regles), 3)
         self.assertTrue(all(not r.get("non_blocking") for r in regles))
 
-    def test_total_bloquant_des_cas_reels_est_38(self):
-        """32 d'avant, moins le critère de paragraphe de veille-goulot (indicateur), plus ses trois vérifications (34), plus un par cas du module de cas (3), plus un pour le second critère de experimentation-en-cours (38)."""
+    def test_total_bloquant_des_cas_reels_est_39(self):
+        """32 d'avant, moins le critère de paragraphe de veille-goulot (indicateur), plus ses trois vérifications (34), plus un par cas du module de cas (3), plus un pour le second critère de experimentation-en-cours (38), plus l'absence de Critic sur discovery-cadrage (39)."""
         total = 0
         for cas in yaml.safe_load(CAS_REEL.read_text(encoding="utf-8")):
             total += 1 if cas.get("posture") is not None else 0
             total += sum(1 for r in cas.get("verifications") or [] if not r.get("non_blocking"))
             total += sum(1 for j in cas.get("judgements") or [] if not (isinstance(j, dict) and j.get("non_blocking")))
-        self.assertEqual(total, 38)
+        self.assertEqual(total, 39)
 
 
 class IndicateursNonBloquants(Base):
@@ -1517,11 +1517,6 @@ class Prerequis(unittest.TestCase):
 
     def test_regle_inconnue(self):
         self.assertIn("inconnu", self.manque([{"bizarre": 1}])[0])
-
-    def test_plus_d_index_sqlite(self):
-        self.assertFalse(hasattr(essai, "library_db"))
-        self.assertFalse(hasattr(essai, "sqlite3"))
-        self.assertNotIn("library.sqlite", Path(essai.__file__).read_text(encoding="utf-8"))
 
     def test_lecteur_reel_compte_et_termine_chaque_transaction(self):
         conn = mock.MagicMock()

@@ -130,7 +130,7 @@ repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou 
   local dossier=$1 pid debut age mtime
   pid="$(cat "$dossier/pid" 2>/dev/null)"
   if ! printf '%s' "$pid" | grep -Eq '^[0-9]+$'; then   # création en cours, ou dossier abandonné
-    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    mtime="$(stat -c %Y "$dossier" 2>/dev/null || stat -f %m "$dossier" 2>/dev/null)"
     printf '%s' "$mtime" | grep -Eq '^[0-9]+$' && [ $(( $(date +%s) - mtime )) -gt 10 ] && return 0
     return 1
   fi
@@ -139,7 +139,7 @@ repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou 
   if printf '%s' "$debut" | grep -Eq '^[0-9]+$'; then
     age=$(( $(repere_maintenant) - debut ))
   else
-    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    mtime="$(stat -c %Y "$dossier" 2>/dev/null || stat -f %m "$dossier" 2>/dev/null)"
     printf '%s' "$mtime" | grep -Eq '^[0-9]+$' || return 1
     age=$(( $(date +%s) - mtime ))
   fi

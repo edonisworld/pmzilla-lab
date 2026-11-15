@@ -55,11 +55,19 @@ The system SHALL name worktrees by their folder relative to the lab folder, dirt
 - **THEN** it holds neither the temporary folder's absolute path nor the home folder nor the name of any dirty file
 
 ### Requirement: The freeze check tells an agent whether a finish is running
-The system SHALL give the pilot tool a freeze check that exits 0 when no live finish lock is held or when the caller carries the lock's token, and 4 with the phrase of design D3 naming the branch and the start time otherwise, and a wait form that repeats the check until it is free or the minutes given are spent (exit 4 with its phrase). A stale lock SHALL count as free and be reported. Minutes outside the range of D3 SHALL exit 2. It SHALL NOT create, remove or change the lock, nor run tests.
+The system SHALL give the pilot tool a freeze check that exits 0 when no live finish lock is held, when the caller carries the lock's token, or when the lock's readable list (`freeze_scope()`, change autonomous-trains-merge, design D18) does not hold the caller's worktree (with the phrase `pilot : fin en cours : <n> worktree(s) gelé(s), main, dossier d'exécution et liste prête` of design D19 when a live lock is held but does not list the caller's worktree, R-20261106-13 Q2), and 4 with the phrase of design D3 naming the branch and the start time when a live lock without the caller's token lists the caller's worktree or holds no readable list, and a wait form that repeats the check until it is free or the minutes given are spent (exit 4 with its phrase). A stale lock SHALL count as free and be reported. Minutes outside the range of D3 SHALL exit 2. It SHALL NOT create, remove or change the lock, run tests, nor keep a freeze rule of its own beside `freeze_scope()`.
 
 #### Scenario: Finish running
-- **WHEN** a lock of a live process names a branch and the caller has no token
+- **WHEN** a lock of a live process names a branch, lists the caller's worktree, and the caller has no token
 - **THEN** the check exits 4 with `pilot : fin de branche en cours (<branche>, depuis HH:MM)` and the lock is unchanged
+
+#### Scenario: Finish running in other worktrees
+- **WHEN** a lock of a live process lists two other worktrees than the caller's, and the caller has no token
+- **THEN** the check exits 0 with `pilot : fin en cours : 2 worktree(s) gelé(s), main, dossier d'exécution et liste prête` and the lock is unchanged
+
+#### Scenario: Lock without a readable list
+- **WHEN** a lock of a live process holds no readable list and the caller has no token
+- **THEN** the check exits 4
 
 #### Scenario: Caller is the finish
 - **WHEN** the caller's token equals the lock's token
@@ -70,7 +78,7 @@ The system SHALL give the pilot tool a freeze check that exits 0 when no live fi
 - **THEN** it exits 0 with `pilot : aucune fin de branche en cours`
 
 #### Scenario: Wait spent
-- **WHEN** the lock stays held for the whole wait
+- **WHEN** the lock stays held and keeps listing the caller's worktree for the whole wait
 - **THEN** it exits 4 with `pilot : fin de branche toujours en cours après <minutes> min`
 
 #### Scenario: Stale lock
@@ -133,11 +141,18 @@ The system SHALL keep a tracked agent preamble with the standing rules and the c
 - **THEN** it holds no absolute path and no home-folder form
 
 ### Requirement: The agent preamble forbids piped interpreters and file changes by script
-The system SHALL make the tracked agent preamble tell every agent to modify files with the Edit tool only (Write only to create a new file) and to run only the commands its definition and prompt allow, read-only searches included (design D12 of change multi-session-piloting). It SHALL forbid piping a command into `python3`, `grep` or `tail` (design D4 of change deny-rules-review), except a `tail` right after the targeted test runner or `unittest`, and changing a file with a script, `sed -i` or a shell redirection.
+The system SHALL make the tracked agent preamble tell every agent to modify files with the Edit tool only (Write only to create a new file) and to run only the commands its definition and prompt allow, read-only searches included (design D12 of change multi-session-piloting). It SHALL forbid changing a file with a script, `sed -i` or a shell redirection.
 
 #### Scenario: Three rules present
 - **WHEN** the preamble test reads the preamble
 - **THEN** it finds the rule on piping into `python3`, `grep` or `tail` with the test-runner exception for `tail`, the rule on Edit for every file change with `sed -i` and redirections named as forbidden, and the rule on allowed commands
+
+### Requirement: The agent preamble forbids piping into an interpreter or a filter
+The system SHALL make the tracked agent preamble forbid piping a command into `python3`, `grep` or `tail` (design D4 of change deny-rules-review), except a `tail` right after the targeted test runner or `unittest`.
+
+#### Scenario: Piping rule present
+- **WHEN** the preamble test reads the preamble
+- **THEN** it finds the rule on piping into `python3`, `grep` or `tail`, with the exception for a `tail` right after the targeted test runner or `unittest`
 
 ### Requirement: The pilot tool is testable without the real workspace
 The system SHALL include a Python suite, found by the runner, that exercises the pilot tool on temporary repositories with linked worktrees, a fake snapshot, a fake sensitive-names list and identifiers file, a fake process listing, an injectable clock and poll interval (design D11). It SHALL NOT read the real workspace, the real common Git folder, the real snapshot or the real sensitive-names list.
@@ -156,3 +171,53 @@ The system SHALL make the agent preamble tell an agent whose change touches deny
 #### Scenario: Framing checklist
 - **WHEN** the framing agent's definition is read
 - **THEN** its "Done" checklist holds the deny-rule point
+
+### Requirement: The pilot status shows the ready list and the train job
+The system SHALL add to the pilot status the two items of design D9 of autonomous-trains-observe: the ready flag on each listed worktree's line, and the `train automatique` line after the finish lock line, which names the mode (`observation`, `fusion automatique` or `activation invalide`, from `activation_valid()`) and the series (`série <k>/5`, from `activation_status()`) (change autonomous-trains-merge, design D20). Each item is computed by a service function of the autonomous-train tools and only formatted by the status. The status SHALL stay offline and read-only. When no train file exists, its output SHALL be unchanged. It SHALL NOT create, remove or change the activation file, nor compute the mode or the series in its formatting.
+
+#### Scenario: Listed branch with a stale tip
+- **WHEN** a worktree's branch is listed and has a commit after its line
+- **THEN** its status line holds `prête (écartée : sommet changé depuis l'inscription)`
+
+#### Scenario: Stop active
+- **WHEN** the stop file exists
+- **THEN** the status holds a `train automatique` line with `arrêt actif`
+
+#### Scenario: Merge mode shown
+- **WHEN** a valid activation file exists and a pass ran
+- **THEN** the line reads `train automatique : fusion automatique ; dernier passage …`
+
+#### Scenario: No train files
+- **WHEN** the data folder holds no ready list, no state, no stop file and no activation file
+- **THEN** the status output is the same as before this change, and nothing is written
+
+### Requirement: The finish lock freezes only the train's references and worktrees
+While a train holds the finish lock, the readers of the freeze SHALL refuse, to a caller without the lock's token, only the actions that write `main`, the run tree or the ready list, and the commits, suites and container passes started in a worktree that the lock lists (each train branch's worktree and the integration worktree), as `freeze_scope()` of `tools/finish_lock.py` returns them (change autonomous-trains-merge, design D18). The readers of the freeze, the pre-commit hook, the runner, `ci_local.sh run`, `pilot.py freeze --check` and `train_ready.py add`, `drop` and `prune`, SHALL all decide through that one function (R-20261106-71 Q1 (a)); a worktree whose current branch is a listed branch SHALL count as listed; the workspace on `main` (head on `main` or detached) and the run folder SHALL count as writing `main` (R-20261106-71 Q2 (a)); and a held lock without a readable list SHALL count as freezing everything. `ci_local.sh run` from another worktree SHALL wait in the queue behind the train's pass instead of exiting 7. The npm guard, the `pre-merge-commit` hook, `ci_local.sh build` and `up` SHALL keep the general freeze, and dbtest SHALL keep its refusal 3. The system SHALL NOT refuse, in a worktree that the lock does not list, a commit, a suite or a `ci_local.sh run` that writes neither `main`, the run tree nor the ready list, nor keep a second freeze rule in any of its readers.
+
+#### Scenario: Session in another worktree
+- **WHEN** a train holds the lock and a session commits in a worktree that the lock does not list
+- **THEN** the commit is not refused by the freeze
+
+#### Scenario: Train branch worktree
+- **WHEN** a train holds the lock and a session runs a suite in the worktree of a branch of the train
+- **THEN** the runner refuses it as frozen
+
+#### Scenario: Ready list during a train
+- **WHEN** a train holds the lock and a session runs `train_ready.py add`
+- **THEN** the addition is refused as frozen and the list is unchanged, whatever the worktree; `train_ready.py drop` and `prune` are refused the same way, and `list` stays allowed
+
+#### Scenario: Train branch checked out in a new worktree
+- **WHEN** a train holds the lock and a branch of its list, without a worktree at the start, is checked out in a new worktree during the train
+- **THEN** a commit or a suite in that worktree is refused as frozen
+
+#### Scenario: Workspace on main during a train
+- **WHEN** a train holds the lock and a session commits or runs a suite in the workspace on `main` (or on a detached head), outside the list
+- **THEN** it is refused as frozen, since it counts as writing `main`
+
+#### Scenario: Lock without a list
+- **WHEN** the lock is held and its list of branches and worktrees cannot be read
+- **THEN** every reader treats every worktree as frozen
+
+#### Scenario: npm ci during a train
+- **WHEN** a train holds the lock and `npm ci` is started in a worktree that the lock does not list
+- **THEN** the npm guard refuses it, as before this change

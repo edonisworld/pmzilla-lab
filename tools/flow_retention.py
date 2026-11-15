@@ -127,6 +127,31 @@ SQL_COMPTE_CONTENU = f"SELECT count(*), min(horloge) FROM (SELECT {HORLOGE_CONTE
 SQL_SUPPRESSION_CONTENU = f"DELETE FROM quality.items WHERE {HORLOGE_CONTENU} < %s"
 ROLE_CONTENU = "pmzilla_quality"
 
+# Références de version (change jira-delivery-fields, D10). Une référence est hors règle quand aucune version d'actif courante ni aucune période
+# de version d'actif ne la porte et qu'elle a été vue pour la dernière fois il y a plus longtemps que la durée de conservation ; elle part avec ses
+# instantanés de version. Les instantanés plus vieux que l'âge maximal de fichier d'une référence gardée partent aussi, sauf le dernier de chaque
+# objet. Un sprint qu'aucun ticket ne porte plus part dans la même transaction que les tickets. Règle nouvelle ; remplace : rien ; retrait :
+# permanent (règle du 2026-10-18). Paramètres : date limite de la dernière vue ; date limite de l'âge maximal.
+CLAUSE_VERSIONS_HORS_REGLE = ("(v.last_seen AT TIME ZONE 'UTC')::date < %s "
+                              "AND NOT EXISTS (SELECT 1 FROM flow.issue_current_asset_versions a WHERE a.object_id = v.object_id) "
+                              "AND NOT EXISTS (SELECT 1 FROM flow.issue_asset_version_periods p WHERE p.object_id = v.object_id)")
+SQL_COMPTE_VERSIONS = ("SELECT count(*), min((v.last_seen AT TIME ZONE 'UTC')::date) FROM flow.release_versions v WHERE "
+                       + CLAUSE_VERSIONS_HORS_REGLE)
+CLAUSE_INSTANTANES_VERSION_ANCIENS = ("(r.run_at AT TIME ZONE 'UTC')::date < %s "
+                                      "AND s.run_id < (SELECT max(x.run_id) FROM flow.raw_version_snapshots x WHERE x.object_id = s.object_id) "
+                                      "AND s.object_id NOT IN (SELECT v.object_id FROM flow.release_versions v WHERE "
+                                      + CLAUSE_VERSIONS_HORS_REGLE + ")")
+SQL_COMPTE_INSTANTANES_VERSION = ("SELECT count(*) FROM flow.raw_version_snapshots s JOIN flow.raw_runs r ON r.id = s.run_id WHERE "
+                                  + CLAUSE_INSTANTANES_VERSION_ANCIENS)
+SQL_SUPPRESSION_INSTANTANES_VERSION_ANCIENS = ("DELETE FROM flow.raw_version_snapshots s USING flow.raw_runs r WHERE r.id = s.run_id AND "
+                                               + CLAUSE_INSTANTANES_VERSION_ANCIENS)
+SQL_SUPPRESSION_INSTANTANES_VERSION_ORPHELINS = ("DELETE FROM flow.raw_version_snapshots WHERE object_id IN "
+                                                 "(SELECT v.object_id FROM flow.release_versions v WHERE " + CLAUSE_VERSIONS_HORS_REGLE + ")")
+SQL_SUPPRESSION_VERSIONS = "DELETE FROM flow.release_versions v WHERE " + CLAUSE_VERSIONS_HORS_REGLE
+SQL_SUPPRESSION_SPRINTS = ("DELETE FROM flow.sprints s WHERE NOT EXISTS "
+                           "(SELECT 1 FROM flow.issue_current_sprints c WHERE c.sprint_id = s.sprint_id) "
+                           "AND NOT EXISTS (SELECT 1 FROM flow.issue_sprint_periods p WHERE p.sprint_id = s.sprint_id)")          # Q328 : ni courant ni en période
+
 
 class Usage(Exception):
     pass
@@ -226,13 +251,14 @@ class Analyse:
     brute: Magasin = field(default_factory=Magasin)             # instantanés de la couche brute hors règle
     visites: Magasin = field(default_factory=Magasin)           # visites de la couche brute hors règle (dans le total, sans ligne)
     contenu: Magasin = field(default_factory=Magasin)           # contenu des stories (schéma quality)
+    versions: Magasin = field(default_factory=Magasin)          # références de version et instantanés de version (jira-delivery-fields D10)
     voie_csv: Magasin = field(default_factory=Magasin)          # fichiers laissés par la voie CSV (CSV des exports, ancien cache)
     points: Magasin = field(default_factory=Magasin)
     sauvegardes: Magasin = field(default_factory=Magasin)
     hors_site: Magasin = field(default_factory=Magasin)
 
     def total(self) -> int:
-        return sum(m.n for m in (self.base, self.brute, self.visites, self.contenu, self.voie_csv, self.points,
+        return sum(m.n for m in (self.base, self.brute, self.visites, self.contenu, self.versions, self.voie_csv, self.points,
                                  self.sauvegardes, self.hors_site))
 
 
@@ -339,9 +365,21 @@ def compter_visites(conn, limite: dt.date, limite_age: dt.date) -> int:
     return int(cur.fetchone()[0])
 
 
-def supprimer_base(conn, limite: dt.date, limite_age: dt.date | None = None, avec_tickets: bool = True) -> int:
+def compter_versions(conn, limite: dt.date, limite_age: dt.date) -> tuple[int, dt.date | None]:
+    """(références de version hors règle plus instantanés de version trop anciens des références gardées, date de la dernière vue la plus
+    ancienne). Des comptes seulement : jamais un identifiant, un numéro ni un nom court."""
+    cur = conn.cursor()
+    cur.execute(SQL_COMPTE_VERSIONS, (limite,))
+    n, plus_ancien = cur.fetchone()
+    cur.execute(SQL_COMPTE_INSTANTANES_VERSION, (limite_age, limite))
+    return int(n) + int(cur.fetchone()[0]), plus_ancien
+
+
+def supprimer_base(conn, limite: dt.date, limite_age: dt.date | None = None, avec_tickets: bool = True,
+                   avec_versions: bool = False) -> int:
     """Supprime en UNE transaction la couche brute hors règle (instantanés puis visites, avant les tickets dont elles portent la
-    clé), puis les tickets au-delà de la règle ; l'échec annule tout (rollback) et relève l'erreur. Un passage n'est jamais supprimé."""
+    clé), puis les tickets au-delà de la règle, puis les sprints qu'aucun ticket ne porte plus et, après les tickets, les références de
+    version hors règle avec leurs instantanés ; l'échec annule tout (rollback) et relève l'erreur. Un passage n'est jamais supprimé."""
     cur = conn.cursor()
     try:
         if limite_age is not None:
@@ -350,6 +388,13 @@ def supprimer_base(conn, limite: dt.date, limite_age: dt.date | None = None, ave
         if avec_tickets:
             cur.execute(SQL_SUPPRESSION, (limite,))
         supprimes = cur.rowcount
+        if avec_tickets:
+            cur.execute(SQL_SUPPRESSION_SPRINTS)
+        if avec_versions:
+            cur.execute(SQL_SUPPRESSION_INSTANTANES_VERSION_ORPHELINS, (limite,))
+            cur.execute(SQL_SUPPRESSION_VERSIONS, (limite,))
+            if limite_age is not None:
+                cur.execute(SQL_SUPPRESSION_INSTANTANES_VERSION_ANCIENS, (limite_age, limite))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -407,8 +452,8 @@ def supprimer(analyse: Analyse, lieux: Emplacements, conn, limite: dt.date, limi
     for magasin in (analyse.voie_csv, analyse.points):
         for chemin in magasin.cibles:
             chemin.unlink(missing_ok=True)
-    if analyse.base.n or analyse.brute.n or analyse.visites.n:
-        supprimer_base(conn, limite, limite_age, avec_tickets=bool(analyse.base.n))
+    if analyse.base.n or analyse.brute.n or analyse.visites.n or analyse.versions.n:
+        supprimer_base(conn, limite, limite_age, avec_tickets=bool(analyse.base.n), avec_versions=bool(analyse.versions.n))
     if analyse.contenu.n:
         supprimer_contenu(conn, limite)
     for chemin in analyse.sauvegardes.cibles:
@@ -430,6 +475,7 @@ def afficher_comptes(analyse: Analyse, age_hors_site: int | None, t: Messages) -
     print(ligne_magasin(t, "store_database", analyse.base))
     print(t("store_raw", n=analyse.brute.n))                    # la phrase fixe de la couche brute, sans âge ni clé
     print(ligne_magasin(t, "store_story_content", analyse.contenu))
+    print(t("store_version_references", n=analyse.versions.n))          # la phrase fixe, sans âge ni identifiant
     print(ligne_magasin(t, "store_csv_route", analyse.voie_csv))
     print(ligne_magasin(t, "store_points", analyse.points))
     print(ligne_magasin(t, "store_backups", analyse.sauvegardes))
@@ -508,6 +554,7 @@ def main(argv: list[str] | None = None, environ=None, ouvrir_base=None) -> int:
         analyse.contenu.n, plus_ancien = compter_contenu(conn, limite)
         if plus_ancien is not None:
             analyse.contenu.plus_ancien = (aujourdhui - plus_ancien).days
+        analyse.versions.n, _ = compter_versions(conn, limite, limite_age)
         afficher_comptes(analyse, age_hors_site, t)
         print(ligne_total(analyse, t))
         if args.commande == "check":

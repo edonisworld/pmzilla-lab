@@ -394,5 +394,27 @@ class TestCompteMasque(unittest.TestCase):
         self.assertEqual(outil.compte(5, en), "5")
 
 
+class TestTransitionsMemeStatut(unittest.TestCase):
+    """Idée 492 : une transition vers un statut de même nom n'est ni un passage ni une transition sortante. Données inventées."""
+
+    def test_meme_nom_ecarte_des_passages_et_des_sortantes(self):
+        jour = "2026-03-05T09:00:00.000+0100"
+        cache = {"AB-1": {"transitions": [
+            [jour, "Draft", "Epic Review"], [jour, "Epic Review", "Epic Review"], [jour, "Epic Review", " epic review "],
+            [jour, "Epic Review", "Done"], [jour, None, "Draft"]]}}
+        statuts = outil.releve({"AB-1": "Done"}, cache)
+        self.assertEqual(statuts["Epic Review"]["passages"], 1)                       # l'arrivée venue de Draft seulement
+        self.assertEqual(dict(statuts["Epic Review"]["sortantes"]), {"Done": 1})
+        self.assertEqual(statuts["Done"]["passages"], 1)
+        self.assertEqual(statuts["Draft"]["passages"], 1)                             # départ vide : l'arrivée compte toujours
+
+    def test_sans_transition_de_meme_nom_rien_ne_change(self):
+        jour = "2026-03-05T09:00:00.000+0100"
+        statuts = outil.releve({"AB-1": ""}, {"AB-1": {"transitions": [[jour, "Draft", "Review"], [jour, "Review", "Draft"]]}})
+        self.assertEqual(statuts["Review"]["passages"], 1)
+        self.assertEqual(statuts["Draft"]["passages"], 1)
+        self.assertEqual(dict(statuts["Draft"]["sortantes"]), {"Review": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

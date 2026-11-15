@@ -41,7 +41,7 @@ class StartEnWorktree(unittest.TestCase):
 
     def test_passation_donne_toujours_la_fin_en_worktree(self):
         passation = self.corps.split("## 5. Hand over", 1)[1].split("##", 1)[0]
-        self.assertIn("`bash tools/finish_worktree.sh <branch>`", passation)
+        self.assertIn("`bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>`", passation)   # le train d'une branche remplace la fin en worktree (B9)
         self.assertIn("for every job", passation)
         self.assertNotIn("`bash tools/finish_branch.sh`", passation)
 

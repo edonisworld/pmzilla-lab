@@ -1,0 +1,26 @@
+{
+  "name": "mothra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mothra, the lab's web application: one npm workspace of three packages (contract, server, front).",
+  "workspaces": [
+    "contract",
+    "server",
+    "front"
+  ],
+  "engines": {
+    "node": "26.13.0",
+    "npm": "11.20.0"
+  },
+  "scripts": {
+    "build": "npm run build -w @mothra/front",
+    "typecheck": "node outils/types.mjs",
+    "test": "npm run typecheck && node --test \"test/*.test.ts\" && npm run test --workspaces"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}

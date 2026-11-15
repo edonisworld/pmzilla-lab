@@ -14,8 +14,11 @@
 # Dépendances npm de Mothra (mothra-npm-ready, D1, D2) : quand le worktree créé porte mothra/package-lock.json, sur un terminal, la
 # question « lancer npm ci --offline dans mothra/ depuis le cache local ? [o/N] » ; o lance `npm ci --offline` dans <worktree>/mothra
 # (succès ou échec en une ligne nommée, worktree gardé, code 0 inchangé) ; toute autre réponse, ou une entrée standard qui n'est pas
-# un terminal (lancement depuis une session), affiche la commande à taper, sans rien lancer. Jamais npm sans --offline, jamais
-# npm install, npm audit ni npx. Variables (pour les tests) : WORKTREE_NPM remplace la commande npm ; WORKTREE_TERMINAL=1 ou 0
+# un terminal (lancement depuis une session), affiche la commande à taper (`cd <worktree>/mothra && npm ci`, sans --offline), sans rien
+# lancer. Ce texte n'est admis par la garde npm que pour un chemin de worktree sans espace ni caractère spécial (les chemins du lab), et
+# ne vaut qu'avant la pose du bac à sable (après, enveloppe des worktrees puis npm_ci.sh).
+# Le script lui-même ne lance jamais npm sans --offline, jamais npm install, npm audit ni npx.
+# Variables (pour les tests) : WORKTREE_NPM remplace la commande npm ; WORKTREE_TERMINAL=1 ou 0
 # force l'entrée standard à valoir terminal ou non (non posée : test [ -t 0 ]).
 # Interdit au script : ouvrir, lire, copier ou lier la liste (test d'existence seulement), écrire son chemin dans un fichier suivi,
 # pousser, fusionner, valider, lancer les tests.
@@ -89,7 +92,7 @@ printf 'ouvrir la session : cd %q && claude\n' "$dossier"
 # Un échec ne change ni le worktree ni le code de sortie ; jamais le réseau, jamais une autre sous-commande npm.
 if [ -f "$dossier/mothra/package-lock.json" ]; then
   npm=${WORKTREE_NPM:-npm}
-  a_taper="$(printf 'cd %q && npm ci --offline' "$dossier/mothra")"
+  a_taper="$(printf 'cd %q && npm ci' "$dossier/mothra")"
   case "${WORKTREE_TERMINAL:-}" in
     1) terminal=1 ;;
     0) terminal=0 ;;

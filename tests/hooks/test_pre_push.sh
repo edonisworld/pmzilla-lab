@@ -5,6 +5,7 @@
 # Lancement à la main : sh tests/hooks/test_pre_push.sh
 set -u
 unset PMZILLA_SKIP_GREEN_CHECK PRE_PUSH_RUNNER PMZILLA_NOMS
+unset CLAUDECODE   # le marqueur de session n'est pas hérité : la suite passe aussi bien dans une session qu'au Terminal ; les cas de session le posent eux-mêmes
 hook="$(cd "$(dirname "$0")/../../tools/hooks" && pwd)/pre-push"
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
@@ -13,6 +14,9 @@ mkdir -p "$tmp/listes"
 printf '# liste fictive\n%s\n' "$NOM" > "$tmp/listes/noms-sensibles.txt"
 printf 'referential_teams:\n- name: %s\n  jira_team_ids: []\ncatalogue_teams: []\n' "$EQUIPE" > "$tmp/listes/equipes-lisibles.yaml"
 export PMZILLA_LAB_SENSITIVE_NAMES="$tmp/listes/noms-sensibles.txt"
+# dossier de données fictif et vide pour TOUS les cas (revue Opus point 10) : le hook lit ci/preuves de PMZILLA_LAB_DATA (preuve du conteneur) ; sans cette
+# ligne, les premiers cas liraient le vrai ~/.pmzilla-lab/ci/preuves de l'auteur et un arbre déjà prouvé là fausserait les refus attendus
+export PMZILLA_LAB_DATA="$tmp/donnees-fictives"; mkdir -p "$PMZILLA_LAB_DATA/ci"
 git init -q --bare "$tmp/distant.git"
 git init -q -b main "$tmp/depot" && cd "$tmp/depot" || exit 1
 git config user.email t@example.org && git config user.name test
@@ -53,6 +57,21 @@ verifie "main : arbre sale sans empreinte : refusé sans lancer le lanceur" 1 en
 verifie "main : le lanceur n'a pas tourné sur un arbre sale" 1 test -e "$tmp/lance"
 git checkout -q -- f.md
 
+# R-20261102-37 (Q314) : le repli ignore les non suivis sous _bmad-output/, refuse tout le reste
+mkdir -p _bmad-output/pmzilla; echo livrable > "_bmad-output/pmzilla/livrable avec espace.md"
+verifie "main : un non suivi sous _bmad-output/ n'empêche pas le repli : accepté" 0 env PRE_PUSH_RUNNER="sh $tmp/vert.sh" git push -q origin main
+verifie "main : un non suivi sous _bmad-output/ : le lanceur a tourné" 0 test -e "$tmp/lance"
+rm -f "$tmp/lance"
+rm -rf _bmad-output
+valide cinq
+mkdir -p _bmad-output/pmzilla; echo livrable > _bmad-output/pmzilla/suivi.md; git add _bmad-output/pmzilla/suivi.md
+verifie "main : un fichier indexé sous _bmad-output/ : refusé" 1 env PRE_PUSH_RUNNER="sh $tmp/vert.sh" git push -q origin main
+git reset -q; rm -rf _bmad-output
+echo autre > hors-bmad.txt
+verifie "main : un non suivi hors _bmad-output/ : refusé sans lancer le lanceur" 1 env PRE_PUSH_RUNNER="sh $tmp/vert.sh" git push -q origin main
+verifie "main : le lanceur n'a pas tourné (non suivi hors _bmad-output/)" 1 test -e "$tmp/lance"
+rm -f hors-bmad.txt
+
 git checkout -q -b travail
 valide quatre
 verifie "branche de travail : aucun contrôle" 0 env PRE_PUSH_RUNNER="sh $tmp/rouge.sh" git push -q origin travail
@@ -68,17 +87,19 @@ if [ "$code" -eq 1 ]; then echo "ok : arbre introuvable : refusé"; ok=$((ok+1))
 case "$sortie" in *"main exige une exécution complète réussie de l'arbre poussé"*) echo "ok : arbre introuvable : message du refus"; ok=$((ok+1));; *) echo "ECHEC : arbre introuvable : message du refus"; ko=$((ko+1));; esac
 verifie "arbre introuvable : le lanceur n'a pas tourné" 1 test -e "$tmp/lance"
 
-# --- light-spec-finish (D5) : l'empreinte allégée pmzilla-light-ok n'est acceptée qu'après revérification : arbre poussé, chemins sous openspec/
-# seulement (premier parent), arbre du premier parent validé dans l'enregistrement pmzilla-main-validated (date, signature d'environnement de la question Q9 : tools/finish_env.sh --main-signature).
-# Le lanceur factice rouge sert de preuve : un push accepté avec lui n'a lancé aucun test ; un push refusé n'a pas été accepté sur l'empreinte allégée.
+# --- finish-single-b7-b9 (B9, D8, D10 ; décision de l'auteur R-20261105-32 Q1) : la voie allégée est retirée du hook. L'empreinte allégée pmzilla-light-ok n'est plus
+# lue : chaque scénario de l'ancienne acceptation (arbre, openspec/ seulement, premier parent validé dans pmzilla-main-validated avec la signature d'environnement
+# de tools/finish_env.sh --main-signature, date, signature) est RÉÉCRIT pour affirmer le refus avec la phrase existante, aucun n'est supprimé. Le lanceur factice
+# rouge sert de preuve : le hook retombe sur son propre lancement complet, qui échoue ; le lanceur vert est lancé par le hook puis accepté (voie du lancement
+# complet du hook, inchangée). Remplace : les tests d'acceptation de l'empreinte allégée ; retrait : permanent.
 rm -f "$(vert)" "$(cible)" "$tmp/lance"
 commun=$(git rev-parse --path-format=absolute --git-common-dir)
 registre="$commun/pmzilla-main-validated"
 leger() { git rev-parse --git-path pmzilla-light-ok; }
 distant_main() { git --git-dir="$tmp/distant.git" rev-parse main; }
-revient() { git checkout -q -B main "$(distant_main)"; rm -f "$registre" "$(leger)" "$(vert)" "$tmp/lance"; }
+revient() { git checkout -q -B main "$(distant_main)"; rm -f "$registre" "$(leger)" "$(vert)" "$(cible)" "$tmp/lance"; }
 compteur=0
-signature() { bash "$(dirname "$hook")/../finish_env.sh" --main-signature; }   # signature d'environnement que le hook recalcule
+signature() { bash "$(dirname "$hook")/../finish_env.sh" --main-signature; }   # signature d'environnement que l'ancien hook recalculait
 scenario() { # date-de-la-ligne chemin-modifie [signature ; défaut : celle de l'environnement] : premier parent validé à cette date, puis un commit qui change le chemin
   compteur=$((compteur+1))
   printf '%s\tcomplet\t%s\t%s\n' "$(git rev-parse 'HEAD^{tree}')" "$1" "${3:-$(signature)}" > "$registre"
@@ -88,10 +109,15 @@ scenario() { # date-de-la-ligne chemin-modifie [signature ; défaut : celle de l
 }
 inchanges() { [ "$(cat "$registre")" = "$avant_registre" ] && [ "$(cat "$(leger)")" = "$avant_leger" ]; }
 pousse() { env LIGHT_FINISH_TODAY=2026-01-15 PRE_PUSH_RUNNER="sh $1" git push -q origin main; }
+phrase_refus() { sortie_p=$(pousse "$1" 2>&1); case "$sortie_p" in *"pre-push : main exige une exécution complète réussie de l'arbre poussé"*) return 0;; *) return 1;; esac; }
+refuse_avec_phrase() { # description : refus (lanceur rouge) et phrase existante du refus
+  verifie "$1 : refusé (lanceur rouge)" 1 pousse "$tmp/rouge.sh"
+  verifie "$1 : la phrase existante du refus" 0 phrase_refus "$tmp/rouge.sh"
+}
 revient
 
 scenario 2026-01-15 openspec/specs/a/spec.md
-verifie "allégé : empreinte égale, openspec/ seulement, premier parent validé : accepté sans lancer de test" 0 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : empreinte égale, openspec/ seulement, premier parent validé (acceptée avant B9)"
 verifie "allégé : le hook n'a écrit aucun des deux enregistrements" 0 inchanges
 revient
 
@@ -105,41 +131,41 @@ revient
 
 scenario 2026-01-15 openspec/specs/c/spec.md
 rm -f "$registre"
-verifie "allégé : premier parent non validé (aucun enregistrement) : refusé" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : premier parent non validé (aucun enregistrement)"
 revient
 scenario 2026-01-15 openspec/specs/c2/spec.md
 printf '%s\tcomplet\t2026-01-15\t%s\n' 1111111111111111111111111111111111111111 "$(signature)" > "$registre"
-verifie "allégé : enregistrement sans l'arbre du premier parent : refusé" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : enregistrement sans l'arbre du premier parent"
 revient
 
 scenario 2026-01-15 tools/hors.sh
-verifie "allégé : le commit poussé change aussi un chemin hors de openspec/ : refusé" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : le commit poussé change aussi un chemin hors de openspec/"
 revient
 compteur=$((compteur+1)); echo "v$compteur" > racine.txt; git add racine.txt; git commit -q --no-verify -m "racine"   # le premier parent diffère alors par openspec/ et un fichier racine
 scenario 2026-01-15 openspec/specs/d/spec.md
-verifie "allégé : un fichier racine dans le premier parent n'empêche rien (seul le commit poussé compte)" 0 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : un fichier racine dans le premier parent (acceptée avant B9, seul le commit poussé comptait)"
 revient
 scenario 2026-01-15 openspec/specs/e/spec.md
 git rm -q --cached openspec/specs/e/spec.md; ln -sf ../x openspec/specs/e/spec.md; git add openspec/specs/e/spec.md; git commit -q --no-verify --amend -m "lien"
 git rev-parse 'HEAD^{tree}' > "$(leger)"; avant_leger=$(cat "$(leger)")
-verifie "allégé : lien symbolique sous openspec/ : refusé" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : lien symbolique sous openspec/"
 revient
 
 scenario 2026-01-09 openspec/specs/f/spec.md
-verifie "allégé : premier parent validé il y a 6 jours : accepté sans lancer de test" 0 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : premier parent validé il y a 6 jours (acceptée avant B9)"
 revient
 scenario 2026-01-08 openspec/specs/g/spec.md
-verifie "allégé : premier parent validé il y a 7 jours (limite) : accepté sans lancer de test" 0 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : premier parent validé il y a 7 jours, limite (acceptée avant B9)"
 revient
 scenario 2026-01-07 openspec/specs/h/spec.md
-verifie "allégé : premier parent validé il y a 8 jours : refusé (expiré)" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : premier parent validé il y a 8 jours (expiré)"
 verifie "allégé : premier parent expiré : le lanceur vert est lancé par le hook" 0 pousse "$tmp/vert.sh"
 verifie "allégé : premier parent expiré : le lanceur a tourné" 0 test -e "$tmp/lance"
 revient
-# passage allégé forcé (risque des faux runners) : un premier parent validé par une ligne « allégé-forcé » n'ouvre pas le chemin allégé
+# passage allégé forcé (risque des faux runners) : une ligne « allégé-forcé » n'ouvrait pas le chemin allégé ; il n'existe plus
 scenario 2026-01-15 openspec/specs/i/spec.md
 printf '%s\tallégé-forcé\t2026-01-15\t%s\n' "$(git rev-parse 'HEAD~1^{tree}')" "$(signature)" > "$registre"; avant_registre=$(cat "$registre")
-verifie "allégé : premier parent validé par un passage forcé : refusé (lanceur rouge)" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : premier parent validé par un passage forcé"
 verifie "allégé : premier parent validé par un passage forcé : le lanceur vert est lancé par le hook" 0 pousse "$tmp/vert.sh"
 verifie "allégé : premier parent validé par un passage forcé : le lanceur a tourné" 0 test -e "$tmp/lance"
 revient
@@ -154,9 +180,11 @@ for d in $(printf '%s' "$PATH" | tr ':' ' '); do
 done
 printf '#!/bin/sh\necho "uv 1.2.3"\n' > "$tmp/uv-a/uv"; printf '#!/bin/sh\necho "uv 1.2.4"\n' > "$tmp/uv-b/uv"; chmod +x "$tmp/uv-a/uv" "$tmp/uv-b/uv"
 pousse_path() { env PATH="$1" LIGHT_FINISH_TODAY=2026-01-15 PRE_PUSH_RUNNER="sh $2" git push -q origin main; }
+phrase_refus_path() { sortie_p=$(pousse_path "$1" "$2" 2>&1); case "$sortie_p" in *"pre-push : main exige une exécution complète réussie de l'arbre poussé"*) return 0;; *) return 1;; esac; }
 signature_uv() { PATH="$tmp/uv-a:$sans_uv" signature; }
 scenario 2026-01-15 openspec/specs/i/spec.md "$(signature_uv)"
-verifie "allégé : même signature (faux uv identique) : accepté sans lancer de test" 0 pousse_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
+verifie "allégé : même signature (faux uv identique) : refusé (acceptée avant B9)" 1 pousse_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
+verifie "allégé : même signature (faux uv identique) : la phrase existante du refus" 0 phrase_refus_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
 revient
 scenario 2026-01-15 openspec/specs/i2/spec.md "$(signature_uv)"
 verifie "allégé : premier parent enregistré avec une autre signature : refusé" 1 pousse_path "$tmp/uv-b:$sans_uv" "$tmp/rouge.sh"
@@ -169,10 +197,11 @@ verifie "allégé : uv absent du PATH du hook : le lanceur vert est lancé par l
 verifie "allégé : uv absent du PATH du hook : le lanceur a tourné" 0 test -e "$tmp/lance"
 revient
 scenario 2026-01-15 openspec/specs/i4/spec.md inconnue
-verifie "allégé : signature enregistrée « inconnue » : refusé" 1 pousse "$tmp/rouge.sh"
+refuse_avec_phrase "allégé : signature enregistrée « inconnue »"
 revient
 scenario 2026-01-09 openspec/specs/i5/spec.md "$(signature_uv)"
-verifie "allégé : même signature à 6 jours : accepté sans lancer de test" 0 pousse_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
+verifie "allégé : même signature à 6 jours : refusé (acceptée avant B9)" 1 pousse_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
+verifie "allégé : même signature à 6 jours : la phrase existante du refus" 0 phrase_refus_path "$tmp/uv-a:$sans_uv" "$tmp/rouge.sh"
 revient
 
 # l'empreinte complète garde son sens, l'empreinte ciblée ne suffit toujours pas
@@ -248,6 +277,46 @@ git checkout -q -b noms6
 echo q > q.md; git add q.md; git commit -q --no-verify -m "six cite $NOM"
 verifie "noms : deux références poussées ensemble, la seconde touchée : refusé" 1 git push -q origin noms5 noms6
 git checkout -q main
+
+# --- ci-local-runner (D8, Q217) : la preuve du conteneur. ci/preuves (dossier de données fictif, PMZILLA_LAB_DATA) avec les trois phases ET une ligne de
+# l'arbre dans pmzilla-run-mac-ok du dossier Git commun : accepté sans lancer de test. `ciblee` jamais ; deux phases ou pas de ligne Mac : refusé ;
+# fichier illisible (appel sans preuve) : refusé. Le lanceur factice rouge prouve qu'un push accepté n'a rien lancé. Jamais le vrai dossier de données.
+verifie "conteneur : le hook testé a tools/preuve_arbre.py à côté de lui (sinon la voie du conteneur ne peut pas réussir)" 0 test -f "$(dirname "$hook")/../preuve_arbre.py"
+donnees="$tmp/donnees"; mkdir -p "$donnees/ci"
+mac_ok="$commun/pmzilla-run-mac-ok"
+revient
+valide conteneur
+arbre_c=$(git rev-parse 'HEAD^{tree}')
+# lanceur rouge de ce bloc qui laisse un témoin quand il tourne : l'assertion finale « n'a pas tourné » porte alors (le rouge.sh commun n'écrit rien)
+echo "echo lance > $tmp/lance-c; echo rouge; exit 1" > "$tmp/rouge-c.sh"
+pousse_c() { env PMZILLA_LAB_DATA="$donnees" PRE_PUSH_RUNNER="sh $tmp/rouge-c.sh" git push -q origin main; }
+rm -f "$donnees/ci/preuves" "$mac_ok"
+printf '%s\tcle\tportable,base,e2e\n' "$arbre_c" > "$donnees/ci/preuves"
+verifie "conteneur : ci/preuves sans ligne Mac : refusé" 1 pousse_c
+printf '%s\n' "$arbre_c" > "$mac_ok"
+printf '%s\tcle\tportable,base\n' "$arbre_c" > "$donnees/ci/preuves"
+verifie "conteneur : deux phases sur trois : refusé" 1 pousse_c
+printf '%s\tcle\tportable,base,e2e\n' "$(git rev-parse 'HEAD~1^{tree}')" > "$donnees/ci/preuves"
+verifie "conteneur : ligne d'un autre arbre : refusé" 1 pousse_c
+printf '%s\tcle\tportable,base,e2e\n' "$arbre_c" > "$donnees/ci/preuves"; : > "$mac_ok"
+verifie "conteneur : fichier Mac sans l'arbre : refusé" 1 pousse_c
+printf '%s\n' "$arbre_c" > "$mac_ok"; rm -f "$donnees/ci/preuves"
+fichier_branche=$(git rev-parse --git-path pmzilla-run-branch-ok)
+printf '%s\talpha\n' "$arbre_c" > "$fichier_branche"
+verifie "conteneur : l'empreinte de branche (ciblee) seule ne passe jamais : refusé" 1 pousse_c
+rm -f "$fichier_branche"
+printf '%s\tcle\tportable,base,e2e\n' "$arbre_c" > "$donnees/ci/preuves"
+if [ "$(id -u)" -eq 0 ]; then   # en root, chmod 000 n'empêche pas la lecture : le cas ne prouverait rien (revue Opus point 10)
+  echo "saute : conteneur : ci/preuves illisible (appel sans preuve) : refusé (le test tourne en root, chmod 000 est sans effet)"
+else
+  chmod 000 "$donnees/ci/preuves"
+  verifie "conteneur : ci/preuves illisible (appel sans preuve) : refusé" 1 pousse_c
+  chmod 600 "$donnees/ci/preuves"
+fi
+rm -f "$tmp/lance-c"   # les refus précédents ont fait tourner le lanceur rouge (repli du hook) : le témoin est remis à zéro avant le cas accepté
+verifie "conteneur : trois phases et ligne Mac : accepté sans lancer de test" 0 pousse_c
+verifie "conteneur : le lanceur n'a pas tourné" 1 test -e "$tmp/lance-c"
+rm -f "$mac_ok"
 
 echo "$ok réussis, $ko échec(s)"
 [ "$ko" -eq 0 ]

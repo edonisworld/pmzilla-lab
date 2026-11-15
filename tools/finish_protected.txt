@@ -1,0 +1,273 @@
+# Outillage de fin et de test protégé (change finish-train-foundations, design D16 ; classes : change finish-single-b3-b6, B4, design D9 et D10). Un motif par ligne ; « # » commence un commentaire.
+# Un motif qui finit par « / » est un préfixe de chemin ; sinon, un joker de type Git (« * » traverse les dossiers). Lue par tools/finish_checks.py dans origin/main, main local ET dans le sommet : l'union s'applique.
+# Chaque ligne de motif finit par une étiquette de classe dans son commentaire, `#[juge]` ou `#[sensible]`, suivie d'un texte libre. L'étiquette est après « # » : le lecteur d'avant les classes lit les mêmes motifs. Sans étiquette (ou avec deux classes selon la révision), un motif compte `juge`.
+# `juge` : l'outillage de fin lui-même (ce dont un changement peut changer le verdict d'une fin ou d'une garde sur le contenu d'une autre branche, ou le code qui tourne pendant une fin ou un commit). Une branche qui en touche un se termine par une fin unitaire (par un train d'une seule branche après B6).
+# `sensible` : masquage, Jira, base et vues, qualité des histoires, données synthétiques, bibliothèque, veille et les outils que la fermeture y atteint : aucun verdict de fin ne les lit, leur risque est la confidentialité ou les données réelles. Une branche qui ne touche que des fichiers `sensible` peut entrer dans un train quand une revue Opus est enregistrée pour son sommet.
+# Le test tests/finish_checks/test_closure.py garde la liste complète : il échoue en nommant tout fichier de la fermeture non couvert, et toute ligne sans exactement une étiquette connue. La fermeture de la liste est couverte par TestArbreReel (juge ou sensible) ; aucune règle de fermeture propre aux juges (R-20261030-34).
+
+# Racines de la fermeture : les scripts de fin, le lanceur de tests, les crochets Git, le garde-fou du matin, l'installeur des crochets.
+tests/run_all.sh  #[juge]
+tools/hooks/  #[juge]
+tools/morning_state.sh  #[juge]
+tools/install_hooks.sh  #[juge]
+
+# Racine de la fermeture ajoutée par le change finish-train-v1 (design D20) : la fin en train de l'auteur, qui déplace main et pousse.
+tools/finish_train.sh  #[juge]
+
+# Graines déclarées : fichiers que la règle de fermeture ne voit pas. Les règles de session, les consignes (chaque CLAUDE.md, celui de Mothra
+# compris) et la CI locale.
+.claude/  #[juge]
+CLAUDE.md  #[juge]
+*/CLAUDE.md  #[juge]
+.gitattributes  #[juge]
+ci/  #[juge]
+
+# Graines déclarées : outils de fin, de test et de garde que les racines n'appellent pas par un chemin lisible.
+tools/dbtest.sh  #[juge]
+tools/ci_local.sh  #[juge]
+# Étapes de la passe de bout en bout (change ci-local-runner, tranche 2) : fichier de fonctions sourcé par tools/ci_local.sh et tools/dbtest.sh, même classe que dbtest.sh.
+tools/e2e_steps.sh  #[juge]
+tools/run_worktree.sh  #[juge]
+tools/worktree.sh  #[juge]
+tools/gh_issue.py  #[juge]
+# Registre des composants, lancé par la CI locale (graine déclarée) : décision validée de D10 (S7, outil lancé par l'auteur, jamais pendant une fin) .
+tools/composants.py  #[sensible]
+tools/settings_assemble.py  #[juge]
+tools/pipe_guard.py  #[juge]
+tools/npm_guard.py  #[juge]
+# Conditions de npm ci pour une session (npm-ci-session D13, R-20261031-53) : importé par la garde npm pour cette seule commande, même classe qu'elle. Tombe avec elle à la condition de retrait de D11.
+tools/npm_ci_conditions.py  #[juge]
+# Garde de session, niveau 1 de la correction de l'audit #629 (session-guard-n1) : troisième garde PreToolUse des appels Bash, même classe que la garde npm et la garde des tubes. Retrait : permanent.
+tools/garde_session.py  #[juge]
+# Outils figés du bac à sable de Bash (niveau 2, design D4, D5, tâches 7.3 et 7.4) : les enveloppes tournent hors du bac à sable, et le script de copie est lancé par la fin d'un train (frozen_prepare et frozen_swap de tools/finish_train.sh), donc dans la fermeture. Remplace : rien. Retrait : avec le bac à sable.
+tools/outils_figes/  #[juge]
+# Tests des outils figés (même change) : ils jugent les enveloppes et le script de copie ci-dessus. Remplace : rien. Retrait : avec le bac à sable.
+tests/outils_figes/  #[juge]
+tools/db_backup.sh  #[juge]
+tools/offsite_backup.sh  #[juge]
+
+# Graines déclarées : les modules de contrôle de contenu et de chemins que les crochets chargent.
+tools/lab_paths.*  #[juge]
+tools/secret_scan*  #[juge]
+tools/sensitive_names.py  #[juge]
+tools/commit_names_scan.py  #[juge]
+tools/identifiants_personnels.py  #[juge]
+tools/posture_eval_fingerprint.py  #[juge]
+tools/select_suites.py  #[juge]
+
+# Graines déclarées : les outils de cette change et leur liste.
+tools/range_scan.py  #[juge]
+tools/finish_checks.py  #[juge]
+tools/finish_protected.txt  #[juge]
+# Liste unique des chemins d'interface (finish-e2e-proof-shared D1, décision R-20261029-29) : une entrée retirée desserre la preuve de bout en bout de
+# toute fin ; toute branche qui la modifie reçoit une revue complète Opus qui vérifie qu'aucune entrée n'est retirée sans décision de l'auteur.
+# Tombe avec B5 (une seule implémentation des contrôles, la liste lue en union par toutes les fins).
+tools/finish_e2e_paths.txt  #[juge]
+# Liste unique des chemins du code de la base (finish-single-b3-b6 D15, tâche 4.4 ; remplace le tableau CHEMINS_BASE de tools/finish_branch.sh) : une entrée
+# retirée desserre le contrôle 14 (passage dbtest) de toute fin ; classe juge (elle juge une branche), comme la liste des chemins d'interface.
+# Permanent tant qu'une fin exige le passage dbtest quand le code de la base a changé.
+tools/finish_db_paths.txt  #[juge]
+# Liste unique des chemins du runner et de la preuve (autonomous-trains-merge D3, tâche 3.3) : une entrée retirée dessert la règle « une branche qui change le runner
+# ou la preuve reste seule » ; classe juge (elle juge une branche), comme les deux listes ci-dessus. Permanent tant que le train juge son arbre avec le runner et la preuve de ses branches.
+tools/finish_runner_paths.txt  #[juge]
+tools/finish_codes.yaml  #[juge]
+
+# Graines déclarées : les suites de test des gardes.
+tests/hooks/  #[juge]
+tests/settings_deny/  #[juge]
+tests/run_all/  #[juge]
+tests/finish_*  #[juge]
+tests/db/test_couverture_base.py  #[juge]
+tests/range_scan/  #[juge]
+tests/finish_checks/  #[juge]
+
+# Fermeture calculée sur l'arbre réel (règle de D16 : lue sur le texte, commentaires ignorés ; racines et graines .py et .sh de tools/ comme
+# points de départ ; le bloc CHEMINS_BASE n'est pas une référence). Un fichier ne sort de cette liste que par une exemption de référence
+# « source -> cible » du test (tests/finish_checks/test_closure.py) avec sa raison, validée par l'auteur.
+
+# Fermeture : modules que les scripts de fin et les crochets sourcent, lancent ou importent.
+tools/finish_env.sh  #[juge]
+tools/finish_lock.sh  #[juge]
+tools/finish_lock.py  #[juge]
+tools/finish_merge.sh  #[juge]
+# Sourcé par la fin unitaire et par le train (change finish-single-b3-b6, B3, D4) : la règle de stabilité du worktree après le runner et le listage des
+# processus qui y ont leur dossier courant ; un changement de sa règle change ce que les deux fins jugent « modifié ».
+tools/finish_stability.sh  #[juge]
+# Sourcé par la fin unitaire et par le train (change finish-single-b3-b6, B4, D8) : la propreté du worktree, la règle des fichiers ignorés qui seraient perdus et
+# la lecture de la trace de revue qui admet une branche `sensible` au train ; un changement de sa règle change ce que les deux fins admettent.
+tools/finish_admission.sh  #[juge]
+# Lancé par le lanceur de tests pendant la fin : il décide si la suite npm de Mothra tourne (node_modules contre le verrou) et, avec le Node
+# fixé, arrête tout de suite le lanceur complet (mothra-slices, groupe 3) ; un changement de sa règle change ce que la fin vérifie.
+tools/npm_lock_check.py  #[juge]
+# Lancé par le lanceur de tests pendant la fin (run-all-faster-and-guarded) : l'ordre de départ des suites selon les durées mesurées (D1). Sa suite est
+# tests/suite_order/ ; un changement de l'un change ce que la fin lance et dans quel ordre. (La garde des lancements non complets est retirée avec
+# le verrou de session : tooling-proof-in-container, T2.)
+tools/suite_order.py  #[juge]
+tests/suite_order/  #[juge]
+# Lancé pendant une fin de branche par la passe de bout en bout (tools/dbtest.sh --e2e, lancée par le train (autrefois par tools/finish_worktree.sh) quand le refus 16
+# l'exige), avec sa spec et sa configuration ; le jeu synthétique que cette passe charge est lu par le chargeur de tests/mothra_donnees/
+# (mothra-slices, groupe 8).
+tests/run_e2e.sh  #[juge]
+tests/e2e/  #[juge]
+tests/mothra_donnees/jeu_synthetique.py  #[sensible] données synthétiques que la passe de bout en bout charge, pas la règle qui la juge (D10, S5)
+# Importé par jeu_synthetique.py par sys.path et exécuté avec lui pendant une fin (la garde qui refuse toute base autre que la jetable) : un
+# changement de cette garde change ce que la passe de bout en bout accepte de charger.
+tests/db/garde_base_jetable.py  #[juge]
+# Les deux listes de noms factices (noms inventés) que tools/dbtest.sh --e2e donne au serveur de la passe de bout en bout par
+# MOTHRA_SENSITIVE_NAMES_FILE et MOTHRA_TEAM_NAMES_FILE (mothra-slices, tâche 18.3) : elles entrent dans la fermeture de ce script protégé.
+mothra/server/test/listes/  #[sensible] listes de noms inventés, données des preuves (D10, S5)
+
+# Fermeture : listes de données que le lanceur de tests, le sélecteur et les contrôles de fin lisent, et deux tests nommés dans un message.
+tests/postures/fichiers-evalues.txt  #[juge]
+tests/suites_shell.txt  #[juge]
+tests/suites_mac.txt  #[juge]
+tests/openspec_readers.txt  #[juge]
+tests/select_suites/test_openspec_readers.py  #[juge]
+tests/posture_evals/test_entrees_juge.py  #[juge]
+
+# Fermeture : outils que les crochets, le lanceur, les graines ou le jeu d'essai des postures nomment, lancent ou importent.
+tools/evals_auto.sh  #[juge]
+tools/posture_evals.py  #[juge]
+tools/install_links.sh  #[sensible]
+tools/messages.py  #[sensible] † catalogues de messages partagés
+tools/roadmap_model.py  #[sensible]
+tools/roadmap_settings.yaml  #[sensible] † dépendance figée du bac à sable (R-20261110-03). Remplace : rien. Retrait : avec le bac à sable.
+tools/context_lab.py  #[sensible]
+tools/private_collections.py  #[sensible] † collections privées
+
+# Fermeture : données lues par ces outils (jeu d'essai des postures, installation, composants, veille, grille de qualité).
+tests/postures/cas-commandes.yaml  #[juge]
+tests/postures/cas.yaml  #[juge]
+tests/postures/contexte-neutre.en.md  #[juge]
+tests/postures/contexte-neutre.md  #[juge]
+tests/postures/vocabulaire.yaml  #[juge]
+tests/fixtures_library/demo_expected.py  #[sensible] données de la démonstration de la bibliothèque (D10, S5)
+openspec/config.yaml  #[juge]
+_bmad/_config/manifest.yaml  #[sensible]
+mothra/.node-version  #[juge]
+mothra/package.json  #[juge]
+docs/pmzilla/watch-prompts-en-correspondance.md  #[sensible]
+docker-compose.yml  #[sensible] † base locale
+tools/book_catalog.yaml  #[sensible]
+tools/mutation_masking_seuil.txt  #[sensible] † seuil du masquage des petites cellules
+tools/story_quality_grid.json  #[sensible]
+tools/story_quality_overlay.schema.json  #[sensible]
+watch/sources.yaml  #[sensible]
+watch/tri.yaml  #[sensible]
+
+# Fermeture : outils et modules de la base, de l'export Jira, du flux et de la bibliothèque, importés ou lancés par les graines (npm_guard,
+# composants, gh_issue, db_backup, offsite_backup) et par les outils de la fermeture.
+tools/cases_store.py  #[sensible]
+tools/db.py  #[sensible]
+tools/db_container_common.sh  #[sensible] †
+tools/db_rehearsal.sh  #[sensible]
+tools/db_restore_test.sh  #[sensible]
+tools/db_up.sh  #[sensible] †
+tools/dependencies_jira.py  #[sensible]
+tools/dependencies_jira_messages.py  #[sensible]
+tools/epic_statuses.py  #[sensible]
+tools/epic_statuses_messages.py  #[sensible]
+tools/export_jira_api.py  #[sensible]
+tools/export_jira_api_equipes.py  #[sensible]
+tools/export_jira_api_equipes_messages.py  #[sensible]
+tools/export_jira_api_messages.py  #[sensible]
+tools/flow_delivery.py  #[sensible]
+tools/flow_glossary.py  #[sensible]
+tools/flow_organisation.py  #[sensible]
+tools/flow_raw.py  #[sensible]
+tools/flow_store.py  #[sensible]
+tools/flow_views.py  #[sensible]
+tools/flow_views_messages.py  #[sensible]
+tools/flux_config.py  #[sensible]
+tools/flux_jira.py  #[sensible]
+tools/flux_jira_messages.py  #[sensible]
+tools/history_common.py  #[sensible]
+tools/history_jira.py  #[sensible]
+tools/history_jira_messages.py  #[sensible]
+tools/history_store.py  #[sensible]
+tools/hybrid_search.py  #[sensible]
+tools/journal_lab.py  #[sensible]
+tools/journal_lab_messages.py  #[sensible]
+tools/knowledge_library.py  #[sensible]
+tools/mapping_lab.py  #[sensible]
+tools/morning_summary.py  #[sensible] †
+tools/morning_summary_messages.py  #[sensible]
+tools/mutation_masking.py  #[sensible]
+tools/pmzilla_lab_library.py  #[sensible]
+tools/yaml_strict.py  #[sensible] †
+
+# Fermeture : tableau de bord, miroir de Critic, doctor et leurs messages, importés ou lancés par les outils de la fermeture.
+tools/critic_mirror.py  #[sensible]
+tools/critic_mirror_messages.py  #[sensible]
+tools/dashboard.py  #[sensible]
+tools/dashboard_messages.py  #[sensible]
+tools/doctor.py  #[sensible] †
+tools/doctor.sh  #[sensible] †
+tools/doctor_messages.py  #[sensible]
+# Contrôle `sandbox` du doctor (change bash-sandbox-n2, D8) : lecteur partagé de la source du fichier géré, même classe que le doctor. Tombe avec le fichier géré.
+tools/sandbox_config.py  #[sensible]
+# Source du fichier géré du bac à sable : elle trace la frontière de sécurité, donc préfixe `juge` comme .claude/ et ci/ (R-20261108-01, question 18). Remplace : rien. Tombe avec le fichier géré.
+config/gere/  #[juge]
+tools/essai_crochet_pretooluse.sh  #[juge]
+
+# Fermeture : installation du lab et ses modules, importés ou lancés par les outils de la fermeture.
+tools/install_lab.py  #[sensible]
+tools/install_lab.sh  #[sensible]
+tools/install_lab_check.py  #[sensible]
+tools/install_lab_context.py  #[sensible]
+tools/install_lab_database.py  #[sensible]
+tools/install_lab_launchd.py  #[sensible]
+tools/install_lab_mcp.py  #[sensible]
+tools/install_lab_prereqs.py  #[sensible]
+tools/install_lab_repo.py  #[sensible]
+
+# Fermeture : qualité des histoires (sources, magasins, grille, nettoyage), importés ou lancés par les outils de la fermeture.
+tools/patient_data.py  #[sensible]
+tools/story_quality.py  #[sensible]
+tools/story_quality_analyse.py  #[sensible]
+tools/story_quality_audit_store.py  #[sensible]
+tools/story_quality_coach.py  #[sensible]
+tools/story_quality_collect.py  #[sensible]
+tools/story_quality_data.py  #[sensible]
+tools/story_quality_engine.py  #[sensible]
+tools/story_quality_messages.py  #[sensible]
+tools/story_quality_overlay.py  #[sensible]
+tools/story_quality_patient.py  #[sensible]
+tools/story_quality_report.py  #[sensible]
+tools/story_quality_review.py  #[sensible]
+tools/story_quality_scrub.py  #[sensible]
+tools/story_quality_store.py  #[sensible]
+
+# Fermeture : veille (script, configuration, magasin, tri, invites anglaises), importés ou lancés par les outils de la fermeture.
+tools/watch.sh  #[sensible] †
+tools/watch_config.py  #[sensible]
+tools/watch_lab.py  #[sensible] †
+tools/watch_paths.py  #[sensible]
+tools/watch_prompts_en.py  #[sensible]
+tools/watch_store.py  #[sensible]
+tools/watch_triage.py  #[sensible]
+
+# Train automatique, observation (change autonomous-trains-observe, design D13) : le passage et la liste prête décident quelles branches entrent
+# dans l'essai du train ; ce sont des juges de la fin. Une branche qui les change ne passe donc jamais par le passage : fin unitaire de l'auteur.
+# Permanent tant que les trains peuvent être lancés par la tâche de l'auteur ; à la décision B4 de R-20261028-81, leur classe est « juge de la fin ».
+tools/train_auto.py  #[juge]
+tools/train_auto_messages.py  #[juge]
+tools/train_ready.py  #[juge]
+tools/train_ready_messages.py  #[juge]
+# Atteints depuis B4 (change finish-single-b3-b6, D12) : tools/finish_admission.sh nomme tools/train_ready.py (fa_review_done), qui importe tools/train_auto.py
+# (check_line, exclusions), qui importe tools/pilot.py (état du gel, carte des processus) et son catalogue ; un outil nommé par un outil de la liste entre dans
+# la liste (précédent R-20261028-106), même classe que train_auto et train_ready.
+tools/pilot.py  #[juge]
+tools/pilot_messages.py  #[juge]
+tests/train_auto/  #[juge]
+tests/train_ready/  #[juge]
+# Preuve d'un arbre (change ci-local-runner, D8) : tools/preuve_arbre.py est appelé par le crochet pre-push (tools/hooks/, juge) et par tools/train_ready.py ; il décide
+# de ce qui part dans main. Remplace : rien. Retrait : tombe avec la preuve `conteneur` (D8).
+tools/preuve_arbre.py  #[juge]
+tests/preuve_arbre/  #[juge]
+# Journal des trains (change autonomous-trains-merge, design D4 et D21, tâche 3.7) : tools/train_record.py est écrit par le piège de sortie de tools/finish_train.sh
+# et lu par les contrôles de fin et par l'activation de la fusion automatique ; ce sont des juges de la fin (une branche qui les change est un train de l'auteur,
+# D2). Remplace : rien (nouvelle preuve). Retrait : permanent tant que l'activation lit le journal.
+tools/train_record.py  #[juge]
+tools/train_record_messages.py  #[juge]
+tests/train_record/  #[juge]

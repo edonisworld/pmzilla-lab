@@ -16,7 +16,8 @@ nomme des outils sans les tester, et cette suite-ci nomme les outils dans ses li
 Les sous-dossiers de tools/ (hooks/, vendor/) sont hors champ : seuls tools/*.py et tools/*.sh sont contrôlés.
 Édition anglaise : une seule source, edition/manifest.yaml. Dans le dépôt de développement (manifeste présent), toute déclaration est
 vérifiée normalement, et un test simule l'arbre de l'édition (fichiers suivis moins ceux que le manifeste exclut) : une déclaration
-(suite transversale ou exception d'outil) dont tous les fichiers sont exclus par le manifeste n'y est pas signalée comme périmée.
+(suite transversale, exception d'outil ou dossier de données) dont tous les fichiers sont exclus par le manifeste n'y est pas
+signalée comme périmée (extension aux dossiers de données : R-20261109-18. Remplace : rien. Retrait : avec le manifeste de l'édition).
 Dans l'arbre généré (manifeste absent, exclu par lui-même), une déclaration absente de l'arbre n'est donc pas signalée : la
 simulation du dépôt de développement garantit que seules les déclarations exclues par le manifeste y manquent.
 """
@@ -36,17 +37,29 @@ CETTE_SUITE = "correspondance_suites"
 DOSSIERS_DE_DONNEES = {
     "fixtures_library": "bibliothèque inventée importée par les suites du lot 4 (hybrid_search, library_backend, parity)",
     "fixtures_watch": "faux magasin en mémoire de la veille et du pré-tri (fake_store.py), importé par les suites watch_store, watch_lab, watch_triage, watch_sh et dashboard",
+    "e2e": "spec Playwright du passage de bout en bout de Mothra, lancée par tests/run_e2e.sh sous dbtest --e2e, pas une suite du runner",
     "postures": "jeu d'essai des postures (cas, contextes neutres, vocabulaire), lu par posture_evals",
+    "sandbox_sonde": "table des cas et verdict de la sonde du bac à sable, lus par la suite sandbox_config et par sonde.sh (K4), pas une suite du runner",   # R-20261109-16 (1)
 }
 
 SUITES_TRANSVERSALES = {
     CETTE_SUITE: "contrôle la correspondance entre tools/ et tests/ (R-42)",
     "db_backup_plist": "modèle launchd tools/com.pmzilla.db-backup.plist, pas un script",
     "db_scripts": "scripts shell de la base (db_up.sh, db_backup.sh, db_restore_test.sh, dbtest.sh)",
+    "fin_piege": "gabarit du piège de sortie des fichiers de fin tools/etapes/modele-piege-fin.sh, pas un outil (R-148/u14)",
+    "finish_codes": "registre des codes de sortie des scripts de fin, tools/finish_codes.yaml (R-148/u17), pas un outil",
     "hooks": "hooks Git de tools/hooks/ (pre-commit, post-commit, commit-msg, pre-push)",
     "installation": "liens et hooks de l'installation (install_links.sh, install_hooks.sh)",
-    "library_backend": "choix de la voie de la bibliothèque et tools/knowledge_library.py",
-    "mothra_consignes": "consignes de session mothra/CLAUDE.md écrites par l'auteur, pas un outil (mothra-session-guards, D7)",
+    "forme_p_mac": "mode privilégié -p du vrai /bin/bash 3.2 du Mac sur la forme des enveloppes figées (bash-sandbox-n2, D13, tâche 19.1), pas un tools/<nom>.py ni .sh",
+    "finish_train_fin": "tests des codes, des messages et de la question d'arrivée de tools/finish_train.sh, séparés de finish_train pour la durée (R-20261029-38)",
+    "finish_train_reprise": "tests de la reprise et du nettoyage de tools/finish_train.sh, séparés de finish_train pour la durée (R-20261029-38)",
+    "finish_train_npm": "tests npm de Mothra et du verrou du matin de tools/finish_train.sh, séparés de finish_train pour la durée (R-20261029-38)",
+    "finish_train_base": "tests de la base, de la construction, du contenu, du lanceur dbtest et de ls_norm de tools/finish_train.sh, séparés de finish_train pour la durée (R-20261029-38)",
+    "library_backend":"choix de la voie de la bibliothèque et tools/knowledge_library.py",
+    "mothra_donnees": "jeu synthétique du schéma flow et son chargeur (tests/mothra_donnees/jeu_synthetique.py), pas un outil de tools/ (#240)",
+    "mothra_consignes":"consignes de session mothra/CLAUDE.md écrites par l'auteur, pas un outil (mothra-session-guards, D7)",
+    "oracle_masquage": "oracle de masquage sans base (tests/oracle_masquage/oracle_masquage.py) contre tools/flow_views.py, pas un outil de tools/ (R-20261104-20)",
+    "outils_figes": "enveloppes figées du dossier tools/outils_figes/ (bac à sable N2, K3), pas un tools/<nom>.py ni .sh",
     "parity": "tools/library_parity.py (nom court) et le jeu figé de requêtes",
     "postures_skills": "skills de posture traduits en anglais, pas un outil",
     "private_guards": "réglages réels de la veille suivis (watch/sources.yaml, watch/tri.yaml)",
@@ -55,6 +68,7 @@ SUITES_TRANSVERSALES = {
     "run_all": "lanceur tests/run_all.sh",
     "script_dependencies": "en-têtes PEP 723 de tous les scripts lancés par uv run",
     "settings_deny": "règles de .claude/settings.json",
+    "spec_sources": "lignes « Source: » des specs principales openspec/specs/, pas un outil (R-136)",
     "wake_postures": "scripts/wake.py des quatre postures, hors tools/",
     "watch_sh": "enchaînement de tools/watch.sh (nom court)",
     "workflow_commands": "commandes de travail de .claude/commands/",
@@ -95,11 +109,14 @@ def arbre_de_l_edition(suivis: list[str], regles: list) -> list[str]:
     return [p for p in suivis if not exclu_de_l_edition(p, regles)]
 
 
-def declarations_hors_edition(suivis: list[str], regles: list, transversales: dict, exceptions: dict) -> set[str]:
-    """Déclarations dont tous les fichiers suivis (tests/<suite>/, tools/<nom>.py ou .sh) sont exclus par le manifeste."""
+def declarations_hors_edition(suivis: list[str], regles: list, transversales: dict, exceptions: dict,
+                              donnees: dict | None = None) -> set[str]:
+    """Déclarations dont tous les fichiers suivis (tests/<suite>/, tools/<nom>.py ou .sh, tests/<dossier>/ pour un dossier de
+    données) sont exclus par le manifeste. `donnees` (R-20261109-18) : DOSSIERS_DE_DONNEES, facultatif."""
     def exclue(fichiers):
         return bool(fichiers) and all(exclu_de_l_edition(p, regles) for p in fichiers)
     noms = {s for s in transversales if exclue([p for p in suivis if p.startswith(f"tests/{s}/")])}
+    noms |= {d for d in (donnees or {}) if exclue([p for p in suivis if p.startswith(f"tests/{d}/")])}   # R-20261109-18
     return noms | {n for n in exceptions if exclue([p for p in suivis if p in (f"tools/{n}.py", f"tools/{n}.sh")])}
 
 
@@ -114,7 +131,7 @@ def ecarts(racine: Path, suivis: list[str], donnees: dict, transversales: dict, 
     for dossier in sorted(dossiers - suites - set(donnees)):
         messages.append(f"tests/{dossier}/ suivi sans fichier de test suivi : ajouter un test_*.py ou test_*.sh, "
                         f"retirer le dossier, ou le déclarer dans DOSSIERS_DE_DONNEES avec sa raison")
-    for dossier in sorted(set(donnees) - (dossiers - suites)):
+    for dossier in sorted(set(donnees) - (dossiers - suites) - set(hors_edition)):   # R-20261109-18
         messages.append(f"DOSSIERS_DE_DONNEES déclare {dossier} : dossier absent ou devenu suite, retirer la déclaration")
     for suite in sorted(suites):
         if suite in outils and suite in transversales:
@@ -283,6 +300,29 @@ class FauxDepot(unittest.TestCase):
         regles = regles_du_manifeste(self.racine)
         self.assertEqual(declarations_hors_edition(self.suivis, regles, {"privee": "x"}, {}), set())
 
+    @unittest.skipUnless(OUTIL_DE_DEVELOPPEMENT, "outil de développement absent : arbre de l'édition")
+    def test_dossier_de_donnees_exclu_non_signale_dans_l_edition(self):   # R-20261109-18
+        self.ecrire("tests/privee/cas.yaml")
+        donnees = {"privee": "table des cas privée"}
+        regles = self.manifeste()
+        # Dépôt de développement : le dossier de données est vérifié normalement, rien à signaler.
+        self.assertEqual(self.ecarts(donnees=donnees), [])
+        edition = arbre_de_l_edition(self.suivis, regles)
+        self.assertNotIn("tests/privee/cas.yaml", edition)
+        hors = declarations_hors_edition(self.suivis, regles, {}, {}, donnees)
+        self.assertEqual(hors, {"privee"})
+        # Arbre de l'édition : le dossier a disparu, la déclaration exclue par le manifeste n'est pas signalée.
+        self.assertEqual(self.ecarts(donnees=donnees, hors_edition=hors, suivis=edition), [])
+        self.assertEqual(len(self.ecarts(donnees=donnees, suivis=edition)), 1)
+
+    @unittest.skipUnless(OUTIL_DE_DEVELOPPEMENT, "outil de développement absent : arbre de l'édition")
+    def test_dossier_de_donnees_absent_non_exclu_reste_signale(self):   # R-20261109-18
+        regles = self.manifeste()
+        donnees = {"fantome": "dossier absent du dépôt"}
+        self.assertEqual(declarations_hors_edition(self.suivis, regles, {}, {}, donnees), set())
+        [message] = self.ecarts(donnees=donnees)
+        self.assertIn("DOSSIERS_DE_DONNEES déclare fantome", message)
+
     def test_sans_manifeste(self):
         self.assertIsNone(regles_du_manifeste(self.racine))
 
@@ -298,7 +338,7 @@ class DepotReel(unittest.TestCase):
         suivis = self.suivis()
         regles = regles_du_manifeste(RACINE) if OUTIL_DE_DEVELOPPEMENT else None
         # Manifeste présent (dépôt de développement) : tout est vérifié. Absent (arbre de l'édition) : voir l'en-tête.
-        hors = set() if regles is not None else set(SUITES_TRANSVERSALES) | set(EXCEPTIONS_OUTILS)
+        hors = set() if regles is not None else set(SUITES_TRANSVERSALES) | set(EXCEPTIONS_OUTILS) | set(DOSSIERS_DE_DONNEES)   # R-20261109-18
         messages = ecarts(RACINE, suivis, DOSSIERS_DE_DONNEES, SUITES_TRANSVERSALES, EXCEPTIONS_OUTILS, hors)
         self.assertEqual(messages, [], "\n" + "\n".join(messages))
 
@@ -308,7 +348,8 @@ class DepotReel(unittest.TestCase):
         if regles is None:
             self.skipTest("arbre de l'édition : pas de manifeste à simuler")
         suivis = self.suivis()
-        hors = declarations_hors_edition(suivis, regles, SUITES_TRANSVERSALES, EXCEPTIONS_OUTILS)
+        hors = declarations_hors_edition(suivis, regles, SUITES_TRANSVERSALES, EXCEPTIONS_OUTILS,
+                                         DOSSIERS_DE_DONNEES)   # R-20261109-18
         messages = ecarts(RACINE, arbre_de_l_edition(suivis, regles), DOSSIERS_DE_DONNEES, SUITES_TRANSVERSALES,
                           EXCEPTIONS_OUTILS, hors)
         self.assertEqual(messages, [], "\n" + "\n".join(messages))

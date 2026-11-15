@@ -79,6 +79,9 @@ def build_patterns(vocabulary: dict[str, dict]) -> tuple[re.Pattern, re.Pattern,
 
 # début d'une section écrite en ligne simple, fin d'une telle section (pas de titre Markdown), balise de posture
 START_PLAIN, PLAIN_END, POSTURE = build_patterns(load_vocabulary())
+# titre Markdown réduit à la balise de posture de Critic (« ## [Posture : Critic] ») : CLAUDE.md demande la section
+# Critic du message final introduite par cette balise, elle ouvre donc une section
+TAG_HEADING = re.compile(r"^#{1,6}\s+" + POSTURE.pattern + r"\s*\]\s*$", re.IGNORECASE)
 ITEM = re.compile(r"^(\d+[.)]|[-*])\s+")
 # posture écrite en métadonnée, en tête de livrable : « - **Posture :** Scaling » (typographie française, espace
 # avant les deux-points) ou « - **Posture:** Scaling » (anglaise) ; puces, gras, italique et deux-points dans ou
@@ -101,7 +104,9 @@ def critic_sections(lines: list[str]) -> list[list[str]]:
     sections, i = [], 0
     while i < len(lines):
         line = lines[i].strip()
-        if (START_HEADING.match(line) or START_PLAIN.match(line)) and not POSTURE.search(line):
+        tag = TAG_HEADING.match(line)
+        if (tag and tag.group(1).lower() == "critic") or \
+                ((START_HEADING.match(line) or START_PLAIN.match(line)) and not POSTURE.search(line)):
             level = heading_level(line)
             body, i = [], i + 1
             while i < len(lines):

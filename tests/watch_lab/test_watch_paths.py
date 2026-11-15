@@ -45,7 +45,7 @@ class Dossiers(Base):
             message = str(refus.exception)
             self.assertIn(f"{ancien}/", message)
             self.assertIn(f"{nouveau}/", message)
-            self.assertIn("tools/migrate_watch.py", message)
+            self.assertIn("renommer à la main", message)
 
     def test_le_nouveau_a_priorite_quand_les_deux_existent(self):
         for nom in ("veille", "watch"):
@@ -67,7 +67,7 @@ class Collection(Base):
         with self.assertRaises(SystemExit) as refus:
             watch_paths.collection_name(lab)
         self.assertIn("Watch-Lab/watch/", str(refus.exception))
-        self.assertIn("tools/migrate_watch.py", str(refus.exception))
+        self.assertIn("renommer à la main", str(refus.exception))
         (lab / "watch").mkdir()
         self.assertEqual(self.appeler(watch_paths.collection_name, lab)[0], "watch")
 
@@ -94,7 +94,7 @@ class LigneDeCommande(Base):
         self.assertNotEqual(resultat.returncode, 0)
         self.assertEqual(resultat.stdout, "")
         self.assertIn("Watch-Lab/", resultat.stderr)
-        self.assertIn("tools/migrate_watch.py", resultat.stderr)
+        self.assertIn("renommer à la main", resultat.stderr)
 
     def test_usage(self):
         self.assertEqual(self.lancer("inconnu", str(self.ws)).returncode, 2)

@@ -9,7 +9,7 @@ Source of truth: `tests/hybrid_search/test_hybrid_search.py`, `tests/pmzilla_lab
 ## Requirements
 
 ### Requirement: Fuse a semantic ranking and a keyword ranking by reciprocal rank
-The system SHALL rank passages by building a semantic list (vector similarity, dot product without renormalisation) and a keyword list, and SHALL score each passage by the sum of a reciprocal-rank contribution over the lists in which it appears, plus a freshness bonus. A passage present in both lists SHALL outrank a passage present in only one at the same position.
+The system SHALL rank passages by building a semantic list (vector similarity, dot product without renormalisation) and a keyword list, and SHALL score each passage by the sum of a reciprocal-rank contribution over the lists in which it appears, plus a freshness bonus.
 
 Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_fusion_valeurs_a_la_main, FusionEtFraicheur.test_fusion_identique_a_library_search)
 
@@ -24,6 +24,15 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_fusi
 #### Scenario: Result limit
 - **WHEN** a limit smaller than the number of fused passages is given
 - **THEN** only that many best passages are returned
+
+### Requirement: Rank a passage of both lists above a passage of one list
+A passage present in both lists SHALL outrank a passage present in only one at the same position.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_fusion_valeurs_a_la_main)
+
+#### Scenario: Same position, one list or both
+- **WHEN** passage "a" holds a position in both lists and passage "b" holds the same position in only one
+- **THEN** "a" is ranked above "b"
 
 ### Requirement: Split a question into words
 The system SHALL split a question into word tokens on Unicode word characters, so that apostrophes, hyphens and punctuation separate words and a question made only of punctuation yields no word.
@@ -65,21 +74,26 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (VecteursDegeneres)
 - **THEN** it ranks above a passage at the same angle with a unit norm, except for freshness effects
 
 ### Requirement: Give a freshness bonus to recent dated watch articles
-The system SHALL add a bonus that decays with the age of the document for documents that belong to the watch collection, carry a valid publication date and do not belong to the author's own collection. The system SHALL give half of the maximum bonus (neutral value) to every other passage: undated documents, books, documents of the author's own collection, and documents whose date is unreadable.
+The system SHALL add a bonus that decays with the age of the document for documents that belong to the watch collection, carry a valid publication date and do not belong to the author's own collection.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonus_cas_limites, FusionEtFraicheur, the freshness test with its frozen values)
+Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur, its freshness test with frozen values)
 
 #### Scenario: Article published today
 - **WHEN** a watch article is dated today
 - **THEN** it receives the maximum bonus
 
-#### Scenario: Neutral cases
-- **WHEN** the document has no date, an unreadable date, a collection other than watch, or the author's own collection
-- **THEN** it receives the neutral half bonus
-
 #### Scenario: Older article
 - **WHEN** a watch article is older
 - **THEN** its bonus is lower than that of a recent one, halving at each half-life of age
+
+### Requirement: Give the neutral half bonus to every other passage
+The system SHALL give half of the maximum bonus (neutral value) to every other passage: undated documents, books, documents of the author's own collection, and documents whose date is unreadable.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonus_cas_limites)
+
+#### Scenario: Neutral cases
+- **WHEN** the document has no date, an unreadable date, a collection other than watch, or the author's own collection
+- **THEN** it receives the neutral half bonus
 
 ### Requirement: Order equal relevance by freshness then by identifier
 The system SHALL order passages of equal rounded relevance inside each list by freshness (most recent watch article first), then by identifier, and SHALL break ties in the final fused score by semantic rank, then keyword rank (passages absent from a list last), then identifier.
@@ -95,9 +109,9 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 - **THEN** its freshness bonus may still place it first in the fused result
 
 ### Requirement: Restrict a search by collection, date and passage type
-The system SHALL restrict results to passages of the requested collections, to documents published on or after a given date (keeping undated books), and to the requested passage types. A filter that is not requested SHALL NOT appear in the query. On the PostgreSQL path, the collection filter, the date filter and the passage-type filter SHALL all be applied before the keyword candidate limit (the collection and date filters as a list of book identifiers, without a join in the keyword query), so that a collection holding none of the globally best keyword matches still gets its own keyword candidates.
+The system SHALL restrict results to passages of the requested collections, to documents published on or after a given date (keeping undated books), and to the requested passage types. A filter that is not requested SHALL NOT appear in the query.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_filtres_seulement_si_demandes, Requete.test_bm25_filtre_type_collection_et_date_avant_la_limite, Requete.test_bm25_sans_filtre_de_collection_ni_de_date_requete_inchangee, Requete.test_bm25_date_seule_avant_la_limite), `tests/hybrid_search/test_hybrid_search_sans_tsvector.py` (RequeteDeLaBibliothequeInchangee), `tests/hybrid_search/test_filtre_avant_limite.py` (FiltreAvantLaLimite, skipped when no database is available), `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_filtre_par_collection, Recherche.test_filtre_de_date_garde_les_livres), `tests/pmzilla_lab_library/test_figures.py` (Types.test_une_recherche_de_figures_n_est_pas_noyee_par_les_passages_de_texte)
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_filtres_seulement_si_demandes), `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_filtre_par_collection, test_filtre_de_date_garde_les_livres)
 
 #### Scenario: Unknown collection
 - **WHEN** a search is restricted to a collection that does not exist
@@ -107,9 +121,19 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_filtres_seulem
 - **WHEN** a search uses a date later than a watch article's publication date
 - **THEN** that article is excluded and undated books remain
 
+### Requirement: Apply the passage-type filter before the keyword candidate limit
+On the PostgreSQL path, the passage-type filter SHALL be applied before the keyword candidate limit.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_bm25_filtre_type_collection_et_date_avant_la_limite), `tests/pmzilla_lab_library/test_figures.py` (Types.test_une_recherche_de_figures_n_est_pas_noyee_par_les_passages_de_texte)
+
 #### Scenario: Figure search not drowned by text
 - **WHEN** many running-text passages match better than any figure and only figures are requested
 - **THEN** figure passages are still returned, because the type filter is applied inside the keyword query
+
+### Requirement: Apply the collection and date filters before the keyword candidate limit
+On the PostgreSQL path, the collection filter and the date filter SHALL be applied before the keyword candidate limit, as a list of book identifiers, without a join in the keyword query, so that a collection holding none of the globally best keyword matches still gets its own keyword candidates.
+
+Source: tests/hybrid_search/ test_hybrid_search.py (Requete.test_bm25_*), test_hybrid_search_sans_tsvector.py (RequeteDeLaBibliothequeInchangee), test_filtre_avant_limite.py (needs a database)
 
 #### Scenario: Under-represented collection
 - **WHEN** a search is restricted to a collection and every best keyword match of the whole library lies outside it
@@ -141,26 +165,40 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 - **THEN** the request is refused with an error
 
 ### Requirement: Build the SQL search without interpolating user values
-The system SHALL pass the question, its words, the collections, the date, the passage types and the vector as bound parameters and SHALL NOT write any of them into the SQL text. A specification that does not declare a collection filter, a date or a passage-type column SHALL ignore the matching option without inventing a column.
+The system SHALL pass the question, its words, the collections, the date, the passage types and the vector as bound parameters and SHALL NOT write any of them into the SQL text.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_aucune_valeur_dans_le_sql, Requete.test_specification_sans_fraicheur_ni_filtre, Requete.test_vecteur_en_texte)
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_aucune_valeur_dans_le_sql, Requete.test_vecteur_en_texte)
 
 #### Scenario: Hostile question
 - **WHEN** the question contains SQL syntax
 - **THEN** the SQL text contains none of it and the words appear only in parameters
+
+### Requirement: Ignore the options a specification does not declare
+A specification that does not declare a collection filter, a date or a passage-type column SHALL ignore the matching option without inventing a column.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_specification_sans_fraicheur_ni_filtre)
 
 #### Scenario: Specification without filters
 - **WHEN** a table specification declares no collection filter and a collection filter is requested
 - **THEN** no collection parameter is produced
 
 ### Requirement: Choose the vector scan strategy
-The system SHALL support an approximate-nearest-neighbour scan (default) and an exact scan, SHALL rank both by dot product, and SHALL refuse unknown scan or keyword-index names. For the approximate scan it SHALL set the search breadth inside the transaction, SHALL refuse a breadth outside the supported range, and SHALL use a breadth at least as large as the candidate count by default. The scope of candidate passages SHALL never be materialised.
+The system SHALL support an approximate-nearest-neighbour scan (default) and an exact scan, SHALL rank both by dot product, and SHALL refuse unknown scan or keyword-index names. The scope of candidate passages SHALL never be materialised.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_balayage_exact_ou_ann, Requete.test_ann_regle_hnsw_dans_la_transaction, Requete.test_ann_ef_search_hors_bornes, Requete.test_defaut_ann_et_400, Requete.test_ann_ef_search_par_defaut_couvre_les_candidats)
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_balayage_exact_ou_ann, Requete.test_defaut_ann_et_400)
 
 #### Scenario: Exact scan
 - **WHEN** the exact scan is requested
 - **THEN** the score is a dot product that bypasses the approximate index
+
+#### Scenario: Unknown scan
+- **WHEN** an unknown scan or keyword-index name is given
+- **THEN** the query builder raises an error
+
+### Requirement: Set and bound the search breadth of the approximate scan
+For the approximate scan the system SHALL set the search breadth inside the transaction, SHALL refuse a breadth outside the supported range, and SHALL use a breadth at least as large as the candidate count by default.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_ann_regle_hnsw_dans_la_transaction, test_ann_ef_search_hors_bornes, test_defaut_ann_et_400, test_ann_ef_search_par_defaut_couvre_les_candidats)
 
 #### Scenario: Approximate scan setup
 - **WHEN** the approximate scan runs
@@ -170,14 +208,10 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_balayage_exact
 - **WHEN** a breadth below or above the supported range is requested
 - **THEN** the search is refused with an error
 
-#### Scenario: Unknown scan
-- **WHEN** an unknown scan or keyword-index name is given
-- **THEN** the query builder raises an error
-
 ### Requirement: Offer a legacy text-search ranking for comparison
-The system SHALL keep a legacy full-text ranking (word disjunction with a configurable length-normalisation flag from the supported set) selectable for comparison only, with the keyword index (BM25) as default, and SHALL refuse a normalisation flag outside the supported set. A table specification without a BM25 index SHALL be refused when BM25 is selected. A table specification without a legacy full-text column SHALL be accepted with BM25, SHALL carry no full-text vector in its scope, and SHALL be refused when the legacy ranking is selected. The query built for the library specification SHALL be unchanged.
+The system SHALL keep a legacy full-text ranking (word disjunction with a configurable length-normalisation flag from the supported set) selectable for comparison only, with the keyword index (BM25) as default, and SHALL refuse a normalisation flag outside the supported set.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_drapeau_de_normalisation_par_defaut_et_reglable, Requete.test_specification_sans_fraicheur_ni_filtre, Requete.test_constantes_de_la_fusion_dans_le_sql), `tools/hybrid_search.py` (build_query), `tests/hybrid_search/test_hybrid_search_sans_tsvector.py` (SpecificationSansTsvector, SpecificationSansTsvectorAvecBase).
+Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.test_drapeau_de_normalisation_par_defaut_et_reglable, Requete.test_constantes_de_la_fusion_dans_le_sql)
 
 #### Scenario: Default ranking
 - **WHEN** a query is built without options
@@ -187,6 +221,11 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 - **WHEN** a normalisation flag outside the supported set is given
 - **THEN** an error is raised
 
+### Requirement: Accept or refuse a table specification by its text-search columns
+A table specification without a BM25 index SHALL be refused when BM25 is selected. A table specification without a legacy full-text column SHALL be accepted with BM25, SHALL carry no full-text vector in its scope, and SHALL be refused when the legacy ranking is selected.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (Requete.test_specification_sans_fraicheur_ni_filtre), `tests/hybrid_search/test_hybrid_search_sans_tsvector.py` (SpecificationSansTsvector, SpecificationSansTsvectorAvecBase)
+
 #### Scenario: Specification without legacy column
 - **WHEN** a specification declares no legacy full-text column and BM25 is selected
 - **THEN** the query is built, its scope carries a null full-text vector, and it returns results on a disposable database
@@ -194,6 +233,11 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 #### Scenario: Legacy ranking without legacy column
 - **WHEN** the same specification is used with the legacy ranking
 - **THEN** the query builder raises an error
+
+### Requirement: Keep the library query unchanged
+The query built for the library specification SHALL be unchanged.
+
+Source: `tools/hybrid_search.py` (build_query), `tests/hybrid_search/test_hybrid_search_sans_tsvector.py`
 
 #### Scenario: Library query unchanged
 - **WHEN** the library query is built with the same arguments before and after this change
@@ -218,13 +262,27 @@ Source: `tests/hybrid_search/test_hybrid_search.py` (DepartageEtNormalisation.te
 - **THEN** their ordering and limit clauses are identical and only the diagnostic one exposes intermediate columns
 
 ### Requirement: Use one generic name for the personal collection
-The system SHALL name the collection of the user's own articles with a single fixed generic name, identical for every user and free of any personal identifier, defined once and read by the search, the watch collection, the pre-sort, the dashboard and the tests. The name SHALL be made of lower-case letters, digits and hyphens, start with a letter, and differ from the watch collection name and its former name. The search SHALL exclude documents of that collection from the freshness bonus under that name only.
+The system SHALL name the collection of the user's own articles with a single fixed generic name, identical for every user and free of any personal identifier, defined once and read by the search, the watch collection, the pre-sort, the dashboard and the tests.
 
-Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_nom_de_la_collection_personnelle, FusionEtFraicheur.test_bonus_cas_limites)
+Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_nom_de_la_collection_personnelle)
 
 #### Scenario: One definition
 - **WHEN** the personal collection name is read from the search module, the library server module and the watch folder module
 - **THEN** the three values are equal and match the allowed form
+
+### Requirement: Give the personal collection name a fixed form
+The personal collection name SHALL be made of lower-case letters, digits and hyphens, start with a letter, and differ from the watch collection name and its former name.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (Constantes.test_nom_de_la_collection_personnelle)
+
+#### Scenario: Allowed form
+- **WHEN** the personal collection name is checked
+- **THEN** it is made of lower-case letters, digits and hyphens, starts with a letter, and differs from the watch collection name and its former name
+
+### Requirement: Exclude the personal collection from the freshness bonus by name only
+The search SHALL exclude documents of the personal collection from the freshness bonus under that name only.
+
+Source: `tests/hybrid_search/test_hybrid_search.py` (FusionEtFraicheur.test_bonus_cas_limites)
 
 #### Scenario: SQL path
 - **WHEN** the library search query is built

@@ -26,7 +26,7 @@ Show a table in the user's language, one row per worktree, then the finish lock 
 - a worktree `occupé` while the user wants to finish it: the user closes the session first;
 - a worktree whose note says it is ready.
 
-For a worktree whose note says it is ready, give its finishing command, labelled as the user's command, to type in the Terminal from the workspace: `bash tools/finish_worktree.sh <branch>`. Only one finish runs at a time: when the finish lock line shows a finish running, say so and give no second finishing command.
+For a worktree whose note says it is ready, give its finishing command, labelled as the user's command, to type in the Terminal (the one-branch train, from the run tree): `bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>`. Only one finish runs at a time: when the finish lock line shows a finish running, say so and give no second finishing command.
 
 ## 3. Notes
 
@@ -34,7 +34,7 @@ A note is set with `uv run tools/pilot.py note <branch> "<text>"` and cleared wi
 
 ## Never
 
-- Run a finishing script (`tools/finish_branch.sh`, `tools/finish_worktree.sh`).
+- Run a finishing script (`tools/finish_train.sh`).
 - Write a note without the user's yes, or read a note's file directly (the status shows it).
 - Commit, merge, or push; use `--no-verify` or the owner bypass variable (`PMZILLA_SKIP_GREEN_CHECK`).
 - Remove a worktree or a branch, or touch the finish lock.

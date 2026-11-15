@@ -1,0 +1,255 @@
+{
+  "_statut": "Validée par l'auteur le 2026-11-12 (R-20261112-03, R-20261112-10) après un passage vert, non sauté, de DroitsReels sur la base jetable ; un écart futur entre la matrice et le catalogue est une erreur à trancher par l'auteur.",
+  "_source": "Les migrations de db/migrations/ font foi ; cette matrice en est la déclaration. Le test tests/db/test_matrice_droits.py la compare au catalogue réel (pg_class, pg_proc, pg_namespace, pg_roles) de la base jetable, après toutes les migrations. Le droit effectif d'un rôle est celui que PostgreSQL calcule (has_*_privilege), PUBLIC compris.",
+  "_remplace": "Rien : les tests de droits par schéma de tests/db/ (test_flow_schema, test_quality_schema, test_mothra_schema, test_knowledge_schema, test_cases_schema, test_watch_schema, test_flow_*) restent en place et vérifient chacun un comportement (essai sous SET ROLE). Cette matrice ajoute la vue d'ensemble : chaque rôle contre chaque objet, PUBLIC compris. En cas d'écart entre elle et un test par schéma, la matrice fait foi pour l'inventaire des droits, le test par schéma pour le comportement ; l'écart est un constat à trancher par l'auteur.",
+  "_retrait": "Permanent (non-régression de la classe « droits trop larges, PUBLIC compris », audit #629). Seules les exceptions nommées plus bas portent leur propre condition de retrait.",
+  "_ajout_d_un_objet": "Un objet nouveau d'un schéma suit les droits par défaut de son schéma (clés table_defaut, vue_defaut, sequence_defaut) ; s'il doit avoir d'autres droits, il est nommé dans « objets ». Une fonction nouvelle d'un schéma du projet doit être déclarée dans « fonctions » : sans déclaration, le test échoue.",
+  "_hors_perimetre": [
+    "privilèges de colonne (attacl) et privilèges par défaut (pg_default_acl) : à ajouter si l'auteur le demande",
+    "fonctions, opérateurs et types des extensions vector et pg_search (schémas public, pdb, paradedb) : PUBLIC y a EXECUTE par défaut, non énuméré ; pdb et paradedb tombent avec #727",
+    "attribut de connexion (rolcanlogin) : il change avec tools/db.py role-password, donc avec l'instance"
+  ],
+  "roles": [
+    "pmzilla_owner",
+    "pmzilla_knowledge", "pmzilla_knowledge_ro",
+    "pmzilla_cases", "pmzilla_cases_ro",
+    "pmzilla_flow", "pmzilla_flow_ro", "pmzilla_flow_views",
+    "pmzilla_quality", "pmzilla_quality_ro", "pmzilla_quality_views",
+    "pmzilla_mothra", "pmzilla_mothra_views"
+  ],
+  "attributs_interdits": ["rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls"],
+  "appartenances": [],
+  "base": {
+    "CONNECT": [
+      "pmzilla_owner", "pmzilla_knowledge", "pmzilla_knowledge_ro", "pmzilla_cases", "pmzilla_cases_ro", "pmzilla_flow", "pmzilla_flow_ro",
+      "pmzilla_flow_views", "pmzilla_quality", "pmzilla_quality_ro", "pmzilla_quality_views", "pmzilla_mothra", "pmzilla_mothra_views"
+    ],
+    "CREATE": [],
+    "TEMPORARY": []
+  },
+  "schemas": {
+    "flow": {
+      "proprietaire": "pmzilla_owner",
+      "USAGE": ["pmzilla_flow", "pmzilla_flow_ro", "pmzilla_flow_views", "pmzilla_mothra_views"],
+      "CREATE": []
+    },
+    "quality": {
+      "proprietaire": "pmzilla_owner",
+      "USAGE": ["pmzilla_quality", "pmzilla_quality_ro", "pmzilla_quality_views"],
+      "CREATE": []
+    },
+    "cases": {
+      "proprietaire": "pmzilla_owner",
+      "USAGE": ["pmzilla_cases", "pmzilla_cases_ro"],
+      "CREATE": []
+    },
+    "knowledge": {
+      "proprietaire": "pmzilla_owner",
+      "USAGE": ["pmzilla_knowledge", "pmzilla_knowledge_ro"],
+      "CREATE": []
+    },
+    "mothra": {
+      "proprietaire": "pmzilla_owner",
+      "USAGE": ["pmzilla_mothra"],
+      "CREATE": []
+    },
+    "public": {
+      "proprietaire": null,
+      "USAGE": [],
+      "CREATE": []
+    },
+    "pdb": {
+      "optionnel": true,
+      "proprietaire": null,
+      "USAGE": ["pmzilla_owner", "pmzilla_knowledge", "pmzilla_knowledge_ro", "pmzilla_cases", "pmzilla_cases_ro", "pmzilla_flow", "pmzilla_flow_ro"],
+      "CREATE": []
+    },
+    "paradedb": {
+      "optionnel": true,
+      "proprietaire": null,
+      "USAGE": ["pmzilla_owner", "pmzilla_knowledge", "pmzilla_knowledge_ro", "pmzilla_cases", "pmzilla_cases_ro", "pmzilla_flow", "pmzilla_flow_ro"],
+      "CREATE": []
+    }
+  },
+  "relations": {
+    "flow": {
+      "proprietaire": "pmzilla_owner",
+      "table_defaut": {
+        "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+        "pmzilla_flow_ro": ["SELECT"]
+      },
+      "vue_defaut": {
+        "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+        "pmzilla_flow_ro": ["SELECT"]
+      },
+      "sequence_defaut": {
+        "pmzilla_flow": ["USAGE", "SELECT", "UPDATE"],
+        "pmzilla_flow_ro": ["SELECT"]
+      },
+      "objets": {
+        "raw_runs": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"]},
+        "raw_run_sightings": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"]},
+        "raw_issue_snapshots": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"]},
+        "raw_version_snapshots": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"]},
+        "ref_cycles": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_labels": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_dw_columns": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_dw_statuses": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_state": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_flow_statuses": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_unplanned_types": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "ref_blocking_link_types": {"pmzilla_flow": ["SELECT", "INSERT", "DELETE"], "pmzilla_flow_ro": ["SELECT"]},
+        "issue_current_versions": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_delivery_fields": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "sprints": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_current_sprints": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_current_asset_versions": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_delivery_options": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_defect_fields": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_sprint_periods": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "issue_asset_version_periods": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "release_versions": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "version_photo_versions": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "version_photo_runs": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "version_photo_weeks": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "version_photo_rows": {"pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "version_photo_n": {"pmzilla_flow": ["SELECT", "INSERT"]},
+        "v_team_status": {
+          "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_flow_ro": ["SELECT"],
+          "pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]
+        },
+        "v_team_weekly_resolved": {
+          "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_flow_ro": ["SELECT"], "pmzilla_flow_views": ["SELECT"],
+          "pmzilla_mothra_views": ["SELECT"]
+        },
+        "v_team_open_age": {
+          "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_flow_ro": ["SELECT"], "pmzilla_flow_views": ["SELECT"]
+        },
+        "v_team_dependencies": {
+          "pmzilla_flow": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_flow_ro": ["SELECT"], "pmzilla_flow_views": ["SELECT"]
+        },
+        "v_team_tickets_seen": {"pmzilla_flow_ro": ["SELECT"]},
+        "v_teams": {"pmzilla_flow_views": ["SELECT"]},
+        "v_team_jira_ids": {"pmzilla_flow_views": ["SELECT"]},
+        "v_team_fix_version_share": {"pmzilla_flow_views": ["SELECT"]},
+        "v_version_quality_photo": {"pmzilla_flow_views": ["SELECT"]},
+        "v_team_fix_version_lag": {"pmzilla_flow_views": ["SELECT"]},
+        "v_team_delivery_fields_coverage": {"pmzilla_flow_views": ["SELECT"]},
+        "v_t3_withheld": {},
+        "v_team_lead_time_throughput": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "v_task_without_team_share": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "v_team_ready_queue": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "v_team_blocked_share": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "v_unplanned_share": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "v_team_flow_inout": {"pmzilla_flow_views": ["SELECT"], "pmzilla_mothra_views": ["SELECT"]},
+        "raw_runs_id_seq": {"pmzilla_flow": ["USAGE", "SELECT", "UPDATE"]},
+        "version_photo_versions_version_no_seq": {"pmzilla_flow": ["USAGE", "SELECT", "UPDATE"]},
+        "version_photo_runs_id_seq": {"pmzilla_flow": ["USAGE", "SELECT", "UPDATE"]},
+        "version_photo_n_id_seq": {"pmzilla_flow": ["USAGE", "SELECT", "UPDATE"]},
+        "release_versions_number_seq": {"pmzilla_flow": ["USAGE", "SELECT", "UPDATE"]}
+      }
+    },
+    "quality": {
+      "proprietaire": "pmzilla_owner",
+      "table_defaut": {"pmzilla_quality": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_quality_ro": ["SELECT"]},
+      "vue_defaut": {"pmzilla_quality": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_quality_ro": ["SELECT"]},
+      "sequence_defaut": {"pmzilla_quality": ["USAGE", "SELECT", "UPDATE"], "pmzilla_quality_ro": ["SELECT"]},
+      "objets": {
+        "quality_by_team": {
+          "pmzilla_quality": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_quality_ro": ["SELECT"], "pmzilla_quality_views": ["SELECT"]
+        },
+        "quality_coverage_by_team": {
+          "pmzilla_quality": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_quality_ro": ["SELECT"], "pmzilla_quality_views": ["SELECT"]
+        },
+        "quality_by_product": {
+          "pmzilla_quality": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_quality_ro": ["SELECT"], "pmzilla_quality_views": ["SELECT"]
+        }
+      }
+    },
+    "cases": {
+      "proprietaire": "pmzilla_owner",
+      "table_defaut": {"pmzilla_cases": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_cases_ro": ["SELECT"]},
+      "vue_defaut": {"pmzilla_cases": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_cases_ro": ["SELECT"]},
+      "sequence_defaut": {"pmzilla_cases": ["USAGE", "SELECT", "UPDATE"], "pmzilla_cases_ro": ["SELECT"]},
+      "objets": {}
+    },
+    "knowledge": {
+      "proprietaire": "pmzilla_owner",
+      "table_defaut": {"pmzilla_knowledge": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_knowledge_ro": ["SELECT"]},
+      "vue_defaut": {"pmzilla_knowledge": ["SELECT", "INSERT", "UPDATE", "DELETE"], "pmzilla_knowledge_ro": ["SELECT"]},
+      "sequence_defaut": {"pmzilla_knowledge": ["USAGE", "SELECT", "UPDATE"], "pmzilla_knowledge_ro": ["SELECT"]},
+      "objets": {}
+    },
+    "mothra": {
+      "proprietaire": "pmzilla_owner",
+      "table_defaut": {},
+      "vue_defaut": {},
+      "sequence_defaut": {},
+      "objets": {
+        "users": {"pmzilla_mothra": ["SELECT", "INSERT", "UPDATE", "DELETE"]},
+        "sheets": {"pmzilla_mothra": ["SELECT", "INSERT", "UPDATE"]},
+        "published_versions": {"pmzilla_mothra": ["SELECT", "INSERT"]},
+        "threshold_history": {"pmzilla_mothra": ["SELECT", "INSERT"]}
+      }
+    },
+    "public": {
+      "proprietaire": null,
+      "seulement_nommes": true,
+      "table_defaut": {},
+      "vue_defaut": {},
+      "sequence_defaut": {},
+      "objets": {
+        "schema_migrations": {"pmzilla_flow": ["SELECT"]}
+      }
+    }
+  },
+  "fonctions": {
+    "flow.mask_count": {"pmzilla_flow_views": ["EXECUTE"], "pmzilla_mothra_views": ["EXECUTE"]},
+    "flow.mask_count_zero": {"pmzilla_flow_views": ["EXECUTE"], "pmzilla_mothra_views": ["EXECUTE"]},
+    "flow.fuite_serie": {"pmzilla_flow_views": ["EXECUTE"], "pmzilla_mothra_views": ["EXECUTE"]},
+    "flow.closed_quarter_starts": {"pmzilla_flow_views": ["EXECUTE"], "pmzilla_mothra_views": ["EXECUTE"]},
+    "flow.photo_serie": {"pmzilla_flow_views": ["EXECUTE"]},
+    "flow.retard_d2": {"pmzilla_flow_views": ["EXECUTE"]},
+    "flow.propager_bornes": {"pmzilla_flow_views": ["EXECUTE"]},
+    "flow.photo_masque": {"pmzilla_flow_views": ["EXECUTE"]},
+    "flow.masking_version": {"pmzilla_flow": ["EXECUTE"]},
+    "quality.mask_count": {"pmzilla_quality": ["EXECUTE"], "pmzilla_quality_ro": ["EXECUTE"], "pmzilla_quality_views": ["EXECUTE"]},
+    "quality.mask_verdicts": {"pmzilla_quality": ["EXECUTE"], "pmzilla_quality_ro": ["EXECUTE"], "pmzilla_quality_views": ["EXECUTE"]},
+    "knowledge.immutable_unaccent": {},
+    "cases.forbid_success_criterion_update": {}
+  },
+  "fonctions_optionnelles": {
+    "_note": "Créée par le chargeur du jeu synthétique (tests/mothra_donnees/jeu_synthetique.py), jamais par une migration : absente de la base jetable migrée seule, donc non exigée ; si elle existe, ses droits sont ceux-ci.",
+    "flow.synthetic_dataset_marker": {"pmzilla_flow_views": ["EXECUTE"]}
+  },
+  "exceptions_public": [
+    {
+      "nom": "usage-du-schema-public",
+      "cible": {"genre": "schema", "nom": "public"},
+      "droits": ["USAGE"],
+      "raison": "défaut de PostgreSQL ; les extensions vector et pg_search résolvent leurs types et fonctions par ce schéma",
+      "retrait": "permanent : valeur par défaut de PostgreSQL ; ne tombe qu'avec une décision de l'auteur de retirer USAGE de public à PUBLIC"
+    },
+    {
+      "nom": "usage-du-schema-pdb",
+      "cible": {"genre": "schema", "nom": "pdb"},
+      "droits": ["USAGE"],
+      "raison": "exigé par le planificateur de pg_search, que PUBLIC doit pouvoir traverser",
+      "retrait": "tombe avec #727"
+    },
+    {
+      "nom": "usage-du-schema-paradedb",
+      "cible": {"genre": "schema", "nom": "paradedb"},
+      "droits": ["USAGE"],
+      "raison": "même exigence que pdb pour les versions de pg_search qui exposent encore ce schéma",
+      "retrait": "tombe avec #727"
+    },
+    {
+      "nom": "execute-des-fonctions-sans-revoke-du-projet",
+      "cible": {"genre": "fonction", "noms": ["knowledge.immutable_unaccent", "cases.forbid_success_criterion_update"]},
+      "droits": ["EXECUTE"],
+      "raison": "défaut de PostgreSQL : les migrations 0004 et 0006 ne retirent pas EXECUTE à PUBLIC sur ces deux fonctions ; sans USAGE sur leur schéma, PUBLIC ne peut pas les atteindre",
+      "retrait": "tombe quand une migration retire EXECUTE de PUBLIC sur ces deux fonctions (aucune décision à ce jour) : la ligne de « fonctions » est alors la source"
+    }
+  ]
+}

@@ -31,7 +31,9 @@ RUN="$LAB_RUN_TREE"
 SCRIPTS=(convert_books.py posture_evals.py flux_jira.py
          mapping_lab.py pmzilla_lab_library.py watch_triage.py watch_lab.py sort_by_domain.py morning_summary.py watch.sh
          db_backup.sh offsite_backup.sh doctor.sh)
-RELIQUATS=(pmzilla_lab_library.py.avant-veille)     # anciennes sauvegardes à ranger avec les copies
+# Reliquats : d'anciennes sauvegardes et l'ancien lien history_common.py (inutile : le module est trouvé à côté de la cible du lien de
+# flux_jira.py), rangés avec les copies, qu'ils soient un fichier, un lien valide ou un lien cassé.
+RELIQUATS=(pmzilla_lab_library.py.avant-veille history_common.py)
 VERIFIER=0
 CIBLE_ARBRE=run
 while (( $# )); do
@@ -100,7 +102,7 @@ for f in "${SCRIPTS[@]}"; do
 done
 
 for f in "${RELIQUATS[@]}"; do
-  if [[ -e "$LAB/$f" && ! -L "$LAB/$f" ]]; then
+  if [[ -e "$LAB/$f" || -L "$LAB/$f" ]]; then
     (( VERIFIER )) && echo "reliquat   $f (sera rangé avec les copies)" || echo "reliquat   $f rangé avec les copies"
     ranger "$LAB/$f"
   fi

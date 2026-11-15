@@ -15,6 +15,7 @@ Les tests passent par une fausse connexion (protocole `execute`, `fetchall`, `ro
 """
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +69,24 @@ SQL_CLES_EQUIPE = ("SELECT i.key FROM quality.items i JOIN quality.item_teams t 
                    "WHERE t.team = %s AND i.out_of_collection_at IS NULL ORDER BY i.key")
 SQL_TEXTES = "SELECT item_key, title, description, acceptance_criteria FROM quality.contents WHERE item_key = ANY(%s)"
 SQL_RELECTURE = "INSERT INTO quality.team_reviews (team, sample_size) VALUES (%s, %s)"
+# change patient-data-detection (design D6) : textes nettoyés de TOUS les éléments stockés (sortis de la collecte compris), sans clé ;
+# passages du détecteur et levées de la suspension (aucun compte, aucun texte, aucune clé)
+SQL_TEXTES_DETECTION = ("SELECT i.kind, c.title, c.description, c.acceptance_criteria FROM quality.items i "
+                        "JOIN quality.contents c ON c.item_key = i.key")
+SQL_DETECTION = ("INSERT INTO quality.patient_scan_runs (detector_version, id_markers_fingerprint, items_read, found) "
+                 "VALUES (%s, %s, %s::jsonb, %s::jsonb) RETURNING run_at")
+SQL_DERNIERE_DETECTION = ("SELECT id, run_at, detector_version, id_markers_fingerprint, items_read, found FROM quality.patient_scan_runs "
+                          "ORDER BY run_at DESC, id DESC LIMIT 1")
+SQL_LEVEE = ("INSERT INTO quality.patient_scan_lifts (detector_version, id_markers_fingerprint, run_id, accepted_categories) "
+             "VALUES (%s, %s, %s, %s)")
+SQL_DERNIERE_LEVEE = ("SELECT id, lifted_at, detector_version, id_markers_fingerprint, run_id, accepted_categories "
+                      "FROM quality.patient_scan_lifts ORDER BY lifted_at DESC, id DESC LIMIT 1")
+SQL_TROUVES_APRES = "SELECT found FROM quality.patient_scan_runs WHERE run_at > %s"
+
+
+def _json(valeur):
+    """Un jsonb rendu par le pilote est déjà un dictionnaire ; une chaîne (fausse connexion, ancien pilote) est décodée."""
+    return json.loads(valeur) if isinstance(valeur, str) else dict(valeur)
 
 
 class MagasinQualite:
@@ -132,6 +151,59 @@ class MagasinQualite:
     def enregistrer_relecture(self, equipe: str, taille: int) -> None:
         """Enregistre la relecture d'un échantillon de l'équipe (équipe, instant, taille) : ni texte, ni clé, ni personne."""
         self._transaction(lambda cur: cur.execute(SQL_RELECTURE, (equipe, taille)))
+
+    def textes_pour_detection(self) -> list[tuple[str, str, str, str]]:
+        """(genre, titre, description, critères) des textes nettoyés de TOUS les éléments stockés, sortis de la collecte compris, SANS les
+        clés, dans un ordre quelconque. Lecture seule (change patient-data-detection)."""
+        try:
+            cur = self.conn.cursor()
+            cur.execute(SQL_TEXTES_DETECTION)
+            return [(r[0], r[1] or "", r[2] or "", r[3] or "") for r in cur.fetchall()]
+        finally:
+            self.conn.rollback()
+
+    def enregistrer_detection(self, version: int, empreinte: str | None, lus: dict[str, int], trouves: dict[str, bool]):
+        """Enregistre un passage du détecteur : version, empreinte de la liste facultative (None : absente), éléments lus par genre, un
+        drapeau trouvé par catégorie. Ni compte par catégorie, ni texte, ni clé, ni équipe. Rend l'instant enregistré."""
+        def travail(cur):
+            cur.execute(SQL_DETECTION, (version, empreinte, json.dumps(lus, sort_keys=True), json.dumps(trouves, sort_keys=True)))
+            ligne = cur.fetchone()
+            return ligne[0] if ligne else None
+        return self._transaction(travail)
+
+    def derniere_detection(self) -> dict | None:
+        """Dernier passage : {id, run_at, detector_version, labels_fingerprint, items_read, found}, ou None."""
+        try:
+            cur = self.conn.cursor()
+            cur.execute(SQL_DERNIERE_DETECTION)
+            ligne = cur.fetchone()
+        finally:
+            self.conn.rollback()
+        if not ligne:
+            return None
+        return {"id": ligne[0], "run_at": ligne[1], "detector_version": ligne[2], "labels_fingerprint": ligne[3],
+                "items_read": _json(ligne[4]), "found": _json(ligne[5])}
+
+    def enregistrer_levee(self, version: int, empreinte: str | None, run_id, acceptees: list[str]) -> None:
+        """Enregistre la levée de la suspension : version du détecteur, empreinte de la liste, passage sur lequel elle s'appuie, catégories
+        acceptées."""
+        self._transaction(lambda cur: cur.execute(SQL_LEVEE, (version, empreinte, run_id, sorted(set(acceptees)))))
+
+    def derniere_levee(self) -> dict | None:
+        """Dernière levée : {id, lifted_at, detector_version, labels_fingerprint, run_id, accepted, found_after}, ou None. `found_after` :
+        les catégories trouvées par les passages enregistrés APRÈS la levée."""
+        try:
+            cur = self.conn.cursor()
+            cur.execute(SQL_DERNIERE_LEVEE)
+            ligne = cur.fetchone()
+            if not ligne:
+                return None
+            cur.execute(SQL_TROUVES_APRES, (ligne[1],))
+            apres = {code for (trouves,) in cur.fetchall() for code, drapeau in _json(trouves).items() if drapeau}
+        finally:
+            self.conn.rollback()
+        return {"id": ligne[0], "lifted_at": ligne[1], "detector_version": ligne[2], "labels_fingerprint": ligne[3],
+                "run_id": ligne[4], "accepted": sorted(ligne[5] or []), "found_after": sorted(apres)}
 
     def fermer(self) -> None:
         try:

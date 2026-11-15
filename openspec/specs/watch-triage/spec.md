@@ -9,7 +9,7 @@ Source of truth: `tests/watch_triage/test_watch_triage.py`, `tests/watch_triage/
 ## Requirements
 
 ### Requirement: Create and edit the triage settings preserving comments
-The system SHALL create the triage settings file on first use with observation mode by default, an explicit French `language` line, no social handle key and a comment pointing to the local settings file. It SHALL update one setting in place without losing comments, appending the key when absent. Updating a setting SHALL write only the tracked settings file, never the local one.
+The system SHALL create the triage settings file on first use with observation mode by default, an explicit French `language` line, no social handle key and a comment pointing to the local settings file. It SHALL update one setting in place without losing comments, appending the key when absent.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Classement.test_reglages_crees_au_premier_lancement_et_commentaires_conserves, Reglages.test_set_config_en_nouveaux_noms_et_ajout_si_absent)
 
@@ -17,12 +17,17 @@ Source: `tests/watch_triage/test_watch_triage.py` (Classement.test_reglages_cree
 - **WHEN** settings are read and no file exists
 - **THEN** a file is created with mode observation, French language and no handle key, and later edits keep its comments
 
+### Requirement: Write a setting only to the tracked settings file
+Updating a setting SHALL write only the tracked settings file, never the local one.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Reglages)
+
 #### Scenario: Local file untouched
 - **WHEN** a setting is updated and a local settings file exists
 - **THEN** the local file is unchanged
 
 ### Requirement: Accept former setting and option names with a warning
-The system SHALL load settings written with former French key names (mapped to the English names) with one warning per key, load English names silently, and refuse a file that holds both names of the same setting. Writing a setting to a file in former names SHALL update the existing former-named line and keep its comment. A text migration function SHALL rename the keys, keep comments and be idempotent. Former option names SHALL be accepted with a "renamed" warning, and the former French sub-commands SHALL be refused. Public help and option names SHALL NOT contain the user's name.
+The system SHALL load settings written with former French key names (mapped to the English names) with one warning per key, load English names silently, and refuse a file that holds both names of the same setting. Writing a setting to a file in former names SHALL update the existing former-named line and keep its comment. A text migration function SHALL rename the keys, keep comments and be idempotent.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Reglages)
 
@@ -34,20 +39,21 @@ Source: `tests/watch_triage/test_watch_triage.py` (Reglages)
 - **WHEN** a setting appears under both its former and new name
 - **THEN** loading stops with an error saying it is the same setting
 
+### Requirement: Accept former option names and refuse former sub-commands
+Former option names SHALL be accepted with a "renamed" warning, and the former French sub-commands SHALL be refused. Public help and option names SHALL NOT contain the user's name.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Reglages)
+
+#### Scenario: Former option name
+- **WHEN** a former option name is given
+- **THEN** it is accepted and a warning says it was renamed
+
 #### Scenario: Former sub-command
 - **WHEN** a former French sub-command is invoked
 - **THEN** the command exits with an error
 
 ### Requirement: Rank articles by relevance and give discard reasons
-The system SHALL compute for every scored article a relevance, as a rank on a 0-100 scale by proximity to reference articles, and a list of discard reasons:
-- outside the user's themes, with the model's justification;
-- promotional content;
-- reading compilation;
-- excerpt only (no score);
-- each unmet substance criterion, when the number of satisfied criteria is below the substance threshold;
-- relevance below the optional relevance threshold, for articles collected within the settings period only.
-
-Relevance SHALL order the reading list. It SHALL decide filtering only through the relevance threshold and SHALL NOT discard any article collected before the period. A manual exclusion SHALL override a good score, and a manual rescue SHALL override a poor one. The command SHALL stop with an error when there are no references or no scored articles.
+The system SHALL compute for every scored article a relevance, as a rank on a 0-100 scale by proximity to reference articles, and a list of discard reasons. Relevance SHALL order the reading list. It SHALL decide filtering only through the relevance threshold and SHALL NOT discard any article collected before the period.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Classement)
 
@@ -55,30 +61,56 @@ Source: `tests/watch_triage/test_watch_triage.py` (Classement)
 - **WHEN** articles are scored with different flags
 - **THEN** the closest to the reference gets relevance 100, the farthest 0, and each discarded article lists its specific reasons
 
+#### Scenario: No relevance threshold
+- **WHEN** no relevance threshold is set
+- **THEN** relevance gives no discard reason to any article
+
+### Requirement: Define the discard reasons of a scored article
+The list of discard reasons of a scored article SHALL hold:
+- outside the user's themes, with the model's justification;
+- promotional content;
+- reading compilation;
+- excerpt only (no score);
+- each unmet substance criterion, when the number of satisfied criteria is below the substance threshold;
+- relevance below the optional relevance threshold, for articles collected within the settings period only.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Classement)
+
 #### Scenario: Threshold decides
 - **WHEN** the substance threshold is raised above an article's satisfied criteria
 - **THEN** the unmet criteria become its discard reasons
+
+### Requirement: Let manual decisions override the score
+A manual exclusion SHALL override a good score, and a manual rescue SHALL override a poor one.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Classement)
 
 #### Scenario: Manual override
 - **WHEN** a good article is manually excluded and a weak one rescued
 - **THEN** the first shows the reason "écarté à la main" and the second has no reason
 
-#### Scenario: No relevance threshold
-- **WHEN** no relevance threshold is set
-- **THEN** relevance gives no discard reason to any article
+### Requirement: Stop ranking without references or scored articles
+The ranking command SHALL stop with an error when there are no references or no scored articles.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Classement)
+
+#### Scenario: No references
+- **WHEN** ranking runs while no reference or no scored article is stored
+- **THEN** the command stops with an error
 
 ### Requirement: Build references and score new articles
-The system SHALL build the reference set from the user's assistant conversation exports and from the user's own articles, read in the folder of the personal collection (its generic name defined in the code). Rebuilding the references SHALL replace every previous reference that is not a share, whatever label it was stored under, and SHALL keep share references. The system SHALL score articles not yet scored with a local model, storing relevance vector, criteria with justifications, flags, summary and why-it-matters; a rescore option SHALL redo existing scores and a no-model option SHALL skip the model call.
+The system SHALL build the reference set from the user's assistant conversation exports and from the user's own articles, read in the folder of the personal collection (its generic name defined in the code).
 
-Source: `tools/watch_triage.py` (cmd_references, cmd_score); `tests/watch_triage/test_shadow.py` (test_sans_modele_pas_d_ombre); `tests/watch_triage/test_watch_triage.py` (CollectionPersonnelle); `tests/watch_triage/test_robustesse.py` (FusionDesReferences)
-
-#### Scenario: No model
-- **WHEN** scoring runs with the no-model option
-- **THEN** no model call is made
+Source: `tools/watch_triage.py` (cmd_references); `tests/watch_triage/test_watch_triage.py` (CollectionPersonnelle)
 
 #### Scenario: Own articles
 - **WHEN** references are built with the user's own articles
 - **THEN** the articles of the personal collection folder are added and the output gives their number with the collection name
+
+### Requirement: Rebuild the references keeping the share references
+Rebuilding the references SHALL replace every previous reference that is not a share, whatever label it was stored under, and SHALL keep share references.
+
+Source: `tools/watch_triage.py` (cmd_references); `tests/watch_triage/test_robustesse.py` (FusionDesReferences)
 
 #### Scenario: Rebuild
 - **WHEN** references are rebuilt while the store holds share references and references under another label
@@ -88,14 +120,59 @@ Source: `tools/watch_triage.py` (cmd_references, cmd_score); `tests/watch_triage
 - **WHEN** references are built a second time from an export that yields fewer conversations
 - **THEN** the references of the first run that are not in the second are gone, and running twice with the same references does not duplicate them
 
-### Requirement: Never store a score from an unusable model answer
-The system SHALL refuse, for one article, a model answer that is empty, not JSON, truncated, missing a criterion or a flag, or whose criterion or flag is not an object with a true/false value, and SHALL then retry that article once. A timeout SHALL NOT be retried inside the model call itself (one request per attempt) but counts as a failed attempt, so the article is tried at most twice in the pass. When both attempts fail, the article SHALL get no score at all (never a partial or default score), the output SHALL mark it "NON NOTÉ" with the reason and say it is "repris au prochain passage", and the pass SHALL continue with the next article. A model that refuses the thinking option SHALL be asked again once without it. A model unknown to the local service SHALL stop the command with the command to download it. A JSON answer that is valid but not an object, and a response body without a message, SHALL be refused like any other unusable answer (retried once, then "NON NOTÉ"), and SHALL NOT stop the pass.
+### Requirement: Score new articles with a local model
+The system SHALL score articles not yet scored with a local model, storing relevance vector, criteria with justifications, flags, summary and why-it-matters; a rescore option SHALL redo existing scores and a no-model option SHALL skip the model call.
 
-Source: `tests/watch_triage/test_robustesse.py` (Notation, including the answers that are not an object and the bodies without a message)
+Source: `tools/watch_triage.py` (cmd_score); `tests/watch_triage/test_shadow.py` (test_sans_modele_pas_d_ombre)
+
+#### Scenario: No model
+- **WHEN** scoring runs with the no-model option
+- **THEN** no model call is made
+
+### Requirement: Never store a score from an unusable model answer
+The system SHALL refuse, for one article, a model answer that is empty, not JSON, truncated, missing a criterion or a flag, or whose criterion or flag is not an object with a true/false value, and SHALL then retry that article once.
+
+Source: `tests/watch_triage/test_robustesse.py` (Notation)
+
+#### Scenario: Unusable answer then valid answer
+- **WHEN** the first answer for an article is truncated and the second is valid
+- **THEN** the article is called twice and scored
+
+### Requirement: Leave an article unscored after two failed attempts
+When both attempts fail, the article SHALL get no score at all (never a partial or default score), the output SHALL mark it "NON NOTÉ" with the reason and say it is "repris au prochain passage", and the pass SHALL continue with the next article.
+
+Source: `tests/watch_triage/test_robustesse.py` (Notation)
 
 #### Scenario: Unusable answer for one article
 - **WHEN** the model answers unusably for one of two articles on both attempts
 - **THEN** only the other article is scored and the output says "NON NOTÉ" and "repris au prochain passage"
+
+### Requirement: Refuse answers that are not an object like any unusable answer
+A JSON answer that is valid but not an object, and a response body without a message, SHALL be refused like any other unusable answer (retried once, then "NON NOTÉ"), and SHALL NOT stop the pass.
+
+Source: `tests/watch_triage/test_robustesse.py` (Notation, answers that are not an object, bodies without a message)
+
+#### Scenario: Answer that is a JSON list
+- **WHEN** the model answers twice with a valid JSON list, or with a body without a message, for one article
+- **THEN** that article is marked "NON NOTÉ" and the pass continues with the next article
+
+### Requirement: Retry the thinking option and stop on an unknown model
+A model that refuses the thinking option SHALL be asked again once without it. A model unknown to the local service SHALL stop the command with the command to download it.
+
+Source: `tests/watch_triage/test_robustesse.py` (Notation)
+
+#### Scenario: Thinking option refused
+- **WHEN** the model refuses the thinking option
+- **THEN** it is asked again once without it
+
+#### Scenario: Unknown model
+- **WHEN** the local service answers that the model does not exist
+- **THEN** the command stops with a message containing the download command for that model
+
+### Requirement: Count a timeout as a failed attempt
+A timeout SHALL NOT be retried inside the model call itself (one request per attempt) but counts as a failed attempt, so the article is tried at most twice in the pass.
+
+Source: `tests/watch_triage/test_robustesse.py` (Notation)
 
 #### Scenario: Timeout then success
 - **WHEN** the first attempt for an article times out and the second answers validly
@@ -104,10 +181,6 @@ Source: `tests/watch_triage/test_robustesse.py` (Notation, including the answers
 #### Scenario: Two timeouts
 - **WHEN** both attempts for an article time out
 - **THEN** the article is not scored, the output says "pas de réponse du modèle", and the next article is scored
-
-#### Scenario: Unknown model
-- **WHEN** the local service answers that the model does not exist
-- **THEN** the command stops with a message containing the download command for that model
 
 ### Requirement: Keep observation mode non-destructive and filter mode moving discarded articles
 In observation mode, `apply` SHALL announce the mode and move nothing. In filter mode, `apply` SHALL move every article that has discard reasons from the library folder to the excluded folder (never delete), record the new location, report the number moved, and move nothing on a second run. Articles scored but no longer in the library SHALL be ignored.
@@ -132,9 +205,18 @@ Source: `tests/watch_triage/test_watch_triage.py` (Filtre.test_ecarter_a_la_main
 - **THEN** the file stays in the library and 0 articles are moved
 
 ### Requirement: Write the ranked reading list
-The system SHALL write a reading list for the settings period: the top N unread articles (excluding articles the user has already shared), the others by relevance, reading compilations, and the discarded articles with their reasons (headed "would be discarded" in observation mode and "discarded" in filter mode), plus a share statistic when applicable. Picks SHALL be recorded by day. Top picks SHALL be ordered by relevance whatever their publication dates (equal dates decide nothing), and articles of equal relevance and date SHALL keep the same order from one run to the next.
+The system SHALL write a reading list for the settings period: the top N unread articles (excluding articles the user has already shared), the others by relevance, reading compilations, and the discarded articles with their reasons (headed "would be discarded" in observation mode and "discarded" in filter mode), plus a share statistic when applicable. Picks SHALL be recorded by day.
 
-Source: `tools/watch_triage.py` (cmd_digest, share_stats); `tests/watch_triage/test_shadow.py` (photo); `tests/watch_triage/test_robustesse.py` (OrdreADatesEgales)
+Source: `tools/watch_triage.py` (cmd_digest, share_stats); `tests/watch_triage/test_shadow.py` (photo)
+
+#### Scenario: Shared article
+- **WHEN** an article was shared by the user
+- **THEN** it is not in the top picks and is marked as shared elsewhere in the list
+
+### Requirement: Order top picks by relevance with a stable order
+Top picks SHALL be ordered by relevance whatever their publication dates (equal dates decide nothing), and articles of equal relevance and date SHALL keep the same order from one run to the next.
+
+Source: `tests/watch_triage/test_robustesse.py` (OrdreADatesEgales)
 
 #### Scenario: Equal publication dates
 - **WHEN** three articles published the same day are inserted in an order unrelated to their relevance
@@ -144,12 +226,17 @@ Source: `tools/watch_triage.py` (cmd_digest, share_stats); `tests/watch_triage/t
 - **WHEN** the reading list is written several times for articles of equal relevance and date
 - **THEN** their order is identical each time
 
-#### Scenario: Shared article
-- **WHEN** an article was shared by the user
-- **THEN** it is not in the top picks and is marked as shared elsewhere in the list
-
 ### Requirement: Read the user's shares and refine references
-The system SHALL read the user's recent public social posts when a social handle is configured in the merged settings (local layer first), mark the collected articles the user shared (matching cleaned links and platform identifiers), and add them to the references. With no handle, it SHALL skip the step with a message naming the local settings file. When the social service is unavailable, it SHALL continue the run with a message. It SHALL NOT print the handle.
+The system SHALL read the user's recent public social posts when a social handle is configured in the merged settings (local layer first), mark the collected articles the user shared (matching cleaned links and platform identifiers), and add them to the references.
+
+Source: `tools/watch_triage.py` (cmd_shares); `tests/watch_triage/test_partages_semaine.py` (Partages)
+
+#### Scenario: Shared article
+- **WHEN** a handle is configured and one of the user's recent posts links a collected article
+- **THEN** that article is marked shared and added to the references
+
+### Requirement: Skip or continue the shares step without printing the handle
+With no handle, the shares step SHALL be skipped with a message naming the local settings file. When the social service is unavailable, the system SHALL continue the run with a message. It SHALL NOT print the handle.
 
 Source: `tools/watch_triage.py` (cmd_shares); `tests/watch_triage/test_partages_semaine.py` (Partages)
 
@@ -167,20 +254,47 @@ Source: `tools/watch_triage.py` (cmd_week); `tests/watch_triage/test_partages_se
 - **THEN** both are parsed and applied to the period computation
 
 ### Requirement: Export calibration sheet and propose thresholds from user opinions
-The system SHALL keep the calibration in the database: one calibration entry per scored article, holding the values shown at the last export (the filter's verdict, relevance, substance, missing criteria, flags) and the user's opinion (keep, discard or none).
+The system SHALL keep the calibration in the database: one calibration entry per scored article, holding the values shown at the last export (the filter's verdict, relevance, substance, missing criteria, flags) and the user's opinion (keep, discard or none). No command other than `calibration` SHALL read or write the sheet.
 
-The `calibration` command SHALL refresh the calibration entries from the current scores, keep every opinion already stored (including for an article no longer scored), and export a semicolon-separated sheet with the filter's verdict, relevance, missing criteria, flags and an opinion column (keep/discard) pre-filled with the stored opinions. The import option of `calibration` SHALL read the opinion column of the edited sheet and store it: a keep or discard opinion is stored, an empty cell removes the stored opinion, a row naming an article without a calibration entry is counted and ignored; it SHALL print the counts of design.md D3 only, and SHALL refuse with exit code 1 when the sheet is absent. No other command SHALL read or write the sheet.
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 
-The `thresholds` command SHALL:
-- read the opinions and the exported values from the database, never from the sheet;
-- refuse to run without any stored opinion (message of design.md D3) or with too few opinions, stating the count;
-- compare opinions with every possible substance threshold, print the table and propose the substance threshold that loses the fewest wanted articles, then keeps the fewest weak ones, then is the least strict;
-- print a matrix of wanted articles lost and weak articles kept for every pair of substance threshold and relevance threshold in steps of ten (zero meaning no relevance filtering), using the relevance of the last export;
-- propose the pair with the highest agreement, then the fewest wanted lost, then the lowest relevance threshold, then the lowest substance threshold, listing the wanted articles that pair loses with the command to restore each;
-- report disagreements caused by fixed rules (compilation, promotional) and by wrongly kept articles, with the command to fix each;
-- write nothing unless asked to save, and never change a calibration entry.
+#### Scenario: Sheet not rewritten
+- **WHEN** thresholds runs, with or without save, while a calibration sheet exists
+- **THEN** the calibration sheet is byte-identical afterwards
 
-When saving, it SHALL write the substance and relevance thresholds of the combined proposal, keep comments, and keep the mode unchanged.
+### Requirement: Refresh the calibration entries and export the sheet
+The `calibration` command SHALL refresh the calibration entries from the current scores, keep every opinion already stored (including for an article no longer scored), and export a semicolon-separated sheet with the filter's verdict, relevance, missing criteria, flags and an opinion column (keep/discard) pre-filled with the stored opinions.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Re-export keeps opinions
+- **WHEN** calibration runs again after opinions were imported
+- **THEN** the exported sheet shows the stored opinions in its opinion column and no opinion is lost
+
+### Requirement: Import the user's opinions from the calibration sheet
+The import option of `calibration` SHALL read the opinion column of the edited sheet and store it: a keep or discard opinion is stored, an empty cell removes the stored opinion, a row naming an article without a calibration entry is counted and ignored; it SHALL print the counts of design.md D3 only, and SHALL refuse with exit code 1 when the sheet is absent.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Import
+- **WHEN** an edited sheet with one keep, one discard, one emptied opinion and one unknown file is imported
+- **THEN** the counts printed are 1 to keep, 1 to discard, 1 cleared and 1 unknown, and the stored opinions match the sheet
+
+#### Scenario: Sheet absent
+- **WHEN** the import option is used and the sheet is absent
+- **THEN** the command exits with code 1
+
+### Requirement: Propose a substance threshold from the stored opinions
+The `thresholds` command SHALL read the opinions and the exported values from the database, never from the sheet. It SHALL compare opinions with every possible substance threshold, print the table and propose the substance threshold that loses the fewest wanted articles, then keeps the fewest weak ones, then is the least strict.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Sheet not read by thresholds
+- **WHEN** opinions are imported, the sheet is deleted, and thresholds runs
+- **THEN** the output is the same as with the sheet present, and the calibration entries are unchanged
+
+### Requirement: Refuse to propose thresholds without enough opinions
+The `thresholds` command SHALL refuse to run without any stored opinion (message of design.md D3) or with too few opinions, stating the count.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 
@@ -192,36 +306,48 @@ Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 - **WHEN** thresholds runs and no calibration opinion is stored
 - **THEN** the command exits with code 1 and the message of design.md D3, whether or not a sheet exists
 
-#### Scenario: Proposal without saving
-- **WHEN** thresholds runs with opinions and without save
-- **THEN** the substance-only proposal, the combined proposal "Proposition (substance et pertinence)", the matrix and the disagreements are printed, and the settings file is unchanged
+### Requirement: Print the matrix of substance and relevance thresholds
+The `thresholds` command SHALL print a matrix of wanted articles lost and weak articles kept for every pair of substance threshold and relevance threshold in steps of ten (zero meaning no relevance filtering), using the relevance of the last export.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Matrix printed
+- **WHEN** thresholds runs with opinions
+- **THEN** the matrix gives, for every pair of substance threshold and relevance threshold in steps of ten from zero, the wanted articles lost and the weak articles kept
+
+### Requirement: Propose a combined substance and relevance threshold
+The `thresholds` command SHALL propose the pair with the highest agreement, then the fewest wanted lost, then the lowest relevance threshold, then the lowest substance threshold, listing the wanted articles that pair loses with the command to restore each.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
 
 #### Scenario: Combined proposal rule
 - **WHEN** wanted articles are all highly relevant and weak ones mostly poorly relevant
 - **THEN** the combined proposal has a relevance threshold above zero and a higher agreement than the substance-only proposal
 
+### Requirement: Report the disagreements with the opinions
+The `thresholds` command SHALL report disagreements caused by fixed rules (compilation, promotional) and by wrongly kept articles, with the command to fix each.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Disagreement from a fixed rule
+- **WHEN** the user wants to keep an article discarded as a compilation
+- **THEN** the disagreement is reported with the command to fix it
+
+### Requirement: Save the thresholds only on request
+The `thresholds` command SHALL write nothing unless asked to save, and SHALL never change a calibration entry. When saving, it SHALL write the substance and relevance thresholds of the combined proposal, keep comments, and keep the mode unchanged.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Calibration)
+
+#### Scenario: Proposal without saving
+- **WHEN** thresholds runs with opinions and without save
+- **THEN** the substance-only proposal, the combined proposal "Proposition (substance et pertinence)", the matrix and the disagreements are printed, and the settings file is unchanged
+
 #### Scenario: Save
 - **WHEN** thresholds runs with save
 - **THEN** both thresholds of the combined proposal are stored, comments are kept and the mode remains observation
 
-#### Scenario: Sheet not rewritten
-- **WHEN** thresholds runs, with or without save, while a calibration sheet exists
-- **THEN** the calibration sheet is byte-identical afterwards
-
-#### Scenario: Sheet not read by thresholds
-- **WHEN** opinions are imported, the sheet is deleted, and thresholds runs
-- **THEN** the output is the same as with the sheet present, and the calibration entries are unchanged
-
-#### Scenario: Re-export keeps opinions
-- **WHEN** calibration runs again after opinions were imported
-- **THEN** the exported sheet shows the stored opinions in its opinion column and no opinion is lost
-
-#### Scenario: Import
-- **WHEN** an edited sheet with one keep, one discard, one emptied opinion and one unknown file is imported
-- **THEN** the counts printed are 1 to keep, 1 to discard, 1 cleared and 1 unknown, and the stored opinions match the sheet
-
 ### Requirement: Suggest new sources from citations
-The system SHALL propose, as inactive sources with feed discovery, hosts cited by at least a minimum number of distinct citing sources among retained articles (or by retained compilations even from a single source), up to a maximum, most cited first. It SHALL NOT count citations from discarded articles, repeated citations from the same source, home pages, images, shop or social links, hosts already followed, or hosts cited once. An already suggested source SHALL be updated (counts) while keeping its feed, active flag and suggestion date, with no new feed search. The reset option SHALL remove suggestions never activated and keep active and manually added sources. With no scored article, the command SHALL end without error, say so and point to scoring, still honour reset, and make no network call.
+The system SHALL propose, as inactive sources with feed discovery, hosts cited by at least a minimum number of distinct citing sources among retained articles (or by retained compilations even from a single source), up to a maximum, most cited first. It SHALL NOT count citations from discarded articles, repeated citations from the same source, home pages, images, shop or social links, hosts already followed, or hosts cited once.
 
 Source: `tests/watch_triage/test_watch_triage.py` (Suggestions)
 
@@ -229,12 +355,30 @@ Source: `tests/watch_triage/test_watch_triage.py` (Suggestions)
 - **WHEN** a host is cited by articles from two retained sources
 - **THEN** it is added inactive with its feed, citation count 2 and example links
 
+### Requirement: Update existing suggestions and reset the never-activated ones
+An already suggested source SHALL be updated (counts) while keeping its feed, active flag and suggestion date, with no new feed search. The reset option SHALL remove suggestions never activated and keep active and manually added sources.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Suggestions)
+
+#### Scenario: Source already suggested
+- **WHEN** a host already suggested is cited again
+- **THEN** its counts are updated, its feed, active flag and suggestion date are kept, and no feed search is made
+
+#### Scenario: Reset
+- **WHEN** suggestions run with the reset option
+- **THEN** suggestions never activated are removed and active and manually added sources remain
+
+### Requirement: End source suggestions without error on an empty base
+With no scored article, the suggestions command SHALL end without error, say so and point to scoring, still honour reset, and make no network call.
+
+Source: `tests/watch_triage/test_watch_triage.py` (Suggestions)
+
 #### Scenario: Empty base with reset
 - **WHEN** reset runs with no scored article
 - **THEN** "Aucun article noté" is printed and never-activated suggestions are removed
 
 ### Requirement: Guard the tracked configuration
-The tracked settings SHALL load without error and be in filter mode. They SHALL hold a substance threshold that is a number within the range the loader accepts, a `language` that is French or English, a relevance threshold that is absent or an integer from 0 to 100, and a social handle that is absent or empty. The local settings file SHALL NOT be tracked and SHALL be matched by the ignore rules. In the tracked sources file, every source SHALL have a unique key and a boolean active flag, and a note present on a deactivated source SHALL be non-empty (a deactivated source without a note is accepted). The guard SHALL NOT depend on any calibration date, any exact threshold value, any source name or any handle value, and SHALL NOT print a handle.
+The tracked settings SHALL load without error and be in filter mode. They SHALL hold a substance threshold that is a number within the range the loader accepts, a `language` that is French or English, a relevance threshold that is absent or an integer from 0 to 100, and a social handle that is absent or empty. The local settings file SHALL NOT be tracked and SHALL be matched by the ignore rules.
 
 Source: `tests/watch_triage/test_watch_triage.py` (FichiersSuivis)
 
@@ -242,9 +386,23 @@ Source: `tests/watch_triage/test_watch_triage.py` (FichiersSuivis)
 - **WHEN** the tracked settings and sources files are loaded
 - **THEN** the settings are valid and in filter mode, with a valid language, a relevance threshold absent or in range and no handle value, and every source is well formed
 
+### Requirement: Keep the configuration guard independent of the chosen values
+The guard of the tracked configuration SHALL NOT depend on any calibration date, any exact threshold value, any source name or any handle value, and SHALL NOT print a handle.
+
+Source: `tests/watch_triage/test_watch_triage.py` (FichiersSuivis)
+
 #### Scenario: Handle in the tracked file
 - **WHEN** the tracked settings hold a non-empty handle
 - **THEN** the guard fails and its message does not contain the handle
+
+#### Scenario: Legitimate recalibration
+- **WHEN** a source is reactivated, or a new source is deactivated with a note, or a threshold changes within the accepted range
+- **THEN** the guard still passes
+
+### Requirement: Guard the tracked sources file
+In the tracked sources file, every source SHALL have a unique key and a boolean active flag, and a note present on a deactivated source SHALL be non-empty (a deactivated source without a note is accepted).
+
+Source: `tests/watch_triage/test_watch_triage.py` (FichiersSuivis)
 
 #### Scenario: Deactivated source with an empty note
 - **WHEN** a deactivated source carries a note that is empty or blank
@@ -258,10 +416,6 @@ Source: `tests/watch_triage/test_watch_triage.py` (FichiersSuivis)
 - **WHEN** two sources share a key
 - **THEN** the guard fails
 
-#### Scenario: Legitimate recalibration
-- **WHEN** a source is reactivated, or a new source is deactivated with a note, or a threshold changes within the accepted range
-- **THEN** the guard still passes
-
 ### Requirement: Keep personal identifiers out of help and option names
 The system SHALL keep every personal identifier computed by the scanner out of the public help of the pre-sort commands and out of their current option names; the test SHALL read the identifiers from the scanner and SHALL report a failure without printing the identifier.
 
@@ -272,7 +426,16 @@ Source: tests/watch_triage/test_watch_triage.py (test_aucun_identifiant_personne
 - **THEN** none is found
 
 ### Requirement: Select the scoring prompts by the triage language
-The system SHALL read a top-level `language` setting of the triage settings, accepting only French and English, treating an absent key as French, and SHALL score every article for decision with the prompt set of that language: the French prompts and criteria of the triage tool for French, the English prompt module checked by the prompt module contract for English. A value other than the two languages SHALL be refused with the key's line number and without echoing the value, and SHALL stop the command with exit code 1. With English, an English module that cannot be loaded or fails the contract SHALL stop scoring with exit code 1 and a message naming the module (design.md, section 1). It SHALL NOT fall back to the French prompts, and SHALL NOT store any score from that pass. Themes SHALL always come from the `themes` setting. With French, the decision payload SHALL stay byte-identical to the payload before this change.
+The system SHALL read a top-level `language` setting of the triage settings, accepting only French and English, treating an absent key as French, and SHALL score every article for decision with the prompt set of that language: the French prompts and criteria of the triage tool for French, the English prompt module checked by the prompt module contract for English.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (tasks 1.1, 1.2)
+
+#### Scenario: English
+- **WHEN** `language` is English and an article is scored
+- **THEN** the model receives the English system and user prompts and English criteria questions, with the themes of the settings
+
+### Requirement: Keep the themes setting and the French payload
+Themes SHALL always come from the `themes` setting. With French, the decision payload SHALL stay byte-identical to the payload before this change.
 
 Source: to be covered by `tests/watch_triage/test_watch_triage.py` (tasks 1.1, 1.2)
 
@@ -280,39 +443,77 @@ Source: to be covered by `tests/watch_triage/test_watch_triage.py` (tasks 1.1, 1
 - **WHEN** the settings have no `language` key and an article is scored
 - **THEN** the model receives the French prompts, identical to before this change
 
-#### Scenario: English
-- **WHEN** `language` is English and an article is scored
-- **THEN** the model receives the English system and user prompts and English criteria questions, with the themes of the settings
+### Requirement: Refuse an unknown triage language
+A `language` value other than the two languages SHALL be refused with the key's line number and without echoing the value, and SHALL stop the command with exit code 1.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (tasks 1.1, 1.2)
 
 #### Scenario: Unknown language
 - **WHEN** `language` holds another value
 - **THEN** the command exits with code 1, the message names the key and its line, and the value is not in the message
+
+### Requirement: Stop scoring when the English prompt module is unusable
+With English, an English module that cannot be loaded or fails the contract SHALL stop scoring with exit code 1 and a message naming the module (design.md, section 1). It SHALL NOT fall back to the French prompts, and SHALL NOT store any score from that pass.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (tasks 1.1, 1.2)
 
 #### Scenario: Broken English module
 - **WHEN** `language` is English and the English module misses a required part
 - **THEN** scoring stops with exit code 1 and the module name, no model call is made and no score is stored
 
 ### Requirement: Ship an English prompt set for the published edition
-The system SHALL ship English prompts that satisfy the prompt module contract and that, compared with the French text, reinforce promotional detection and tighten the compilation rule. Promotional detection SHALL explicitly cover book excerpts and book announcements, webinars and events, and paid courses. The compilation rule SHALL leave an article false when the author's own argument runs through the text, even when the text is organised as a list. The French prompts and criteria SHALL stay byte-identical, which a frozen-fingerprint test guards. Every deliberate deviation of the English text SHALL be recorded in the phrase-by-phrase correspondence document. The English prompts SHALL NOT become official without the user's measurement against the acceptance figures of design.md, section 2.
+The system SHALL ship English prompts that satisfy the prompt module contract and that, compared with the French text, reinforce promotional detection and tighten the compilation rule. Promotional detection SHALL explicitly cover book excerpts and book announcements, webinars and events, and paid courses.
 
 Source: to be covered by `tests/watch_triage/test_shadow.py` (Contrat) and a French-fingerprint test (task 2.1)
-
-#### Scenario: French unchanged
-- **WHEN** the fingerprint of the French prompts, criteria and default themes is computed
-- **THEN** it equals the frozen value
 
 #### Scenario: English contract
 - **WHEN** the shipped English module is checked
 - **THEN** it satisfies the contract, its fingerprint differs from the one before this change, and its promotional item names book excerpts, book announcements, webinars and paid courses
 
+### Requirement: Tighten the compilation rule of the English prompts
+The compilation rule of the English prompts SHALL leave an article false when the author's own argument runs through the text, even when the text is organised as a list.
+
+Source: to be covered by `tests/watch_triage/test_shadow.py` (Contrat) (task 2.1)
+
+#### Scenario: Argued list
+- **WHEN** the compilation item of the shipped English module is read
+- **THEN** it leaves false an article whose own argument runs through the text, even when the text is organised as a list
+
+### Requirement: Keep the French prompts frozen and the English deviations recorded
+The French prompts and criteria SHALL stay byte-identical, which a frozen-fingerprint test guards. Every deliberate deviation of the English text SHALL be recorded in the phrase-by-phrase correspondence document. The English prompts SHALL NOT become official without the user's measurement against the acceptance figures of design.md, section 2.
+
+Source: to be covered by a French-fingerprint test (task 2.1)
+
+#### Scenario: French unchanged
+- **WHEN** the fingerprint of the French prompts, criteria and default themes is computed
+- **THEN** it equals the frozen value
+
 ### Requirement: Discard articles below an optional relevance threshold
-The system SHALL accept an optional `relevance_threshold` setting, an integer from 0 to 100, absent or 0 meaning no relevance filtering. Any other value SHALL be refused with the key's line number, without echoing the value, and with exit code 1. When the threshold is above 0, an article collected within the settings period whose relevance is below the threshold SHALL get the discard reason "pertinence {p}/100 sous le seuil {R}". An article collected before the period SHALL NOT get a relevance reason. A manual rescue SHALL remove that reason like any other, and a manual exclusion SHALL still show "écarté à la main". The reading list SHALL state the relevance part of the rule when the threshold is above 0. The language comparison of the shadow report SHALL NOT apply relevance.
+The system SHALL accept an optional `relevance_threshold` setting, an integer from 0 to 100, absent or 0 meaning no relevance filtering. When the threshold is above 0, an article collected within the settings period whose relevance is below the threshold SHALL get the discard reason "pertinence {p}/100 sous le seuil {R}".
 
 Source: to be covered by `tests/watch_triage/test_watch_triage.py` (task 1.1)
 
 #### Scenario: Recent article below the threshold
 - **WHEN** the threshold is set and an article collected within the period has a lower relevance
 - **THEN** its reasons include "pertinence {p}/100 sous le seuil {R}" and `apply` in filter mode moves it out
+
+#### Scenario: Absent setting
+- **WHEN** the setting is absent
+- **THEN** reasons, reading list and moves are identical to before this change
+
+### Requirement: Refuse an invalid relevance threshold
+A `relevance_threshold` value other than an integer from 0 to 100 SHALL be refused with the key's line number, without echoing the value, and with exit code 1.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (task 1.1)
+
+#### Scenario: Out of range
+- **WHEN** the setting is negative, above 100 or not an integer
+- **THEN** loading exits with code 1, naming the key and its line, without the value
+
+### Requirement: Spare older and manually decided articles from the relevance reason
+An article collected before the period SHALL NOT get a relevance reason. A manual rescue SHALL remove that reason like any other, and a manual exclusion SHALL still show "écarté à la main".
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (task 1.1)
 
 #### Scenario: Older article
 - **WHEN** an article collected before the period has a relevance below the threshold
@@ -322,16 +523,17 @@ Source: to be covered by `tests/watch_triage/test_watch_triage.py` (task 1.1)
 - **WHEN** an article discarded by relevance is restored
 - **THEN** it has no reason and stays in the library at the next `apply`
 
-#### Scenario: Absent setting
-- **WHEN** the setting is absent
-- **THEN** reasons, reading list and moves are identical to before this change
+### Requirement: State the relevance rule in the reading list, not in the shadow comparison
+The reading list SHALL state the relevance part of the rule when the threshold is above 0. The language comparison of the shadow report SHALL NOT apply relevance.
 
-#### Scenario: Out of range
-- **WHEN** the setting is negative, above 100 or not an integer
-- **THEN** loading exits with code 1, naming the key and its line, without the value
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` (task 1.1)
+
+#### Scenario: Threshold above zero
+- **WHEN** the relevance threshold is above 0
+- **THEN** the reading list states the relevance part of the rule, and the shadow report compares languages without applying relevance
 
 ### Requirement: Keep the social handle in an untracked local settings layer
-The system SHALL read an optional local triage settings file next to the tracked one, ignored by Git and never written by any command, and SHALL merge it over the tracked settings. The only accepted key SHALL be the social handle. An unknown key, a duplicated key or a non-mapping file SHALL be refused with the line number and exit code 1, without echoing any value. A missing local file SHALL mean no local value. A non-empty handle in the tracked file SHALL still be read when the local layer does not set one, with a warning, naming no value, that asks to move it. When both set the handle, the local one SHALL win and the same warning SHALL be printed. The settings file created at first launch SHALL hold no handle key.
+The system SHALL read an optional local triage settings file next to the tracked one, ignored by Git and never written by any command, and SHALL merge it over the tracked settings. The only accepted key SHALL be the social handle. A missing local file SHALL mean no local value. The settings file created at first launch SHALL hold no handle key.
 
 Source: to be covered by `tests/watch_triage/test_watch_triage.py` and `tests/watch_triage/test_partages_semaine.py` (task 1.1)
 
@@ -343,20 +545,34 @@ Source: to be covered by `tests/watch_triage/test_watch_triage.py` and `tests/wa
 - **WHEN** neither file sets a handle
 - **THEN** the shares step is skipped with a message naming the local file
 
+#### Scenario: Writing a setting
+- **WHEN** a command updates a setting while a local file exists
+- **THEN** only the tracked file changes, and the local file is byte-identical
+
+### Requirement: Refuse an invalid local settings file
+In the local triage settings file, an unknown key, a duplicated key or a non-mapping file SHALL be refused with the line number and exit code 1, without echoing any value.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` and `tests/watch_triage/test_partages_semaine.py` (task 1.1)
+
 #### Scenario: Unknown local key
 - **WHEN** the local file holds another key
 - **THEN** loading exits with code 1, naming the key and its line
+
+### Requirement: Warn when the handle is still in the tracked settings
+A non-empty handle in the tracked file SHALL still be read when the local layer does not set one, with a warning, naming no value, that asks to move it. When both set the handle, the local one SHALL win and the same warning SHALL be printed.
+
+Source: to be covered by `tests/watch_triage/test_watch_triage.py` and `tests/watch_triage/test_partages_semaine.py` (task 1.1)
 
 #### Scenario: Handle still tracked
 - **WHEN** the tracked file holds a non-empty handle
 - **THEN** it is used, a warning asks to move it to the local file, and the warning does not contain it
 
-#### Scenario: Writing a setting
-- **WHEN** a command updates a setting while a local file exists
-- **THEN** only the tracked file changes, and the local file is byte-identical
+#### Scenario: Handle in both files
+- **WHEN** both the local and the tracked file set the handle
+- **THEN** the local handle is used and the same warning is printed
 
 ### Requirement: Keep the triage state in the database only
-The system SHALL keep the pre-triage state (references, scores, manual rescues, manual exclusions, shares, daily picks, calibration) in the knowledge schema of the local database, for every subcommand: references, score, apply, restore, exclude, shares, digest, week, suggestions, calibration and thresholds. Commands that write no row (week, thresholds) SHALL connect under the knowledge read-only role. The system SHALL NOT read, create or write any local triage state file and SHALL NOT fall back to one when the database fails. Decisions (relevance, discard reasons, reading lists, moves) SHALL be the same as before this change for the same stored state.
+The system SHALL keep the pre-triage state (references, scores, manual rescues, manual exclusions, shares, daily picks, calibration) in the knowledge schema of the local database, for every subcommand: references, score, apply, restore, exclude, shares, digest, week, suggestions, calibration and thresholds.
 
 Source: tests/watch_triage/ and tests/watch_store/test_contract.py
 
@@ -364,13 +580,27 @@ Source: tests/watch_triage/ and tests/watch_store/test_contract.py
 - **WHEN** two articles are scored
 - **THEN** two score rows exist in the database with their vector, criteria, justifications, flags, summary and why-it-matters, and no triage state file is created
 
-#### Scenario: Read-only command
-- **WHEN** week runs
-- **THEN** it connects under the knowledge read-only role and writes no row
+### Requirement: Use no local triage state file
+The system SHALL NOT read, create or write any local triage state file and SHALL NOT fall back to one when the database fails.
+
+Source: tests/watch_triage/ and tests/watch_store/test_contract.py
 
 #### Scenario: No former path
 - **WHEN** the triage module is read
 - **THEN** it does not import the SQLite library and names no triage state file
+
+### Requirement: Connect read-only for triage commands that write no row
+Commands that write no row (week, thresholds) SHALL connect under the knowledge read-only role. Decisions (relevance, discard reasons, reading lists, moves) SHALL be the same as before this change for the same stored state.
+
+Source: tests/watch_triage/ and tests/watch_store/test_contract.py
+
+#### Scenario: Read-only command
+- **WHEN** week runs
+- **THEN** it connects under the knowledge read-only role and writes no row
+
+#### Scenario: Same decisions for the same state
+- **WHEN** the same state is stored in the database as before this change
+- **THEN** relevance, discard reasons, reading lists and moves are the same
 
 ### Requirement: Stop before any model call or file move when the database fails
 The system SHALL connect to the database before any model call, social-network read, file move or file write. When the database does not answer, or the watch tables are absent, every triage subcommand SHALL exit with the code and message of design.md D4, and SHALL NOT call the model, read the user's posts, move an article or write a reading list, inventory or sheet. The message SHALL NOT contain a password or a driver error text.

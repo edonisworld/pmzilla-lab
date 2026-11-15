@@ -30,6 +30,46 @@ components:
   # majeure que les lignes LTS. L'étiquette de la base Node de ci/Dockerfile lui est égale (inventory --verify) ; le node de BMAD
   # (outil non épinglé, fnm) et l'image library/node de la CI restent des entrées à part.
   - {name: node-mothra, kind: node-runtime, pinned_in: mothra/.node-version, upstream: Node.js releases, procedure: Update the Node of Mothra, flags: [major-watch-only]}
+  # --- espace npm de Mothra (change mothra-slices, tâche 2.4) : npm est épinglé par engines.npm de mothra/package.json ; une entrée
+  # npm-package par dépendance directe des paquets de mothra/ (versions exactes, lues dans mothra/package-lock.json, créé par le npm
+  # install de l'auteur). Tâche 2.3 : fastify, son fournisseur de types TypeBox, typebox, ajv-formats, react, react-dom, react-intl
+  # et @types/react ; les paquets des tranches suivantes ajoutent leurs entrées.
+  # npm de Mothra, installé aussi dans l'image de la CI locale : ci/Dockerfile lit engines.npm de mothra/package.json à la
+  # construction (R-20261101-112) ; une seule source, aucune version recopiée ici.
+  - {name: npm, kind: npm-runtime, pinned_in: mothra/package.json, upstream: npm registry, procedure: Update the npm of Mothra}
+  - {name: fastify, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@fastify/type-provider-typebox", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: typebox, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: ajv-formats, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: react, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: react-dom, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: react-intl, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@types/react", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # Tâche 6 (serveur de la tranche 0) : le pilote PostgreSQL du serveur et ses types (versions relevées le 2026-10-26).
+  - {name: pg, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@types/pg", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # Groupe 7 (page d'une vue) : TanStack Query pour les données du front, vite et son greffon React pour le bundle.
+  - {name: "@tanstack/react-query", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: vite, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@vitejs/plugin-react", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # Groupe 8 (passe de bout en bout et bundle servi par le serveur) : @fastify/static (licence MIT) sert le bundle ; @playwright/test
+  # (licence Apache-2.0) pilote le navigateur de tests/run_e2e.sh. Le schéma d'entrée n'a pas de champ de licence : le contrôle des licences
+  # est celui du verrou (tâche 2.6).
+  - {name: "@fastify/static", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # @playwright/test fournit aussi le Chromium de l'image de la CI locale (ci/Dockerfile, playwright install chromium) : sa révision
+  # est fixée par la version de Playwright du verrou npm, déjà dans la clé de l'image ; une seule source, aucune entrée chromium (R-20261101-117).
+  - {name: "@playwright/test", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # R-151 (vérification des types, 2026-10-27) : typescript 7.0.2 (licence Apache-2.0) en tête de npm test ; @types/node déclaré (arrivait
+  # par @types/pg) ; @types/react-dom pour les imports de react-dom du front et des tests.
+  - {name: typescript, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@types/node", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@types/react-dom", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # Groupe 19 (graphiques du second écran) : ECharts (licence Apache-2.0, audit à 0) ; version lue dans le verrou.
+  - {name: echarts, kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  # Habillage de la démo, lot 2 (change mothra-demo-habillage, D10) : IBM Plex Sans et IBM Plex Serif (licence OFL-1.1), servies depuis le
+  # bundle par deux paquets du projet Fontsource ; versions exactes lues dans le verrou, jamais chargées depuis un autre hôte.
+  - {name: "@fontsource/ibm-plex-sans", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
+  - {name: "@fontsource/ibm-plex-serif", kind: npm-package, pinned_in: mothra/package-lock.json, upstream: npm registry, procedure: Update a Mothra npm package}
   # --- base de données : l'image apporte PostgreSQL et ses extensions ; une ligne PostgreSQL plus haute demande une migration
   - {name: paradedb/paradedb, kind: docker-image, pinned_in: docker-compose.yml, upstream: Docker Hub tags, procedure: Update the database image, flags: [major-watch-only]}
   # --- modèles Ollama : embedding de la bibliothèque (tout réindexer s'il change) et modèle du pré-tri de la veille
@@ -40,8 +80,6 @@ components:
   - {name: core, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
   - {name: bmm, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
   - {name: bmb, kind: bmad-module, pinned_in: BMAD manifest, upstream: npm registry, procedure: Update BMAD}
-  # --- bibliothèque de graphiques copiée dans tools/vendor
-  - {name: echarts, kind: vendored, pinned_in: vendor version file, upstream: npm registry, procedure: Update the vendored chart library}
   # --- outils des prérequis d'installation, non épinglés (fiche C5) : la vérification lit leur version locale
   # Le canal décrit le Mac de l'auteur, pas le script d'installation (qui propose Homebrew quand l'outil manque) : le test ne
   # reconstruit que les noms depuis les prérequis, jamais le canal. Ici git vient des outils en ligne de commande de Xcode (mis à
@@ -55,7 +93,7 @@ components:
   - {name: docker-compose, kind: tool, pinned_in: not pinned, channel: Homebrew formula, upstream: Homebrew API, procedure: Update a Homebrew tool}
   - {name: ollama, kind: tool, pinned_in: not pinned, channel: Homebrew cask, upstream: Homebrew API, procedure: Update a Homebrew tool}
   - {name: claude, kind: tool, pinned_in: not pinned, channel: official installer, upstream: npm registry, procedure: Update Claude Code}
-  # --- CLI OpenSpec (fiche C8) : déclarée par openspec/config.yaml, absente des prérequis d'installation
+  # --- CLI OpenSpec (fiche C8) : déclarée par openspec/config.yaml, installée par npm (installation.md, section 2)
   - {name: openspec, kind: tool, pinned_in: not pinned, channel: npm registry, upstream: npm registry, procedure: Update the OpenSpec CLI}
   # --- image de la CI locale (local-ci-container D4) : versions et empreintes dans ci/Dockerfile, jamais recopiées ici
   - {name: library/node, kind: docker-image, pinned_in: CI Dockerfile, upstream: Docker Hub tags, procedure: Update the CI image}

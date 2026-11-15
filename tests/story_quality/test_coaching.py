@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from aide_analyse import CLE_ANALYSE, EspaceAnalyse
+from aide_analyse import CLE_ANALYSE, EspaceAnalyse, contenu_requete
 from aide_story_quality import DISTINCTIFS, EQUIPE_A, EQUIPE_B
 import story_quality_coach  # noqa: E402  (tools/story_quality_coach.py, chemin posé par aide_story_quality)
 
@@ -50,7 +50,7 @@ class Coaching(EspaceAnalyse):
         for interdit in ("ZZA-", EQUIPE_A, CLE_ANALYSE, "story-deux"):
             self.assertNotIn(interdit, brut)
         self.assertNotIn("tools", requete)
-        self.assertEqual([c["code"] for c in json.loads(requete["messages"][0]["content"])["criteria"]],
+        self.assertEqual([c["code"] for c in contenu_requete(requete)["criteria"]],
                          ["story-un", "story-trois", "orga-role"])                    # même grille effective que l'audit
         self.assertEqual(self.moteur.entetes[0]["x-api-key"], CLE_ANALYSE)
 

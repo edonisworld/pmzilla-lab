@@ -16,6 +16,12 @@ Aucun fichier n'est écrit : flow_import.py dérive les tables courantes de la c
         texte (sans tenir compte de la casse) : de quoi retrouver le customfield_NNNNN de « [G] Team/s » pour le
         réglage export_team_field. Aucune valeur de champ, aucun ticket n'est lu.
 
+    uv run tools/export_jira_api.py fields --project <clé> --field <identifiant> [--field <identifiant> ...]
+        Sur les 500 derniers tickets créés du projet (taille de l'échantillon affichée), compte combien de
+        tickets ont chaque champ rempli (les champs système components, fixVersions et versions compris). Affiche seulement l'identifiant du champ, son
+        nom et le compte, avec la taille de l'échantillon : jamais une valeur, jamais une clé de ticket. Lancée par l'auteur
+        seulement (règles deny de la sous-commande fields).
+
     uv run tools/export_jira_api.py export [--query NOM] [--full] [--strict-teams]
         Exécute les requêtes JQL nommées du réglage jql_exports (ou jql_export) de Flux-Lab/flux.yaml, pagination complète
         (nextPageToken), et écrit UN passage de la couche brute (voir plus bas). Chaque passage lit en entier tous les tickets de chaque
@@ -24,7 +30,9 @@ Aucun fichier n'est écrit : flow_import.py dérive les tables courantes de la c
         puisse venir sans changer l'interface). --output est retirée (code 2) : l'export n'écrit aucun fichier. Les attributs lus :
         clé, type, état, catégorie d'état, dates de création, de résolution, de changement de catégorie et de mise à jour (instants
         du fuseau export_timezone, à la minute), résolution, clé du parent, story points si le réglage export_points_field est donné,
-        équipes (dans l'ordre) et liens. Ni les étiquettes ni les versions ne sont demandées (la collecte de l'historique s'en charge),
+        équipes (dans l'ordre), liens et noms des versions courantes (fixVersions et versions) avec, pour chaque version, sa date de sortie et son drapeau de sortie
+        (releaseDate, released : aucun autre attribut de version), en base seulement, jamais affichés, aucune valeur. Les
+        étiquettes ne sont pas demandées (la collecte de l'historique s'en charge),
         ni la colonne de vérification (aucun lecteur ne s'en sert). Aucun titre, aucune description, aucune personne n'est demandé à
         Jira. Sortie : des nombres, jamais une clé ni un nom.
         Si le champ d'équipe ne renvoie pas un libellé (identifiant d'objet Assets, UUID), il traduit l'identifiant par le
@@ -44,7 +52,8 @@ Aucun fichier n'est écrit : flow_import.py dérive les tables courantes de la c
         transaction, un passage (instant, nombre de requêtes nommées lues, toutes lues ou non), les clés des tickets lus (visites) et,
         pour un ticket nouveau ou dont le contenu a changé, un instantané de ses attributs autorisés (équipes dans l'ordre, avec leur
         identifiant d'équipe Jira quand le champ en renvoie un, y compris un identifiant dans aucune des deux sources ; liens). Jamais de
-        titre, de description, de personne, d'étiquette ni de version. Dans la même transaction, le type de chaque équipe rencontrée
+        titre, de description, de personne ni d'étiquette ; les versions courantes y sont, par genre, avec leur date de sortie et leur drapeau de
+        sortie, sans jamais être affichés ni aucune valeur. Dans la même transaction, le type de chaque équipe rencontrée
         s'écrit dans flow.teams (type du catalogue, ou type effectif de l'équipe du référentiel : forcé, sinon déduit du catalogue ;
         jamais deviné ; une équipe créée si elle manque ; la colonne n'est mise à jour que si le type diffère) et la ligne « équipes
         sans type : N » (un effectif, jamais un libellé) s'affiche. Une erreur de Jira ou de la base ne laisse aucun passage. L'outil
@@ -57,6 +66,14 @@ Aucun fichier n'est écrit : flow_import.py dérive les tables courantes de la c
         (référentiel, catalogue), les lignes habituelles s'affichent, puis la phrase « identifiants d'équipe inconnus : export
         incomplet » et la sortie avec le code 3, SANS rien écrire dans la couche brute (sans l'option, le code reste 0 et le passage
         est écrit). Une équipe du catalogue, obsolète ou non, ne rend jamais l'export incomplet.
+
+    Client Jira en lecture seule (diagnose, fields, export ; change jira-read-only-client) : seules les lectures de la liste de
+        history_jira.py sont envoyées. Une requête refusée arrête avec le code 5 et la phrase fixe en entier (écriture interdite, ou
+        hors de la liste des lectures permises, ou option non permise), rien n'est enregistré. La garde du périmètre n'admet que des
+        recherches limitées aux projets de scope_projects, refuse ceux de forbidden_projects, filtre les réponses (tickets hors des
+        projets déclarés écartés et comptés : « tickets hors des projets déclarés écartés : N », seulement au-dessus de zéro ; liens,
+        parent et sous-tâches réduits à la clé et au type) : un refus de la garde, ou un de ces deux réglages absent, vide ou illisible
+        (aucun appel à Jira), arrête avec le code 6. Codes 5 et 6 : jamais un autre motif.
 
     uv run tools/export_jira_api.py extract-teams [--language fr|en]
         Utilisateur seul, dans le Terminal (refusé dans une session Claude Code, code 3, avant toute lecture). Aucun appel à Jira,
@@ -126,8 +143,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flux_config
 import flow_organisation
 import export_jira_api_equipes as equipes
+import sensitive_names
 from yaml_strict import charger
 import flow_raw
+import flow_delivery
 import history_common as commun
 import history_jira as hj
 from export_jira_api_messages import CATALOGS
@@ -136,10 +155,14 @@ from messages import Messages, add_language_option
 OPTIONS_RENOMMEES = {**flux_config.OPTIONS_COMMUNES, "--cherche": "--search", "--requete": "--query"}
 
 PAGE = 100
-# Champs demandés à Jira : ni étiquettes, ni versions (la collecte de l'historique les demande), ni colonne de vérification, ni
-# titre ni personne (database-only, D5 et spec jira-flow-export « No sensitive field requested or printed »)
+ECHANTILLON_REMPLISSAGE = 500        # fields --project --field : nombre maximal de derniers tickets créés comptés
+CLE_PROJET = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,49}")
+CHAMP_ADMIS = re.compile(r"customfield_[0-9]+|components|fixVersions|versions")      # jamais un champ système de texte ou de personne
+# Champs demandés à Jira : les versions courantes (fixVersions, versions : validées le 2026-10-23, change flow-version-share), ni
+# étiquettes (la collecte de l'historique les demande), ni colonne de vérification, ni titre ni personne (database-only, D5 et spec
+# jira-flow-export « No sensitive field requested or printed »)
 CHAMPS_DE_BASE = ["issuetype", "status", "created", "resolutiondate", "resolution", "statuscategorychangedate",
-                  "parent", "issuelinks", "updated"]
+                  "parent", "issuelinks", "updated", "fixVersions", "versions"]
 CLES_LIBELLE = ("name", "value", "label", "displayName", "title")
 IDENTIFIANT = re.compile(r"\d+|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}")
 
@@ -259,12 +282,11 @@ def resoudre_traduction() -> Traduction:
     catalogue = flow_organisation.charger_catalogue_si_present(hj.FLUX_DIR / NOM_CATALOGUE, _LANGUE)
     if referentiel is not None:
         flow_organisation.verifier_sources(referentiel, catalogue, _LANGUE)
-    correspondance: dict[str, str] = {}
-    for entree in catalogue.entrees:
-        for identifiant in entree.jira_ids:
-            correspondance[identifiant] = entree.nom
+    identifiants = [i for e in catalogue.entrees for i in e.jira_ids]
     if referentiel is not None:
-        correspondance.update({i: e.nom for e in referentiel.teams.values() for i in e.jira_ids})
+        identifiants += [i for e in referentiel.teams.values() for i in e.jira_ids]
+    # une seule traduction identifiant -> nom : flow_organisation.nom_traduit (référentiel d'abord, sinon libellé du catalogue)
+    correspondance = {i: flow_organisation.nom_traduit(i, referentiel, catalogue) for i in dict.fromkeys(identifiants)}
     exterieurs = frozenset(i for i in catalogue.ids if referentiel is None or referentiel.team_for_jira_id(i) is None)
     obsoletes = frozenset(i for i in catalogue.ids if catalogue.est_obsolete(i))
     return Traduction(correspondance or None, referentiel, catalogue, (hj.FLUX_DIR / NOM_TABLE).exists(), exterieurs, obsoletes)
@@ -362,6 +384,42 @@ def texte_points(valeur) -> tuple[str, bool]:
     return "", True
 
 
+def noms_de_versions(valeur) -> list[str]:
+    """Noms des versions d'un champ de versions de Jira, dans l'ordre et l'orthographe renvoyés ; un nom vide ou répété est ignoré.
+    Jamais affiché."""
+    noms: list[str] = []
+    for version in valeur if isinstance(valeur, list) else []:
+        nom = str((version or {}).get("name") or "").strip() if isinstance(version, dict) else ""
+        if nom and nom not in noms:
+            noms.append(nom)
+    return noms
+
+
+def attributs_de_sortie(*valeurs) -> dict[str, dict]:
+    """Date de sortie et drapeau « sortie » de chaque version des champs de versions de Jira (change version-release-date, design D1, D2) :
+    {nom: {"date": date ISO ou None, "released": booléen ou None}}. Seuls `releaseDate` et `released` sont lus, aucun autre attribut de
+    l'objet ; une valeur de forme inattendue donne None. Un nom présent dans les deux champs garde les valeurs du premier objet qui en
+    porte. Jamais affiché."""
+    attributs: dict[str, dict] = {}
+    for valeur in valeurs:
+        for version in valeur if isinstance(valeur, list) else []:
+            if not isinstance(version, dict):
+                continue
+            nom = str(version.get("name") or "").strip()
+            if not nom:
+                continue
+            date = version.get("releaseDate")
+            try:
+                date = dt.date.fromisoformat(date).isoformat() if isinstance(date, str) else None
+            except ValueError:
+                date = None
+            sortie = version.get("released")
+            lu = {"date": date, "released": sortie if isinstance(sortie, bool) else None}
+            if nom not in attributs:
+                attributs[nom] = lu
+    return attributs
+
+
 def interroger(client, jql: str, champs: list[str], une_page: bool = False) -> tuple[list[dict], int]:
     """Tickets de la requête, toutes les pages (nextPageToken). Retourne les tickets (sans doublon) et le nombre de pages."""
     tickets, vus, pages, jeton = [], set(), 0, None
@@ -431,11 +489,14 @@ def nombre_points(texte: str) -> Decimal | None:
 def construire_instantanes(tickets: list[dict], champ_equipe: str | None, table: dict[str, str] | None = None,
                            fuseau: dt.tzinfo | None = None, champ_points: str | list[str] | None = None,
                            exterieurs: frozenset = frozenset(), obsoletes: frozenset = frozenset(),
-                           separateur: str = ";") -> tuple[dict[str, dict], dict]:
+                           separateur: str = ";", types_defauts=()) -> tuple[dict[str, dict], dict]:
     """Instantanés de la couche brute (clé -> instantané de flow_raw) des tickets lus, et quelques effectifs. Un libellé d'équipe
     est pris tel quel ; un identifiant d'objet se traduit par `table` (identifiant -> nom ; absent : « (équipe inconnue) »,
     compté). Lève Arret si le champ d'équipe n'est ni un libellé ni un identifiant traduisible. Un ticket sans date de création ou de
-    mise à jour lisible n'a pas d'instantané (Jira renvoie toujours les deux)."""
+    mise à jour lisible n'a pas d'instantané (Jira renvoie toujours les deux).
+    Champs de livraison (change jira-delivery-fields, D1) : réduits à leur forme stockée dans la partie `delivery` de l'instantané ; les champs
+    des défauts ne sont gardés que pour les types de `types_defauts` ; un champ d'option n'est gardé que par son identifiant d'option
+    (R-20261102-51), les engagements et l'objectif stratégique par leur seule présence (R-20261102-50)."""
     fuseau = fuseau or dt.timezone.utc
     equipes = {}
     paires_equipes: dict[str, list[tuple[str, str | None]]] = {}      # par ticket : (nom écrit, identifiant d'équipe Jira ou None)
@@ -503,7 +564,10 @@ def construire_instantanes(tickets: list[dict], champ_equipe: str | None, table:
             "motif": (champs.get("resolution") or {}).get("name") or None,
             "debut": instant_api(champs.get("statuscategorychangedate"), fuseau),
             "points": nombre_points(texte), "modifie": modifie, "parent": (champs.get("parent") or {}).get("key") or None,
-            "equipes": equipes.get(cle, []), "liens": liens_de(ticket)}
+            "equipes": equipes.get(cle, []), "liens": liens_de(ticket),
+            "delivery": flow_delivery.livraison_de(champs, (champs.get("issuetype") or {}).get("name") or "", types_defauts),
+            "versions": {"fix": noms_de_versions(champs.get("fixVersions")), "affects": noms_de_versions(champs.get("versions")),
+                         "release": attributs_de_sortie(champs.get("fixVersions"), champs.get("versions"))}}
         instantanes[cle] = flow_raw.instantane(ticket_lu, paires_equipes.get(cle), separateur)
     vues = {nom for noms in equipes.values() for nom in noms if nom != EQUIPE_INCONNUE}
     return instantanes, {"inconnus_distincts": len(inconnus), "inconnus_ids": sorted(inconnus), "inconnus_tickets": len(tickets_inconnus),
@@ -586,6 +650,12 @@ def ouvrir_magasin():
 # Commandes
 # ---------------------------------------------------------------------------
 
+def afficher_hors_perimetre(client) -> None:
+    """La ligne du nombre de tickets écartés hors des projets déclarés (design D9) : seulement au-dessus de zéro, jamais une clé."""
+    if client.tickets_hors_perimetre:
+        hj.afficher(hj.t("out_of_scope_count", count=client.tickets_hors_perimetre))
+
+
 def cmd_diagnose(args: argparse.Namespace) -> None:
     settings, requetes, champ, _ = reglages_export()
     jql = requetes[0][1]          # la première requête suffit à voir la forme du champ
@@ -594,6 +664,7 @@ def cmd_diagnose(args: argparse.Namespace) -> None:
     client = hj.construire_client(settings)
     tickets, _ = interroger(client, jql, [champ], une_page=True)
     hj.afficher(t("diagnose_page", count=len(tickets)))
+    afficher_hors_perimetre(client)
     if not tickets:
         raise Arret(t("diagnose_no_ticket"))
     if not any(champ in (t.get("fields") or {}) for t in tickets):
@@ -617,8 +688,88 @@ def cmd_diagnose(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def est_rempli(valeur) -> bool:
+    """Vrai si la valeur du champ est renseignée. Absent, None, texte d'espaces, liste vide, objet sans value, name ni id (non
+    vide) et document ADF sans contenu : non remplis ; nombre ou booléen (0 et False compris) : remplis. Le contenu n'est jamais gardé."""
+    if valeur is None:
+        return False
+    if isinstance(valeur, str):
+        return bool(valeur.strip())
+    if isinstance(valeur, (list, tuple)):
+        return len(valeur) > 0
+    if isinstance(valeur, dict):
+        if valeur.get("type") == "doc":
+            return bool(valeur.get("content"))
+        return any(est_rempli(valeur.get(cle)) for cle in ("value", "name", "id"))
+    return True
+
+
+def valider_remplissage(args: argparse.Namespace) -> tuple[str, list[str]]:
+    """Contrôles de forme, avant la lecture du jeton et tout appel : clé de projet, champs non vides, identifiants admis
+    (customfield_NNNNN, components, fixVersions et versions seulement). Rend la clé et les champs demandés, sans doublon, dans l'ordre."""
+    projet = (args.projet or "").strip()
+    if not CLE_PROJET.fullmatch(projet):
+        raise Arret(t("fields_project_invalid"))
+    bruts = [f.strip() for f in args.champs_demandes]
+    if not bruts or any(not f for f in bruts):
+        raise Arret(t("fields_field_empty"))
+    refuses = [f for f in bruts if not CHAMP_ADMIS.fullmatch(f)]
+    if refuses:
+        raise Arret(t("fields_field_not_allowed", ids=", ".join(dict.fromkeys(refuses))))
+    return projet, list(dict.fromkeys(bruts))
+
+
+def est_champ_de_personne(champ: dict) -> bool:
+    schema = champ.get("schema") if isinstance(champ.get("schema"), dict) else {}
+    return "user" in (schema.get("type"), schema.get("items"))
+
+
+def cmd_remplissage(args: argparse.Namespace) -> None:
+    """Pour chaque --field : le nombre de tickets où il est rempli, sur les derniers tickets créés du projet. Sortie : identifiant,
+    nom, compte et taille de l'échantillon, jamais une valeur ni une clé de ticket."""
+    projet, demandes = valider_remplissage(args)
+    client = hj.construire_client(hj.reglages())
+    champs = client.json("GET", "/rest/api/3/field")
+    if not isinstance(champs, list):
+        raise Arret(t("fields_unexpected"))
+    connus = {str(c.get("id") or ""): c for c in champs if isinstance(c, dict)}
+    inconnus = [f for f in demandes if f not in connus]
+    if inconnus:
+        raise Arret(t("fields_unknown", ids=", ".join(inconnus)))
+    personnes = [f for f in demandes if est_champ_de_personne(connus[f])]
+    if personnes:
+        raise Arret(t("fields_field_person", ids=", ".join(personnes)))
+    noms = {f: str(connus[f].get("name") or "") for f in demandes}
+    limite = ECHANTILLON_REMPLISSAGE
+    jql = f'project = "{projet}" ORDER BY created DESC'
+    remplis, vus, jeton = Counter(), 0, None
+    while vus < limite:
+        corps = {"jql": jql, "fields": demandes, "maxResults": min(PAGE, limite - vus)}
+        if jeton:
+            corps["nextPageToken"] = jeton
+        reponse = client.json("POST", "/rest/api/3/search/jql", json=corps)
+        for ticket in (reponse.get("issues") or [])[:limite - vus]:
+            vus += 1
+            valeurs = ticket.get("fields") or {}
+            for f in demandes:
+                if est_rempli(valeurs.get(f)):
+                    remplis[f] += 1
+        suivant = reponse.get("nextPageToken")
+        if not suivant or suivant == jeton or not reponse.get("issues"):
+            break
+        jeton = suivant
+        time.sleep(hj.PAUSE)
+    hj.afficher(t("fields_sample", project=projet, count=vus, limit=limite))
+    for f in demandes:
+        hj.afficher(f"  {f}  {noms[f]}  {remplis[f]}/{vus}")
+    afficher_hors_perimetre(client)
+
+
 def cmd_champs(args: argparse.Namespace) -> None:
-    """Identifiant et nom des champs dont le nom contient le texte cherché. Rien d'autre n'est affiché ni gardé."""
+    """Identifiant et nom des champs dont le nom contient le texte cherché, ou (--project et --field) le nombre de tickets où des
+    champs sont remplis. Rien d'autre n'est affiché ni gardé."""
+    if args.cherche is None:
+        return cmd_remplissage(args)
     cherche = args.cherche.strip().casefold()
     if not cherche:
         raise Arret(t("fields_search_empty"))
@@ -658,6 +809,34 @@ def cmd_export(args: argparse.Namespace) -> None:
             pile["magasin"].fermer()
 
 
+def lire_versions(client, settings: dict, filtre: "flow_delivery.FiltreOptions | None" = None) -> dict[str, dict] | None:
+    """Recherche unique des tickets de type Version du projet de référence des versions (jira-delivery-fields D4, D5) : {objet d'actif:
+    contenu} joint par flow_delivery.joindre_versions, ou None quand le réglage est absent (ligne fixe, aucune recherche). La forme de la
+    recherche est celle que le client compare littéralement ; sa réponse ne garde que des tickets de type Version. Les lignes de compte (D12)
+    sont des nombres. Aucune clé de ticket de version, aucun résumé, aucun identifiant ne sort ni n'est stocké."""
+    if client.reference is None:
+        hj.afficher(t("export_no_version_project"))
+        return None
+    if not flow_delivery.versions_configurees():          # sans l'objet d'actif des tickets de version, pas de jointure : aucune recherche
+        if flow_delivery.table_configuree():          # table absente : la ligne de l'export l'a déjà dit
+            hj.afficher(t("export_no_version_fields"))
+        return None
+    avant = client.autres_types_reference
+    tickets, _ = interroger(client, hj.recherche_versions(client.reference), flow_delivery.champs_versions())
+    lus = [flow_delivery.version_de_ticket(ticket.get("fields") or {}, filtre) for ticket in tickets]
+    contenus, comptes = flow_delivery.joindre_versions(lus)
+    hj.afficher(t("export_version_tickets", count=comptes["lus"]))
+    if client.autres_types_reference - avant:
+        hj.afficher(t("export_version_other_type", count=client.autres_types_reference - avant))
+    if comptes["sans_actif"]:
+        hj.afficher(t("export_version_no_asset", count=comptes["sans_actif"]))
+    if comptes["plusieurs_actifs"]:
+        hj.afficher(t("export_version_several_assets", count=comptes["plusieurs_actifs"]))
+    if comptes["conflits"]:
+        hj.afficher(t("export_version_conflicts", count=comptes["conflits"]))
+    return contenus
+
+
 def _export(args: argparse.Namespace, pile: dict) -> None:
     if args.sortie is not None:          # option retirée : avant tout appel à Jira et toute connexion
         hj.afficher(t("error_line", message=t("output_retired")))
@@ -670,7 +849,16 @@ def _export(args: argparse.Namespace, pile: dict) -> None:
     separateur = settings.get("separateur_equipes") or ";"
     traduction = resoudre_traduction() if champ else Traduction(None, None, flow_organisation.Catalogue(), False)   # refus : avant Jira
     pile["magasin"] = ouvrir_magasin()          # mot de passe absent ou base injoignable : arrêt avant tout appel à Jira (D4, D13)
-    client = hj.construire_client(settings)
+    filtre = flow_delivery.FiltreOptions()
+    try:
+        filtre.charger()          # garde neuve (R-20261102-41, Q326) : liste des noms sensibles chargée AVANT le premier appel à Jira ; remplace : rien ;
+    except sensitive_names.SensitiveNamesUnavailable:          # retrait : permanent tant qu'un nom court de version est stocké (R-20261102-51)
+        raise Arret(t("sensitive_list_unavailable")) from None          # jamais le chemin ni le contenu de la liste
+    client = hj.construire_client(settings, avec_reference=True)          # réglage de la référence des versions illisible : code 6, avant tout appel
+    types_defauts = flux_config.defect_types(settings)
+    avec_table = flow_delivery.configurer(flux_config.delivery_fields(settings))          # table de flux.yaml, hors Git (R-20261114-108, même logique que A-92)
+    if not avec_table:
+        hj.afficher(t("export_no_delivery_fields"))          # sans table : aucun champ demandé, livraison déjà stockée conservée (R-20261114-89 C2)
     equipes_inconnues = avertie = False
     equipes_vues: set[str] = set()
     instantanes: dict[str, dict] = {}          # couche brute : le dernier passage de requête l'emporte pour un ticket lu deux fois
@@ -678,10 +866,12 @@ def _export(args: argparse.Namespace, pile: dict) -> None:
     for nom, jql in requetes:
         etiquette = f"[{nom}] " if nom else ""
         # lecture complète à chaque passage (D3 (c)) : aucune condition sur la date de mise à jour, aucun instant d'un passage antérieur
-        tickets, pages = interroger(client, jql, CHAMPS_DE_BASE + ([champ] if champ else []) + champ_points)
+        tickets, pages = interroger(client, jql, CHAMPS_DE_BASE + ([champ] if champ else []) + champ_points
+                                    + flow_delivery.champs_demandes())
         tickets, hors_conservation = ecarter_hors_conservation(tickets, jours_conservation, hj.aujourd_hui(), fuseau)
         instantanes_requete, effectifs = construire_instantanes(tickets, champ, traduction.correspondance, fuseau, champ_points,
-                                                                traduction.exterieurs, traduction.obsoletes, separateur)
+                                                                traduction.exterieurs, traduction.obsoletes, separateur,
+                                                                types_defauts)
         equipes_vues |= effectifs["equipes_vues"]
         instantanes.update(instantanes_requete)
         vus += [str(ticket["key"]) for ticket in tickets]
@@ -710,6 +900,10 @@ def _export(args: argparse.Namespace, pile: dict) -> None:
             hj.afficher(t("export_unknown_teams", label=etiquette, identifiers=effectifs["inconnus_distincts"],
                           tickets=effectifs["inconnus_tickets"]))
             hj.afficher(t("export_unknown_ids", label=etiquette, ids=t("list_separator").join(effectifs["inconnus_ids"])))
+    versions = lire_versions(client, settings, filtre)          # une recherche de forme fixe, ou rien sans le réglage (D4)
+    if filtre.remplacees:          # un nombre, jamais une valeur (jira-delivery-fields D1, D12) ; ne compte plus que les noms courts de version
+        hj.afficher(t("export_option_filter", count=filtre.remplacees))
+    afficher_hors_perimetre(client)
     if traduction.referentiel is not None:        # contrôle du référentiel : un nombre, jamais un nom (design D17)
         sans_ticket = sum(1 for nom in traduction.referentiel.teams if nom not in equipes_vues)
         if sans_ticket:
@@ -718,8 +912,11 @@ def _export(args: argparse.Namespace, pile: dict) -> None:
         hj.afficher(t("export_strict_teams"))
         sys.exit(3)
     types = types_des_equipes(instantanes, traduction)
+    ecriture_versions = {} if versions is None else {"versions": versions}          # absent sans le réglage : appel inchangé
+    if not avec_table:          # sans table : la partie `delivery` du dernier instantané est reprise, rien n'est effacé ni réécrit pour cette raison
+        ecriture_versions["livraison_conservee"] = True
     nb_vus, ajoutes = pile["magasin"].enregistrer(genre="export", nb_requetes=len(requetes), toutes=args.requete is None,
-                                                       vus=vus, instantanes=instantanes, types_equipes=types)
+                                                       vus=vus, instantanes=instantanes, types_equipes=types, **ecriture_versions)
     hj.afficher(t("export_teams_without_type", count=pile["magasin"].sans_type))          # un effectif, jamais un libellé
     hj.afficher(t("export_raw_layer", seen=nb_vus, added=ajoutes))      # des effectifs seulement : ni clé, ni équipe, ni valeur
 
@@ -729,8 +926,13 @@ def main(argv: list[str] | None = None) -> None:
     commandes = parser.add_subparsers(dest="commande", required=True,
                                       metavar="{diagnose,fields,export,check-teams,migrate-teams,review-teams,extract-teams}")
     commandes.add_parser("diagnose", help="forme des valeurs du champ d'équipe (jamais les valeurs)")
-    champs = commandes.add_parser("fields", help="identifiant et nom des champs dont le nom contient un texte")
-    champs.add_argument("--search", dest="cherche", required=True, metavar="TEXTE", help="texte cherché dans le nom des champs (sans casse)")
+    champs = commandes.add_parser("fields", help="identifiant et nom des champs dont le nom contient un texte ; avec --project et "
+                                                 "--field, compte les tickets où des champs sont remplis")
+    champs.add_argument("--search", dest="cherche", metavar="TEXTE", help="texte cherché dans le nom des champs (sans casse)")
+    champs.add_argument("--project", dest="projet", metavar="CLE",
+                        help=f"avec --field : projet dont les {ECHANTILLON_REMPLISSAGE} derniers tickets créés sont comptés")
+    champs.add_argument("--field", dest="champs_demandes", action="append", default=[], metavar="IDENTIFIANT",
+                        help="avec --project : champ dont on compte les tickets où il est rempli (répétable ; components, fixVersions et versions admis)")
     export = commandes.add_parser("export", help="écrit un passage de la couche brute datée (jql_exports, ou jql_export)")
     export.add_argument("--query", dest="requete", metavar="NOM", help="ne lance que cette requête de jql_exports (par défaut : toutes)")
     export.add_argument("--full", action="store_true",
@@ -761,6 +963,11 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(2)
     if inconnus:
         parser.error("unrecognized arguments: " + " ".join(inconnus))
+    if args.commande == "fields":
+        if args.cherche is None and not (args.projet and args.champs_demandes):
+            parser.error(t("fields_options_missing"))
+        if args.cherche is not None and (args.projet or args.champs_demandes):
+            parser.error(t("fields_options_combined"))
     try:
         if args.commande in ("check-teams", "migrate-teams", "review-teams", "extract-teams"):
             commande = {"check-teams": equipes.cmd_check_teams, "migrate-teams": equipes.cmd_migrate_teams,
@@ -781,6 +988,12 @@ def main(argv: list[str] | None = None) -> None:
     except hj.ErreurHTTP as erreur:
         hj.afficher(str(erreur))
         sys.exit(1)
+    except hj.RequeteRefusee as erreur:          # la phrase fixe en entier, code 5 (jira-read-only-client, D3 et D4) : rien n'est enregistré
+        hj.afficher(t("error_line", message=erreur))
+        sys.exit(hj.CODE_REFUS)
+    except hj.RequeteHorsPerimetre as erreur:    # code 6 (garde du périmètre, D10) : rien n'est enregistré
+        hj.afficher(t("error_line", message=erreur))
+        sys.exit(hj.CODE_PERIMETRE)
     except (hj.ErreurSimple, Arret) as erreur:
         hj.afficher(t("error_line", message=erreur))
         sys.exit(1)

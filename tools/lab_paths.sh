@@ -33,15 +33,20 @@ _lp_tilde() { case "$1" in "~") printf %s "$HOME" ;; "~/"*) printf %s "$HOME/${1
 _lp_git_commun() {
   local _lp_tmp _lp_pid _lp_garde _lp_ligne _lp_rc
   _lp_tmp=$(mktemp "${TMPDIR:-/tmp}/lab_paths.XXXXXX") || return 1
-  { git -C "$1" rev-parse --path-format=absolute --git-common-dir >"$_lp_tmp" 2>/dev/null </dev/null & } 2>/dev/null
+  # La tâche de fond écrit elle-même le code de sortie de git (ligne « rc=N » en fin de fichier) : le code rendu par wait est faux
+  # sous zsh quand la tâche a déjà été ramassée. Tâche tuée par le délai : pas de ligne rc, donc échec.
+  { { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null </dev/null; printf 'rc=%s\n' "$?"; } >"$_lp_tmp" & } 2>/dev/null
   _lp_pid=$!
-  { ( sleep 5; kill "$_lp_pid" ) >/dev/null 2>&1 & } 2>/dev/null
+  { ( sleep 5; pkill -P "$_lp_pid"; kill "$_lp_pid" ) >/dev/null 2>&1 & } 2>/dev/null
   _lp_garde=$!
   { wait "$_lp_pid"; } 2>/dev/null
-  _lp_rc=$?
   { kill "$_lp_garde"; } >/dev/null 2>&1
   _lp_ligne=$(cat "$_lp_tmp"); rm -f "$_lp_tmp"
-  [ "$_lp_rc" -eq 0 ] || return 1
+  case "$_lp_ligne" in *rc=*) ;; *) return 1 ;; esac
+  _lp_rc=${_lp_ligne##*rc=}
+  _lp_ligne=${_lp_ligne%rc=*}
+  _lp_ligne=${_lp_ligne%$'\n'}
+  [ "$_lp_rc" = 0 ] || return 1
   case "$_lp_ligne" in
     *$'\n'*|"") return 1 ;;
     /*) printf %s "$_lp_ligne" ;;

@@ -1,0 +1,52 @@
+{
+  "cells": [
+    { "name": "cell-count-above-threshold", "view": "v_team_status", "column": "tickets", "value": 12, "threshold": 5, "expected": { "state": "value", "value": 12 } },
+    { "name": "cell-count-at-threshold", "view": "v_team_status", "column": "tickets", "value": 5, "threshold": 5, "expected": { "state": "value", "value": 5 } },
+    { "name": "cell-count-just-under-threshold", "view": "v_team_status", "column": "tickets", "value": 4, "threshold": 5, "expected": { "state": "masked", "threshold": 5 } },
+    { "name": "cell-count-under-threshold", "view": "v_team_status", "column": "tickets", "value": 3, "threshold": 5, "expected": { "state": "masked", "threshold": 5 } },
+    { "name": "cell-count-zero", "view": "v_team_status", "column": "tickets", "value": 0, "threshold": 5, "expected": { "state": "masked", "threshold": 5 } },
+    { "name": "cell-null-from-the-database", "view": "v_team_status", "column": "tickets", "value": null, "threshold": 5, "expected": { "state": "masked", "threshold": 5 } },
+    { "name": "cell-raised-threshold-masks-eight", "view": "v_team_status", "column": "tickets", "value": 8, "threshold": 10, "expected": { "state": "masked", "threshold": 10 } },
+    { "name": "cell-raised-threshold-shows-ten", "view": "v_team_status", "column": "tickets", "value": 10, "threshold": 10, "expected": { "state": "value", "value": 10 } },
+    { "name": "cell-null-with-raised-threshold", "view": "v_team_status", "column": "tickets", "value": null, "threshold": 10, "expected": { "state": "masked", "threshold": 10 } },
+    { "name": "cell-threshold-under-floor-is-raised", "view": "v_team_status", "column": "tickets", "value": null, "threshold": 3, "expected": { "state": "masked", "threshold": 5 } },
+    { "name": "plain-column-team", "view": "v_team_status", "column": "team", "value": "Team A", "threshold": 5, "expected": "Team A" },
+    { "name": "plain-column-status", "view": "v_team_status", "column": "status", "value": "In progress", "threshold": 5, "expected": "In progress" },
+    { "name": "plain-column-small-text-is-not-a-count", "view": "v_team_status", "column": "type", "value": "Story", "threshold": 10, "expected": "Story" }
+  ],
+  "views": [
+    { "name": "view-listed", "view": "v_team_status", "accepted": true },
+    { "name": "view-not-in-the-slice-0-contract", "view": "v_teams", "accepted": false },
+    { "name": "view-schema-qualified", "view": "flow.v_team_status", "accepted": false },
+    { "name": "view-other-case", "view": "V_TEAM_STATUS", "accepted": false },
+    { "name": "view-leading-space", "view": " v_team_status", "accepted": false },
+    { "name": "view-table-name", "view": "issues", "accepted": false },
+    { "name": "view-schema-qualified-table", "view": "flow.issues", "accepted": false },
+    { "name": "view-injection-text", "view": "v_team_status; DROP TABLE flow.issues", "accepted": false },
+    { "name": "view-comment-injection", "view": "v_team_status--", "accepted": false },
+    { "name": "view-empty", "view": "", "accepted": false },
+    { "name": "view-slice-1-lead-time-throughput", "view": "v_team_lead_time_throughput", "accepted": true },
+    { "name": "view-slice-1-task-without-team", "view": "v_task_without_team_share", "accepted": true },
+    { "name": "view-slice-1-ready-queue", "view": "v_team_ready_queue", "accepted": true },
+    { "name": "view-slice-1-blocked-share", "view": "v_team_blocked_share", "accepted": true },
+    { "name": "view-slice-1-unplanned-share", "view": "v_unplanned_share", "accepted": true },
+    { "name": "view-flow-inout", "view": "v_team_flow_inout", "accepted": true },
+    { "name": "view-flow-inout-schema-qualified", "view": "flow.v_team_flow_inout", "accepted": false },
+    { "name": "view-slice-1-schema-qualified", "view": "flow.v_unplanned_share", "accepted": false }
+  ],
+  "thresholds": [
+    { "name": "threshold-nothing-set", "contractThreshold": null, "setting": null, "option": null, "expected": { "threshold": 5 } },
+    { "name": "threshold-setting-and-option-under-floor", "contractThreshold": null, "setting": 2, "option": 1, "expected": { "threshold": 5 } },
+    { "name": "threshold-setting-wins", "contractThreshold": null, "setting": 8, "option": 6, "expected": { "threshold": 8 } },
+    { "name": "threshold-option-wins", "contractThreshold": null, "setting": 6, "option": 12, "expected": { "threshold": 12 } },
+    { "name": "threshold-contract-raises", "contractThreshold": 10, "setting": null, "option": null, "expected": { "threshold": 10 } },
+    { "name": "threshold-contract-beats-lower-setting-and-option", "contractThreshold": 10, "setting": 8, "option": 6, "expected": { "threshold": 10 } },
+    { "name": "threshold-option-beats-contract", "contractThreshold": 10, "setting": 6, "option": 20, "expected": { "threshold": 20 } },
+    { "name": "threshold-contract-at-floor", "contractThreshold": 5, "setting": null, "option": null, "expected": { "threshold": 5 } },
+    { "name": "threshold-contract-three-is-refused", "contractThreshold": 3, "setting": null, "option": null, "expected": { "refusal": "CONTRACT_FLOOR" } },
+    { "name": "threshold-contract-four-is-refused", "contractThreshold": 4, "setting": 9, "option": 9, "expected": { "refusal": "CONTRACT_FLOOR" } },
+    { "name": "threshold-contract-zero-is-refused", "contractThreshold": 0, "setting": null, "option": null, "expected": { "refusal": "CONTRACT_FLOOR" } },
+    { "name": "threshold-contract-negative-is-invalid", "contractThreshold": -1, "setting": null, "option": null, "expected": { "refusal": "CONTRACT_INVALID" } },
+    { "name": "threshold-contract-fraction-is-invalid", "contractThreshold": 7.5, "setting": null, "option": null, "expected": { "refusal": "CONTRACT_INVALID" } }
+  ]
+}

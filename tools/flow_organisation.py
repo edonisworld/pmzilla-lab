@@ -23,6 +23,8 @@ Structure du fichier (le contrat des outils qui le lisent) :
         site: ...                    # facultatif
         jira_team_ids: [identifiant, ...]      # facultatif (absent ou vide : pas d'identifiant)
         single_po: true                        # facultatif, booléen (qualité des stories, attribut d'équipe)
+        jira_team: none                        # facultatif : équipe sans équipe Jira par construction (jamais avec jira_team_ids)
+        jira_team_reason: effectifs            # obligatoire avec jira_team : effectifs, transverse ou site
     cross_cutting_teams: [noms d'équipes]      # facultatif
 
 Les refus sont des `ErreurConfig` (code 1) : le message donne le chemin de la clé et le numéro de ligne, jamais une valeur,
@@ -59,7 +61,10 @@ SANS_GROUPE = {
 CLES_RACINE = {"source_date", "sites", "departments", "teams", "cross_cutting_teams"}
 CLES_DEPARTEMENT = {"name", "site", "headcount", "mission_teams", "teams"}
 CLES_MISSION_TEAM = {"name", "discovery_workflow_pilot", "teams"}
-CLES_EQUIPE = {"name", "headcount", "site", "jira_team_ids", "type", "single_po"}
+CLES_EQUIPE = {"name", "headcount", "site", "jira_team_ids", "type", "single_po", "jira_team", "jira_team_reason"}
+# marqueur « sans équipe Jira par construction » (jira_team: none) et ses raisons courtes (jira_team_reason), comparées exactement
+MARQUEUR_SANS_EQUIPE_JIRA = "none"
+RAISONS_SANS_EQUIPE_JIRA = ("effectifs", "transverse", "site")
 CLES_CATALOGUE_RACINE = {"teams"}
 CLES_ENTREE_CATALOGUE = {"name", "jira_team_ids", "type", "obsolete"}
 # les quatre sous-types de Team d'Assets (change team-mapping, design Q5) : noms génériques, comparés exactement
@@ -93,6 +98,7 @@ teams:
     site: <site déclaré>           # facultatif
     jira_team_ids: [<identifiant>, ...]   # facultatif
     type: <sous-type de Team>      # facultatif, force le type déduit du catalogue
+    jira_team: none                # facultatif, sans équipe Jira par construction (avec jira_team_reason, sans jira_team_ids)
 cross_cutting_teams: [<équipe>, ...]  # facultatif"""
 
 # mêmes structures pour une sortie en anglais (messages « aucune source d'équipes ») : clés seules, jamais une valeur
@@ -112,6 +118,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional"""
 
 STRUCTURE_CATALOGUE_EN = """teams:
@@ -144,6 +151,8 @@ class Equipe:
     chemin_type: str = ""            # chemin et ligne de la clé type (vides sans type forcé)
     ligne_type: int = 0
     single_po: bool = False          # story-quality-audit D8 : attribut de l'équipe déclaré par l'utilisateur, aucune donnée de personne
+    sans_equipe_jira: bool = False   # marqueur `jira_team: none` : pas d'équipe Jira par construction (jamais avec des jira_team_ids)
+    raison_sans_equipe_jira: str | None = None   # raison courte du marqueur (effectifs, transverse, site), None sans marqueur
 
 
 @dataclass(frozen=True)
@@ -331,6 +340,29 @@ class _Lecteur:
             ids.append(str(v))
         return tuple(ids)
 
+    def marqueur_sans_equipe_jira(self, bloc: DictLignes, chemin: str, identifiants: tuple[str, ...]) -> tuple[bool, str | None]:
+        """`jira_team: none` avec `jira_team_reason` (effectifs, transverse ou site) : les deux ensemble ou aucun ; refusé avec
+        des `jira_team_ids` (incohérence). Les messages donnent le chemin et la ligne, jamais la valeur."""
+        if "jira_team" not in bloc:
+            if "jira_team_reason" in bloc:
+                self.refuser(f"« {chemin}.jira_team_reason » (L{bloc.lignes['jira_team_reason']}) n'a de sens qu'avec "
+                             f"« {chemin}.jira_team » : none.")
+            return False, None
+        ligne = bloc.lignes["jira_team"]
+        if bloc["jira_team"] != MARQUEUR_SANS_EQUIPE_JIRA:
+            self.refuser(f"« {chemin}.jira_team » (L{ligne}) n'accepte que la valeur « {MARQUEUR_SANS_EQUIPE_JIRA} » "
+                         "(équipe sans équipe Jira par construction).")
+        if identifiants:
+            self.refuser(f"« {chemin}.jira_team » (L{ligne}) et « {chemin}.jira_team_ids » (L{bloc.lignes['jira_team_ids']}) "
+                         "sont incohérents : une équipe marquée sans équipe Jira ne porte aucun identifiant.")
+        if "jira_team_reason" not in bloc:
+            self.refuser(f"« {chemin}.jira_team » (L{ligne}) demande « {chemin}.jira_team_reason » "
+                         f"({', '.join(RAISONS_SANS_EQUIPE_JIRA)}).")
+        if bloc["jira_team_reason"] not in RAISONS_SANS_EQUIPE_JIRA:
+            self.refuser(f"« {chemin}.jira_team_reason » (L{bloc.lignes['jira_team_reason']}) doit être l'une de : "
+                         f"{', '.join(RAISONS_SANS_EQUIPE_JIRA)}.")
+        return True, bloc["jira_team_reason"]
+
     def site(self, bloc: DictLignes, chemin: str, sites: set[str], obligatoire: bool) -> str | None:
         if "site" not in bloc and not obligatoire:
             return None
@@ -387,9 +419,12 @@ class _Lecteur:
             un_seul_po = bloc.get("single_po", False)
             if not isinstance(un_seul_po, bool):
                 self.refuser(f"« {chemin}.single_po » (L{bloc.lignes['single_po']}) doit être true ou false.")
+            identifiants = self.identifiants(bloc, chemin)
+            sans_jira, raison = self.marqueur_sans_equipe_jira(bloc, chemin, identifiants)
             equipes[nom] = Equipe(nom, self.effectif(bloc, chemin), self.site(bloc, chemin, sites, False),
-                                  self.identifiants(bloc, chemin), type_, chemin, bloc.lignes["name"],
-                                  f"{chemin}.type" if "type" in bloc else "", bloc.lignes.get("type", 0), un_seul_po)
+                                  identifiants, type_, chemin, bloc.lignes["name"],
+                                  f"{chemin}.type" if "type" in bloc else "", bloc.lignes.get("type", 0), un_seul_po,
+                                  sans_jira, raison)
         if types_refuses:
             self.refuser(PHRASE_TYPE[self.language].format(paths=" ; ".join(types_refuses)))
         return equipes

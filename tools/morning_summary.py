@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab : résumé du matin (change morning-summary, R-50).
 
     uv run tools/morning_summary.py [--language fr|en] [--json] [--notify] [--failed-steps "<étapes>"]
 
-Imprime un titre puis une ligne par partie, dans cet ordre : la veille du jour, les bilans dus, les travaux prêts de la file, le dernier
-contrôle du doctor. Des nombres et des dates seulement : jamais un titre d'article, un texte de problème, un titre de travail, un chemin,
+Imprime un titre, puis la ligne de l'arrêt du train automatique (en tête, s'il y a lieu), puis une ligne par partie, dans cet ordre : la veille
+du jour, les bilans dus, les travaux prêts de la file, le dernier contrôle du doctor, puis les copies figées en retard (s'il y a lieu). Des nombres et des dates seulement : jamais un titre d'article, un texte de problème, un titre de travail, un chemin,
 un nom ni un secret. Sans `--notify`, le script n'écrit rien : la session peut le lancer pour lire le résumé dans le Terminal.
 
 Sources (chacune lue en lecture seule, jamais le réseau) :
@@ -18,7 +18,13 @@ Sources (chacune lue en lecture seule, jamais le réseau) :
     sans auteur configuré, la ligne est omise et aucune connexion n'est ouverte ; si le mot de passe ne se lit pas (Trousseau fermé),
     la ligne dit « indisponible » ; si la base ne répond pas, « base injoignable » ;
   - la file : l'instantané du lecteur (tools/roadmap.py), compté comme le rappel de début de séance (Status Ready) ;
-  - le doctor : `doctor-etat.json` (date du contrôle et nombre de problèmes).
+  - le doctor : `doctor-etat.json` (date du contrôle et nombre de problèmes) ;
+  - les copies figées : la note `outils-figes-en-retard` (écrite par la fin d'un train quand les copies ne sont pas rafraîchies), signalée
+    avec la commande exacte de rafraîchissement qu'elle contient dans la sortie texte et dans --json, seule exception à « jamais un chemin »
+    (la notification, elle, porte une phrase sans chemin) ; rien quand la note est absente.
+  - l'arrêt du train automatique (change train-auto-launchd-env, D8) : une ligne juste après le titre, la même dans la notification, et la clé
+    JSON `train_stop`, tant que le fichier d'arrêt existe, lues par `train_auto.stop_info()` seul ; rien sans arrêt. Aucun chemin, aucun nom ;
+    les codes de sortie ne changent pas. Remplace : rien. Retrait : avec le passage automatique (R-166).
 Les dossiers viennent des réglages (PMZILLA_LAB_DATA, PMZILLA_LAB_WORKSPACE), jamais de l'emplacement du script ; PMZILLA_LAB_TODAY
 (AAAA-MM-JJ) fixe le jour dans les tests, sinon c'est le jour d'Europe/Paris.
 
@@ -188,8 +194,60 @@ def partie_doctor() -> dict:
     return {"state": "problems" if problemes else "ok", "date": date, "problems": problemes}
 
 
-def lignes(parties: dict, t: Messages) -> list[str]:
+RAISON_PERMISE = r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}"   # R-20261110-31 : seule forme de raison imprimée ; remplace : rien ; retrait : avec le passage automatique (R-166)
+
+
+def partie_arret() -> dict:
+    """Change train-auto-launchd-env, D8 : l'arrêt du train automatique, lu par `train_auto.stop_info()` seul (jamais le fichier d'arrêt ni le journal).
+    États : `stopped` (date, raison éventuellement nulle), `unreadable`, `unknown` (état `inconnu`, import impossible ou erreur) et `absent` (rien à dire).
+    Remplace : rien. Retrait : avec le passage automatique (R-166)."""
+    try:
+        import train_auto
+        info = train_auto.stop_info()
+        etat = info.get("state")
+    except (Exception, SystemExit):
+        return {"state": "unknown"}
+    if etat == "absent":
+        return {"state": "absent"}
+    if etat == "arrete" and isinstance(info.get("date"), str):
+        raison = info.get("raison")
+        if isinstance(raison, str) and not re.fullmatch(RAISON_PERMISE, raison):   # une raison hors forme (chemin, saut de ligne) n'est jamais imprimée
+            return {"state": "unreadable", "date": None, "reason": None}
+        return {"state": "stopped", "date": info["date"], "reason": raison if isinstance(raison, str) else None}
+    if etat == "illisible":
+        return {"state": "unreadable", "date": None, "reason": None}
+    return {"state": "unknown"}
+
+
+NOTE_FIGEES = "outils-figes-en-retard"
+
+
+def partie_figees() -> dict:
+    """R-20261110-03, -04 : la note du retard des copies figées (le sommet du train, un espace, la commande exacte à lancer par l'auteur).
+    Absente : rien à dire. Illisible ou sans commande : l'état seul, jamais une trace.
+    Remplace : rien. Retrait : avec le bac à sable (R-20261110-03, -04)."""
+    chemin = dossier_donnees() / NOTE_FIGEES
+    if not (chemin.exists() or chemin.is_symlink()):
+        return {"state": "absent"}
+    try:
+        texte = chemin.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return {"state": "unreadable"}
+    commande = texte.partition(" ")[2].strip()
+    if not commande or "\n" in commande:
+        return {"state": "unreadable"}
+    return {"state": "late", "command": commande}
+
+
+def lignes(parties: dict, t: Messages, notification: bool = False) -> list[str]:
+    """Les lignes du résumé. `notification` (R-20261110-04) : la ligne des copies figées en retard porte alors une phrase sans chemin (la commande exacte reste
+    dans la sortie texte et dans --json). Remplace : rien. Retrait : avec le bac à sable."""
     sortie = []
+    a = parties.get("train_stop", {"state": "absent"})      # D8 : la ligne de l'arrêt vient en tête, la même dans la notification
+    if a["state"] == "stopped":
+        sortie.append(t("stop_since", date=a["date"], code=a["reason"] if a["reason"] is not None else t("stop_reason_none")))
+    elif a["state"] == "unreadable":
+        sortie.append(t("stop_unreadable"))
     v = parties["watch"]
     if v["state"] == "done":
         base = t("watch_done", n=v["retained"]) if v["retained"] is not None else t("watch_done_no_triage")
@@ -227,6 +285,11 @@ def lignes(parties: dict, t: Messages) -> list[str]:
         sortie.append(t("doctor_unreadable"))
     else:
         sortie.append(t("doctor_absent"))
+    g = parties.get("frozen", {"state": "absent"})
+    if g["state"] == "late":
+        sortie.append(t("frozen_late_notify") if notification else t("frozen_late", command=g["command"]))
+    elif g["state"] == "unreadable":
+        sortie.append(t("frozen_unreadable"))
     return sortie
 
 
@@ -271,9 +334,14 @@ def main(argv=None, reviews=None) -> int:
     jour = aujourdhui()
     etapes = [e.strip() for e in args.failed_steps.split(",") if e.strip()]
     parties = {"watch": partie_veille(jour, etapes), "reviews": partie_bilans(jour, reviews or bilans_de_la_base),
-               "queue": partie_file(jour), "doctor": partie_doctor()}
+               "queue": partie_file(jour), "doctor": partie_doctor(), "frozen": partie_figees(),
+               "train_stop": partie_arret()}
     texte = lignes(parties, t)
     if args.json:
+        if parties["frozen"]["state"] == "absent":   # R-20261110-04 : la clé n'existe que tant que la note existe
+            parties = {k: v for k, v in parties.items() if k != "frozen"}
+        if parties["train_stop"]["state"] == "absent":   # D8 : la clé n'existe que pendant l'arrêt
+            parties = {k: v for k, v in parties.items() if k != "train_stop"}
         print(json.dumps(parties, ensure_ascii=False, indent=2))
     else:
         print(t("title"))
@@ -289,7 +357,7 @@ def main(argv=None, reviews=None) -> int:
     if memoire is not None and memoire.get("date") == jour.isoformat():
         print(t("already_sent"))
         return 3
-    if not notifier(t("title"), " ; ".join(texte)):
+    if not notifier(t("title"), " ; ".join(lignes(parties, t, notification=True))):
         print(t("notify_failed"))
         return 1
     if not ecrire_memoire(jour):

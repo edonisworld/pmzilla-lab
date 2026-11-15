@@ -1,7 +1,7 @@
 """
 Tests de la conversion des livres (tools/convert_books.py) sur des EPUB et des PDF minuscules inventés.
 
-    uv run --with pymupdf4llm --with ebooklib --with markdownify --with beautifulsoup4 \
+    uv run --with "pymupdf4llm<2" --with ebooklib --with markdownify --with beautifulsoup4 \
         python -m unittest discover -s tests/convert_books -v
 
 Les livres sont fabriqués dans le test, dans un dossier temporaire : avec texte, presque vides, scannés (pages
@@ -19,6 +19,15 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import convert_books as cb  # noqa: E402
+
+# Réglage des tests (R-20261030-22 et -23) : pymupdf4llm 1.28 active à l'import son moteur de mise en page (onnxruntime), dont les
+# threads natifs ont bloqué une fois l'arrêt de l'interpréteur après « OK » (fin du 2026-10-30, délai de 900 s). Les tests le coupent ;
+# l'outil réel n'est pas modifié (décision de l'auteur après la démo). Les modules de la suite partagent ce réglage par l'import.
+try:
+    import pymupdf4llm  # noqa: E402
+    pymupdf4llm.use_layout(False)
+except (ImportError, AttributeError):
+    pass
 
 PHRASE = "Le flux de valeur relie la discovery à la livraison et rend la prévision plus fiable. "
 

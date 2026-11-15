@@ -4,6 +4,7 @@
 
 ```
 Tickets: 4; pages: 1.
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 4 snapshots added
 ```
@@ -13,6 +14,7 @@ raw layer: 4 tickets seen, 4 snapshots added
 ```
 Tickets: 4; pages: 1.
 No team read: export_team_field is not set.
+version reference project not configured: version attributes skipped
 teams without a type: 0
 raw layer: 4 tickets seen, 3 snapshots added
 ```
@@ -21,6 +23,7 @@ raw layer: 4 tickets seen, 3 snapshots added
 
 ```
 Tickets: 4; pages: 1.
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 3 snapshots added
 ```
@@ -30,6 +33,7 @@ raw layer: 4 tickets seen, 3 snapshots added
 ```
 [a] Tickets: 4; pages: 1.
 [b] Tickets: 4; pages: 1.
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 0 snapshots added
 ```
@@ -38,6 +42,7 @@ raw layer: 4 tickets seen, 0 snapshots added
 
 ```
 [a] Tickets: 4; pages: 1.
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 0 snapshots added
 ```
@@ -47,6 +52,7 @@ raw layer: 4 tickets seen, 0 snapshots added
 ```
 [a] Tickets: 4; pages: 1.
 [b] Tickets: 4; pages: 1.
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 0 snapshots added
 ```
@@ -186,6 +192,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -220,6 +227,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -254,6 +262,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -285,6 +294,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -311,6 +321,7 @@ Tickets: 4; pages: 1.
 teams outside the organisation: 1 identifiers, 4 tickets
 team identifiers in neither the referential nor the catalogue: 1, on 4 tickets
 identifiers to add: 999
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 4 snapshots added
 ```
@@ -323,6 +334,7 @@ teams outside the organisation: 1 identifiers, 4 tickets
 tickets on obsolete teams: 4
 team identifiers in neither the referential nor the catalogue: 1, on 4 tickets
 identifiers to add: 999
+version reference project not configured: version attributes skipped
 teams without a type: 2
 raw layer: 4 tickets seen, 0 snapshots added
 ```
@@ -360,6 +372,7 @@ Tickets: 6; pages: 1.
 teams outside the organisation: 3 identifiers, 4 tickets
 team identifiers in neither the referential nor the catalogue: 3, on 2 tickets
 identifiers to add: 4; 5; 6
+version reference project not configured: version attributes skipped
 teams without a type: 4
 raw layer: 6 tickets seen, 6 snapshots added
 ```
@@ -381,6 +394,7 @@ former team table no longer read: delete equipes-assets.yaml
 teams outside the organisation: 1 identifiers, 1 tickets
 team identifiers in neither the referential nor the catalogue: 3, on 2 tickets
 identifiers to add: 4; 5; 6
+version reference project not configured: version attributes skipped
 referential teams without ticket: 1
 teams without a type: 4
 raw layer: 6 tickets seen, 0 snapshots added
@@ -392,6 +406,7 @@ raw layer: 6 tickets seen, 0 snapshots added
 Tickets: 6; pages: 1.
 team identifiers in neither the referential nor the catalogue: 4, on 3 tickets
 identifiers to add: 3; 4; 5; 6
+version reference project not configured: version attributes skipped
 referential teams without ticket: 1
 teams without a type: 3
 raw layer: 6 tickets seen, 1 snapshots added
@@ -403,6 +418,7 @@ raw layer: 6 tickets seen, 1 snapshots added
 Tickets: 6; pages: 1.
 team identifiers in neither the referential nor the catalogue: 4, on 3 tickets
 identifiers to add: 3; 4; 5; 6
+version reference project not configured: version attributes skipped
 referential teams without ticket: 1
 unknown team identifiers: export incomplete
 ```
@@ -437,6 +453,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -469,6 +486,7 @@ teams:
     site: <declared site>          # optional
     jira_team_ids: [<identifier>, ...]   # optional
     type: <Team sub-type>          # optional, forces the type deduced from the catalogue
+    jira_team: none                # optional, no Jira team by construction (with jira_team_reason, without jira_team_ids)
 cross_cutting_teams: [<team>, ...]  # optional
 Team catalogue Flux-Lab/equipes-jira.yaml (keys only):
 teams:
@@ -484,6 +502,7 @@ teams:
 ```
 Tickets: 4; pages: 1.
 No team read: export_team_field is not set.
+version reference project not configured: version attributes skipped
 teams without a type: 0
 raw layer: 4 tickets seen, 2 snapshots added
 ```
@@ -494,6 +513,7 @@ raw layer: 4 tickets seen, 2 snapshots added
 Tickets: 3; pages: 1.
 tickets past retention, not written: 1
 No team read: export_team_field is not set.
+version reference project not configured: version attributes skipped
 teams without a type: 0
 raw layer: 3 tickets seen, 0 snapshots added
 ```

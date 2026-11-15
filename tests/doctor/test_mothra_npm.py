@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aide_doctor import Labo  # noqa: E402
+from aide_doctor import Labo, resume_attendu  # noqa: E402
 
 # Le verrou de Mothra au format de npm (lockfileVersion 3) : entrée racine "", un espace de travail et son lien, une dépendance, une
 # dépendance optionnelle d'une autre plateforme.
@@ -81,7 +81,7 @@ class MothraNpm(Labo):
         self.mothra_pret()
         niveau, _, p = self.niveau("mothra-npm")
         self.assertEqual(niveau, "ok", p.stdout)
-        self.assertTrue(self.lancer("--quiet").stdout.strip().endswith("doctor : tout va bien"))
+        self.assertTrue(self.lancer("--quiet").stdout.strip().endswith(resume_attendu()))
         self.sans_reseau()
 
     def test_node_d_une_autre_version_avertit_et_nomme_les_deux(self):
@@ -205,7 +205,7 @@ class MothraNpm(Labo):
         self.assertEqual(entree["reason"]["counts"], {"findings": 2})
         self.assertEqual(self.lignes(env=env), ["mothra-npm : avertissement : Node v20.5.1 différent de mothra/.node-version (22.11.0)",
                                                 "mothra-npm : avertissement : node_modules absent dans mothra/"])
-        self.assertTrue(self.lancer(env=env).stdout.strip().endswith("doctor : 1 avertissement(s)"))
+        self.assertTrue(self.lancer(env=env).stdout.strip().endswith(resume_attendu(1)))
 
     def test_jamais_probleme_ni_ecriture(self):
         self.mothra_pret(installe=False)

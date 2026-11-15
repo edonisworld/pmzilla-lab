@@ -302,7 +302,7 @@ echo "DUMP flow" > "$sauv/db-2026-10-08/flow.dump"
 etat_nominal
 FAUX_PRET=1 DB_RESTORE_ATTENTE=40 bash "$racine/tools/db_restore_test.sh" > "$tmp/s" 2>&1 &
 pid=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$FX/conteneurs" ] && break; sleep 0.5; done
+i=0; while [ ! -s "$FX/conteneurs" ]; do [ "$i" -lt 2400 ] || { echo "test restore : borne de sécurité de 120 secondes atteinte, aucun conteneur jetable n'est apparu" >&2; break; }; i=$((i+1)); sleep 0.05; done
 kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; code=$?
 verifie "restore : interruption (SIGTERM), code non nul et conteneur jetable supprimé" "$([ $code -ne 0 ] && [ ! -s "$FX/conteneurs" ] && grep -q 'Conteneur jetable supprimé' "$tmp/s"; echo $?)"
 

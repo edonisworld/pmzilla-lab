@@ -4,8 +4,8 @@
 
 Spécification : jira-flow-reports (« Labels and versions absent from the flow report ») ; jira-flow-labels.
 L'export synthétique porte une étiquette déclarée et une version corrective distinctives (colonnes « Declared Label » et
-« Fix Version »). Ni l'une ni l'autre ne doit paraître dans la sortie de statuses, compute (avec --points), compare, ni dans
-un fichier du dossier de flux (rapports Markdown et JSON, rapport d'évolution, points d'âge). Le code actuel ne lit pas ces
+« Fix Version »). Ni l'une ni l'autre ne doit paraître dans la sortie de statuses, compute, compare, ni dans
+un fichier du dossier de flux (rapports Markdown et JSON, rapport d'évolution). Le code actuel ne lit pas ces
 colonnes : le test verrouille la régression pour les groupes qui liront les étiquettes déclarées (les cycles n'y paraissent
 que par des clés neutres).
 Autorisé et donc non interdit ici : les clés, les équipes et le nom du fichier d'export dans les rapports du dossier de flux
@@ -55,7 +55,7 @@ class ChainesDistinctives(unittest.TestCase):
             ecrire_csv_distinctif(csv_entree, construire(random.Random(7), "ZZKEY", WORKFLOW_1, 40, [EQUIPE], ["Story", "Task"]))
             sorties = [lancer(ws, "statuses", str(csv_entree))]
             for date in ("2026-09-20", "2026-10-04"):
-                sorties.append(lancer(ws, "compute", str(csv_entree), "--name", "zz", "--today", date, "--points"))
+                sorties.append(lancer(ws, "compute", str(csv_entree), "--name", "zz", "--today", date))
             sorties.append(lancer(ws, "compare", "--name", "zz"))
             ecrits = [p for p in ws.rglob("*") if p.is_file() and p != csv_entree and p.name != "flux.yaml"]
             self.assertTrue(any(p.suffix == ".md" for p in ecrits), ecrits)

@@ -65,6 +65,14 @@ def load_names(path=None) -> list:
 
 
 NOM_EXTRAIT = "equipes-lisibles.yaml"
+# Source unique des noms jugés (A-75 de #629, R-20261112-05) : la liste des noms sensibles ET les noms distinctifs de l'extrait voisin,
+# assemblés ici seulement. Le crochet pre-commit, tools/commit_names_scan.py (donc commit-msg et tools/range_scan.py), tools/gh_issue.py, le
+# contrôle de publication de tools/build_edition.py, la garde de tools/train_auto.py, celle de tools/pilot.py et celle de tools/context_lab.py
+# appellent `names_with_extract`, `load_judged_names` ou `load_judged_split` ; aucun ne refait l'assemblage. Aucune exception (R-20261112-22) :
+# tools/journal_lab.py, cases_store.py, flow_delivery.py, story_quality.py et story_quality_collect.py chargent aussi par cette source ;
+# le test statique de tests/build_edition/test_noms_source_unique.py n'admet que ce module.
+# Remplace : l'assemblage fait à la main dans chaque juge (le générateur de l'arbre public ne lisait pas l'extrait). Retrait : permanent ;
+# l'écart entre juges est détecté par tests/build_edition/test_noms_source_unique.py.
 SECTIONS_EXTRAIT = ("referential_teams", "catalogue_teams")
 NOM_GENERIQUES = "noms-generiques.txt"
 
@@ -116,6 +124,38 @@ def extract_names(path=None) -> list:
     return vus
 
 
+def names_with_extract(names, list_path) -> list:
+    """Les noms donnés (lus de la liste) suivis des noms distinctifs de l'extrait qui voisine la liste `list_path` : la règle unique des juges.
+    Extrait absent ou illisible : les noms donnés seuls, jamais d'erreur."""
+    return list(names) + extract_names(Path(list_path).parent / NOM_EXTRAIT)
+
+
+def load_judged_split(path=None) -> tuple:
+    """`(noms de la liste, noms de l'extrait voisin)` : `load_names` (mêmes erreurs : `SensitiveNamesUnavailable`, jamais une liste vide)
+    puis `extract_names`. Pour le seul juge qui distingue les deux origines dans son message (tools/context_lab.py) ; les autres appellent
+    `load_judged_names`."""
+    chemin = Path(path) if path is not None else default_path()
+    return load_names(chemin), extract_names(chemin.parent / NOM_EXTRAIT)
+
+
+def load_judged_names(path=None) -> list:
+    """`load_names` (mêmes erreurs : `SensitiveNamesUnavailable`, jamais une liste vide) puis les noms de l'extrait voisin de la liste."""
+    noms, extrait = load_judged_split(path)
+    return noms + extrait
+
+
+def check_extract_readable(list_path=None) -> None:
+    """Extrait absent : rien. Présent mais illisible : `SensitiveNamesUnavailable("unreadable", <extrait>)`. Pour le seul générateur de
+    l'arbre public, qui échoue fermé (A-75, R-20261112-20 Q-C). Remplace : rien. Retrait : permanent (classe des noms)."""
+    chemin = (Path(list_path) if list_path is not None else default_path()).parent / NOM_EXTRAIT
+    if not chemin.exists():
+        return
+    try:
+        chemin.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise SensitiveNamesUnavailable("unreadable", chemin) from None
+
+
 def generic_names(dossier) -> frozenset:
     """Noms de la liste `noms-generiques.txt` du dossier donné (change extract-name-exclusions, D1 et D3), repliés en minuscules
     (`casefold`) : un nom par ligne, espaces de bord, lignes vides et lignes commençant par « # » ignorés, marque d'ordre des octets
@@ -125,6 +165,20 @@ def generic_names(dossier) -> frozenset:
     except (OSError, UnicodeDecodeError, ValueError):
         return frozenset()
     return frozenset(n.casefold() for n in parse_names(texte))
+
+
+# Lecture normalisée d'un texte (audit #629, L3-06), la même que `normaliserTexte` de mothra/contract/src/texte.ts, vérifiée par les cas
+# partagés de mothra/contract/test-data/cas-texte.json : caractères de mise en forme (catégorie Cf, dont les largeurs nulles) retirés, NFKC
+# (espace insécable, arobase pleine largeur, accent décomposé), toute suite de blancs ramenée à une espace, tirets Unicode ramenés à « - ».
+# Appliquée au texte et aux noms de la liste, pour que les deux côtés se lisent pareil.
+# Remplace : rien. Retrait : permanent tant qu'un texte est confronté à une liste de noms.
+_BLANCS_A_REDUIRE = re.compile("[\t\n\v\f\r\x1c-\x20\x85\xa0  -     　]+")
+_TIRETS_UNICODE = re.compile("[‐-―−]")
+
+
+def normalize_text(texte: str) -> str:
+    sans_format = "".join(c for c in texte if unicodedata.category(c) != "Cf")
+    return _TIRETS_UNICODE.sub("-", _BLANCS_A_REDUIRE.sub(" ", unicodedata.normalize("NFKC", sans_format)))
 
 
 def _sensible_a_la_casse(nom):
@@ -139,7 +193,7 @@ def _compiler(noms, drapeaux):
 
 
 def _motifs(names):
-    noms = {n.strip() for n in names if n and n.strip()}
+    noms = {normalize_text(n).strip() for n in names if n and normalize_text(n).strip()}
     exacts = {n for n in noms if _sensible_a_la_casse(n)}
     return [m for m in (_compiler(exacts, 0), _compiler(noms - exacts, re.IGNORECASE)) if m]
 
@@ -150,7 +204,11 @@ def patterns(names) -> list:
 
 
 def line_matches(motifs, ligne: str) -> bool:
-    return any(m.search(ligne) for m in motifs)
+    # Correspondance sur le texte brut OU sur le texte normalisé : la normalisation (retrait des caractères Cf) peut coller un nom à la
+    # lettre voisine et lui faire perdre sa frontière de mot ; le texte brut garde celle que main refusait déjà.
+    # Remplace : la comparaison sur le seul texte normalisé. Retrait : permanent, la normalisation seule fait perdre les frontières de mot.
+    lue = normalize_text(ligne)
+    return any(m.search(ligne) or m.search(lue) for m in motifs)
 
 
 # ---------------------------------------------------------------------------

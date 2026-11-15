@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx", "numpy", "pyyaml", "feedparser", "trafilatura", "beautifulsoup4", "markdownify", "mcp>=1.2,<2", "psycopg[binary]"]
+# dependencies = ["httpx", "numpy", "pyyaml", "feedparser", "trafilatura", "beautifulsoup4", "markdownify", "mcp>=2,<3", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab — pré-tri de la veille par le modèle local.

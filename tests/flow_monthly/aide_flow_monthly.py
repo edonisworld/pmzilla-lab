@@ -45,12 +45,12 @@ monthly_run:
       scope: {PERIMETRE_1},{PERIMETRE_2}
       dependencies: both
     - name: {SERIE_2}
-  dashboard: both
 """
 
 # les outils que l'orchestrateur appelle, et ceux qu'il ne doit jamais appeler (ils existent en faux pour que l'appel se voie)
-OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_board", "flow_retention")
-OUTILS_EXCLUS = ("segment_sample", "db", "flow_views", "knowledge_import", "flow_compare")
+OUTILS = ("export_jira_api", "history_jira", "flow_import", "flux_jira", "dependencies_jira", "flow_retention")
+# flow_board : le tableau des flux est retiré (R-146), un faux outil du même nom rend visible tout appel qui lui resterait
+OUTILS_EXCLUS = ("segment_sample", "db", "flow_views", "knowledge_import", "flow_compare", "flow_board")
 
 FAUX_OUTIL = '''import datetime, json, os, sys
 from pathlib import Path

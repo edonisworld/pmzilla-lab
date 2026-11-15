@@ -2,23 +2,58 @@
 # PMZilla Lab : hook reference-transaction (change finish-under-lock, design D17 ; Git 2.28 ou plus). Installé par tools/install_hooks.sh
 # en lien relatif.
 #
-# Git le lance à chaque transaction de références, avec l'état en argument et une ligne « <ancien> <nouveau> <référence> » par mise à jour sur
-# l'entrée standard. Il n'agit que dans l'état « prepared » et que si une ligne vise exactement refs/heads/main : avance rapide, reset --hard,
-# pull, update-ref, fin de rebase sur main. Dans tout autre cas il sort 0 tout de suite. Sans dossier de verrou dans le dossier Git commun, il
-# sort 0 sans lancer Python. Sinon il lit le verrou par tools/finish_lock.py : un verrou vivant d'un autre jeton (FINISH_LOCK_TOKEN) refuse
-# (code 1, Git abandonne la transaction) ; le jeton du verrou, ou un verrou périmé (dit sur une ligne), laisse passer. Aucune variable ne lève
-# ce refus. Le hook lit le verrou seulement : il ne le crée, ne le retire ni ne le modifie jamais. Procédure de déblocage : guide d'installation.
+# Git le lance à chaque transaction de références, avec l'état en argument et une ligne « <ancien> <nouveau> <référence> » par mise à jour
+# sur l'entrée standard. Il n'agit que dans l'état « prepared » et que si une ligne vise exactement refs/heads/main : avance rapide,
+# reset --hard, pull, update-ref, fin de rebase sur main. Dans tout autre cas il sort 0 tout de suite. Sans dossier de verrou dans le
+# dossier Git commun, il sort 0 sans lancer Python. Sinon il lit le verrou par tools/finish_lock.py : un verrou vivant d'un autre jeton
+# (FINISH_LOCK_TOKEN) refuse (code 1, Git abandonne la transaction) ; le jeton du verrou, ou un verrou dont le processus est prouvé mort
+# (dit sur une ligne), laisse passer. Échec fermé (classe D de #629) : une erreur de git ou un dossier commun illisible refuse, de même
+# qu'un verrou périmé par l'âge dont le processus vit (« vérification impossible »). Aucune variable ne lève ce refus. Garde de session (R-148, u13) : marqueur de session posé, le hook refuse (code 1) toute mise à
+# jour qui supprime refs/heads/main ou lui donne une autre valeur que la courante, AVANT de chercher le verrou et sans exception pour le
+# jeton (une session pourrait le lire et le passer) ; le jeton ne vaut que hors session. Une mise à jour sans effet (reset nu, stash,
+# rebase --abort) passe. Le hook lit le verrou seulement : il ne le crée, ne le retire ni ne le modifie jamais. Déblocage d'un verrou périmé
+# (réservé à l'auteur, refusé en session), dans son Terminal depuis l'espace de travail : python3 tools/finish_lock.py debloquer
+# (retire un verrou périmé, jamais un verrou tenu ; guide d'installation, « Unblocking »).
 etat=${1:-}
+en_session=0
+[ -n "${CLAUDECODE+x}" ] && en_session=1
 vise_main=0
+deplace_main=0
 while read -r ancien nouveau reference; do
   # toute ligne qui vise refs/heads/main compte, valeurs égales ou nulles comprises (une suppression sans valeur attendue arrive avec deux
-  # valeurs nulles). Limite (relecture du 2026-10-20) : le rangement de git pack-refs (ou gc --auto) retire le fichier libre de main comme
-  # une suppression ; sous le verrou d'une autre fin il est refusé, main reste inchangée, et la commande qui a lancé gc --auto n'en est pas changée.
-  [ "$reference" = "refs/heads/main" ] && vise_main=1
+  # valeurs nulles). En session, la ligne déplace main si la nouvelle valeur est nulle ou diffère de la valeur courante (main absente :
+  # toute création). Limites (relecture du 2026-10-20) : le rangement de git pack-refs (ou gc --auto) retire le fichier libre de main
+  # comme une suppression ; il est refusé (sous le verrou d'une autre fin, ou en session), main reste inchangée et lisible en fichier
+  # libre ; pack-refs sort en erreur, gc --auto et gc -q sortent 0.
+  if [ "$reference" = "refs/heads/main" ]; then
+    vise_main=1
+    if [ "$en_session" -eq 1 ] && [ "$etat" = "prepared" ]; then
+      case "$nouveau" in
+        *[!0]*)
+          courante=$(git rev-parse -q --verify refs/heads/main 2>/dev/null) || courante=
+          [ "$nouveau" = "$courante" ] || deplace_main=1 ;;
+        *) deplace_main=1 ;;
+      esac
+    fi
+  fi
 done
 [ "$etat" = "prepared" ] || exit 0
 [ "$vise_main" -eq 1 ] || exit 0
-commun=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+# Garde de session (R-148, u13) : le marqueur de session de Claude Code est posé (même vide) ; aucune commande ne peut alors déplacer
+# refs/heads/main (rebase, reset, update-ref, cherry-pick, branch -f, checkout -B, switch -C, alias...), création et suppression comprises.
+# Pas de jeton, pas de verrou : une fin lancée par l'auteur tourne hors session. Hors session rien ne change.
+if [ "$en_session" -eq 1 ]; then
+  [ "$deplace_main" -eq 1 ] || exit 0
+  echo "reference-transaction : session Claude Code, mise à jour de main refusée ; intégrer main : git rebase main dans le worktree de la branche ; main n'avance que par une fin de l'auteur ; si le dossier est abîmé après le refus : git rebase --abort, ou git reset --hard sur la branche de travail" >&2
+  exit 1
+fi
+# Échec fermé (A-41, classe D de #629) : le dossier Git commun doit être donné par git ET lisible ; sinon on ne sait pas s'il y a un verrou, refus.
+# Remplace : « || exit 0 » sur une erreur de git. Retrait : permanent (une garde qui échoue ouverte est un défaut).
+commun=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$commun" ] && [ -d "$commun" ] && [ -r "$commun" ] \
+  && [ -x "$commun" ] || {
+  echo "reference-transaction : vérification impossible (dossier Git commun non lu), mise à jour de main refusée" >&2
+  exit 1
+}
 [ -d "$commun/pmzilla-fin-en-cours" ] || exit 0
 # dossier tools/ du dépôt : celui du fichier lié (.git/hooks/reference-transaction -> ../../tools/hooks/reference-transaction)
 ici=$(cd "$(dirname "$0")" && pwd -P) || exit 1
@@ -32,19 +67,38 @@ else
   crochets=$ici
 fi
 outils=$(dirname "$crochets")
-exec python3 -I -c '
-import os, sys
+# R-20261108-09 et R-20261108-10. Remplace : le lancement par python3 trouvé par PATH, puis le relais /usr/bin/python3 qui suit DEVELOPER_DIR.
+# Retrait : permanent (le bac à sable limite ce qu'un programme atteint, pas quel programme tourne).
+# R-20261108-09 point 3 (dans le programme) : aucun code compilé lu ni écrit dans tools/__pycache__. Le programme est entre
+# apostrophes droites : il ne contient aucune apostrophe droite.
+exec /Library/Developer/CommandLineTools/usr/bin/python3 -IS -c '
+import atexit, os, shutil, sys, tempfile
+# R-20261108-09 point 3. Remplace : rien. Retrait : permanent.
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, sys.pycache_prefix, True)
 sys.path.insert(0, sys.argv[1])
 import finish_lock
 verrou = finish_lock.read_lock(sys.argv[2])
 if verrou is None:
     sys.exit(0)
 if verrou["stale"]:
-    print("reference-transaction : verrou de fin périmé, ignoré", file=sys.stderr)
+    # A-42 : périmé ne vaut pas fini. Seule la preuve positive (processus du verrou mort) ou le jeton de la fin elle-même laisse passer.
+    # Remplace : « périmé, ignoré » sur toute péremption (âge dépassé, pid illisible). Retrait : permanent.
+    jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
+    if finish_lock.owner_dead(sys.argv[2]):
+        print("reference-transaction : verrou de fin périmé, ignoré", file=sys.stderr)
+        sys.exit(0)
+    if jeton and jeton == verrou["token"]:
+        sys.exit(0)
+    print("reference-transaction : vérification impossible (verrou de fin périmé, son processus n’est pas prouvé mort), mise à jour de main refusée ; "
+          "l’auteur retire le verrou périmé dans son Terminal : " + finish_lock.UNLOCK_COMMAND, file=sys.stderr)   # apostrophes typographiques : le script est entre apostrophes droites
+    sys.exit(1)
+# Une seule lecture du verrou décide (pas de second appel à blocking(), qui relirait l age : course où un verrou tenu devient périmé
+# entre les deux lectures et passe sans preuve de mort). Remplace : blocking() rappelé après read_lock. Retrait : permanent.
+jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
+if jeton and jeton == verrou["token"]:
     sys.exit(0)
-bloquant = finish_lock.blocking(sys.argv[2], os.environ.get("FINISH_LOCK_TOKEN", ""))
-if bloquant is None:
-    sys.exit(0)
-print("reference-transaction : fin de branche en cours (%s), mise à jour de main refusée" % bloquant["branch"], file=sys.stderr)
+print("reference-transaction : fin de branche en cours (%s), mise à jour de main refusée" % verrou["branch"], file=sys.stderr)
 sys.exit(1)
 ' "$outils" "$commun"

@@ -49,6 +49,15 @@ CHAMPS_INTERDITS = frozenset({"assignee", "reporter", "creator", "watches", "wat
 TYPES_DE_PERSONNE = ("userpicker", "multiuserpicker", "people", "participants", "sd-approvals")
 
 
+class RefusJira(Exception):
+    """Refus du client Jira en lecture seule (code 5) ou de la garde du périmètre (code 6) : la phrase fixe est celle de history_jira,
+    écrite en entier sur la sortie d'erreur (jamais un chemin, une clé ni une valeur)."""
+
+    def __init__(self, phrase: str, code: int):
+        super().__init__(phrase)
+        self.phrase, self.code = phrase, code
+
+
 class Refus(Exception):
     """Arrêt avec une phrase du catalogue et un code (jamais une valeur de Jira ni des réglages)."""
 
@@ -137,6 +146,9 @@ def lancer(args, environ, t) -> int:
     except Refus as refus:
         print(phrase(t, refus.cle, **refus.valeurs), file=sys.stderr)
         return refus.code
+    except RefusJira as refus:
+        print(refus.phrase, file=sys.stderr)
+        return refus.code
 
 
 def phrase(t, cle: str, **valeurs) -> str:
@@ -171,7 +183,7 @@ def _collecter(args, environ, t) -> int:
     if champ_equipe and not re.fullmatch(r"[A-Za-z0-9_]+", champ_equipe):
         raise Refus("settings_unreadable", 1, detail=CLE_EQUIPE)
     try:
-        nettoyeur = scrub.Nettoyeur(sensitive_names.load_names(environ.get(NAMES_VARIABLE) or None))
+        nettoyeur = scrub.Nettoyeur(sensitive_names.load_judged_names(environ.get(NAMES_VARIABLE) or None))
     except (sensitive_names.SensitiveNamesUnavailable, ValueError):
         raise Refus("collect_names_unavailable", 3) from None
     try:
@@ -199,6 +211,10 @@ def _lire_et_ecrire(t, settings, sq, requetes, complet, jours, fuseau, champ_equ
             lus, _ = eja.interroger(client, jql, champs)
             for ticket in lus:
                 tickets.setdefault(str(ticket.get("key")), ticket)
+    except hj.RequeteRefusee as erreur:        # avant l'erreur Jira : code 5, phrase fixe en entier, rien n'est stocké
+        raise RefusJira(str(erreur), hj.CODE_REFUS) from None
+    except hj.RequeteHorsPerimetre as erreur:  # code 6 (garde du périmètre)
+        raise RefusJira(str(erreur), hj.CODE_PERIMETRE) from None
     except (hj.ErreurSimple, hj.ErreurHTTP) as erreur:
         raise Refus("jira_error", 1, detail=hj.masquer(str(erreur))) from None
     genres = sq["kinds"]
@@ -225,6 +241,8 @@ def _lire_et_ecrire(t, settings, sq, requetes, complet, jours, fuseau, champ_equ
     except Exception as erreur:              # la transaction est annulée par le magasin ; seul le type est écrit
         raise Refus("db_error", 1, kind=type(erreur).__name__) from None
     print(t("collect_done", n=len(elements), r=sum(e.replacements for e in elements)))
+    if client.tickets_hors_perimetre:            # un nombre seulement, jamais une clé (design D9)
+        print(hj.t("out_of_scope_count", count=client.tickets_hors_perimetre))
     print(t("past_retention", n=ecartes))
     if illisibles:
         print(t("unreadable_dates", n=illisibles))

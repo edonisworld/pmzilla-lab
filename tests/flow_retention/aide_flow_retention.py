@@ -39,10 +39,13 @@ class FausseBase:
 
     def __init__(self, compte: int = 0, plus_ancien: dt.date | None = None, echec_suppression: Exception | None = None,
                  brute: int = 0, brute_plus_ancienne: dt.date | None = None, visites: int = 0,
-                 contenu: int = 0, contenu_plus_ancien: dt.date | None = None, echec_suppression_contenu: Exception | None = None):
+                 contenu: int = 0, contenu_plus_ancien: dt.date | None = None, echec_suppression_contenu: Exception | None = None,
+                 versions: int = 0, instantanes_de_version: int = 0):
         """`brute` : nombre d'instantanés de la couche brute hors règle rendu par la requête qui les compte (jira-data-architecture) ;
         `visites` : nombre de visites hors règle, rendu par la requête qui compte les visites.
         `contenu*` : le magasin « contenu des stories » (schéma quality, R-78) ; une requête qui cite `quality.` lit ces valeurs."""
+        self.versions, self.instantanes_de_version = versions, instantanes_de_version      # jira-delivery-fields D10 : références hors règle, leurs instantanés trop anciens
+        self._comptage_versions = self._comptage_instantanes_version = False
         self.compte, self.plus_ancien, self.echec_suppression = compte, plus_ancien, echec_suppression
         self.brute, self.brute_plus_ancienne, self.visites = brute, brute_plus_ancienne, visites
         self._comptage_brute = self._comptage_visites = False
@@ -65,6 +68,8 @@ class FausseBase:
         comptage = propre.upper().startswith("SELECT COUNT(*)")
         self._comptage_visites = comptage and "FROM flow.raw_run_sightings s" in propre
         self._comptage_brute = comptage and "FROM flow.raw_issue_snapshots s" in propre
+        self._comptage_versions = comptage and "FROM flow.release_versions v" in propre
+        self._comptage_instantanes_version = comptage and "FROM flow.raw_version_snapshots s" in propre
         if propre.upper().startswith(("SET ROLE", "RESET ROLE")):
             self.evenements.append(propre)
         if propre.upper().startswith("DELETE"):
@@ -78,6 +83,10 @@ class FausseBase:
         return self
 
     def fetchone(self):
+        if self._comptage_instantanes_version:          # avant les références : sa sous-requête cite aussi flow.release_versions
+            return (self.instantanes_de_version,)
+        if self._comptage_versions:
+            return (self.versions, None)
         if self._comptage_visites:
             return (self.visites, None)
         if self._comptage_brute:

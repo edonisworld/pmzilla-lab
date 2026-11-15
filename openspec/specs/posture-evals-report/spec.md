@@ -7,7 +7,16 @@ Describes scoring, regressions, automatic retries, run records and the report pr
 ## Requirements
 
 ### Requirement: Score and regression computation
-The system SHALL count blocking verifications only (the total also includes the expected blocking verifications of non-evaluable cases, see "Non-evaluable cases make the run non-validating"), SHALL define a regression as a blocking verification that fails now and passed in the most recent previous run of the same language (excluding the current run), and SHALL print a summary line with passed over total, the regression count, and the report location. The previous run SHALL be the latest other run; runs without a language field SHALL count as French.
+The system SHALL count blocking verifications only (the total also includes the expected blocking verifications of non-evaluable cases, see "Non-evaluable cases make the run non-validating"), SHALL define a regression as a blocking verification that fails now and passed in the most recent previous run of the same language (excluding the current run), and SHALL print a summary line with passed over total, the regression count, and the report location.
+
+#### Scenario: Indicator failing
+- WHEN an indicator fails and passed before
+- THEN it is neither counted nor a regression
+
+Source: tests/posture_evals/test_posture_evals.py (Rapport, Langue, IndicateursNonBloquants)
+
+### Requirement: Previous run of the regression comparison
+The previous run SHALL be the latest other run; runs without a language field SHALL count as French.
 
 #### Scenario: Previous results
 - WHEN several previous runs exist
@@ -17,14 +26,14 @@ The system SHALL count blocking verifications only (the total also includes the 
 - WHEN comparing English results
 - THEN only runs of the same language are used
 
-#### Scenario: Indicator failing
-- WHEN an indicator fails and passed before
-- THEN it is neither counted nor a regression
-
-Source: tests/posture_evals/test_posture_evals.py (Rapport, Langue, IndicateursNonBloquants)
+Source: tests/posture_evals/test_posture_evals.py (Rapport, Langue)
 
 ### Requirement: Report content
-The system SHALL write a Markdown report per run containing the memory mode (and the language when not French), the score with number of cases and tested state (truncated), the indicator score, a regression section only when regressions exist, a summary table with passed count (plus indicators), posture, cost (or a placeholder when unknown) and turns, and per case the question and each check with a pass or fail mark and a "regression" or "corrected" note, plus the justification. Indicators SHALL be labelled non-blocking.
+The system SHALL write a Markdown report per run containing the memory mode (and the language when not French), the score with number of cases and tested state (truncated), the indicator score, a regression section only when regressions exist, a summary table with passed count (plus indicators), posture, cost (or a placeholder when unknown) and turns, and per case the section of the scenario "Case section". Indicators SHALL be labelled non-blocking.
+
+#### Scenario: Case section
+- **WHEN** a case is written in the report
+- **THEN** its section holds the question and each check with a pass or fail mark and a "regression" or "corrected" note, plus the justification
 
 #### Scenario: With a regression and a correction
 - WHEN a verification newly fails and another newly passes
@@ -58,7 +67,7 @@ The system SHALL write, for each run, a record with date, tested state, memory m
 Source: tests/posture_evals/test_posture_evals.py (Principal, Langue); tests/posture_evals/test_gaps_posture_evals.py (PassageComplet, FichierDeCasDeCommandes)
 
 ### Requirement: Automatic retries of failing cases
-The system SHALL replay a case whose blocking verification failed a configurable number of times (zero disables). A case that passes all replays SHALL be "unstable" and count as passed, with the first failure kept; a case failing a replay SHALL be a "confirmed failure" and the series SHALL stop at the first failing replay. When more than a configurable number of cases fail, no case SHALL be replayed and a note SHALL say so. Failing indicators, technical incidents and real-memory violations SHALL NOT trigger replays. A rejudge SHALL never replay.
+The system SHALL replay a case whose blocking verification failed a configurable number of times (zero disables). A case that passes all replays SHALL be "unstable" and count as passed, with the first failure kept; a case failing a replay SHALL be a "confirmed failure" and the series SHALL stop at the first failing replay. Failing indicators, technical incidents and real-memory violations SHALL NOT trigger replays. A rejudge SHALL never replay.
 
 #### Scenario: No failure
 - WHEN every case passes
@@ -76,13 +85,18 @@ The system SHALL replay a case whose blocking verification failed a configurable
 - WHEN a criterion passed in a previous run and the case fails its replays
 - THEN a regression is reported
 
-#### Scenario: Massive failure
-- WHEN failing cases exceed the cap
-- THEN no replay is played and the report states the cap
-
 #### Scenario: Retries disabled
 - WHEN retries are zero
 - THEN a failing case is not replayed and is not unstable
+
+Source: tests/posture_evals/test_posture_evals.py (Rejeux)
+
+### Requirement: No retries on massive failure
+When more than a configurable number of cases fail, no case SHALL be replayed and a note SHALL say so.
+
+#### Scenario: Massive failure
+- WHEN failing cases exceed the cap
+- THEN no replay is played and the report states the cap
 
 Source: tests/posture_evals/test_posture_evals.py (Rejeux)
 
@@ -109,7 +123,7 @@ The system SHALL report each case's cost and turns and SHALL report the replay c
 Source: tests/posture_evals/test_posture_evals.py (Rejeux)
 
 ### Requirement: Models and non-validating runs
-The system SHALL record in the run record, and print in the report header, the model of the tested sessions and the model of the judge, the session model as the usual model when none was given and the judge model as Sonnet when none was given (the default judge, see the judge specification). A run whose session model is not the usual one SHALL be marked "not validating" in its record and in its report. A non-validating run SHALL NOT serve as the previous run for the regression comparison, SHALL NOT serve as the previous complete run for the repeated-instability check, and SHALL NOT count for the acceptance rule. A judge model alone SHALL NOT make a run non-validating.
+The system SHALL record in the run record, and print in the report header, the model of the tested sessions and the model of the judge, the session model as the usual model when none was given and the judge model as Sonnet when none was given (the default judge, see the judge specification). A run whose session model is not the usual one SHALL be marked "not validating" in its record and in its report. A judge model alone SHALL NOT make a run non-validating.
 
 #### Scenario: Usual models
 - WHEN no model is given
@@ -119,18 +133,31 @@ The system SHALL record in the run record, and print in the report header, the m
 - WHEN a session model is given
 - THEN the header names both models, the report carries a "not validating" notice, and the record marks the run as not validating
 
-#### Scenario: Baseline
-- WHEN a non-validating run is the most recent run
-- THEN the next run compares with the latest validating run instead
-
 #### Scenario: Judge model alone
 - WHEN only a judge model is given
 - THEN the run stays validating and the header shows that judge
 
 Source: tests/posture_evals/test_posture_evals.py (ChoixDuModele)
 
+### Requirement: A non-validating run never serves as reference
+A non-validating run SHALL NOT serve as the previous run for the regression comparison, SHALL NOT serve as the previous complete run for the repeated-instability check, and SHALL NOT count for the acceptance rule.
+
+#### Scenario: Baseline
+- WHEN a non-validating run is the most recent run
+- THEN the next run compares with the latest validating run instead
+
+Source: tests/posture_evals/test_posture_evals.py (ChoixDuModele)
+
 ### Requirement: Non-evaluable cases make the run non-validating
-The system SHALL compute the total of a run over every expected blocking verification, those of non-evaluable cases included (counted as not passed): the posture check when a posture is expected, the blocking rules and the blocking judged criteria. When at least one case is non-evaluable, the summary line SHALL give the number of non-evaluable cases and say the run is not validating, the record SHALL mark the run not validating and list those cases, a line SHALL name them with the exit code, and the run SHALL end with exit code 3 after writing its record and report; the report SHALL carry a "not validating" notice naming them. Such a run SHALL NOT serve as a reference (same rule as any non-validating run). A run without non-evaluable case SHALL stay validating and exit with code 0. A rejudge checks no prerequisite, so it has no non-evaluable case.
+The system SHALL compute the total of a run over every expected blocking verification, those of non-evaluable cases included (counted as not passed): the posture check when a posture is expected, the blocking rules and the blocking judged criteria. A run with at least one non-evaluable case SHALL be not validating, as the scenario "Run with non-evaluable cases" states; a run without non-evaluable case SHALL stay validating and exit with code 0.
+
+#### Scenario: Run with non-evaluable cases
+- **WHEN** at least one case of a run is non-evaluable
+- **THEN** the summary line gives the number of non-evaluable cases and says the run is not validating, the record marks the run not validating and lists those cases, a line names them with the exit code, the run ends with exit code 3 after writing its record and report, the report carries a "not validating" notice naming them, and the run does not serve as a reference (same rule as any non-validating run)
+
+#### Scenario: Rejudge without non-evaluable case
+- **WHEN** a past run is rejudged
+- **THEN** no prerequisite is checked, so the rejudge has no non-evaluable case
 
 #### Scenario: Cases database unavailable
 - WHEN a case with a fixture cannot be evaluated because the disposable cases database is unavailable, and another case passes

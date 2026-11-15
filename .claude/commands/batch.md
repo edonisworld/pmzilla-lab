@@ -15,8 +15,8 @@ This command prepares and stops. It creates worktrees and sets Statuses; it neve
 1. Without a milestone, ask for one and run nothing else.
 2. Run `git rev-parse --abbrev-ref HEAD`. If the branch is not `main`, say that `/batch` runs on `main` only and stop: run neither the reader nor the worktree script, write nothing. Never fetch or pull; if the user needs the latest changes, tell them to bring `main` up to date themselves.
 3. Run `git status` and, if the working tree is not clean, list the files and stop.
-4. Run `uv run --with pyyaml python tools/roadmap.py check`. If the queue is invalid, report each problem line and stop.
-5. Run `uv run --with pyyaml python tools/roadmap.py batch --milestone <milestone>`. Exit codes: 1 the queue is invalid (report each problem line, stop); 2 usage, an unknown or closed milestone, or a missing milestone (report the line, stop); 5 `GitHub unreachable; a batch needs a live read` (report it and propose nothing: never start from a snapshot). The reader prints French lines prefixed `roadmap : `: header, current release, `retenues`, `écartées`, `fichiers partagés`.
+4. Read the queue first: `uv run tools/gh_issue.py list --sortie <file in the scratchpad folder>`; stop on any non-zero code and report its line. Then run `uv run --with pyyaml python tools/roadmap.py check --issues-json <that file>`. If the queue is invalid, report each problem line and stop.
+5. Run `uv run --with pyyaml python tools/roadmap.py batch --milestone <milestone> --issues-json <that file>`. Exit codes: 1 the queue is invalid (report each problem line, stop); 2 usage, an unknown or closed milestone, or a missing milestone (report the line, stop); 5 `GitHub unreachable; a batch needs a live read` (report it and propose nothing: never start from a snapshot). The reader prints French lines prefixed `roadmap : `: header, current release, `retenues`, `écartées`, `fichiers partagés`.
 6. Stop, writing nothing, when the reader prints `release courante : aucune` (say that the current-release setting is empty; the user fixes it, you never edit `tools/roadmap_settings.yaml`) or when no feature is retained.
 
 ## 2. Propose, and wait for one yes
@@ -52,7 +52,7 @@ One single final message, then one block per started feature:
 
 - the feature (identifier, title), the folder, the branch, the launch model and the session kind;
 - the launch command, to type in the Terminal: `cd <folder> && claude --model <alias> "<prompt>"`, and the prompt alone, to paste if needed. Launch model and prompt follow the reader's line: framing (`openspec` without change, branch `chore/spec-r<n>`): `opus` and the framing prompt `Frame R-<n> as an OpenSpec change with the spec-writer agent: proposal, design, tasks, delta specs and fiche-decisions.md with an empty decision column; run openspec validate --strict; commit on this branch; do not push.`; execution: the model the reader printed (`sonnet` for an `openspec` feature with a change, the feature's model for `direct-prompt`, `sonnet` when `tbd`) and the prompt `/start R-<n>`;
-- the finishing command, labelled as the user's command, to run in the Terminal from the workspace once that session has ended: `bash tools/finish_worktree.sh <branch>`.
+- the finishing command, labelled as the user's command, to run in the Terminal once that session has ended (the one-branch train, from the run tree): `bash ~/PMZilla-Lab/run/tools/finish_train.sh <branch>`.
 
 Then list the features set aside or dropped and why, and the worktrees left for the user to keep or remove. Never run a launch command or a finishing command.
 
@@ -61,9 +61,9 @@ Then list the features set aside or dropped and why, and the worktrees left for 
 - Launch a session or `claude`.
 - Open a Terminal.
 - Merge, or push.
-- Run the finishing scripts (`tools/finish_branch.sh`, `tools/finish_worktree.sh`).
+- Run the finishing script (`tools/finish_train.sh`).
 - Remove a worktree or a branch.
-- Write to GitHub other than through `tools/gh_issue.py`, or with any `gh` command; pre-approve either in a header.
+- Read or write GitHub other than through `tools/gh_issue.py`, or with any `gh` command; pre-approve either in a header.
 - Set a Status other than `In progress` (never `Ready`); change a rank, an estimate, a model, a dependency, a condition or a milestone other than through the Status write; edit `tools/roadmap_settings.yaml`.
 - Start a feature the reader did not retain, or one the user removed.
 - Use `--no-verify` or the owner bypass variable (`PMZILLA_SKIP_GREEN_CHECK`).

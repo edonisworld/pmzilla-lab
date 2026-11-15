@@ -6,13 +6,18 @@ Describes the neutral cycle and patch keys mapped in the flow settings and the c
 ## Requirements
 
 ### Requirement: Neutral cycle keys mapped in the flow settings
-The system SHALL read from the `cycles` block of the flow settings a mapping from a neutral cycle key to one fix version, a start date and an end date, and from the `patches` block a mapping from a quarterly patch key to its fix versions. Cycle keys SHALL have the form of design D12 (`YYYY-Cn` with n from 1 to 6, or `YYYY-EOY`), patch keys the form `YYYY-Qn` with n from 1 to 4. The system SHALL refuse, with exit code 1 naming the key path and line and never a value: a key of another form, a fix version mapped to two keys, a start date that is not a Monday, an end date that is not a Friday, and a cycle that does not start on the Monday after the previous cycle's end. A cycle that does not last eight weeks SHALL give a warning naming the key only.
+The system SHALL read from the `cycles` block of the flow settings a mapping from a neutral cycle key to one fix version, a start date and an end date, and from the `patches` block a mapping from a quarterly patch key to its fix versions. Cycle keys SHALL have the form of design D12 (`YYYY-Cn` with n from 1 to 6, or `YYYY-EOY`), patch keys the form `YYYY-Qn` with n from 1 to 4.
 
 Source: tests/flux_config/test_nouveaux_blocs.py (TestCycles, TestPatches)
 
 #### Scenario: Valid year
 - **WHEN** six consecutive eight-week cycles and a year-end version are mapped
 - **THEN** they are read without warning
+
+### Requirement: Cycle and patch settings refused when invalid
+The system SHALL refuse, with exit code 1 naming the key path and line and never a value: a key of another form, a fix version mapped to two keys, a start date that is not a Monday, an end date that is not a Friday, and a cycle that does not start on the Monday after the previous cycle's end. A cycle that does not last eight weeks SHALL give a warning naming the key only.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (TestCycles, TestPatches)
 
 #### Scenario: Gap between cycles
 - **WHEN** a cycle starts two weeks after the previous end
@@ -23,7 +28,7 @@ Source: tests/flux_config/test_nouveaux_blocs.py (TestCycles, TestPatches)
 - **THEN** it is refused with exit code 1 and the key path, and the version number is not echoed
 
 ### Requirement: First cycle of the year functional unless flagged as base version
-The system SHALL treat every `YYYY-Cn` cycle as a functional version, C1 included, unless that cycle carries the optional base-version flag of design D12 in the cycles block (provisional reading, pending confirmation by the release manager). For a flagged cycle, the cycles report SHALL write the base-version label of design D19 next to the cycle key in its header, and SHALL compute its figures like any other cycle. The flag SHALL be refused with exit code 1, naming the key path and line, when it is set on a key other than a `YYYY-Cn` cycle or on more than one cycle of a year. The system SHALL NOT infer the base version from a version number or a date, and SHALL NOT need a code change for either answer.
+The system SHALL treat every `YYYY-Cn` cycle as a functional version, C1 included, unless that cycle carries the optional base-version flag of design D12 in the cycles block (provisional reading, pending confirmation by the release manager). The system SHALL NOT infer the base version from a version number or a date, and SHALL NOT need a code change for either answer.
 
 Source: tests/flux_config/test_nouveaux_blocs.py (test_base_version*); tests/flux_jira/test_cycles_commande.py (VersionDeBase)
 
@@ -31,9 +36,19 @@ Source: tests/flux_config/test_nouveaux_blocs.py (test_base_version*); tests/flu
 - **WHEN** no cycle carries the flag
 - **THEN** C1 to C6 are reported as functional versions and no header carries "base version"
 
+### Requirement: Base-version label in the cycles report
+For a flagged cycle, the cycles report SHALL write the base-version label of design D19 next to the cycle key in its header, and SHALL compute its figures like any other cycle.
+
+Source: tests/flux_jira/test_cycles_commande.py (VersionDeBase)
+
 #### Scenario: C1 flagged
 - **WHEN** C1 carries the flag
 - **THEN** the report header writes "base version" next to C1, and C2 to C6 are reported as functional versions
+
+### Requirement: Base-version flag refused when misplaced
+The base-version flag SHALL be refused with exit code 1, naming the key path and line, when it is set on a key other than a `YYYY-Cn` cycle or on more than one cycle of a year.
+
+Source: tests/flux_config/test_nouveaux_blocs.py (test_base_version*)
 
 #### Scenario: Two flags in one year
 - **WHEN** two cycles of the same year carry the flag
@@ -58,17 +73,9 @@ Source: tests/flux_jira/test_cycles_calcul.py (test_cycle_vise_vient_de_la_versi
 - **THEN** it is in no cycle's flow and is counted once under "cycle label without targeted cycle"
 
 ### Requirement: Cycles report from the database
-The system SHALL provide a `cycles` subcommand of the flow report tool that reads only the database (no CSV option), and writes a Markdown and a JSON report named after the series and the day in the reports folder, giving per cycle key: items targeted, items delivered within the cycle window, items carried to a later cycle, up-merge items resolved within the window, the up-merge share and the configured provision side by side, the two-labels count, the without-patch count, and the Epic Review section of the jira-flow-labels capability. Up-merge items SHALL be counted in their quarterly patch and SHALL NOT count in the cycle flow. Tickets out of the export SHALL be left out. The report SHALL hold no key, no person and no version name.
+The system SHALL provide a `cycles` subcommand of the flow report tool that reads only the database (no CSV option), and writes a Markdown and a JSON report named after the series and the day in the reports folder.
 
-Source: tests/flux_jira/test_cycles_commande.py; tests/flux_jira/test_cycles_calcul.py (FluxDuCycle); tests/flow_store/test_lecteurs_cycles.py (DeBoutEnBout)
-
-#### Scenario: Up-merge out of the cycle flow
-- **WHEN** a cycle window holds twenty delivered cycle items and five up-merge items attached to a quarterly patch
-- **THEN** the cycle's delivered count is twenty, the up-merge share is five out of twenty-five, and the patch counts five up-merge items
-
-#### Scenario: Provision missing
-- **WHEN** a cycle has no configured provision
-- **THEN** the share is written and the provision cell says it is not configured
+Source: tests/flux_jira/test_cycles_commande.py; tests/flow_store/test_lecteurs_cycles.py (DeBoutEnBout)
 
 #### Scenario: CSV files given
 - **WHEN** CSV files are passed to `cycles`
@@ -78,10 +85,41 @@ Source: tests/flux_jira/test_cycles_commande.py; tests/flux_jira/test_cycles_cal
 - **WHEN** the settings hold no cycles block
 - **THEN** the run stops with exit code 1 saying no cycle is configured, before reading the database, and writes no report
 
-### Requirement: Up-merge items without a patch fix version counted apart
-The system SHALL, pending the domain's confirmation of design D7, count in the cycles report every up-merge item resolved within a cycle window that carries no fix version mapped to a quarterly patch key: it SHALL include it in the cycle's up-merge share (the window comes from the resolution instant) and SHALL write it, instead of under a patch, on a separate line with the without-patch label of design D19 ("without patch" in English, "sans patch" in French) and its count. The system SHALL NOT silently drop such an item, SHALL NOT attach it to a patch by its dates or by guess, SHALL NOT stop the report or change its exit code because of it, and SHALL NOT list its key. Items carrying both up-merge labels stay under the requirement "Exactly one up-merge label" of the jira-flow-labels capability.
+### Requirement: Cycles report figures per cycle key
+The cycles report SHALL give per cycle key: items targeted, items delivered within the cycle window, items carried to a later cycle, up-merge items resolved within the window, the up-merge share and the configured provision side by side, the two-labels count, the without-patch count, and the Epic Review section of the jira-flow-labels capability.
+
+Source: tests/flux_jira/test_cycles_commande.py; tests/flux_jira/test_cycles_calcul.py (FluxDuCycle)
+
+#### Scenario: Provision missing
+- **WHEN** a cycle has no configured provision
+- **THEN** the share is written and the provision cell says it is not configured
+
+### Requirement: Up-merge items out of the cycle flow
+Up-merge items SHALL be counted in their quarterly patch and SHALL NOT count in the cycle flow.
 
 Source: tests/flux_jira/test_cycles_calcul.py (FluxDuCycle)
+
+#### Scenario: Up-merge out of the cycle flow
+- **WHEN** a cycle window holds twenty delivered cycle items and five up-merge items attached to a quarterly patch
+- **THEN** the cycle's delivered count is twenty, the up-merge share is five out of twenty-five, and the patch counts five up-merge items
+
+### Requirement: Cycles report without keys, persons or versions
+Tickets out of the export SHALL be left out of the cycles report. The report SHALL hold no key, no person and no version name.
+
+Source: tests/flux_jira/test_cycles_commande.py; tests/flow_store/test_lecteurs_cycles.py (DeBoutEnBout)
+
+#### Scenario: Marked ticket and report content
+- **WHEN** the cycles report is written while a ticket is marked out of the export
+- **THEN** that ticket is not counted, and the report holds no key, no person and no version name
+
+### Requirement: Up-merge items without a patch fix version counted apart
+The system SHALL, pending the domain's confirmation of design D7, count in the cycles report every up-merge item resolved within a cycle window that carries no fix version mapped to a quarterly patch key: it SHALL include it in the cycle's up-merge share (the window comes from the resolution instant) and SHALL write it, instead of under a patch, on a separate line with the without-patch label of design D19 and its count.
+
+Source: tests/flux_jira/test_cycles_calcul.py (FluxDuCycle)
+
+#### Scenario: Label by language
+- **WHEN** the cycles report is written in English, then in French
+- **THEN** the separate line is labelled "without patch" in English and "sans patch" in French
 
 #### Scenario: Up-merge item without patch
 - **WHEN** a cycle window holds twenty delivered cycle items, four up-merge items attached to a quarterly patch and one up-merge item with no patch fix version
@@ -90,6 +128,15 @@ Source: tests/flux_jira/test_cycles_calcul.py (FluxDuCycle)
 #### Scenario: None without patch
 - **WHEN** every up-merge item of the window carries a patch fix version
 - **THEN** the "without patch" line gives zero
+
+### Requirement: Up-merge items without patch never dropped or guessed
+The system SHALL NOT silently drop an up-merge item without a patch fix version, SHALL NOT attach it to a patch by its dates or by guess, SHALL NOT stop the report or change its exit code because of it, and SHALL NOT list its key. Items carrying both up-merge labels stay under the requirement "Exactly one up-merge label" of the jira-flow-labels capability.
+
+Source: tests/flux_jira/test_cycles_calcul.py (FluxDuCycle)
+
+#### Scenario: Item kept apart
+- **WHEN** an up-merge item without a patch fix version is resolved within a cycle window
+- **THEN** it is counted on the "without patch" line, under no patch, its key is not listed, and the report is written with an unchanged exit code
 
 ### Requirement: Up-merge provision per cycle
 The system SHALL read the up-merge provision as an optional share of delivered items per cycle key in the cycles block (design D7), refuse a share below zero or above one with exit code 1 naming the key path, and SHALL NOT convert the provision into points, days or capacity.

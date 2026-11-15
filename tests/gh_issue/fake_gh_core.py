@@ -14,6 +14,10 @@ le corps), offline_after_writes (N : réseau perdu après N écritures confirmé
 sur tout appel), rate_limit_after_writes ([N, secondes]), hide_new_reads (une issue créée est cachée de la liste pendant K
 lectures), node_unresolved_adds (K ajouts au Project refusés « Could not resolve to a node »).
 GET issues/<n>/comments liste les commentaires de l'issue.
+PATCH issues/<n> garde state_reason (dont « duplicate ») et duplicate_issue_id ; PATCH milestones/<n> garde aussi description et due_on.
+PATCH issues/<n> avec milestone null retire le jalon. Le Project a un champ Horizon seulement si l'état porte horizon_field_id et
+horizon_options (items : clé horizon) ; la requête des items qui nomme Horizon rend cette valeur (les autres rendent le Status).
+POST issues/<p>/sub_issues refuse (422 « already has a parent ») un enfant déjà sous un autre parent, comme GitHub sans remplacement.
 Le journal note aussi `stdin_devnull` (entrée standard = /dev/null) et `prompt_disabled` (GH_PROMPT_DISABLED).
 Ne répond qu'à `repo view` et `api` ; tout autre appel est noté et refusé (code 2).
 Un mode de blocage lève `Hang` : l'enveloppe en ligne de commande dort alors, l'appelant dans le processus doit en faire une
@@ -150,15 +154,18 @@ def _serve(args, stdin, environ, stdin_devnull, out_buf, err_buf):
         if "projectsV2" in q:
             nodes = []
             if proj:
-                nodes = [{"id": proj["id"], "title": proj["title"],
-                          "fields": {"nodes": [{"id": proj["field_id"], "name": "Status", "options": proj["options"]}]}}]
+                fields = [{"id": proj["field_id"], "name": "Status", "options": proj["options"]}]
+                if proj.get("horizon_field_id"):      # champ Horizon facultatif : une liste d'options à part
+                    fields.append({"id": proj["horizon_field_id"], "name": "Horizon", "options": proj["horizon_options"]})
+                nodes = [{"id": proj["id"], "title": proj["title"], "fields": {"nodes": fields}}]
             out({"data": {"repositoryOwner": {"projectsV2": {"nodes": nodes}}}})
         if "items(" in q:
             items = []
             for it in proj["items"]:
                 node = {"id": it["id"], "content": {"number": it["number"]}, "fieldValueByName": None}
-                if it.get("status"):
-                    node["fieldValueByName"] = {"name": it["status"]}
+                champ = "horizon" if 'name: "Horizon"' in q else "status"      # la requête de horizon lit Horizon, les autres Status
+                if it.get(champ):
+                    node["fieldValueByName"] = {"name": it[champ]}
                 items.append(node)
             out({"data": {"node": {"items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": items}}}})
         if "addProjectV2ItemById" in q:
@@ -175,7 +182,10 @@ def _serve(args, stdin, environ, stdin_devnull, out_buf, err_buf):
             out({"data": {"addProjectV2ItemById": {"item": {"id": it["id"]}}}})
         if "updateProjectV2ItemFieldValue" in q:
             it = next(x for x in proj["items"] if x["id"] == v["item"])
-            it["status"] = next(o["name"] for o in proj["options"] if o["id"] == v["option"])
+            if proj.get("horizon_field_id") and v["field"] == proj["horizon_field_id"]:
+                it["horizon"] = next(o["name"] for o in proj["horizon_options"] if o["id"] == v["option"])
+            else:
+                it["status"] = next(o["name"] for o in proj["options"] if o["id"] == v["option"])
             save()
             out({"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": it["id"]}}}})
         fail("fake gh: requête GraphQL inconnue", 2)
@@ -207,12 +217,14 @@ def _serve(args, stdin, environ, stdin_devnull, out_buf, err_buf):
         out({k: v for k, v in issue.items() if k != "hidden_reads"})
     if parts[0] == "issues" and len(parts) == 2 and method == "PATCH":
         issue = issue_by_number(parts[1])
-        for k in ("title", "body", "state", "state_reason"):
+        for k in ("title", "body", "state", "state_reason", "duplicate_issue_id"):
             if k in body:
                 issue[k] = body[k]
         if "labels" in body:
             issue["labels"] = [{"name": l} for l in body["labels"]]
-        if "milestone" in body:
+        if "milestone" in body and body["milestone"] is None:      # « milestone »: null retire le jalon, le jalon lui-même reste
+            issue["milestone"] = None
+        elif "milestone" in body:
             m = next(x for x in state["milestones"] if x["number"] == body["milestone"])
             issue["milestone"] = {"title": m["title"], "number": m["number"]}
         save()
@@ -230,7 +242,17 @@ def _serve(args, stdin, environ, stdin_devnull, out_buf, err_buf):
         child = issue_by_id(body["sub_issue_id"])
         if child["number"] in subs:
             fail("gh: Sub-issue already exists (HTTP 422)")
+        if any(child["number"] in other for p, other in state["sub"].items() if p != parts[1]):
+            fail("gh: Sub-issue already has a parent (HTTP 422)")      # GitHub ne remplace pas le parent sans l'option explicite
         subs.append(child["number"])
+        save()
+        out(child)
+    if parts[0] == "issues" and len(parts) == 3 and parts[2] == "sub_issue" and method == "DELETE":
+        subs = state.setdefault("sub", {}).setdefault(parts[1], [])
+        child = issue_by_id(body["sub_issue_id"])
+        if child["number"] not in subs:
+            fail("gh: Not Found (HTTP 404)")
+        subs.remove(child["number"])
         save()
         out(child)
     if parts[0] == "issues" and len(parts) >= 4 and parts[2] == "dependencies":
@@ -268,7 +290,7 @@ def _serve(args, stdin, environ, stdin_devnull, out_buf, err_buf):
             save()
             out(m)
         m = next(x for x in state["milestones"] if x["number"] == int(parts[1]))
-        m.update({k: v for k, v in body.items() if k in ("state", "title")})
+        m.update({k: v for k, v in body.items() if k in ("state", "title", "description", "due_on")})
         save()
         out(m)
     fail("fake gh: route inconnue " + route, 2)

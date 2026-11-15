@@ -134,7 +134,7 @@ Without a "Resolved" column, neither lead time nor throughput can be computed: a
 --- stderr ---
 
 ===== compute-older =====
-$ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-09-20 --no-comparison --scope ABC,DEF,ZZZ --history --dormant-from-history --points --target-date 2026-11-15 --batch-closure-resolutions Done,Closed
+$ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-09-20 --no-comparison --scope ABC,DEF,ZZZ --history --dormant-from-history --target-date 2026-11-15 --batch-closure-resolutions Done,Closed
 exit code: 0
 --- stdout ---
 --scope: 180 ticket(s) kept out of 200; 1 requested project(s) with no ticket in the export.
@@ -408,7 +408,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -429,14 +429,12 @@ Examples taken from this report:
 - Forecasts assume that the throughput of the coming weeks will look like that of the period, and that items are of comparable size.
 
 Report: <WS>/Flux-Lab/rapports/flux-s-2026-09-20.md
-Aging WIP points: 46 ticket(s) in progress, no key: <WS>/Flux-Lab/tableaux/points-s-2026-09-20.json
 --- stderr ---
 written: rapports/flux-s-2026-09-20.json
 written: rapports/flux-s-2026-09-20.md
-written: tableaux/points-s-2026-09-20.json
 
 ===== compute-newer-with-comparison =====
-$ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-10-04 --scope ABC,DEF,ZZZ --history --dormant-from-history --points --target 40 --target-date 2026-11-15 --batch-closure-resolutions Done,Closed
+$ compute <WS>/a.csv <WS>/b.csv --name s --today 2026-10-04 --scope ABC,DEF,ZZZ --history --dormant-from-history --target 40 --target-date 2026-11-15 --batch-closure-resolutions Done,Closed
 exit code: 0
 --- stdout ---
 --scope: 180 ticket(s) kept out of 200; 1 requested project(s) with no ticket in the export.
@@ -715,7 +713,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -736,7 +734,6 @@ Examples taken from this report:
 - Forecasts assume that the throughput of the coming weeks will look like that of the period, and that items are of comparable size.
 
 Report: <WS>/Flux-Lab/rapports/flux-s-2026-10-04.md
-Aging WIP points: 46 ticket(s) in progress, no key: <WS>/Flux-Lab/tableaux/points-s-2026-10-04.json
 
 ========================================================================
 
@@ -842,7 +839,6 @@ written: rapports/evolution-s-2026-10-04.json
 written: rapports/evolution-s-2026-10-04.md
 written: rapports/flux-s-2026-10-04.json
 written: rapports/flux-s-2026-10-04.md
-written: tableaux/points-s-2026-10-04.json
 
 ===== compute-dormants-history =====
 $ compute <WS>/a.csv <WS>/b.csv --name d --today 2026-10-04 --no-comparison --dormant-from-history --teams-only --types Story,Bug,Task --batch-closure-resolutions tous --scope tous
@@ -1023,7 +1019,7 @@ Tickets with several teams: 5 out of 122 (1 finished, 2 in progress). Current at
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -1186,7 +1182,7 @@ Tickets with several teams: 5 out of 63 (0 finished, 2 in progress). Current att
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -1374,7 +1370,7 @@ Tickets with several teams: 5 out of 63 (1 finished, 2 in progress). Current att
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -1659,7 +1655,7 @@ Teams are not compared with each other: workflows, ticket sizes and types of wor
 - **P85**: 85% of the items are below, 15% above. It is used to make commitments: "in 85% of cases, less than X days". P70 and P95 read the same way, with 70% and 95%.
 - **Why percentiles rather than an average**: a few very long tickets pull the average up. Percentiles are not dragged along by these extreme cases.
 - **Lead time**: from creation to resolution, for finished items only. **Age**: since the last status category change (creation date if there is none), for items still in progress. Lead time only sees what finishes; age shows what stays stuck.
-- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Ready for". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
+- **WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting status listed in flux.yaml, such as "Awaiting". **Dormant WIP**: not finished and with no status change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither active nor waiting.
 - **Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep exceeding departures, the stock grows. Arrivals also count rejected tickets.
 - **Little's law**: the number of items in progress divided by the average throughput gives an average time in the system. Read it with care when arrivals keep exceeding departures.
 - **Monte Carlo forecast**: 10,000 draws from the throughput of past weeks. It says in how many weeks of throughput the current stock would drain if nothing new came in. It is not a date.
@@ -2304,7 +2300,7 @@ $ compute <WS>/a.csv --today 2026-10-04 --no-comparison --batch-closure-resoluti
 exit code: 1
 --- stdout ---
 --- stderr ---
---batch-closure-resolutions: give resolutions separated by commas ("Done,Accepted & Released"), or "all" for every delivered resolution.
+--batch-closure-resolutions: give resolutions separated by commas ("Done,Shipped"), or "all" for every delivered resolution.
 
 ===== err-threshold-invalid =====
 $ compute <WS>/a.csv --today 2026-10-04 --no-comparison

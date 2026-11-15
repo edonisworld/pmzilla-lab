@@ -6,7 +6,9 @@ Module de bibliothèque, sans ligne de commande. Trois entités (migration flow_
   - visite (flow.raw_run_sightings) : une clé de ticket lue par un passage, après l'écart de conservation ;
   - instantané (flow.raw_issue_snapshots) : les attributs autorisés d'un ticket (projet, type, état, catégorie, dates, résolution,
     story points, parent, équipes dans l'ordre avec leur identifiant d'équipe Jira, liens ou « non suivis »), écrit pour un ticket
-    nouveau ou quand son empreinte change. Jamais de titre, de description, de personne, d'étiquette ni de version.
+    nouveau ou quand son empreinte change, avec les noms de ses versions courantes (fix et affects) et, pour chacune, sa date de sortie et
+    son drapeau de sortie, sans autre attribut (base seulement, jamais affichés, aucune valeur).
+    Jamais de titre, de description, de personne ni d'étiquette.
 
 Écrit par l'export (MagasinBase.enregistrer, une transaction, sous le rôle d'import) ; lu par la reconstruction de flow_import.py
 (`reconstruire`, `amorcer`). La couche brute est en ajout seulement : seule la purge de conservation (flow_retention.py) supprime.
@@ -20,15 +22,19 @@ import hashlib
 import json
 from decimal import Decimal
 
+import flow_delivery
+
 LOT = 500
 LOT_CLES = 2000
 
 # Noms neutres des champs comptés par la reconstruction (design D11) ; « ticket » : la ligne vivante manque.
-CHAMPS = ("ticket", "status", "status category", "type", "resolution", "dates", "story points", "parent", "team", "teams", "links")
+CHAMPS = ("ticket", "status", "status category", "type", "resolution", "dates", "story points", "parent", "team", "teams", "links",
+          "versions", "delivery")
+GENRES_VERSION = ("fix", "affects")          # les deux genres de versions courantes (change flow-version-share, design D1)
 
 COLONNES_INSTANTANE = ("issue_key", "run_id", "updated_at", "project", "type", "status", "status_category", "created_at",
                        "resolved_at", "resolution", "status_category_changed_at", "story_points", "parent_key", "teams", "links",
-                       "content_hash", "seeded")
+                       "content_hash", "current_versions", "delivery", "seeded")
 
 
 class Refus(Exception):
@@ -71,6 +77,7 @@ def empreinte(instantane: dict) -> str:
     """Empreinte du contenu d'un instantané : attributs, équipes avec identifiants, liens (triés) ; la date de mise à jour en fait
     partie (la reconstruction compare aussi les dates). Stable d'un export à l'autre pour le même contenu."""
     liens = instantane.get("links")
+    versions = instantane.get("current_versions")
     contenu = {
         "project": instantane["project"], "type": instantane["type"], "status": instantane["status"],
         "status_category": instantane.get("status_category"), "created_at": _instant(instantane["created_at"]),
@@ -81,6 +88,15 @@ def empreinte(instantane: dict) -> str:
         "teams": [[e["name"], e.get("jira_team_id")] for e in instantane.get("teams") or []],
         "links": None if liens is None else sorted([l["target"], l["type"], l["direction"]] for l in liens),
     }
+    if versions and any(versions.get(genre) for genre in GENRES_VERSION):          # design D2 : sans nom de version, l'empreinte d'avant
+        contenu["versions"] = {genre: sorted(versions.get(genre) or []) for genre in GENRES_VERSION}
+        # change version-release-date, design D3 : date de sortie et drapeau de chaque nom, dès qu'il y a un nom de version ; la clé est
+        # toujours écrite (None sans attributs suivis) : le premier export après le change réécrit un instantané par ticket avec version
+        sortie = versions.get("release")
+        contenu["release"] = None if sortie is None else {
+            nom: [(sortie[nom] or {}).get("date"), (sortie[nom] or {}).get("released")] for nom in sorted(sortie)}
+    if instantane.get("delivery"):          # jira-delivery-fields D3 : sans champ de livraison la clé est absente et l'empreinte d'avant demeure
+        contenu["delivery"] = flow_delivery.canonique(instantane["delivery"])
     return hashlib.sha256(json.dumps(contenu, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -94,9 +110,22 @@ def instantane(ticket: dict, paires: list[tuple[str, str | None]] | None = None,
         "resolved_at": ticket["resolu"], "resolution": ticket["motif"], "status_category_changed_at": ticket["debut"],
         "story_points": ticket["points"], "parent_key": ticket["parent"],
         "teams": equipes_instantane(ticket["equipes"], paires, separateur), "links": liens,
+        "current_versions": ticket.get("versions"),          # {"fix": [...], "affects": [...]} ou None (non suivi)
+        "delivery": ticket.get("delivery"),          # champs de livraison réduits (jira-delivery-fields D1), ou None
     }
     resultat["content_hash"] = empreinte(resultat)
     return resultat
+
+
+def conserver_livraison(instantanes: dict[str, dict], livraisons: dict[str, dict | None]) -> None:
+    """Reprend, pour chaque ticket dont `livraisons` (clé -> partie `delivery` du dernier instantané stocké) porte une entrée, cette partie
+    `delivery` dans l'instantané et recalcule son empreinte. Sert à l'export SANS table des champs de livraison (R-20261114-108, décision
+    R-20261114-89 C2) : l'empreinte et les lignes courantes de livraison restent celles du dernier export avec table, aucun instantané
+    n'est écrit pour cette seule raison et la réconciliation de livraison ne trouve aucun écart. Remplace : rien ; retrait : permanent."""
+    for cle, instantane_ in instantanes.items():
+        if cle in livraisons:
+            instantane_["delivery"] = livraisons[cle]
+            instantane_["content_hash"] = empreinte(instantane_)
 
 
 def choisir(instantanes: dict[str, dict], derniers: dict[str, tuple]) -> list[dict]:
@@ -142,6 +171,13 @@ def champs_differents(snap: dict, vivant: dict | None) -> list[str]:
     if vivant["links"] is not None and snap["links"] is not None and vivant["links"] != {
             (l["target"], l["type"], l["direction"]) for l in snap["links"]}:
         diff.append("links")
+    voulues = _versions_voulues(snap)
+    if voulues is not None and vivant.get("versions") is not None and voulues != {_complete(v) for v in vivant["versions"]}:
+        diff.append("versions")
+    if vivant.get("livraison") is not None:          # jira-delivery-fields D3 : les lignes voulues du dernier instantané contre les lignes vivantes
+        attendu = flow_delivery.lignes_de(snap["issue_key"], snap.get("delivery"))
+        if any(attendu[genre] != lignes for genre, lignes in vivant["livraison"].items()):
+            diff.append("delivery")
     return [c for c in CHAMPS if c in diff]
 
 
@@ -158,7 +194,9 @@ def _parametres_instantane(i: dict, run_id: int, seeded: bool):
     from psycopg.types.json import Jsonb
     return (i["issue_key"], run_id, i["updated_at"], i["project"], i["type"], i["status"], i["status_category"], i["created_at"],
             i["resolved_at"], i["resolution"], i["status_category_changed_at"], i["story_points"], i["parent_key"],
-            Jsonb(i["teams"]), None if i["links"] is None else Jsonb(i["links"]), i["content_hash"], seeded)
+            Jsonb(i["teams"]), None if i["links"] is None else Jsonb(i["links"]), i["content_hash"],
+            None if i.get("current_versions") is None else Jsonb(i["current_versions"]),
+            Jsonb(i["delivery"]) if i.get("delivery") else None, seeded)
 
 
 SQL_INSERTION_INSTANTANE = (
@@ -166,6 +204,13 @@ SQL_INSERTION_INSTANTANE = (
     f"VALUES ({', '.join(['%s'] * len(COLONNES_INSTANTANE))})")
 SQL_DERNIERS = ("SELECT DISTINCT ON (issue_key) issue_key, updated_at, content_hash FROM flow.raw_issue_snapshots "
                 "WHERE issue_key = ANY(%s) ORDER BY issue_key, run_id DESC")
+SQL_DERNIERES_EMPREINTES_VERSION = ("SELECT DISTINCT ON (object_id) object_id, content_hash FROM flow.raw_version_snapshots "
+                                    "WHERE object_id = ANY(%s) ORDER BY object_id, run_id DESC")
+
+
+def empreinte_version(contenu: dict) -> str:
+    """Empreinte du contenu d'une version (nom court, état, catégorie, Started, Released) : stable d'un export à l'autre."""
+    return hashlib.sha256(json.dumps(contenu, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 class MagasinBase:
@@ -177,18 +222,27 @@ class MagasinBase:
         self.sans_type = 0          # après un enregistrement avec types_equipes : équipes rencontrées dont la colonne du type est nulle
 
     def enregistrer(self, *, genre: str, nb_requetes: int, toutes: bool, vus: list[str], instantanes: dict[str, dict],
-                    types_equipes: dict[str, str | None] | None = None):
+                    types_equipes: dict[str, str | None] | None = None, versions: dict[str, dict] | None = None,
+                    livraison_conservee: bool = False):
         """Écrit un passage, ses visites et les instantanés à ajouter, en UNE transaction (annulée en cas d'erreur).
         `types_equipes` (nom d'équipe -> type ou None, database-only, complément du type d'équipe) : dans la même transaction, crée
         l'équipe qui manque et n'écrit la colonne du type que pour un type connu et différent de celui de la base (jamais un type nul
-        par-dessus un type écrit) ; `self.sans_type` compte ensuite les équipes rencontrées au type nul. Rend (clés vues, instantanés
-        ajoutés)."""
+        par-dessus un type écrit) ; `self.sans_type` compte ensuite les équipes rencontrées au type nul. `versions` (change
+        jira-delivery-fields, D3) : objet d'actif -> contenu (nom court, état, catégorie, Started, Released) lu des tickets de version ;
+        dans la même transaction, un instantané de version est ajouté quand le contenu diffère du dernier, et la dernière vue des versions
+        déjà dérivées avance. Rend (clés vues, instantanés ajoutés)."""
         cur = self.conn.cursor()
         try:
             derniers: dict[str, tuple] = {}
             for lot in _par_lots(list(instantanes), LOT_CLES):
                 for cle, instant, empreinte_ in cur.execute(SQL_DERNIERS, (lot,)).fetchall():
                     derniers[cle] = (instant, empreinte_)
+            if livraison_conservee:          # export sans table des champs de livraison : la livraison déjà stockée est reprise telle quelle
+                livraisons: dict[str, dict | None] = {}
+                for lot in _par_lots(list(instantanes), LOT_CLES):
+                    for cle, livraison in cur.execute(SQL_DERNIERES_LIVRAISONS_DES_CLES, (lot,)).fetchall():
+                        livraisons[cle] = livraison
+                conserver_livraison(instantanes, livraisons)
             a_ajouter = choisir(instantanes, derniers)
             run_id = cur.execute("INSERT INTO flow.raw_runs (kind, queries_searched, all_queries) VALUES (%s, %s, %s) RETURNING id",
                                  (genre, nb_requetes, toutes)).fetchone()[0]
@@ -199,11 +253,28 @@ class MagasinBase:
                 cur.executemany(SQL_INSERTION_INSTANTANE, [_parametres_instantane(i, run_id, False) for i in lot])
             if types_equipes is not None:
                 self.sans_type = self._ecrire_types(cur, types_equipes)
+            if versions:
+                self._ecrire_versions(cur, run_id, versions)
             self.conn.commit()
         except BaseException:
             self.conn.rollback()
             raise
         return len(uniques), len(a_ajouter)
+
+    @staticmethod
+    def _ecrire_versions(cur, run_id: int, versions: dict[str, dict]) -> int:
+        """Un instantané par objet dont le contenu diffère du dernier (ajout seulement), puis la dernière vue des références déjà dérivées.
+        Rend le nombre d'instantanés ajoutés. Aucune clé ni résumé de ticket de version : le contenu porte cinq attributs."""
+        from psycopg.types.json import Jsonb
+        objets = list(versions)
+        derniers = dict(cur.execute(SQL_DERNIERES_EMPREINTES_VERSION, (objets,)).fetchall())
+        ajoutes = [(run_id, objet, Jsonb(versions[objet]), empreinte_version(versions[objet])) for objet in objets
+                   if derniers.get(objet) != empreinte_version(versions[objet])]
+        if ajoutes:
+            cur.executemany("INSERT INTO flow.raw_version_snapshots (run_id, object_id, content, content_hash) VALUES (%s, %s, %s, %s)",
+                            ajoutes)
+        cur.execute("UPDATE flow.release_versions SET last_seen = now() WHERE object_id = ANY(%s)", (objets,))
+        return len(ajoutes)
 
     @staticmethod
     def _ecrire_types(cur, types_equipes: dict[str, str | None]) -> int:
@@ -244,6 +315,34 @@ SQL_VIVANT = ("SELECT i.key, i.project, i.type, i.status, i.status_category, i.c
 SQL_EQUIPES_VIVANTES = ("SELECT it.issue_key, t.name FROM flow.issue_teams it JOIN flow.teams t ON t.id = it.team_id "
                         "ORDER BY it.issue_key, it.position")
 SQL_LIENS_VIVANTS = "SELECT source_key, target_key, link_type, direction FROM flow.links"
+# Versions courantes (change flow-version-share) : le dernier instantané de chaque ticket, même si sa colonne est nulle (un instantané
+# d'avant le suivi des versions) ; la dérivation laisse alors les lignes vivantes telles quelles. Puis les lignes vivantes. Les noms ne
+# sortent jamais d'ici.
+SQL_DERNIERES_VERSIONS = ("SELECT DISTINCT ON (issue_key) issue_key, current_versions FROM flow.raw_issue_snapshots "
+                          "ORDER BY issue_key, run_id DESC")
+SQL_VERSIONS_VIVANTES = "SELECT issue_key, kind, name, release_date, released FROM flow.issue_current_versions"
+# Champs de livraison (change jira-delivery-fields, D3) : la partie `delivery` du dernier instantané de chaque ticket, puis les lignes
+# vivantes des tables courantes. Aucune valeur n'en sort.
+SQL_DERNIERES_LIVRAISONS_DES_CLES = ("SELECT DISTINCT ON (issue_key) issue_key, delivery FROM flow.raw_issue_snapshots "
+                                     "WHERE issue_key = ANY(%s) ORDER BY issue_key, run_id DESC")          # export sans table (conserver_livraison)
+SQL_DERNIERES_LIVRAISONS = ("SELECT DISTINCT ON (issue_key) issue_key, delivery FROM flow.raw_issue_snapshots "
+                            "ORDER BY issue_key, run_id DESC")          # le DERNIER instantané : un delivery nul vide les lignes du ticket
+SQL_LIVRAISON_CHAMPS = ("SELECT issue_key, release_target_id, verification_required_id, product_safety_id, isp_id, code_review_status_id, "
+                        "portfolio_rank, customer_commitment, source_commitment, strategic_objective FROM flow.issue_delivery_fields")
+SQL_LIVRAISON_SPRINTS = ("SELECT c.issue_key, s.sprint_id, s.state, s.start_date, s.end_date, s.complete_date "
+                         "FROM flow.issue_current_sprints c JOIN flow.sprints s ON s.sprint_id = c.sprint_id")
+SQL_LIVRAISON_ACTIFS = "SELECT issue_key, kind, object_id FROM flow.issue_current_asset_versions"
+SQL_LIVRAISON_OPTIONS = "SELECT issue_key, field, position, option_id FROM flow.issue_delivery_options"          # identifiant d'option seul (R-20261102-51)
+SQL_LIVRAISON_DEFAUTS = ("SELECT issue_key, detection_phase_id, detection_phase, detected_by_id, installed_base_id "
+                         "FROM flow.issue_defect_fields")          # detection_phase : code fermé ; jamais une valeur libre
+CLES_LIVRAISON = (("fields", SQL_LIVRAISON_CHAMPS), ("sprints", SQL_LIVRAISON_SPRINTS), ("assets", SQL_LIVRAISON_ACTIFS),
+                  ("options", SQL_LIVRAISON_OPTIONS), ("defect", SQL_LIVRAISON_DEFAUTS))
+# Références de version : le dernier instantané de chaque objet (avec l'instant du passage), puis les lignes vivantes.
+SQL_DERNIERES_VERSIONS_BRUTES = ("SELECT DISTINCT ON (s.object_id) s.object_id, s.content, r.run_at FROM flow.raw_version_snapshots s "
+                                 "JOIN flow.raw_runs r ON r.id = s.run_id ORDER BY s.object_id, s.run_id DESC")
+SQL_REFERENCES_VIVANTES = "SELECT object_id, short_name, status, status_category, started, released FROM flow.release_versions"
+SQL_VERSIONS_SANS_TICKET = ("SELECT count(DISTINCT a.object_id) FROM flow.issue_current_asset_versions a "
+                            "WHERE NOT EXISTS (SELECT 1 FROM flow.release_versions v WHERE v.object_id = a.object_id)")
 COLONNES_COMPARAISON = ("project", "type", "status", "status_category", "created_at", "resolved_at", "resolution",
                         "status_category_changed_at", "story_points", "updated_at", "parent_key")
 
@@ -256,14 +355,54 @@ def _derniers_instantanes(cur) -> dict[str, dict]:
         instantanes[cle]["links"] = liens
     for instantane_ in instantanes.values():
         instantane_.setdefault("links", None)
+        instantane_.setdefault("current_versions", None)
+    for cle, versions in cur.execute(SQL_DERNIERES_VERSIONS).fetchall():
+        if cle in instantanes and versions is not None:
+            instantanes[cle]["current_versions"] = versions
+    for instantane_ in instantanes.values():
+        instantane_.setdefault("delivery", None)
+    for cle, livraison in cur.execute(SQL_DERNIERES_LIVRAISONS).fetchall():
+        if cle in instantanes:
+            instantanes[cle]["delivery"] = livraison
     return instantanes
+
+
+def _date_de_sortie(texte) -> dt.date | None:
+    """La date de sortie d'un instantané (texte ISO) ; None sans date ou si elle est illisible. Jamais affichée."""
+    if isinstance(texte, dt.date):
+        return texte
+    try:
+        return dt.date.fromisoformat(texte) if isinstance(texte, str) else None
+    except ValueError:
+        return None
+
+
+def _versions_voulues(snap: dict) -> set[tuple[str, str, dt.date | None, bool | None]] | None:
+    """Les versions courantes d'un instantané comme ensemble de (genre, nom, date de sortie, drapeau « sortie »), ou None quand il ne les suit
+    pas. Un instantané sans la clé `release` (écrit avant le change version-release-date) donne des attributs nuls (design D4)."""
+    versions = snap.get("current_versions")
+    if versions is None:
+        return None
+    sortie = versions.get("release") or {}
+    voulues = set()
+    for genre in GENRES_VERSION:
+        for nom in versions.get(genre) or []:
+            attributs = sortie.get(nom) or {}
+            drapeau = attributs.get("released")
+            voulues.add((genre, nom, _date_de_sortie(attributs.get("date")), drapeau if isinstance(drapeau, bool) else None))
+    return voulues
+
+
+def _complete(version: tuple) -> tuple:
+    """Une version vivante (genre, nom) ou (genre, nom, date, drapeau) comme un quadruplet : les attributs absents sont nuls."""
+    return tuple(version) + (None,) * (4 - len(version))
 
 
 def _vivant(cur) -> dict[str, dict]:
     vivant = {}
     for ligne in cur.execute(SQL_VIVANT).fetchall():
         entree = dict(zip(("key",) + COLONNES_COMPARAISON + ("team",), ligne))
-        entree.update(teams=[], links=set())
+        entree.update(teams=[], links=set(), versions=set())
         vivant[ligne[0]] = entree
     for cle, nom in cur.execute(SQL_EQUIPES_VIVANTES).fetchall():
         if cle in vivant:
@@ -271,6 +410,15 @@ def _vivant(cur) -> dict[str, dict]:
     for source, cible, type_, sens in cur.execute(SQL_LIENS_VIVANTS).fetchall():
         if source in vivant:
             vivant[source]["links"].add((cible, type_, sens))
+    for cle, genre, nom, date_sortie, sortie in cur.execute(SQL_VERSIONS_VIVANTES).fetchall():
+        if cle in vivant:
+            vivant[cle]["versions"].add((genre, nom, date_sortie, sortie))
+    for entree in vivant.values():
+        entree["livraison"] = {genre: set() for genre, _ in CLES_LIVRAISON}
+    for genre, sql in CLES_LIVRAISON:
+        for ligne in cur.execute(sql).fetchall():
+            if ligne[0] in vivant:
+                vivant[ligne[0]]["livraison"][genre].add(tuple(ligne))
     return vivant
 
 
@@ -356,15 +504,73 @@ def _appliquer(cur, changements: list[tuple[dict, list[str]]], vivant: dict) -> 
             for cible, type_, sens in sorted(voulu, key=str):
                 cur.execute("INSERT INTO flow.links (source_key, target_key, link_type, direction) VALUES (%s, %s, %s, %s)",
                             (cle, cible, type_, sens))
+        voulues = _versions_voulues(snap)
+        if voulues is not None and ("ticket" in diff or "versions" in diff):
+            cur.execute("DELETE FROM flow.issue_current_versions WHERE issue_key = %s", (cle,))
+            for genre, nom, date_sortie, sortie in sorted(voulues, key=lambda v: (v[0], v[1])):
+                cur.execute("INSERT INTO flow.issue_current_versions (issue_key, kind, name, release_date, released) "
+                            "VALUES (%s, %s, %s, %s, %s)", (cle, genre, nom, date_sortie, sortie))
+        voulues_livraison = flow_delivery.lignes_de(cle, snap.get("delivery"))
+        if "delivery" in diff or ("ticket" in diff and any(voulues_livraison.values())):
+            _ecrire_livraison(cur, cle, voulues_livraison)
     return equipes_creees, liens_ajoutes, liens_retires
+
+
+def _ecrire_livraison(cur, cle: str, lignes: dict[str, set]) -> None:
+    """Remplace les lignes courantes de livraison d'un ticket par les lignes voulues (jira-delivery-fields D3) : sprints (la ligne de
+    flow.sprints d'abord), champs, versions d'actifs, options, champs des défauts. Aucune valeur n'est affichée."""
+    for table in ("issue_delivery_fields", "issue_current_sprints", "issue_current_asset_versions", "issue_delivery_options",
+                  "issue_defect_fields"):
+        cur.execute(f"DELETE FROM flow.{table} WHERE issue_key = %s", (cle,))
+    for _, sprint, etat, debut, fin, termine in sorted(lignes["sprints"], key=lambda s: s[1]):
+        cur.execute("INSERT INTO flow.sprints (sprint_id, state, start_date, end_date, complete_date) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (sprint_id) DO UPDATE SET state = EXCLUDED.state, start_date = EXCLUDED.start_date, "
+                    "end_date = EXCLUDED.end_date, complete_date = EXCLUDED.complete_date", (sprint, etat, debut, fin, termine))
+        cur.execute("INSERT INTO flow.issue_current_sprints (issue_key, sprint_id) VALUES (%s, %s)", (cle, sprint))
+    for ligne in lignes["fields"]:
+        cur.execute("INSERT INTO flow.issue_delivery_fields (issue_key, release_target_id, verification_required_id, product_safety_id, "
+                    "isp_id, code_review_status_id, portfolio_rank, customer_commitment, source_commitment, strategic_objective) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", ligne)
+    for _, genre, objet in sorted(lignes["assets"]):
+        cur.execute("INSERT INTO flow.issue_current_asset_versions (issue_key, kind, object_id) VALUES (%s, %s, %s)", (cle, genre, objet))
+    for ligne in sorted(lignes["options"], key=lambda o: (o[1], o[2])):
+        cur.execute("INSERT INTO flow.issue_delivery_options (issue_key, field, position, option_id) VALUES (%s, %s, %s, %s)",
+                    ligne)
+    for ligne in lignes["defect"]:
+        cur.execute("INSERT INTO flow.issue_defect_fields (issue_key, detection_phase_id, detection_phase, detected_by_id, "
+                    "installed_base_id) VALUES (%s, %s, %s, %s, %s)", ligne)
+
+
+def deriver_versions(cur) -> dict:
+    """Références de version (jira-delivery-fields D3, D5) : écrit dans flow.release_versions le dernier instantané de chaque objet de la
+    couche brute (création avec l'instant du passage comme première vue, mise à jour des attributs qui diffèrent ; le numéro opaque est
+    attribué par la base à la première vue), puis compte les objets de version référencés par un ticket qu'aucune référence ne porte. Rend
+    {"versions_ecrites", "versions_sans_ticket"} : des nombres seulement, jamais un identifiant ni un nom."""
+    vivantes = {ligne[0]: tuple(ligne[1:]) for ligne in cur.execute(SQL_REFERENCES_VIVANTES).fetchall()}
+    ecrites = 0
+    for objet, contenu, vu in cur.execute(SQL_DERNIERES_VERSIONS_BRUTES).fetchall():
+        voulu = (contenu.get("short_name"), contenu.get("status"), contenu.get("status_category"),
+                 _date_de_sortie(contenu.get("started")), _date_de_sortie(contenu.get("released")))
+        if objet not in vivantes:
+            cur.execute("INSERT INTO flow.release_versions (object_id, short_name, status, status_category, started, released, last_seen) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)", (objet, *voulu, vu))
+            ecrites += 1
+        elif vivantes[objet] != voulu:
+            cur.execute("UPDATE flow.release_versions SET short_name = %s, status = %s, status_category = %s, started = %s, released = %s "
+                        "WHERE object_id = %s", (*voulu, objet))
+            ecrites += 1
+    sans_ticket = cur.execute(SQL_VERSIONS_SANS_TICKET).fetchone()[0]
+    return {"versions_ecrites": ecrites, "versions_sans_ticket": int(sans_ticket)}
 
 
 class RefusDerivation(Exception):
     """Dérivation refusée avant toute écriture : `code` est la clé de la phrase fixe (jeu incomplet, export vide, trop d'absents)."""
 
-    def __init__(self, code: str, suite: str | None = None):
+    def __init__(self, code: str, suite: str | None = None, absents: int | None = None, stockes: int | None = None):
         super().__init__(code)
         self.code = code
+        self.absents = absents      # refus « trop d'absents » seulement : tickets qui deviendraient absents (R-20261114-69)
+        self.stockes = stockes      # idem : tickets stockés non marqués, dénominateur exact de part_absents_depassee
         self.suite = suite          # clé d'une seconde phrase affichée après la première (passage d'export limité à une requête)
 
 
@@ -409,6 +615,7 @@ def deriver(conn, *, appliquer: bool = True, marquer_absents: bool = False, seui
         resultat["modifies"] -= resultat["inseres"]            # « mis à jour » : les tickets déjà stockés dont un champ diffère
         if a_changer:
             resultat["equipes"], resultat["liens_ajoutes"], resultat["liens_retires"] = _appliquer(cur, a_changer, vivant)
+        resultat.update(deriver_versions(cur))          # références de version (jira-delivery-fields) : après les tickets, dans la transaction
         passage = cur.execute("SELECT id, all_queries FROM flow.raw_runs WHERE kind = 'export' ORDER BY id DESC LIMIT 1").fetchone()
         if passage is not None:
             vus = [cle for (cle,) in cur.execute("SELECT issue_key FROM flow.raw_run_sightings WHERE run_id = %s", (passage[0],)).fetchall()]
@@ -428,14 +635,15 @@ def deriver(conn, *, appliquer: bool = True, marquer_absents: bool = False, seui
                                         (vus,)).fetchone()[0]
                 total = cur.execute("SELECT count(*) FROM flow.issues WHERE out_of_export_at IS NULL").fetchone()[0]
                 if part_absents_depassee(candidats, total, seuil_pourcent):
-                    raise RefusDerivation("absent_share_exceeded")
+                    raise RefusDerivation("absent_share_exceeded", absents=candidats, stockes=total)
                 resultat["marques"] = cur.execute("UPDATE flow.issues SET out_of_export_at = %s "
                                                   "WHERE out_of_export_at IS NULL AND NOT (key = ANY(%s::text[]))",
                                                   (maintenant, vus)).rowcount
         elif marquer_absents:
             raise RefusDerivation("incomplete_set")          # aucun passage : l'ensemble complet n'existe pas
-        resultat["rien"] = (passage is None and not a_changer) or (not a_changer and not resultat["marques"] and not resultat["revenus"]
-                                                                  and not resultat["disparus_revus"])
+        resultat["rien"] = ((passage is None and not a_changer and not resultat["versions_ecrites"])
+                            or (not a_changer and not resultat["marques"] and not resultat["revenus"]
+                                and not resultat["disparus_revus"] and not resultat["versions_ecrites"]))
         if appliquer:
             conn.commit()
         else:

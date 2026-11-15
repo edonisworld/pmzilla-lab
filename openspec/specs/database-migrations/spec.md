@@ -26,7 +26,7 @@ Source: tests/db/test_db.py (TestSansBase: test_noms_mal_formes_refuses, test_nu
 ### Requirement: Each repository migration declares the schema it touches
 The system SHALL ship repository migrations whose first line is a comment beginning with the "schema touched" marker, SHALL start the sequence with the schemas, roles and extensions migration, and SHALL keep data (INSERT statements) and password settings out of migrations.
 
-Source: tests/db/test_db.py (test_migrations_du_depot_bien_nommees); tests/db/test_flow_schema.py (SansBase.test_migration_0002_presente_et_sans_donnee); tests/db/test_knowledge_schema.py (SansBase); tests/db/test_cases_schema.py (SansBase.test_migration_0006_presente_sans_donnee_ni_mot_de_passe, SansBase.test_travailleurs_paralleles_coupes_avant_le_premier_index_bm25); tests/db/test_lacunes_base.py (SansBase.test_migration_0003_ajoute_la_colonne_sans_donnee)
+Source: tests/db/test_db.py (test_migrations_du_depot_bien_nommees); tests/db/test_flow_schema.py, test_knowledge_schema.py, test_cases_schema.py and test_lacunes_base.py (SansBase)
 
 #### Scenario: First line of a repository migration
 - **WHEN** the repository migrations are read
@@ -61,7 +61,7 @@ Source: tests/db/test_db.py (test_empreinte_sha256_du_fichier)
 ### Requirement: Pending migrations are applied in order, one transaction each, and tracked
 The system SHALL apply pending migrations in numeric order, each in its own transaction, SHALL record each applied migration (its number, name, fingerprint and application time) in a tracking table of the default schema, and SHALL report each applied migration. A first run on an empty database SHALL create the schemas, the extensions for vector and BM25 search, and the roles.
 
-Source: tests/db/test_db.py (TestAvecBase.test_migration_0001_du_depot, test_cli_status_et_migrate_sans_mot_de_passe_dans_la_sortie)
+Source: tests/db/test_db.py (TestAvecBase: first migration and command-line tests)
 
 #### Scenario: First migration on a blank database
 - WHEN only the first repository migration is applied to a blank database
@@ -164,7 +164,7 @@ Source: tests/db/test_db.py (test_cli_status_et_migrate_sans_mot_de_passe_dans_l
 ### Requirement: Connection addresses never carry a password
 The system SHALL refuse a connection address that contains a password (in the authority part or as a query parameter), SHALL explain where the password is read from, and SHALL NOT echo the rejected password. An address without a password SHALL be accepted. The default address SHALL follow the configured port variable.
 
-Source: tests/db/test_db.py (test_url_avec_mot_de_passe_refusee_sans_l_afficher, test_connect_refuse_url_avec_mot_de_passe, test_url_sans_mot_de_passe_acceptee, test_url_par_defaut_suit_le_port)
+Source: tests/db/test_db.py (the four connection-address tests)
 
 #### Scenario: Password in the address
 - WHEN an address embeds a password, either inline or as a parameter
@@ -177,7 +177,7 @@ Source: tests/db/test_db.py (test_url_avec_mot_de_passe_refusee_sans_l_afficher,
 ### Requirement: The password is read from the macOS keychain first, then from an environment variable
 The system SHALL read the database password at connection time from the macOS keychain (via the `security` command, output captured), SHALL fall back to an environment variable when the keychain gives nothing, SHALL return nothing when neither exists or the command is unavailable, and SHALL allow the keychain command to be overridden for tests.
 
-Source: tests/db/test_db.py (test_voie_trousseau_via_faux_security, test_trousseau_prioritaire_sur_la_variable, test_repli_sur_la_variable_si_trousseau_vide, test_ni_trousseau_ni_variable, test_connexion_par_la_voie_trousseau)
+Source: tests/db/test_db.py (the five keychain tests)
 
 #### Scenario: Keychain wins
 - WHEN both the keychain and the variable provide a value

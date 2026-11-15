@@ -4,6 +4,7 @@ Les commandes (mode GitHub) sont testées dans test_roadmap_github.py.
 
     uv run --with pyyaml python -W ignore -m unittest discover -s tests/roadmap -q -f
 """
+import datetime
 import sys
 import tempfile
 import unittest
@@ -54,7 +55,6 @@ class TestVue(unittest.TestCase):
         self.assertEqual(v["etats"]["done"], 1)
         self.assertEqual([j["id"] for j in v["prets"]], ["R-1"])
         self.assertEqual(v["bloques"][0][1], ["R-1"])
-        self.assertEqual(v["semaines"], [("2026-10-12", 1)])
 
 
 class TestFichiersConnus(unittest.TestCase):
@@ -129,6 +129,106 @@ class TestLancement(unittest.TestCase):
 
     def test_direct_prompt_modele_indecis(self):
         self.assertEqual(roadmap.lancement(self.feat(8, "Petit", method="direct-prompt", model="tbd"))["modele"], "sonnet")
+
+
+def feat_cycle(n, status, **bloc):
+    return {"id": f"R-{n}", "open": True, "status": status, "block": bloc}
+
+
+class TestSignalementsCycle(unittest.TestCase):
+    """Fonction pure `signalements_cycle` (change github-status-lifecycle, design D3 à D5)."""
+
+    def sig(self, feats, branches=frozenset(), sur_main=frozenset()):
+        return roadmap.signalements_cycle(feats, set(branches), set(sur_main))
+
+    def test_en_cours_sans_branche(self):
+        self.assertEqual(self.sig([feat_cycle(7, "In progress")], {"main", "feat/autre"}),
+                         [{"id": "R-7", "kind": "in_progress_without_branch", "change": None}])
+
+    def test_branche_du_change_ou_jeton_d_identifiant(self):
+        self.assertEqual(self.sig([feat_cycle(7, "In progress", change="c")], {"feat/c"}), [])
+        self.assertEqual(self.sig([feat_cycle(7, "In progress", change="c")], {"spec/c"}), [])
+        self.assertEqual(self.sig([feat_cycle(65, "In progress")], {"chore/r65-fixes"}), [])
+        self.assertEqual(self.sig([feat_cycle(65, "In progress")], {"chore/spec-r65"}), [])
+        self.assertEqual(self.sig([feat_cycle(65, "In progress")], {"chore/r65"}), [])
+
+    def test_r650_n_est_pas_r65(self):
+        self.assertEqual([s["kind"] for s in self.sig([feat_cycle(65, "In progress")], {"chore/r650-x", "chore/xr65-y"})],
+                         ["in_progress_without_branch"])
+
+    def test_main_ne_compte_pas_comme_branche(self):
+        self.assertEqual([s["kind"] for s in self.sig([feat_cycle(7, "In progress", change="main")], {"main"})],
+                         ["in_progress_without_branch"])
+
+    def test_ready_change_absent_de_main(self):
+        self.assertEqual(self.sig([feat_cycle(7, "Ready", method="openspec", change="c")]),
+                         [{"id": "R-7", "kind": "ready_change_not_on_main", "change": "c"}])
+        self.assertEqual(self.sig([feat_cycle(7, "Ready", method="openspec", change="c")], sur_main={"c"}), [])
+
+    def test_ready_openspec_sans_change(self):
+        self.assertEqual(self.sig([feat_cycle(7, "Ready", method="openspec")]),
+                         [{"id": "R-7", "kind": "ready_without_change", "change": None}])
+
+    def test_ready_direct_prompt_sans_change_sans_signal(self):
+        self.assertEqual(self.sig([feat_cycle(7, "Ready", method="direct-prompt")]), [])
+
+    def test_nom_de_change_non_sur_donne_aucun_change(self):
+        for nom in ("a/b", "..", "archive", "a.b"):
+            with self.subTest(nom=nom):
+                self.assertEqual([s["kind"] for s in self.sig([feat_cycle(7, "Ready", method="openspec", change=nom)], sur_main={nom})],
+                                 ["ready_change_not_on_main"])
+
+    def test_features_fermees_ou_autres_status_ignorees(self):
+        fermee = feat_cycle(1, "In progress")
+        fermee["open"] = False
+        self.assertEqual(self.sig([fermee, feat_cycle(2, "Todo", method="openspec"), feat_cycle(3, "Done")]), [])
+
+    def test_ordre_du_rang_conserve(self):
+        sig = self.sig([feat_cycle(9, "Ready", method="openspec"), feat_cycle(2, "In progress")])
+        self.assertEqual([s["id"] for s in sig], ["R-9", "R-2"])
+
+    def test_git_illisible(self):
+        feats = [feat_cycle(7, "In progress"), feat_cycle(8, "Ready", method="openspec")]
+        self.assertEqual(roadmap.signalements_cycle(feats, None, set()), [{"kind": "git_unreadable"}])
+        self.assertEqual(roadmap.signalements_cycle(feats, set(), None), [{"kind": "git_unreadable"}])
+
+
+class TestProposable(unittest.TestCase):
+    """Fonction pure `proposable` (design D5, D11) : genre d'une feature proposable, ou None."""
+
+    JOUR = datetime.date(2026, 10, 13)
+
+    def prop(self, status="Ready", ouvert=True, blockers=(), etat=None, **bloc):
+        f = {"id": "R-1", "open": ouvert, "status": status, "block": bloc, "blockers": list(blockers)}
+        return roadmap.proposable(f, self.JOUR, etat if etat is not None else {})
+
+    def test_ready_quelle_que_soit_la_methode(self):
+        self.assertEqual(self.prop(method="openspec", change="c"), "ready")
+        self.assertEqual(self.prop(method="direct-prompt"), "ready")
+
+    def test_todo_direct_prompt(self):
+        self.assertEqual(self.prop("Todo", method="direct-prompt"), "todo_direct")
+
+    def test_todo_openspec_sans_change_est_un_cadrage(self):
+        self.assertEqual(self.prop("Todo", method="openspec"), "todo_framing")
+
+    def test_todo_openspec_avec_change_jamais(self):
+        self.assertIsNone(self.prop("Todo", method="openspec", change="c"))
+
+    def test_todo_direct_prompt_avec_change_jamais(self):
+        # spec workflow-roadmap, « The reader proposes a batch on a milestone » : un Todo dont le change est nommé n'est jamais retenu (D11)
+        self.assertIsNone(self.prop("Todo", method="direct-prompt", change="c"))
+
+    def test_autres_status_et_features_fermees(self):
+        self.assertIsNone(self.prop("In progress", method="direct-prompt"))
+        self.assertIsNone(self.prop("Done", method="direct-prompt"))
+        self.assertIsNone(self.prop("Ready", ouvert=False))
+
+    def test_bloqueur_ouvert_ou_date_future(self):
+        self.assertIsNone(self.prop("Todo", blockers=["R-2"], etat={"R-2": True}, method="direct-prompt"))
+        self.assertEqual(self.prop("Todo", blockers=["R-2"], etat={"R-2": False}, method="direct-prompt"), "todo_direct")
+        self.assertIsNone(self.prop(not_before=datetime.date(2026, 10, 14), method="direct-prompt"))
+        self.assertEqual(self.prop(not_before=datetime.date(2026, 10, 13), method="direct-prompt"), "ready")
 
 
 if __name__ == "__main__":

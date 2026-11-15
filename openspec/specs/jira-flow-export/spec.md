@@ -59,21 +59,34 @@ Source: tests/export_jira_api/test_export_jira_api.py (test_pagination_complete,
 - **THEN** the export ends successfully after the second request
 
 ### Requirement: No sensitive field requested or printed
-The system SHALL NOT request titles, assignee, reporter, creator, description, comments, labels, fix versions or any other user field (the PO in charge included, design D3 of the GDPR alignment) from Jira, SHALL write no title, no label, no version and no person into the database, and SHALL NOT print the token, the site address, the cloud identifier, ticket keys, team labels, labels, version names or the query to the console. The console SHALL report the ticket and page counts.
+The system SHALL NOT request titles, assignee, reporter, creator, description, comments, labels or any other user field (the PO in charge included) from Jira. It SHALL request the current fix and affects versions, read in them only the name, `releaseDate` and `released`, the delivery fields of the jira-flow-delivery-fields capability, and, in the version search alone, the version ticket fields of design D4.
 
-Source: tests/export_jira_api/test_export_jira_api.py (test_aucun_titre_demande_a_jira_et_rien_de_sensible_en_sortie); tests/export_jira_api/test_garde_champs.py; tests/export_jira_api/test_export_jira_api.py (NouveauxComportements.test_champs_demandes_sans_etiquette_ni_version); tests/export_jira_api/test_couche_brute.py (test_aucun_texte_de_ticket_dans_les_instantanes)
-
-#### Scenario: Console and file content
-- **WHEN** an export succeeds
-- **THEN** the requested field list contains none of the forbidden fields, no file is written, and neither the output nor the snapshots contain the secret title or the token
+Source: untested until implemented
 
 #### Scenario: Labels not configured
 - **WHEN** declared labels are not configured
-- **THEN** the requested field list contains neither the labels field nor any user field
+- **THEN** the requested field list contains neither the labels field nor any user field, and holds the two version fields
 
 #### Scenario: No user field with every setting
 - **WHEN** an export runs with every supported optional setting present, declared labels included
-- **THEN** the requested field list contains no comment, summary, description, creator, reporter, assignee, labels, fix versions or other user field
+- **THEN** the requested field list contains no comment, summary, description, creator, reporter, assignee, labels or other user field
+
+#### Scenario: Same requests as before
+- **WHEN** an export runs against a fake server whose versions carry release attributes
+- **THEN** the requested field list and the number of requests equal those of an export without release attributes, and no version endpoint is called
+
+#### Scenario: Delivery fields and version search
+- **WHEN** an export runs with the version reference setting present
+- **THEN** the ticket search requests the delivery fields of design D1, the version search requests only the version ticket fields of design D4, neither requests a summary or a user field, and no Assets or version endpoint is called
+
+### Requirement: No sensitive data written or printed by the export
+The system SHALL write no title, label or person into the database (version names, release dates and released flags excepted), and SHALL NOT print the token, site address, cloud identifier, keys, team labels, labels, version names, release dates, released flags or the query. The console SHALL report the ticket and page counts.
+
+Source: untested until implemented
+
+#### Scenario: Console and file content
+- **WHEN** an export succeeds
+- **THEN** the requested field list contains none of the forbidden fields, no file is written, and neither the output nor the snapshots contain the secret title or the token, and the output holds no version name or release date
 
 ### Requirement: Access errors show only the status code
 The system SHALL, when Jira rejects the request, print only the HTTP status code and exit with code 1.
@@ -85,13 +98,9 @@ Source: tests/export_jira_api/test_export_jira_api.py (Export, Champs: test_erre
 - **THEN** the output is the status code alone and the exit code is 1
 
 ### Requirement: Named export queries
-The system SHALL read the export queries from the settings either as one query or as a mapping of names to queries; the mapping SHALL take precedence. Without `--query`, the system SHALL run every named query in one run of the raw layer. With `--query <name>`, it SHALL run only that query, and that run SHALL NOT count as a complete set for the out-of-export mark. The run SHALL NOT record a query name. Invalid names, empty queries or a non-mapping value SHALL stop with exit code 1 before calling Jira.
+The system SHALL read the export queries from the settings either as one query or as a mapping of names to queries; the mapping SHALL take precedence. Invalid names, empty queries or a non-mapping value SHALL stop with exit code 1 before calling Jira.
 
-Source: tests/export_jira_api/test_export_jira_api.py (RequetesNommees); tests/export_jira_api/test_couche_brute.py (PassageEtVisites: test_premier_export_de_deux_requetes_nommees, test_une_seule_requete_n_est_pas_toutes_les_requetes)
-
-#### Scenario: All queries
-- **WHEN** two named queries are configured and export runs without options
-- **THEN** one run holds the sightings of both queries with identical time zone and team handling, and the console lines are prefixed with the query name
+Source: tests/export_jira_api/test_export_jira_api.py (RequetesNommees)
 
 #### Scenario: Unknown query name
 - **WHEN** the requested name is not configured
@@ -105,10 +114,19 @@ Source: tests/export_jira_api/test_export_jira_api.py (RequetesNommees); tests/e
 - **WHEN** `diagnose` runs with several named queries
 - **THEN** only the first query is sent
 
-### Requirement: Team field as labels
-The system SHALL read the team field when it is configured and record the teams of each ticket in its snapshot, in API order. When no team field is configured, it SHALL record no team and SHALL NOT request the field. The team header setting (`export_team_header`) SHALL be accepted and ignored, like the verification settings (requirement "Optional verification column"): no column, file or message uses it, and it SHALL NOT stop the export or `check-teams` (design D13).
+### Requirement: Named queries run in one run of the raw layer
+Without `--query`, the system SHALL run every named query in one run of the raw layer. With `--query <name>`, it SHALL run only that query, and that run SHALL NOT count as a complete set for the out-of-export mark. The run SHALL NOT record a query name.
 
-Source: tests/export_jira_api/test_export_jira_api.py (Export, ChampEquipeIllisible); amendment task 14.1 (header setting accepted and ignored)
+Source: tests/export_jira_api/test_export_jira_api.py (RequetesNommees); tests/export_jira_api/test_couche_brute.py (PassageEtVisites: test_premier_export_de_deux_requetes_nommees, test_une_seule_requete_n_est_pas_toutes_les_requetes)
+
+#### Scenario: All queries
+- **WHEN** two named queries are configured and export runs without options
+- **THEN** one run holds the sightings of both queries with identical time zone and team handling, and the console lines are prefixed with the query name
+
+### Requirement: Team field as labels
+The system SHALL read the team field when it is configured and record the teams of each ticket in its snapshot, in API order. When no team field is configured, it SHALL record no team and SHALL NOT request the field.
+
+Source: tests/export_jira_api/test_export_jira_api.py (Export, ChampEquipeIllisible)
 
 #### Scenario: No team field
 - **WHEN** no team field is set
@@ -117,6 +135,11 @@ Source: tests/export_jira_api/test_export_jira_api.py (Export, ChampEquipeIllisi
 #### Scenario: Identifier alone is not a label
 - **WHEN** a field value is a bare number, a UUID, or an object holding only a numeric value
 - **THEN** it is not accepted as a label, whereas values with a value or name property, or plain strings, are
+
+### Requirement: Team header setting accepted and ignored
+The team header setting (`export_team_header`) SHALL be accepted and ignored, like the verification settings (requirement "Optional verification column"): no column, file or message uses it, and it SHALL NOT stop the export or `check-teams` (design D13).
+
+Source: amendment task 14.1 (header setting accepted and ignored)
 
 #### Scenario: Team header setting present
 - **WHEN** the flow settings hold the team header setting and the export, then `check-teams`, run
@@ -136,7 +159,7 @@ Source: tests/export_jira_api/test_export_jira_api.py (ChampVerification)
 - **THEN** the export runs with exit code 0 and the output does not name the setting
 
 ### Requirement: Optional story points column
-The system SHALL, when a points field identifier or list of identifiers is configured, write a "story points" column after the updated column and before the team columns, taking the first non-empty numeric value in list order; non-numeric values and booleans SHALL be written empty. A duplicate identifier SHALL be requested once. The console SHALL report per field how many tickets are filled and how many tickets have another points field filled with a different value, plus the count of non-numeric values, never the values themselves. An invalid identifier SHALL stop before calling Jira.
+The system SHALL, when a points field identifier or list of identifiers is configured, write a "story points" column after the updated column and before the team columns, taking the first non-empty numeric value in list order; non-numeric values and booleans SHALL be written empty. A duplicate identifier SHALL be requested once. An invalid identifier SHALL stop before calling Jira.
 
 Source: tests/export_jira_api/test_export_jira_api.py (ChampPoints, ListeDeChampsPoints)
 
@@ -152,6 +175,15 @@ Source: tests/export_jira_api/test_export_jira_api.py (ChampPoints, ListeDeChamp
 - **WHEN** the setting is a single identifier, a list, empty, or absent
 - **THEN** it is read as a one-element list, a list, and two empty lists respectively
 
+### Requirement: Story points counts in the console
+The console SHALL report per points field how many tickets are filled and how many tickets have another points field filled with a different value, plus the count of non-numeric values, never the values themselves.
+
+Source: tests/export_jira_api/test_export_jira_api.py (ChampPoints, ListeDeChampsPoints)
+
+#### Scenario: Disagreement counted
+- **WHEN** two points fields hold different values on one ticket
+- **THEN** the console counts the disagreement per field and prints no points value
+
 ### Requirement: Field search
 The system SHALL provide a `fields --search <text>` subcommand that lists, case-insensitively, only the identifier and name of the Jira fields whose name contains the text, together with the match count over the total count, and SHALL NOT read any ticket. The text SHALL be mandatory and non-blank, and the subcommand SHALL work without an export query.
 
@@ -166,13 +198,18 @@ Source: tests/export_jira_api/test_export_jira_api.py (Champs)
 - **THEN** the exit code is 1 and Jira is not called
 
 ### Requirement: Diagnose subcommand
-The system SHALL provide a `diagnose` subcommand that reads a single page of tickets requesting only the team field and reports, without any value, whether team labels are usable and the shape of the field. It SHALL exit 1 when labels are not usable and neither the referential nor the catalogue holds an identifier, or when the field is absent from responses; otherwise 0, with the identifier count of each source. It SHALL NOT read the former team table.
+The system SHALL provide a `diagnose` subcommand that reads a single page of tickets requesting only the team field and reports, without any value, whether team labels are usable and the shape of the field.
 
-Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, ChampEquipeIllisible); tests/export_jira_api/test_referentiel_et_etiquettes.py (to be extended, task 4.7)
+Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, ChampEquipeIllisible)
 
 #### Scenario: Usable labels
 - **WHEN** the team field returns labels
 - **THEN** the report says labels are usable, one single request is made and no label appears in the output
+
+### Requirement: Diagnose exit codes and team sources
+The `diagnose` subcommand SHALL exit 1 when labels are not usable and neither the referential nor the catalogue holds an identifier, or when the field is absent from responses; otherwise 0, with the identifier count of each source. It SHALL NOT read the former team table.
+
+Source: tests/export_jira_api/test_export_jira_api.py (Diagnostic, ChampEquipeIllisible); tests/export_jira_api/test_referentiel_et_etiquettes.py (to be extended, task 4.7)
 
 #### Scenario: Field absent
 - **WHEN** the configured field never appears in responses
@@ -200,21 +237,35 @@ Source: tests/export_jira_api/test_language.py
 - **THEN** the exit code is 2
 
 ### Requirement: Strict option for unknown team identifiers
-The system SHALL accept on the export subcommand an opt-in strict-teams option (decision Q10 (B) of the database-only change). With it, when at least one team identifier is in neither the organisation referential nor the catalogue of teams outside the organisation, the system SHALL print its usual lines as without the option, then print the key phrase of design D5 of the monthly-run change, exit with code 3, and record no run, sighting or snapshot in the raw layer. A catalogue team, obsolete or not, SHALL NOT make the export incomplete. The key phrase SHALL NOT name an identifier, a label, a key or a value. Without the option, the exit code and the output SHALL stay unchanged and the run SHALL be recorded.
+The system SHALL accept on the export subcommand an opt-in strict-teams option (decision Q10 (B) of the database-only change). With it, when at least one team identifier is in neither the organisation referential nor the catalogue of teams outside the organisation, the system SHALL print its usual lines as without the option, then print the key phrase of design D5 of the monthly-run change, and exit with code 3.
 
-Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes: test_strict_teams_*); tests/export_jira_api/test_couche_brute.py (EquipesInconnuesEnMode_strict)
+Source: tests/export_jira_api/test_export_jira_api.py (test_strict_teams_*)
 
 #### Scenario: Unknown identifier with the option
 - **WHEN** the export runs with the strict-teams option and one identifier is in neither source
 - **THEN** no file is written, the raw layer holds nothing from that run, the output ends with "unknown team identifiers: export incomplete" in English and holds no key, title, label or person, and the exit code is 3
 
-#### Scenario: Complete referential with the option
-- **WHEN** every identifier is in the referential or in the catalogue, some catalogue teams flagged obsolete, including teams written obsolete from Assets
-- **THEN** the exit code is 0 and the key phrase is not printed
-
 #### Scenario: Complete table with the option
 - **WHEN** an identifier is in neither source but is in the former team table
 - **THEN** the exit code is 3: the former table is not read
+
+### Requirement: Strict option stop records nothing and names nothing
+When the strict-teams option stops the export on unknown team identifiers, the system SHALL record no run, sighting or snapshot in the raw layer. The key phrase SHALL NOT name an identifier, a label, a key or a value.
+
+Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes: test_strict_teams_*); tests/export_jira_api/test_couche_brute.py (EquipesInconnuesEnMode_strict)
+
+#### Scenario: Raw layer and key phrase after the stop
+- **WHEN** the export runs with the strict-teams option on a disposable database and one fictitious identifier is in neither source
+- **THEN** the raw layer holds no run, sighting or snapshot of that run, and the key phrase holds neither that identifier nor any label, key or value
+
+### Requirement: What the strict option leaves unchanged
+A catalogue team, obsolete or not, SHALL NOT make the export incomplete. Without the strict-teams option, the exit code and the output SHALL stay unchanged and the run SHALL be recorded.
+
+Source: tests/export_jira_api/test_export_jira_api.py (TableEquipes: test_strict_teams_*); tests/export_jira_api/test_couche_brute.py (EquipesInconnuesEnMode_strict)
+
+#### Scenario: Complete referential with the option
+- **WHEN** every identifier is in the referential or in the catalogue, some catalogue teams flagged obsolete, including teams written obsolete from Assets
+- **THEN** the exit code is 0 and the key phrase is not printed
 
 #### Scenario: Without the option
 - **WHEN** the export runs without the option and one identifier is in neither source
@@ -310,13 +361,43 @@ Source: tests/export_jira_api (task 5.1)
 - **THEN** the exit code is 1 and the message names the key path and line as an unknown key, without any value
 
 ### Requirement: Catalogue entries seen on export tickets signalled for review
-The system SHALL make `check-teams` signal (team-mapping D1, D11) the non-obsolete catalogue entries holding an identifier outside the referential and named by the team of at least one stored ticket in scope (requirement "Team sources check reads the database, never an export file"), split by the review list (design D5 of the names-and-team-review change): an entry whose identifiers outside the referential are all in the review list is already reviewed and only counted; the others are new, counted with their tickets (the sum of the view counts of the new entries, design D13, worded "tickets counted per entry" in English and "tickets comptés par entrée" in French), and only their identifiers missing from the review list are listed. The computation SHALL live in a function that returns the counts and identifiers, the command only formatting them (design D13). It SHALL NOT read an export file, print a label or a team name, signal an entry the referential fully lists, list an identifier of the review list, or change the exit code.
+The system SHALL make `check-teams` signal (team-mapping D1, D11) the non-obsolete catalogue entries holding an identifier outside the referential and named by the team of at least one stored ticket in scope (requirement "Team sources check reads the database, never an export file").
 
-Source: tests/export_jira_api (task 5.3; names-and-team-review task 4.1; rewritten on the teams read from the database by amendment task 14.1)
+Source: tests/export_jira_api (task 5.3; names-and-team-review task 4.1; database read: amendment task 14.1)
 
 #### Scenario: Catalogue entry on tickets of the scope
 - **WHEN** the database holds three tickets in scope whose team names one non-obsolete catalogue entry with two identifiers, the review list is empty, and the sources are otherwise consistent
 - **THEN** the output holds "catalogue teams seen on export tickets, to review: 1 entries, 3 tickets", "catalogue teams seen on export tickets, already reviewed: 0 entries" and "identifiers to review:" followed by the two identifiers, no label, and the exit code is 0
+
+#### Scenario: Obsolete entry not signalled
+- **WHEN** the only catalogue entry seen on tickets in scope is flagged obsolete
+- **THEN** no review line is printed
+
+#### Scenario: Ticket out of the export not counted
+- **WHEN** the only ticket naming a catalogue entry carries an out-of-export instant
+- **THEN** the entry is not signalled
+
+### Requirement: Limits of the catalogue review signal
+The review signal of `check-teams` SHALL NOT read an export file, print a label or a team name, signal an entry the referential fully lists, or change the exit code.
+
+Source: tests/export_jira_api (task 5.3; names-and-team-review task 4.1; database read: amendment task 14.1)
+
+#### Scenario: Entry of a referential team not signalled
+- **WHEN** a non-obsolete catalogue entry has every identifier listed by a referential team, and the database holds tickets in scope of that referential team
+- **THEN** no review line names its identifiers
+
+#### Scenario: Signal with identifiers left to place
+- **WHEN** a catalogue entry is seen on tickets in scope and one former-table identifier is in neither source
+- **THEN** both the review lines and the not-covered lines are printed and the exit code is 4, as without the signal
+
+#### Scenario: No export file
+- **WHEN** no export CSV file exists and the database holds tickets in scope naming a catalogue entry outside the referential
+- **THEN** the review lines are printed from the database, and no review-skipped phrase is printed
+
+### Requirement: Seen catalogue entries split by the review list
+The signalled entries SHALL be split by the review list (design D5 of the names-and-team-review change): an entry whose identifiers outside the referential are all in the review list is already reviewed and only counted; the others are new, counted with their tickets, and only their identifiers missing from the review list are listed. The system SHALL NOT list an identifier of the review list.
+
+Source: tests/export_jira_api (names-and-team-review task 4.1; amendment task 14.1)
 
 #### Scenario: Entry already reviewed
 - **WHEN** two seen entries are outside the referential and the identifiers of one of them are all in the review list
@@ -326,25 +407,18 @@ Source: tests/export_jira_api (task 5.3; names-and-team-review task 4.1; rewritt
 - **WHEN** every seen entry has all its outside identifiers in the review list
 - **THEN** the to-review count is 0, no "identifiers to review:" line is printed, and the exit code is unchanged
 
-#### Scenario: Obsolete entry not signalled
-- **WHEN** the only catalogue entry seen on tickets in scope is flagged obsolete
-- **THEN** no review line is printed
+#### Scenario: Ticket count of the new entries
+- **WHEN** new entries are counted with their tickets
+- **THEN** the ticket count is the sum of the view counts of the new entries (design D13), worded "tickets counted per entry" in English and "tickets comptés par entrée" in French
 
-#### Scenario: Entry of a referential team not signalled
-- **WHEN** a non-obsolete catalogue entry has every identifier listed by a referential team, and the database holds tickets in scope of that referential team
-- **THEN** no review line names its identifiers
+### Requirement: Review signal computed apart from its formatting
+The computation of the review signal SHALL live in a function that returns the counts and identifiers, the command only formatting them (design D13).
 
-#### Scenario: Ticket out of the export not counted
-- **WHEN** the only ticket naming a catalogue entry carries an out-of-export instant
-- **THEN** the entry is not signalled
+Source: tests/export_jira_api (amendment task 14.1)
 
-#### Scenario: Signal with identifiers left to place
-- **WHEN** a catalogue entry is seen on tickets in scope and one former-table identifier is in neither source
-- **THEN** both the review lines and the not-covered lines are printed and the exit code is 4, as without the signal
-
-#### Scenario: No export file
-- **WHEN** no export CSV file exists and the database holds tickets in scope naming a catalogue entry outside the referential
-- **THEN** the review lines are printed from the database, and no review-skipped phrase is printed
+#### Scenario: Function and command
+- **WHEN** the review signal is computed for `check-teams`
+- **THEN** a function returns the counts and identifiers, and the command only formats them
 
 ### Requirement: Catalogue migration from the complete Assets list
 The system SHALL provide `migrate-teams --from-assets <file>` (team-mapping C1, E1, D1), no Jira call, writing once, owner-only, from a dated list of the flow folder, an entry (label, identifier, `type`) per object, then listing the identifiers named like a referential team that does not list them. It SHALL NOT skip objects, read the former table as source, write the referential or `nom_court`, or print values but identifiers and D9 labels.
@@ -380,13 +454,22 @@ Source: tests/export_jira_api (5.2, 5.6, 5.9)
 - **THEN** no sentinel value appears in the output, and the catalogue holds no `nom_court` sentinel
 
 ### Requirement: Distinctive labels proposed for the sensitive-names list
-The system SHALL make `migrate-teams` print the distinctive labels it wrote, the count of the others (team-mapping D11) and, among them, the count of labels left out as common words (design D2 of the names-and-team-review change). A distinctive label reaches the minimum length of design D9 and holds a word neither of three letters or fewer nor a common word, ignoring case and accents. The common words SHALL be the closed list of the shared rule of the sensitive-names module: function and team vocabulary, common business words and common English and French dictionary words. It SHALL NOT write the proposal to a file, touch the sensitive-names list, print a label left out, embed a dictionary, or keep a second word set of its own.
+The system SHALL make `migrate-teams` print the distinctive labels it wrote, the count of the others (team-mapping D11) and, among them, the count of labels left out as common words (design D2 of the names-and-team-review change). It SHALL NOT write the proposal to a file, touch the sensitive-names list, or print a label left out.
 
-Source: tests/export_jira_api (task 5.4); the suite that covers tools/sensitive_names.py (shared rule)
+Source: tests/export_jira_api (task 5.4)
 
 #### Scenario: Distinctive label proposed
 - **WHEN** the migration writes an entry whose fictitious label is long enough and holds a word that is neither short nor common
 - **THEN** the output holds "labels to add to the sensitive-names list: 1" followed by that label, and no file other than the catalogue is written
+
+#### Scenario: Proposal never written
+- **WHEN** the migration ends with distinctive labels proposed
+- **THEN** the sensitive-names list is neither read nor modified, and no file holds the proposal
+
+### Requirement: Distinctive label defined by length and words
+The system SHALL treat as distinctive a label that reaches the minimum length of design D9 and holds a word neither of three letters or fewer nor a common word, ignoring case and accents.
+
+Source: tests/export_jira_api (task 5.4)
 
 #### Scenario: Short label left out
 - **WHEN** an entry's fictitious label is shorter than the minimum length
@@ -396,6 +479,11 @@ Source: tests/export_jira_api (task 5.4); the suite that covers tools/sensitive_
 - **WHEN** an entry's fictitious label is made of words of three letters or fewer, even if the label as a whole reaches the minimum length
 - **THEN** it is not printed and is counted as left out
 
+### Requirement: Common words taken from the shared rule
+The common words SHALL be the closed list of the shared rule of the sensitive-names module: function and team vocabulary, common business words and common English and French dictionary words. The system SHALL NOT embed a dictionary, or keep a second word set of its own.
+
+Source: tests/export_jira_api (task 5.4); the suite that covers tools/sensitive_names.py (shared rule)
+
 #### Scenario: Common words left out
 - **WHEN** an entry's fictitious label is made only of common words and acronyms, whatever its case or accents
 - **THEN** it is not printed and is counted as left out
@@ -404,18 +492,10 @@ Source: tests/export_jira_api (task 5.4); the suite that covers tools/sensitive_
 - **WHEN** an entry's fictitious label is long enough and its words longer than three letters are all common business words of the shared rule
 - **THEN** it is not printed, it is counted as left out, and the output holds "labels left out as common words: 1"
 
-#### Scenario: Proposal never written
-- **WHEN** the migration ends with distinctive labels proposed
-- **THEN** the sensitive-names list is neither read nor modified, and no file holds the proposal
-
 ### Requirement: Strict reading of the Assets list
-The system SHALL read the whole Assets list (five columns, any order) first and exit 1 (D11 phrases) on: a missing or extra column, an empty `id`, `type`, `statut` or `libelle` (counted, with the first line), a non-numeric `id`, a `type` not exactly one of four names (case kept, outer spaces cut), a bad status, a duplicate identifier, a label with two types. An empty `nom_court` is no refusal: the label stands in, and `migrate-teams` warns with the count of those lines per status (draft apart). A line with `libelle` and `nom_court` both empty is refused. The extra-column refusal keeps a nominative attribute out of the catalogue. It SHALL NOT convert an identifier, write on a refusal, or print a value.
+The system SHALL read the whole Assets list (five columns, any order) first and exit 1 (D11 phrases) on: a missing or extra column, an empty `id`, `type`, `statut` or `libelle` (counted, with the first line), a non-numeric `id`, a `type` not exactly one of four names (case kept, outer spaces cut), a bad status, a duplicate identifier, a label with two types. It SHALL NOT convert an identifier, write on a refusal, or print a value.
 
 Source: tests/export_jira_api (task 5.6)
-
-#### Scenario: Empty short name falls back to the label
-- **WHEN** the fictitious list holds one line per status with an empty `nom_court`, and `check-teams` reads the same list
-- **THEN** the catalogue names those entries by their `libelle` (inactive and discarded obsolete, draft not), the output holds "short name empty, label used: 4 lines (1 active, 1 inactive, 1 draft written as active, 1 discarded)" with no label, the labels join the sensitive-names proposal, and `check-teams` accepts the list
 
 #### Scenario: Empty cells counted
 - **WHEN** two lines have an empty `id`, or one line has `libelle` and `nom_court` both empty
@@ -427,7 +507,7 @@ Source: tests/export_jira_api (task 5.6)
 
 #### Scenario: Extra nominative column refused
 - **WHEN** the fictitious list holds a sixth column naming a responsible person, with a sentinel name in its cells
-- **THEN** the exit code is 1, the output holds "assets list refused: unknown column at position" followed by the position, neither the header nor the sentinel name appears in the output, and no catalogue is written
+- **THEN** the exit code is 1, the output holds "assets list refused: unknown column at position" followed by the position, neither the header nor the sentinel name appears in the output, and no catalogue is written: the extra-column refusal keeps a nominative attribute out of the catalogue
 
 #### Scenario: Type surrounded by spaces
 - **WHEN** one line holds `Verification Team` with leading and trailing spaces
@@ -452,6 +532,15 @@ Source: tests/export_jira_api (task 5.6)
 #### Scenario: Identifier listed twice
 - **WHEN** two lines hold the same identifier
 - **THEN** the exit code is 1, the message names both line numbers and not the identifier, and no catalogue is written
+
+### Requirement: Empty short name in the Assets list
+An empty `nom_court` SHALL NOT be a refusal: the label SHALL stand in, and `migrate-teams` SHALL warn with the count of those lines per status (draft apart). A line with `libelle` and `nom_court` both empty SHALL be refused.
+
+Source: tests/export_jira_api (task 5.6)
+
+#### Scenario: Empty short name falls back to the label
+- **WHEN** the fictitious list holds one line per status with an empty `nom_court`, and `check-teams` reads the same list
+- **THEN** the catalogue names those entries by their `libelle` (inactive and discarded obsolete, draft not), the output holds "short name empty, label used: 4 lines (1 active, 1 inactive, 1 draft written as active, 1 discarded)" with no label, the labels join the sensitive-names proposal, and `check-teams` accepts the list
 
 ### Requirement: Obsolete flag written from the Assets status
 The system SHALL make `migrate-teams` write `obsolete: true` on each catalogue entry whose objects are all `inactive` or `discarded`, listed by identifier under their count line (team-mapping E2, D11). It SHALL treat `draft` as active, counted apart (C2 bis (a)). An entry mixing statuses SHALL be written without the flag and listed. It SHALL NOT write `obsolete_to_confirm` or a comment, nor print a label in these lines.
@@ -728,3 +817,85 @@ The system SHALL make `check-teams` read, under the flow read-only role, the tic
 #### Scenario: View only
 - **WHEN** `check-teams` reads the teams seen on a disposable database
 - **THEN** its reader queries the teams-seen view and no flow table, and a count below 5 is used as is
+
+### Requirement: Current versions stored per ticket
+The system SHALL record in each snapshot, in the database only, the names of the ticket's current fix and affects versions in Jira's order and spelling, with the `releaseDate` and `released` of each, and no other version attribute. A version without a release date SHALL get a null date, never an estimate; a ticket without any version SHALL be tracked with no name.
+
+Source: untested until implemented
+
+#### Scenario: Two kinds
+- **WHEN** the fake server returns a ticket with two fix versions and one affects version, each with a release date and a released flag
+- **THEN** its snapshot holds the two fix names and the one affects name under their kind, with the date and flag of each
+
+#### Scenario: No version
+- **WHEN** the fake server returns a ticket with empty version lists
+- **THEN** its snapshot holds empty lists, not a missing value
+
+#### Scenario: Version without release date
+- **WHEN** a version object carries no release date
+- **THEN** the snapshot holds its name with a null date and its released flag
+
+#### Scenario: Other attributes ignored
+- **WHEN** version objects also carry an identifier, a description, an archived flag, a start date and a user-facing date, each a distinctive value
+- **THEN** the database holds none of these distinctive values
+
+### Requirement: Version names never printed
+The system SHALL print no version name, release date, released flag or count by name at export, nor any of them in an error message.
+
+Source: untested until implemented
+
+#### Scenario: Distinctive version name
+- **WHEN** the fake server returns a distinctive string as a version name, and the export succeeds or fails
+- **THEN** the string appears in no output line and no error line
+
+#### Scenario: Distinctive release date
+- **WHEN** the fake server returns a distinctive release date, and the export succeeds or fails
+- **THEN** the date appears in no output line and no error line
+
+### Requirement: Read-only client in every export subcommand
+The subcommands `diagnose`, `fields` and `export` SHALL reach Jira only through the read-only client of the history tool. A refused request SHALL stop the run with exit code 5, as in the history tool, and print the fixed phrase in full, not only a type name. `export` SHALL record nothing then. Exit code 5 SHALL be declared with the other codes of the tool and SHALL NOT be used for another cause.
+
+Source: tests/export_jira_api/test_lecture_seule.py (to be written). Untested until implemented.
+
+#### Scenario: Refusal during the export
+- **WHEN** the search function is replaced by one that sends a write request, and `export` runs against the fake server
+- **THEN** the exit code is 5, the output holds "Jira request refused: write forbidden" in English, nothing is recorded, and the server received no write request
+
+### Requirement: Real probe of the export subcommands
+The system SHALL keep tests that run `diagnose`, `fields --search`, `export`, `export --query <name>` and `export --strict-teams` against a local fake server logging every request. Every logged request SHALL be an allowlisted pair, and the export SHALL send no POST other than the ticket search.
+
+Source: tests/export_jira_api/test_lecture_seule.py (to be written). Untested until implemented.
+
+#### Scenario: Probe of the export subcommands
+- **WHEN** each of these subcommands runs against the fake server
+- **THEN** every logged request is an allowlisted pair, the only POST is the ticket search, and at least one request was received
+
+### Requirement: Scope guard in the export
+The subcommands `diagnose` and `export` SHALL send only ticket searches restricted to the declared projects (design D8), plus the fixed version search of `export` (jira-delivery-fields D4), and SHALL receive answers filtered by the client (design D9). `export` SHALL NOT record a ticket removed by the filter, nor any field of a linked ticket, a parent or a sub-task other than its identifier and type.
+
+Source: tests/export_jira_api/test_lecture_seule.py (to be written).
+
+#### Scenario: Planted ticket of another project
+- **WHEN** the fake server answers a restricted search with tickets of a declared fictitious project and one ticket of an undeclared one, and `export` runs
+- **THEN** only the tickets of the declared project are recorded, the output holds the count line with 1, and no output holds the removed key
+
+#### Scenario: Linked ticket recorded reduced
+- **WHEN** a recorded ticket links to a ticket carrying a summary and a status
+- **THEN** the record of the link holds only the linked ticket's identifier and type
+
+#### Scenario: Version search of the reference project
+- **WHEN** the version reference setting names a fictitious project outside the declared list and `export` runs
+- **THEN** exactly one search names that project, in the form of design D4, and `diagnose` sends none
+
+### Requirement: Scope refusal exits with code 6 in the export
+In `diagnose`, `fields` and `export`, a scope refusal, the missing forbidden list included, SHALL stop the run with exit code 6, as in the history tool, and print the fixed phrase in full; `export` SHALL record nothing then. Exit code 6 SHALL be declared with the other codes of the tool and SHALL NOT be used for another cause.
+
+Source: tests/export_jira_api/test_lecture_seule.py (to be written). Untested until implemented.
+
+#### Scenario: Unrestricted export query
+- **WHEN** the named query of the test configuration does not restrict the result to the declared fictitious projects, and `export` runs
+- **THEN** the exit code is 6, the output holds "Jira request refused: outside the declared scope projects" in English, nothing is recorded and the server received no search
+
+#### Scenario: Missing forbidden list
+- **WHEN** `diagnose`, `fields --search` and `export` run with a test configuration without `forbidden_projects`
+- **THEN** each exits with code 6, prints the missing-setting phrase, records nothing, and the server's raw log is empty

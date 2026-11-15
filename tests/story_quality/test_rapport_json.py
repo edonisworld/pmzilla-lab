@@ -28,7 +28,7 @@ class Document(EspaceRapport):
 
     def test_la_sortie_standard_est_un_seul_document_json(self):
         document, sortie, _ = self.json()
-        self.assertEqual((document["contract"], document["contract_version"]), ("story_quality_report", 1))
+        self.assertEqual((document["contract"], document["contract_version"]), ("story_quality_report", 2))
         self.assertTrue(sortie.lstrip().startswith("{") and sortie.rstrip().endswith("}"))
 
     def test_les_equipes_viennent_dans_l_ordre_des_noms_et_aucun_fichier_n_est_ecrit(self):
@@ -86,9 +86,9 @@ class Document(EspaceRapport):
 
     def test_aucune_cle_hors_du_contrat_et_la_chaine_du_produit_sans_equipe(self):
         document, sortie, _ = self.json()
-        self.assertEqual(set(document), {"contract", "contract_version", "grid", "notice", "teams", "product_chain"})
+        self.assertEqual(set(document), {"contract", "contract_version", "grid", "notice", "teams", "teams_without_section", "product_chain"})
         for equipe in document["teams"]:
-            self.assertEqual(set(equipe), {"team", "single_po", "single_po_notice", "coverage", "criteria", "probable_causes"})
+            self.assertEqual(set(equipe), {"team", "section", "single_po", "single_po_notice", "coverage", "criteria", "probable_causes"})
             for criteres in equipe["criteria"].values():
                 for c in criteres:
                     verifier_cle(self, c["counts"], "counts")
@@ -101,6 +101,22 @@ class Document(EspaceRapport):
         chaine = json.dumps(document["product_chain"])
         for nom in (ALPHA, BETA):
             self.assertNotIn(nom, chaine)
+
+    def test_version_2_les_trois_valeurs_sont_des_valeurs_simples(self):
+        masquee = [dict(VUE_EQUIPE[0], team="Equipe Zzmasquee", audited=None, met=None, not_met=None, not_applicable=None, undetermined=None)]
+        self.vues["quality_by_team"] = VUE_EQUIPE + masquee
+        self.vues["quality_coverage_by_team"] = self.vues["quality_coverage_by_team"] + [
+            {"team": "Equipe Zzmasquee", "item_kind": "story", "collected": None, "audited": None, "empty_acceptance_criteria": None,
+             "single_po": False}]
+        document, _, _ = self.json()
+        self.assertEqual(document["contract_version"], 2)
+        self.assertEqual(document["teams_without_section"], 1)
+        self.assertEqual([e["section"] for e in document["teams"]], [True, True, False])
+        self.assertIs(document["product_chain"]["single_team"], False)
+        self.assertIs(type(document["teams_without_section"]), int)
+        for valeur in (document["teams_without_section"], document["product_chain"]["single_team"],
+                       *(e["section"] for e in document["teams"])):
+            self.assertNotIsInstance(valeur, dict)
 
     def test_rien_d_identifiant_dans_le_json(self):
         self.vues["quality_by_team"] = [dict(l, key="ZZ-1234", title="zztitre", person="zzpersonne", feedback="zzretour", sample="zzverdict")
@@ -119,7 +135,7 @@ class Document(EspaceRapport):
         self.assertEqual(en["teams"][0]["criteria"]["story"][1]["link"], fr["teams"][0]["criteria"]["story"][1]["link"])
 
     def test_le_json_est_celui_du_service(self):
-        resultat = {"contract": "story_quality_report", "contract_version": 1, "teams": [{"team": "Zz"}, {"team": "Aa"}]}
+        resultat = {"contract": "story_quality_report", "contract_version": 2, "teams": [{"team": "Zz"}, {"team": "Aa"}]}
         with mock.patch.object(sr.data, "report_data", return_value=resultat):
             code, sortie, _ = self.lancer("report", "--name", "pilote", "--json")
         self.assertEqual((code, json.loads(sortie)), (0, resultat))                 # même ordre que le service, rien d'ajouté ni de trié

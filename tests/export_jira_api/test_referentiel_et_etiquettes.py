@@ -379,25 +379,28 @@ class AucuneEtiquetteNiVersion(BaseEtiquettes):
         super().setUp()
         self.faux.tickets = {}
 
-    def test_champs_labels_et_fixversions_jamais_demandes_avec_ou_sans_bloc(self):
+    def test_champ_labels_jamais_demande_fixversions_toujours_avec_ou_sans_bloc(self):
         self.ticket("ABC-1", ["cy-a"], ["v1"])
         for extra in ("", DECLAREES):
             self.faux.requetes.clear()
             self.reglages_avec(extra=extra)
             self.exporter()
             demandes = self.champs_demandes()
-            for interdit in ("labels", "fixVersions", "summary", "assignee", "reporter", "creator", "description", "comment", VERIFICATION):
+            self.assertLessEqual({"fixVersions", "versions"}, demandes)      # change flow-version-share
+            for interdit in ("labels", "summary", "assignee", "reporter", "creator", "description", "comment", VERIFICATION):
                 self.assertNotIn(interdit, demandes)
 
-    def test_ni_etiquette_ni_version_dans_les_instantanes_ni_dans_la_console(self):
+    def test_ni_etiquette_dans_les_instantanes_ni_version_ni_etiquette_dans_la_console(self):
         self.reglages_avec()
         self.ticket("ABC-1", ["cy-a", "cy-extra", SECRET_ETIQUETTE, "um-legal", "um-hotfix"], [SECRET_VERSION])
         code, sortie = self.lancer("export")
         self.assertEqual(code, 0, sortie)
         enregistre = repr(self.magasin.instantanes)
+        self.assertIn(SECRET_VERSION, enregistre)                            # versions courantes en base (flow-version-share)
         for chaine in ("cy-a", "cy-extra", "um-legal", "um-hotfix", SECRET_ETIQUETTE, SECRET_VERSION):
             self.assertNotIn(chaine, sortie)
-            self.assertNotIn(chaine, enregistre)
+            if chaine != SECRET_VERSION:
+                self.assertNotIn(chaine, enregistre)
         for chaine in ("ABC-", "Equipe", "étiquette", "label", "up-merge"):
             self.assertNotIn(chaine, sortie)
 

@@ -51,7 +51,18 @@ indexe LISEZMOI 'le sigle ABC ici'                     ; verifie "sans extension
 indexe LISEZMOI 'le sigle abc ici'                     ; verifie "sans extension : abc passe" 0; vide
 printf 'EquipeTest\0binaire\n' > b.bin; git add b.bin ; verifie "binaire (octet nul) non examiné" 0; git reset -q; rm -f b.bin
 python3 -c "open('gros.md','w').write('EquipeTest\n' + 'x' * 1100000)"; git add gros.md
-verifie "fichier de plus de 1 Mo signalé sans blocage" 0 "gros.md dépasse 1 Mo"; git reset -q; rm -f gros.md
+verifie "fichier de plus de 1 Mo examiné en entier : le nom de la liste factice, ligne 1, est refusé" 1 "gros.md, ligne 1"; git reset -q; rm -f gros.md
+python3 -c "open('gros.md','w').write('x' * 1100000 + '\n')"; git add gros.md
+verifie "fichier de plus de 1 Mo propre : passe" 0; git reset -q; rm -f gros.md
+python3 -c "open('gros.md','w').write(('x' * 1100000 + '\n') + 'fin avec EquipeTest\n')"; git add gros.md
+verifie "fichier de plus de 1 Mo, nom en dernière ligne : refusé (ligne 2)" 1 "gros.md, ligne 2"; git reset -q; rm -f gros.md
+# Temps d'examen d'un fichier de 5 Mo (imprimé, sans seuil) : lignes ordinaires de 80 caractères, puis une seule ligne de 5 Mo
+python3 -c "open('gros.md','w').write(('texte ordinaire sans rien de particulier a signaler dans ce fichier de mesure ....\n') * 62500)"; git add gros.md
+t0=$(python3 -c 'import time; print(time.time())'); verifie "fichier de 5 Mo en lignes de 80 caractères propre : passe" 0
+t1=$(python3 -c 'import time; print(time.time())'); python3 -c "import sys; print('mesure : examen d un fichier de 5 Mo (62500 lignes) : %.2f s' % (float(sys.argv[2]) - float(sys.argv[1])))" "$t0" "$t1"; git reset -q; rm -f gros.md
+python3 -c "open('gros.md','w').write('x' * 5000000 + '\n')"; git add gros.md
+t0=$(python3 -c 'import time; print(time.time())'); verifie "fichier de 5 Mo en une seule ligne propre : passe" 0
+t1=$(python3 -c 'import time; print(time.time())'); python3 -c "import sys; print('mesure : examen d un fichier de 5 Mo (une seule ligne) : %.2f s' % (float(sys.argv[2]) - float(sys.argv[1])))" "$t0" "$t1"; git reset -q; rm -f gros.md
 indexe f.md 'MonEquipeTestBis'                         ; verifie "nom au milieu d'un mot ne bloque pas" 0; vide
 printf '# NomEnCommentaire\n   # AutreEnCommentaire\n' >> Flux-Lab/noms-sensibles.txt
 indexe f.md '# NomEnCommentaire et    # AutreEnCommentaire'   ; verifie "ligne de la liste commençant par # ignorée (comme sensitive_names.py)" 0; vide
@@ -140,6 +151,25 @@ tete=$(git -C "$repo" rev-parse HEAD)
 if git commit -q -m t >/dev/null 2>&1; then echo "ECHEC : git commit aurait dû être refusé pendant une fin de branche"; ko=$((ko+1)); else echo "ok : gel : git commit refusé pendant une fin de branche"; ok=$((ok+1)); fi
 [ "$(git -C "$repo" rev-parse HEAD)" = "$tete" ]; if [ $? -eq 0 ]; then echo "ok : gel : le sommet de la branche n'a pas bougé"; ok=$((ok+1)); else echo "ECHEC : gel : le sommet a bougé"; ko=$((ko+1)); fi
 if FINISH_LOCK_TOKEN=jeton-de-test git commit -q -m t >/dev/null 2>&1; then echo "ok : gel : git commit accepté avec le jeton de la fin"; ok=$((ok+1)); else echo "ECHEC : gel : commit refusé malgré le jeton"; ko=$((ko+1)); fi
+# Gel ciblé (change autonomous-trains-merge, D18, tâche 6.3) : la liste du verrou (`gel`, écrite par le train) décide ; une règle unique, finish_lock.freezes().
+# Un verrou sans liste lisible gèle tout (échec fermé, cas des tests ci-dessus) ; avec une liste, seuls ses worktrees, main et le dossier d'exécution sont refusés.
+export PMZILLA_LAB_RUN="$tmp/run" PMZILLA_NOMS="$repo/Flux-Lab/noms-sensibles.txt" PMZILLA_SKIP_GREEN_CHECK=1
+echo propre > "$tmp/wt/g.md"; git -C "$tmp/wt" add g.md
+pose_verrou $$ jeton-de-test; avant=$(etat_verrou)
+printf 'B travail-test\nW %s\nW %s\nfin\n' "$tmp/wt" "$tmp/wt-train-x" > "$GEL/gel"
+verifie_dans "gel ciblé : worktree nommé dans la liste du verrou : refusé" 1 "$tmp/wt" "$CLE_GEL"
+printf 'B autre-branche\nW %s\nfin\n' "$tmp/ailleurs" > "$GEL/gel"
+verifie_dans "gel ciblé : worktree de branche de travail que la liste ne nomme pas : les autres contrôles tournent" 0 "$tmp/wt" "" "fin de branche en cours"
+verifie_dans "gel ciblé : tête détachée (écrit main ou le dossier d'exécution) non listée : refusé" 1 "$tmp/run" "$CLE_GEL"
+verifie_dans "gel ciblé : commit dans l'espace de travail sur main hors liste : refusé" 1 "$repo" "$CLE_GEL"
+printf 'B travail-test\nW %s\n' "$tmp/ailleurs" > "$GEL/gel"
+verifie_dans "gel ciblé : liste sans sa ligne de fin (illisible) : tout est gelé" 1 "$tmp/wt" "$CLE_GEL"
+rm -f "$GEL/gel"
+verifie_dans "gel ciblé : verrou sans liste : tout est gelé" 1 "$tmp/wt" "$CLE_GEL"
+printf 'B autre-branche\nW %s\nfin\n' "$tmp/ailleurs" > "$GEL/gel"
+FINISH_LOCK_TOKEN=un-autre-jeton verifie_dans "gel ciblé : jeton différent, worktree hors liste : les autres contrôles tournent" 0 "$tmp/wt" "" "fin de branche en cours"
+git -C "$tmp/wt" reset -q; rm -f "$tmp/wt/g.md"
+unset PMZILLA_LAB_RUN PMZILLA_NOMS
 rm -rf "$GEL"; vide
 
 # Extrait des noms d'équipes (change team-names-readable, D8, tâche 5.1) : les noms distinctifs de Flux-Lab/equipes-lisibles.yaml
@@ -227,7 +257,7 @@ printf '%s\n' 'postgresql://role:${PGPASSWORD}@localhost/base' 'PMZILLA_LAB_DB''
 verifie_secret "secrets : adresse et variable à espace réservé acceptées" 0; vide_secrets
 indexe f.md 'texte propre'; verifie_secret "secrets : fichier propre accepté" 0; vide_secrets
 python3 -c "import sys; open('gros.md','w').write('x' * 1100000 + '\n' + sys.argv[1] + '\n')" "$jeton"; git add gros.md
-verifie_secret "secrets : fichier de plus de 1 Mo cherché quand même, l'avis des noms reste" 1 "pre-commit : secret possible dans gros.md, ligne 2 (jeton GitHub)" "gros.md dépasse 1 Mo, non examiné"; vide_secrets
+verifie_secret "secrets : fichier de plus de 1 Mo examiné en entier (plus de passage au-delà de 1 Mo), le secret est refusé" 1 "pre-commit : secret possible dans gros.md, ligne 2 (jeton GitHub)" "$FERMETURE"; vide_secrets
 printf '%s\0binaire\n' "$jeton" > b.bin; git add b.bin; verifie_secret "secrets : binaire (octet nul) ignoré" 0; vide_secrets
 # un fichier renommé (git mv) qui reçoit un secret ou un nom est examiné (relecture 4.1 du 2026-10-20 : le filtre ACM laissait passer le R)
 for i in 1 2 3 4 5 6 7 8 9 10; do echo "ligne de texte ordinaire $i"; done > r.md; git add r.md; git commit -q -m "fichier à renommer"

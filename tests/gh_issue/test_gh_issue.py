@@ -385,16 +385,25 @@ class Depot(Base):
         for interdit in ("/transfer", "releases", "git/refs", "git/tags", "deleteIssue", "deleteLabel", "deleteProject",
                          "/lock", "/pin", "lockLockable", "pinIssue", "transferIssue"):
             self.assertNotIn(interdit, corps, interdit)
-        for ligne in src.splitlines():
-            if '"DELETE"' in ligne:
-                self.assertIn("blocked_by", ligne)     # seule suppression : une relation « blocked by »
-        self.assertEqual(src.count('"DELETE"'), 1)
+        suppressions = [ligne for ligne in src.splitlines() if '"DELETE"' in ligne]
+        for ligne in suppressions:
+            # seules suppressions : une relation « blocked by » ou un lien de sous-issue (#406), jamais une issue ni un commentaire
+            self.assertTrue("blocked_by" in ligne or "/sub_issue\"" in ligne, ligne)
+            self.assertNotIn("comments", ligne)
+        self.assertLessEqual(len(suppressions), 2)
+        self.assertEqual(src.count('"DELETE"'), len(suppressions))
         self.assertNotIn("labels/", src.replace("issues/", ""))      # aucun chemin d'étiquette individuelle
         self.assertNotIn("milestones/{m['number']}\", {\"state\": \"open\"", src)
-        # aucun code qui change un jalon existant : ni fonction de fermeture, ni requête PATCH sur milestones/
+        # règle restreinte par gh-issue-autonomy (D9) : aucun code qui ferme, rouvre, renomme ou supprime un jalon existant ; la seule
+        # requête sur milestones/<n> est le PATCH de edit-milestone, qui ne porte que la description et l'échéance
         self.assertNotIn("close_milestone", src)
-        self.assertIsNone(re.search(r"PATCH[\"']\s*,\s*f?[\"']milestones/", src))
-        self.assertNotIn("milestones/{", src)
+        self.assertEqual(re.findall(r"[\"'](\w+)[\"']\s*,\s*f?[\"']milestones/", src), ["PATCH"])
+        self.assertEqual(src.count("milestones/"), 1)
+        edition = src.split("def cmd_edit_milestone", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("payload = {}", edition)
+        self.assertEqual(set(re.findall(r"payload\[\"(\w+)\"\]", edition)), {"description", "due_on"})
+        self.assertNotIn("state", edition)
+        self.assertNotIn("title", edition)
 
 
 # --- Création et édition des features -----------------------------------------------------------------------------
@@ -1418,7 +1427,7 @@ class CommentaireDeCloture(Base):
         cs = self.comments()
         self.assertEqual(len(cs), 1)
         self.assertEqual(cs[0]["body"], "<!-- roadmap-close -->\nClosed on branch chore/r65-fixes, before the merge; "
-                                       "the user merges with bash tools/finish_branch.sh.")
+                                       "the user merges with bash tools/finish_train.sh.")
         ecritures = self.calls(writes_only=True)
         idx = lambda pred: next(k for k, c in enumerate(ecritures) if pred(c))
         statut = idx(lambda c: "updateProjectV2ItemFieldValue" in (c["stdin"] or ""))
@@ -1670,6 +1679,108 @@ class EtiquetteEditionPublique(Base):
         self.assertEqual(self.calls(writes_only=True), [])
         self.assertNotIn(self.ETIQUETTE, self.etiquettes("R-1"))
         self.no_leak(out, err)
+
+
+# --- Lecture des sous-issues et clés en double (change gh-issue-autonomy, groupe 1, design D1) -------------------------
+
+class LectureDesSousIssues(Base):
+    TITRE = "Titre confidentiel de test"
+
+    def sous_issues_de(self, parent, *enfants):
+        """Pose la liste des sous-issues du parent dans le faux GitHub (numéros d'issue)."""
+        self.st = self.load()
+        self.st.setdefault("sub", {})[str(parent)] = list(enfants)
+        self.save()
+
+    def tache(self, key, state="open", body=None):
+        return self.add_issue(key, f"R-1 · {self.TITRE}", ["type:task", "owner:user"], body=body, state=state)
+
+    def setUp(self):
+        super().setUp()
+        self.add_feature(1)
+
+    def test_liste_etat_et_cle_sans_doublon(self):
+        a = self.tache("R-1/u1")
+        b = self.tache("R-1/u2", state="closed")
+        self.sous_issues_de(1, b["number"], a["number"])
+        code, out, err = self.run_cli("sub-issues", "R-1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines(), [
+            f"gh_issue: #{a['number']} open R-1/u1",
+            f"gh_issue: #{b['number']} closed R-1/u2",
+            "gh_issue: 2 sub-issue(s), 1 open",
+            "gh_issue: no duplicate key"])
+        self.assertEqual(self.calls(writes_only=True), [])
+        self.no_leak(out, err, words=(self.TITRE,))
+
+    def test_numero_et_diese_designent_le_parent(self):
+        a = self.tache("R-1/u1")
+        self.sous_issues_de(1, a["number"])
+        for ref in ("1", "#1"):
+            code, out, err = self.run_cli("sub-issues", ref)
+            self.assertEqual(code, 0, err)
+            self.assertIn(f"#{a['number']} open R-1/u1", out)
+
+    def test_cle_en_double_dans_la_feature(self):
+        a = self.tache("R-1/u1")
+        b = self.tache("R-1/u1", state="closed")
+        c = self.tache("R-1/u2")
+        self.sous_issues_de(1, a["number"], b["number"], c["number"])
+        code, out, err = self.run_cli("sub-issues", "R-1")
+        self.assertEqual(code, 0, err)      # la lecture rapporte, les écritures refuseront
+        lignes = out.splitlines()
+        self.assertEqual(lignes[-2:], ["gh_issue: 3 sub-issue(s), 2 open",
+                                       f"gh_issue: duplicate key R-1/u1: #{a['number']}, #{b['number']}"])
+        self.assertNotIn("no duplicate key", out)
+        self.assertEqual(self.calls(writes_only=True), [])
+
+    def test_cle_portee_aussi_par_une_issue_hors_de_la_feature(self):
+        a = self.tache("R-1/u1")
+        autre = self.tache("R-1/u1", state="closed")        # fermée, hors des sous-issues : compte quand même
+        self.sous_issues_de(1, a["number"])
+        code, out, _ = self.run_cli("sub-issues", "R-1")
+        self.assertEqual(code, 0)
+        self.assertIn(f"duplicate key R-1/u1: #{a['number']}, #{autre['number']}", out)
+
+    def test_sous_issue_sans_cle(self):
+        a = self.add_issue("R-1/u1", f"R-1 · {self.TITRE}", ["type:task"], body="texte libre sans marqueur")
+        self.sous_issues_de(1, a["number"])
+        code, out, err = self.run_cli("sub-issues", "R-1")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"#{a['number']} open no key", out)
+        self.assertIn("1 sub-issue(s), 1 open", out)
+        self.assertIn("no duplicate key", out)
+
+    def test_aucune_sous_issue(self):
+        code, out, err = self.run_cli("sub-issues", "R-1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines(), ["gh_issue: 0 sub-issue(s), 0 open", "gh_issue: no duplicate key"])
+
+    def test_parent_inconnu_code_7(self):
+        for ref, message in (("R-99", "unknown identifier R-99"), ("99", "unknown issue 99")):
+            code, out, err = self.run_cli("sub-issues", ref)
+            self.assertEqual(code, 7, err)
+            self.assertIn(message, err)
+            self.assertEqual(out, "")
+        self.assertEqual(self.calls(writes_only=True), [])
+
+    def test_reference_mal_formee_code_2(self):
+        for ref in ("feature-1", "R-1/u1", "R-x", ""):
+            code, _, err = self.run_cli("sub-issues", ref)
+            self.assertEqual(code, 2, err)
+            self.assertIn("usage:", err)
+        self.assertEqual(self.calls(writes_only=True), [])
+
+    def test_service_sub_issue_states_et_duplicate_keys(self):
+        a = self.tache("R-1/u1")
+        b = self.tache("R-1/u1", state="closed")
+        c = self.add_issue("R-1/u3", f"R-1 · {self.TITRE}", ["type:task"], body="sans marqueur")
+        self.sous_issues_de(1, c["number"], a["number"])
+        ctx = g.Ctx(g.Client(g.Guard.load()))
+        etats = g.sub_issue_states(ctx, ctx.snap.by_number[1])
+        self.assertEqual(etats, [{"number": a["number"], "state": "open", "key": "R-1/u1"},
+                                 {"number": c["number"], "state": "open", "key": None}])
+        self.assertEqual(g.duplicate_keys(ctx.snap, ["R-1/u1", "R-1/u2", "R-1"]), {"R-1/u1": [a["number"], b["number"]]})
 
 
 # --- Le faux gh : dans le processus par défaut, en vrai processus pour ce qui vise le lancement -------------------------

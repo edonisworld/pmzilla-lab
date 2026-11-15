@@ -26,6 +26,11 @@ for argument in "$@"; do
     *) echo "Option inconnue : $argument (evals_auto.sh [--readme])" >&2; exit 2 ;;
   esac
 done
+# Le jeu d'essai est payant et reste à l'auteur : refusé dans une session Claude Code (marqueur posé, même vide), avant tout appel.
+if [[ -n "${CLAUDECODE+x}" ]]; then
+  echo "evals_auto : jeu d'essai refusé dans une session Claude Code : payant, réservé à l'auteur (Terminal). Rien n'a été lancé." >&2
+  exit 6
+fi
 # Lancé depuis un hook Git, le script hérite des variables GIT_* du commit (index, dossier .git) :
 # elles casseraient les copies temporaires du jeu d'essai
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_COMMON_DIR

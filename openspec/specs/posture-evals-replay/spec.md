@@ -20,7 +20,7 @@ The system SHALL run each case in a temporary copy of the workspace made from th
 Source: tests/posture_evals/test_posture_evals.py (CasQuiPlante)
 
 ### Requirement: Frozen neutral memory and neutral context by default
-The system SHALL, by default, create the agents' memory areas inside the copy, replace each posture's lived memory by the neutral version for the run language (removing lived files without a neutral version and the session history), keep the structure of the tested state, and deposit a neutral local context instead of any personal one. The neutral material of the English language SHALL be kept apart from the French, SHALL contain no French text, and SHALL cover the same postures and files as the French one.
+The system SHALL, by default, create the agents' memory areas inside the copy, replace each posture's lived memory by the neutral version for the run language (removing lived files without a neutral version and the session history), keep the structure of the tested state, and deposit a neutral local context instead of any personal one.
 
 #### Scenario: Lived memory replaced
 - WHEN memory is frozen
@@ -30,15 +30,20 @@ The system SHALL, by default, create the agents' memory areas inside the copy, r
 - WHEN the neutral memory or the neutral context for the run language cannot be found
 - THEN the run stops with a clear error naming the missing material (an older tested state may fall back to the neutral context of the workspace)
 
-#### Scenario: English run
-- WHEN the language is English
-- THEN the English neutral memory and context are used and the memory declares the English language
-
 #### Scenario: French by default
 - WHEN no language is given
 - THEN French neutral memory and context are used
 
 Source: tests/posture_evals/test_posture_evals.py (MemoireFigee, MemoireEtContexteParLangue, SanctumsEtContexte, CasQuiPlante); tests/posture_evals/test_gaps_a_voies.py (RejugementSansVerrou)
+
+### Requirement: English neutral material is separate and complete
+The neutral material of the English language SHALL be kept apart from the French, SHALL contain no French text, and SHALL cover the same postures and files as the French one.
+
+#### Scenario: English run
+- WHEN the language is English
+- THEN the English neutral memory and context are used and the memory declares the English language
+
+Source: tests/posture_evals/test_posture_evals.py (MemoireEtContexteParLangue)
 
 ### Requirement: Real memory is copied, never used in place, and never changed
 The system SHALL, when real memory is requested, copy the real memory areas and local context into the copy, rewrite absolute paths inside the copied files to point to the copy, and leave the real files unchanged. The system SHALL detect any change of the real memory during a case and SHALL record it as a failed check that is never replayed. Only one run SHALL be allowed at a time; a rejudge takes no lock.
@@ -58,7 +63,7 @@ The system SHALL, when real memory is requested, copy the real memory areas and 
 Source: tests/posture_evals/test_posture_evals.py (SanctumReelProtege)
 
 ### Requirement: Session command and permissions
-The system SHALL run each case as a non-interactive session with a strict library tool configuration, an explicit allow-list of tools, edit-accepting permission mode, a system instruction giving the copy's working folder (in the language of the run, French text unchanged) and an optional choice of the session model, passed to the session command. The session SHALL run with the current environment, with the copy named as its workspace, so that start-of-session hooks never read the real workspace. Free-form shell access SHALL be absent unless the user asks for it. A session that exceeds its time limit SHALL keep what was already written and record the timeout in the trace.
+The system SHALL run each case as a non-interactive session with a strict library tool configuration, an explicit allow-list of tools, edit-accepting permission mode, a system instruction giving the copy's working folder (in the language of the run, French text unchanged) and an optional choice of the session model, passed to the session command. Free-form shell access SHALL be absent unless the user asks for it.
 
 #### Scenario: Default session
 - WHEN a case is played
@@ -68,19 +73,29 @@ The system SHALL run each case as a non-interactive session with a strict librar
 - WHEN a session model is given
 - THEN every session and every replay of the run uses it
 
-#### Scenario: Timeout
-- WHEN the session exceeds its time limit
-- THEN partial output is kept and the trace notes the timeout
-
 #### Scenario: Library configuration
 - WHEN the library configuration is produced
 - THEN it declares the library server launched in serve mode
+
+Source: tests/posture_evals/test_posture_evals.py (Seance, ChoixDuModele); tests/posture_evals/test_cases_fixture.py (EnvironnementDesSeances)
+
+### Requirement: Session environment names the copy as workspace
+The session SHALL run with the current environment, with the copy named as its workspace, so that start-of-session hooks never read the real workspace.
 
 #### Scenario: Workspace of the session
 - WHEN a session is started, with or without a disposable cases database
 - THEN its environment keeps the current variables and names the copy as the workspace
 
-Source: tests/posture_evals/test_posture_evals.py (Seance, ChoixDuModele); tests/posture_evals/test_cases_fixture.py (EnvironnementDesSeances)
+Source: tests/posture_evals/test_cases_fixture.py (EnvironnementDesSeances)
+
+### Requirement: Session timeout keeps partial output
+A session that exceeds its time limit SHALL keep what was already written and record the timeout in the trace.
+
+#### Scenario: Timeout
+- WHEN the session exceeds its time limit
+- THEN partial output is kept and the trace notes the timeout
+
+Source: tests/posture_evals/test_posture_evals.py (Seance)
 
 ### Requirement: Reading a trace
 The system SHALL read a session trace to extract the tools called with their results, the sections returned by the library, chapter or part mentions found in passages, the cost, the number of turns, the error state, refused tools (deduplicated, truncated), the final answer, and the text of the main thread only (sub-agent text excluded). An empty trace or a trace without a final result SHALL be an error; in the latter case the main-thread text is used as the answer.
@@ -113,19 +128,11 @@ The system SHALL compute the ordered list of messages of the last exchange: main
 Source: tests/posture_evals/test_posture_evals.py (DernierEchange)
 
 ### Requirement: Rejudging past runs without new sessions
-The system SHALL, on request, recompute the automatic checks and the judge on the saved traces of a past run, SHALL start no new session, SHALL skip with a message the cases that have no trace in that run, SHALL compute the score and regressions against the preceding validating run, SHALL write a new report and run folder, and SHALL take the memory mode, the tested state, the session model and the validating status from the rejudged run. A rejudge SHALL accept a judge model, used for that rejudge only and recorded in its record, and SHALL refuse a session model with an explicit message. A missing run SHALL stop the run with an error.
+The system SHALL, on request, recompute the automatic checks and the judge on the saved traces of a past run, SHALL start no new session, SHALL skip with a message the cases that have no trace in that run, SHALL compute the score and regressions against the preceding validating run, SHALL write a new report and run folder, and SHALL take the memory mode, the tested state, the session model and the validating status from the rejudged run. A missing run SHALL stop the run with an error.
 
 #### Scenario: Rejudge
 - WHEN a past run is rejudged
 - THEN only the judge is invoked, the summary line shows the score and regression count, and the report carries the original memory mode and tested state
-
-#### Scenario: Rejudge with another judge
-- WHEN a past run is rejudged with a judge model
-- THEN the judge command names that model, no session is started, and the new record carries the judge model, the original session model and the original validating status
-
-#### Scenario: Session model at rejudge
-- WHEN a session model is given together with a rejudge
-- THEN the system stops with a message saying the option does not apply
 
 #### Scenario: Regression at rejudge
 - WHEN the judge returns nothing usable for a criterion that previously passed
@@ -136,6 +143,19 @@ The system SHALL, on request, recompute the automatic checks and the judge on th
 - THEN the system stops with an error
 
 Source: tests/posture_evals/test_posture_evals.py (Principal, Rejeux, ChoixDuModele)
+
+### Requirement: Rejudge accepts a judge model and refuses a session model
+A rejudge SHALL accept a judge model, used for that rejudge only and recorded in its record, and SHALL refuse a session model with an explicit message.
+
+#### Scenario: Rejudge with another judge
+- WHEN a past run is rejudged with a judge model
+- THEN the judge command names that model, no session is started, and the new record carries the judge model, the original session model and the original validating status
+
+#### Scenario: Session model at rejudge
+- WHEN a session model is given together with a rejudge
+- THEN the system stops with a message saying the option does not apply
+
+Source: tests/posture_evals/test_posture_evals.py (ChoixDuModele)
 
 ### Requirement: Tool inspection of a past run
 The system SHALL list, for each case of a past run, the tools called (library searches with query and collections, sub-agents with their type) without launching anything, and SHALL stop with an error for an unknown run.

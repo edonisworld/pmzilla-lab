@@ -25,7 +25,7 @@ Source: tests/flow_store/test_flow_store.py (test_lecture_seule, test_role_inuti
 - **THEN** the database refuses
 
 ### Requirement: Data source option
-The system SHALL refuse, in the flow and dependency tools, the retired option `--source`, whatever its value, with exit code 2 and the key phrase of design D6, before any connection, and SHALL refuse an export file given as argument with exit code 2 and the key phrase of design D6. An unreachable database or a database missing on the server SHALL print a database error (French or English according to language), exit with code 1 and never print the password nor a traceback.
+The system SHALL refuse, in the flow and dependency tools, the retired option `--source`, whatever its value, with exit code 2 and the key phrase of design D6, before any connection, and SHALL refuse an export file given as argument with exit code 2 and the key phrase of design D6.
 
 Source: tests/flow_store/test_erreurs_scripts.py (Erreurs)
 
@@ -36,6 +36,11 @@ Source: tests/flow_store/test_erreurs_scripts.py (Erreurs)
 #### Scenario: Files with database
 - **WHEN** an export file is given without `--source`
 - **THEN** the exit code is 2, the output holds "export files are no longer read: the database is the only source", and no connection is attempted
+
+### Requirement: Database errors in the flow and dependency tools
+An unreachable database or a database missing on the server SHALL print a database error (French or English according to language), exit with code 1 and never print the password nor a traceback.
+
+Source: tests/flow_store/test_erreurs_scripts.py (Erreurs)
 
 #### Scenario: Unreachable database
 - **WHEN** the database does not answer

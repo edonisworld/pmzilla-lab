@@ -11,7 +11,7 @@ Source of truth: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py`, `tests
 ### Requirement: Return passages with book, section and citation metadata
 The system SHALL return, for each search hit, the passage identifier, book title, file name, section, position, collections, passage kind, score and text, and SHALL add the author, source, URL and publication date when the document is an article. When the catalogue gives no author the system SHALL return an explicit "author not stated" marker and SHALL NOT invent a name.
 
-Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_section_et_champs_renvoyes, Recherche.test_article_porte_url_date_et_site, Indexation.test_catalogue_change_titre_et_auteur_sans_recalcul, Decoupage.test_meta_et_titre)
+Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche, Indexation, Decoupage)
 
 #### Scenario: Book hit
 - **WHEN** a book passage is found
@@ -28,7 +28,7 @@ Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_
 ### Requirement: Return running text only by default and figures on request
 The system SHALL search running text only unless passage types are given, SHALL accept `texte`, `figure` or both (as a list or as a single string), and SHALL refuse an unknown or empty type list with an error. A figure hit SHALL carry a reference record (identifier, label, page, section, image path as plain text, caption, alternative text) and a text hit SHALL NOT carry one.
 
-Source: `tests/pmzilla_lab_library/test_figures.py` (Types.test_texte_seul_par_defaut, Types.test_figures_seules, Types.test_les_deux, Types.test_types_invalides, Types.test_filtres_combines)
+Source: `tests/pmzilla_lab_library/test_figures.py` (Types)
 
 #### Scenario: Default
 - **WHEN** a search is made without types
@@ -43,13 +43,30 @@ Source: `tests/pmzilla_lab_library/test_figures.py` (Types.test_texte_seul_par_d
 - **THEN** the search fails with an error naming the known types
 
 ### Requirement: Read a passage with its neighbours
-The system SHALL return the requested passage and a bounded number of neighbouring passages before and after it in the same book, in book order, with the kind of each passage and the reference record of figure passages, and SHALL return an error naming the unknown identifier when the identifier does not exist.
-
-Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_lecture_avec_voisins), `tests/pmzilla_lab_library/test_figures.py` (Types.test_lecture_kind_et_ref), `tests/library_backend/test_backend.py` (AvecBase.test_passage_inconnu)
+The system SHALL return the requested passage and a bounded number of neighbouring passages before and after it in the same book, in book order, with the kind of each passage and the reference record of figure passages. It SHALL return a passage of a private collection only when the call names that collection in its collections argument, and SHALL otherwise answer the unknown-identifier error, with no text, title or header field (design D2).
 
 #### Scenario: Neighbours
 - **WHEN** one passage before and none after is requested
 - **THEN** the answer lists the previous and the anchor passage in book order
+
+#### Scenario: Context passage read with its collection named
+- **WHEN** a passage of the context collection is read with the context collection named
+- **THEN** the answer carries the note's date, nature, source, review date and stale mark, at its head and on each passage, and no author, URL or publication date
+
+#### Scenario: Context passage read without its collection
+- **WHEN** a passage of the context collection, or a neighbour of it, is read without naming the context collection
+- **THEN** the answer is exactly `Unknown passage_id <n>. Use an id returned by search_library.`, the same as for an identifier that does not exist, and holds no text, title or header field of the note
+
+#### Scenario: Unknown collection named
+- **WHEN** the read tool is called with a collection that is not in the library
+- **THEN** it returns the error listing the unknown and the known collections, and no passage is read
+
+Source: `tests/library_backend/test_context_notes.py` (EnTeteEtMarque.test_read_passage_porte_les_champs_en_tete_et_par_passage), `tests/pmzilla_lab_library/test_context_notes_base.py` (RechercheDesNotes.test_read_passage_porte_les_champs_de_la_note); `tools/knowledge_library.py` (`PostgresLibrary.read`), `tools/pmzilla_lab_library.py` (`read_passage`). The refusal without the collection and the unknown collection named are untested (design, open questions 1 and 3).
+
+### Requirement: Refuse an unknown passage identifier
+The system SHALL return an error naming the unknown identifier when the identifier requested from the read tool does not exist.
+
+Source: `tests/library_backend/test_backend.py` (AvecBase.test_passage_inconnu)
 
 #### Scenario: Unknown passage
 - **WHEN** an identifier that does not exist is requested
@@ -69,9 +86,9 @@ Source: `tests/pmzilla_lab_library/test_pmzilla_lab_library.py` (Recherche.test_
 - **THEN** each shows how many of its passages are figures
 
 ### Requirement: Validate tool arguments and bound sizes
-The system SHALL answer the search tool with an error object when a requested collection is unknown (naming the unknown and the known ones), when the date filter is not a calendar date (echoing the value received), or when the search rejects its arguments (such as invalid passage types), SHALL NOT run the search when a collection or the date is refused, SHALL pass a valid date through unchanged, SHALL clamp the result count between one and a maximum and each neighbour count of the read tool between zero and a maximum (with default neighbour counts when none are given), and SHALL keep a successful search as a list.
+The system SHALL answer the search tool with an error object when a requested collection is unknown (naming the unknown and the known ones), when the date filter is not a calendar date (echoing the value received), or when the search rejects its arguments (such as invalid passage types), SHALL NOT run the search when a collection or the date is refused, and SHALL pass a valid date through unchanged.
 
-Source: `tests/pmzilla_lab_library/test_serve_wrapper.py` (Garde.test_collection_inconnue, test_date_invalide, test_date_valide_transmise, test_limite_bornee_de_1_a_20, test_voisins_de_read_passage_bornes_de_0_a_5, test_erreur_de_valeur_de_la_recherche_devient_une_erreur)
+Source: `tests/pmzilla_lab_library/test_serve_wrapper.py` (Garde)
 
 #### Scenario: Unknown collection
 - **WHEN** the search tool is called with a collection that is not in the library
@@ -81,13 +98,18 @@ Source: `tests/pmzilla_lab_library/test_serve_wrapper.py` (Garde.test_collection
 - **WHEN** the date filter is not a valid year-month-day date (impossible month or day, a word, another separator)
 - **THEN** it returns an error naming the expected form and the value received, and no search is made
 
-#### Scenario: Bounds
-- **WHEN** a result count below one or above the maximum is requested, or negative or oversized neighbour counts are requested
-- **THEN** the search receives the nearest bound and the read receives counts clamped to the allowed range
-
 #### Scenario: Rejected arguments
 - **WHEN** the search raises a value error (for example unknown passage types)
 - **THEN** the tool returns an error object carrying that message
+
+### Requirement: Clamp the result and neighbour counts
+The system SHALL clamp the result count of the search tool between one and a maximum and each neighbour count of the read tool between zero and a maximum (with default neighbour counts when none are given), and SHALL keep a successful search as a list.
+
+Source: `tests/pmzilla_lab_library/test_serve_wrapper.py` (Garde.test_limite_bornee_de_1_a_20, test_voisins_de_read_passage_bornes_de_0_a_5)
+
+#### Scenario: Bounds
+- **WHEN** a result count below one or above the maximum is requested, or negative or oversized neighbour counts are requested
+- **THEN** the search receives the nearest bound and the read receives counts clamped to the allowed range
 
 ### Requirement: Read from PostgreSQL with a read-only role
 The system SHALL connect to the library database under a read-only role, SHALL embed the question with the same embedding function as the indexer, SHALL retry a lost connection once, and SHALL be unable to modify library data. The database it connects to SHALL be the installation's, unless the library database setting of design D7 names another one.
@@ -107,13 +129,13 @@ Source: `tests/library_backend/test_backend.py` (Voie.test_connexion_sous_le_rol
 - **THEN** the library tools read that database and the installation's database is not opened
 
 ### Requirement: Expose exactly seven read-only tools without image access
-The system SHALL expose exactly seven tools to the assistant: the four library tools (search, read a passage, list collections, list books) and the three cases tools (search cases, search running experiments, list due reviews). It SHALL let the library search tool take a passage-type argument, SHALL NOT include any capability to open, read, encode or display an image file, and SHALL NOT include any tool that writes to the database.
+The system SHALL expose exactly seven tools to the assistant: the four library tools and the three cases tools listed in the tool inventory scenario. It SHALL let the library search tool take a passage-type argument, SHALL NOT include any capability to open, read, encode or display an image file, and SHALL NOT include any tool that writes to the database.
 
-Source: `tests/pmzilla_lab_library/test_figures.py` (Types.test_serveur_ne_declare_que_quatre_outils_sans_acces_aux_images, which checks the seven tools despite its name; Types.test_aucun_acces_aux_images_en_indexant_cherchant_et_lisant)
+Source: `tests/pmzilla_lab_library/test_figures.py` (Types: the four-tools test checks the seven tools; image-access test)
 
 #### Scenario: Tool inventory
 - **WHEN** the server source is inspected for declared tools
-- **THEN** the declared tools are the search, read, list-collections, list-books, case-search, experiment-search and due-review tools, and none calls image-handling facilities
+- **THEN** the declared tools are the four library tools (search, read a passage, list collections, list books) and the three cases tools (search cases, search running experiments, list due reviews), and none calls image-handling facilities
 
 #### Scenario: No write tool
 - **WHEN** the declared tools are inspected
@@ -211,7 +233,7 @@ The system SHALL return from the PostgreSQL library, for the invented demo libra
 - **THEN** the answers equal the values frozen in the test, positions included, and undated books are kept by the date filter of a search
 
 ### Requirement: Search leaves the private collections out unless named
-The system SHALL leave every private collection out of a search made without collections, and SHALL return the notes of the context collection when the search names it (design D5). The listings of collections and books SHALL show the context collection with its counts. The system SHALL NOT return a note to a search that does not name its collection.
+The system SHALL leave every private collection out of a search made without collections, and SHALL return the notes of the context collection when the search names it (design D5). The collections listing SHALL show the context collection with its count; the books listing SHALL show the notes only when it names that collection. The system SHALL NOT return a note to a search, nor list a note in a books listing, that does not name its collection.
 
 #### Scenario: Default search
 - **WHEN** a search without collections matches words that a fixture note and a fixture book both hold
@@ -224,6 +246,16 @@ The system SHALL leave every private collection out of a search made without col
 #### Scenario: Listing
 - **WHEN** the collections are listed
 - **THEN** the context collection appears with its number of notes
+
+#### Scenario: Books listing naming the context collection
+- **WHEN** the books are listed for the context collection
+- **THEN** the listing holds the fixture note
+
+#### Scenario: Books listing without a collection
+- **WHEN** the books are listed without a collection
+- **THEN** every book whose collections include a private one is left out, and the other books are listed
+
+Source: `tests/library_backend/test_context_notes.py` (Filtre), `tests/pmzilla_lab_library/test_context_notes_base.py` (RechercheDesNotes); `tools/knowledge_library.py` (`PostgresLibrary.search`, `PostgresLibrary.books`). The books listing without a collection is untested (design, open question 1).
 
 ### Requirement: A context hit carries its header and its stale mark
 The system SHALL return, with each context hit and each context passage read, the note's date, nature, source and review date, and a stale mark that is true when the review date is before the current date in the Europe/Paris time zone, the date being injectable for tests. It SHALL NOT add an author or a URL to a note, and SHALL NOT drop a note through the date filter.

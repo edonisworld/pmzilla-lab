@@ -3,8 +3,8 @@
 Les clés de tri.yaml ont un nom anglais (`model`, `to_read`, `days`, `substance_threshold`). Les anciens noms français
 (`modele`, `a_lire`, `jours`, `seuil_substance`) ne sont plus acceptés : le chargement les refuse avec un message qui
 donne le nom actuel. Les clés `mode`, `bluesky` et `themes` ne changent pas (`bluesky` va dans tri.local.yaml, jamais
-dans tri.yaml). `migrate_text` (utilisé par `tools/migrate_watch.py`, l'outil de migration unique) réécrit le texte d'un
-fichier existant en gardant commentaires et mise en page.
+dans tri.yaml). `migrate_text` réécrit le texte d'un
+fichier existant en gardant commentaires et mise en page (plus aucun outil ne l'appelle ; gardé avec son test).
 
 Rien dans ce module ne lit de fichier de lui-même : il reçoit un dictionnaire ou un texte.
 """
@@ -26,7 +26,7 @@ def normalize(raw: dict | None, source: str = "tri.yaml") -> dict:
         if key in KEYS:
             where = f"L{lines[key]} : " if key in lines else ""
             raise ErreurConfig(f"{source} : {where}le réglage « {key} » n'existe plus ; utiliser « {KEYS[key]} » "
-                               "(`uv run tools/migrate_watch.py` réécrit le fichier).")
+                               "(réglage à renommer à la main).")
     return dict(raw or {})
 
 

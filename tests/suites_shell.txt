@@ -1,0 +1,26 @@
+# Suites shell du lanceur (R-130) : une ligne « <chemin du script> <nom de la suite> <interprète> » par suite, triées par chemin.
+# Pour ajouter une suite shell : ajouter sa ligne à la bonne place (ordre alphabétique des chemins), sans autre fichier à toucher.
+# Le lanceur (tests/run_all.sh) lance les suites dans l'ordre de ce fichier ; une ligne mal formée le fait refuser (code 2, numéro de ligne).
+# Le sélecteur (tools/select_suites.py) et les tests de tests/run_all et de tests/correspondance_suites lisent la même liste.
+# Commentaires (« # ») et lignes vides permis. Interprète : sh, bash ou zsh. Le nom est celui que le lanceur et tests/suites_mac.txt emploient.
+
+tests/branch_sync/test_branch_sync.sh branch_sync bash
+tests/ci_local/test_ci_local.sh ci_local bash
+tests/db_scripts/test_db_scripts.sh db_scripts bash
+tests/db_scripts/test_dbtest.sh dbtest bash
+tests/evals_auto/test_evals_auto.sh evals_auto sh
+tests/fin_piege/test_fin_piege.sh fin_piege bash
+tests/hooks/test_commit_msg.sh commit-msg sh
+tests/hooks/test_echec_ferme.sh echec-ferme sh
+tests/hooks/test_interpreteur_crochets.sh interpreteur-crochets sh
+tests/hooks/test_lock_hooks.sh lock-hooks sh
+tests/hooks/test_post_commit.sh post-commit sh
+tests/hooks/test_pre_commit.sh hooks sh
+tests/hooks/test_pre_commit_green.sh pre-commit-green sh
+tests/hooks/test_pre_push.sh pre-push sh
+tests/installation/test_install_hooks.sh install_hooks sh
+tests/installation/test_install_links.sh installation zsh
+tests/morning_state/test_morning_state.sh morning_state bash
+tests/offsite_backup/test_offsite_backup.sh offsite_backup bash
+tests/run_worktree/test_run_worktree.sh run_worktree bash
+tests/worktree/test_worktree.sh worktree bash

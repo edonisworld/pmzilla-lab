@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab : journal d'accompagnement.
@@ -15,7 +15,8 @@ personnes. Il vit dans Journal-Lab/, exclu de Git.
 
     uv run journal_lab.py add <entree.yaml> [--language fr|en]
         Valide une entrée rédigée dans un fichier (voir FORMAT ci-dessous), l'ajoute au journal,
-        puis supprime le fichier. Affiche les identifiants attribués.
+        puis supprime le fichier. Affiche les identifiants attribués. Refuse (code 2) si la liste des noms
+        sensibles est absente ou vide, et (code 1) toute entrée dont un champ contient un de ses noms.
 
     uv run journal_lab.py follow-ups [--scope "équipe X"] [--all] [--language fr|en]
         Suites ouvertes (les plus urgentes d'abord, en retard signalées) et expériences dont le
@@ -192,6 +193,19 @@ def validate(raw: dict, entries: list[dict], now: dt.date, t: Messages = FR) -> 
 # Commandes
 # ---------------------------------------------------------------------------
 
+def sensitive_field(t: Messages, entry: dict) -> str | None:
+    """Champ de l'entrée qui contient un nom de la liste des noms sensibles, sinon None (jamais le nom). Liste absente
+    ou vide : refus de l'écriture, code 2, comme pour les sous-commandes experiment."""
+    names = load_names(t)
+    fields = {k: entry[k] for k in ("perimetre", "tente", "constat")}
+    for n, suite in enumerate(entry["suites"], start=1):
+        fields.update({f"suites[{n}].quoi": suite["quoi"], f"suites[{n}].pour": suite["pour"]})
+    if entry.get("experience"):
+        fields.update({"experience.hypothese": entry["experience"]["hypothese"],
+                       "experience.signal": entry["experience"]["signal"]})
+    return sensitive_names.find_field(fields, names)
+
+
 def cmd_ajouter(args: argparse.Namespace) -> None:
     t = Messages(CATALOGS, args.language)
     path = Path(args.fichier).expanduser()
@@ -203,6 +217,9 @@ def cmd_ajouter(args: argparse.Namespace) -> None:
         entry = validate(raw, entries, today(args), t)
     except (EntreeInvalide, yaml.YAMLError) as error:
         sys.exit(t("entry_refused", error=error))
+    field = sensitive_field(t, entry)
+    if field:
+        sys.exit(t("entry_refused", error=t("err_sensitive_name", field=field)))
     entries.append(entry)
     save(entries)
     path.unlink()
@@ -348,7 +365,7 @@ def require_author(t: Messages) -> str:
 def load_names(t: Messages) -> list[str]:
     """Liste des noms sensibles ; absente, illisible ou vide : refus avant toute connexion (design.md 3.5)."""
     try:
-        return sensitive_names.load_names()
+        return sensitive_names.load_judged_names()
     except sensitive_names.SensitiveNamesUnavailable as error:
         fail(t("sensitive_names_empty" if error.reason == "empty" else "sensitive_names_missing", path=error.path), 2)
 

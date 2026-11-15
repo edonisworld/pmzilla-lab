@@ -10,7 +10,15 @@ PMZilla Lab : commande doctor, un contrôle de santé du laboratoire en lecture 
 Lance les contrôles du design D5 et affiche une ligne par contrôle (`<contrôle> : <niveau> : <raison>`), puis une phrase de
 résumé. Niveaux : ok, avertissement, problème, ignoré (avec sa raison). Contrôles : db, ollama, models, launchd, watch,
 backup, offsite, disk, jira, branches, run-worktree, mothra-npm (change mothra-npm-ready, D3 : avertissement seulement, une ligne
-par constat ; la commande `node` est prise dans le PATH).
+par constat ; la commande `node` est prise dans le PATH), pretooluse (idée 399 : la version de `claude --version` comparée à celle du
+dernier essai conforme du crochet PreToolUse, `essai-crochet-pretooluse.json` du dossier de données, écrit par
+tools/essai_crochet_pretooluse.sh ; le doctor ne lance jamais l'essai), ci-container (R-20261103-6, Q9 : `colima status` rend-il 0, et
+`bash tools/ci_local.sh cle`, lecture seule, trouve-t-il l'image de CI de la clé courante ; avertissement avec la commande de l'auteur ;
+DOCTOR_CI_LOCAL remplace la commande pour les tests), sandbox (change bash-sandbox-n2, design D8 : le fichier géré du bac à sable installé
+est-il égal à sa source suivie `config/gere/50-pmzilla-bac-a-sable.json`, de propriétaire root et non inscriptible par l'utilisateur, les outils
+figés d'`outils-figes/` égaux à leur relevé `empreintes.sha256`, et `claude --version` au moins 2.1.319 ; lecture seule, rien n'est écrit ni
+réparé ; DOCTOR_SANDBOX_FILE, DOCTOR_SANDBOX_OWNER_UID et DOCTOR_SANDBOX_MIN_VERSION remplacent le fichier, le propriétaire attendu et le minimum
+pour les tests).
 
 Options : --json affiche le résultat au format du fichier d'état ; --quiet n'affiche que les contrôles qui ne sont pas ok, puis le
 résumé ; --record écrit le fichier d'état `doctor-etat.json` du dossier de données et peut notifier (seul l'enveloppeur planifié
@@ -22,7 +30,14 @@ inscriptible avec --record).
 
 Le doctor ne répare rien : il ne démarre, ne charge, ne décharge, ne tire, ne supprime et n'élague rien. Il n'ouvre aucune session
 de base, ne lit jamais le Trousseau ni le jeton, n'ouvre aucun fichier du dossier des sauvegardes, ne contacte que la machine
-locale et ne compare aucune version (les versions sont à R-41).
+locale et ne compare aucune version de composant (les versions sont à R-41) ; seules exceptions : l'égalité de la version de Node avec
+`mothra/.node-version`, celle de Claude Code avec la version du dernier essai du crochet PreToolUse et son minimum pour le bac à sable, et celle du `python3`
+du modèle launchd installé du train automatique avec son minimum de 3.10 (contrôle train-auto-plist, R-20261110-14 : calculé par `train_auto.installed_plist_check()`, qui
+reconstruit aussi le modèle pour le comparer à l'installé ; lecture seule, ni chargement ni régénération ; remplace : rien ; retrait : avec la tâche du train automatique),
+crochet-reference-transaction (R-20261110-42 ; Remplace : rien ; Retrait : permanent : le crochet est-il installé et conforme, selon la règle de
+`bash tools/install_hooks.sh --verify` pour ce crochet, lue dans le dossier des hooks du dépôt commun ; problème avec la commande de réparation sinon ;
+c'est le contrôle que le mode fusion du train automatique lit ; DOCTOR_CROCHETS_DEPOT remplace le dépôt contrôlé pour les tests). Un import tiers
+absent (yaml sans pyyaml) rend le contrôle concerné « ignoré : module <nom> absent » au lieu de faire tomber le doctor (R-20261110-42 ; Remplace : rien ; Retrait : permanent).
 
 Variables d'environnement (pour les tests et le réglage) : PMZILLA_LAB_DATA, PMZILLA_LAB_LOGS, PMZILLA_LAB_TODAY (AAAA-MM-JJ),
 PMZILLA_LAB_NOW (HH:MM), PMZILLA_LAB_WORKSPACE (copie principale, qui porte aussi le contenu : Flux-Lab), PMZILLA_LAB_RUN (dossier d'exécution, D3), HOME ; PMZILLA_LAB_DB_URL ou PMZILLA_LAB_DB_PORT ;
@@ -44,11 +59,13 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import fcntl
 import json
 import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -60,6 +77,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import lab_paths  # noqa: E402
+import sandbox_config  # noqa: E402
 from doctor_messages import CATALOGS  # noqa: E402
 from messages import Messages, add_language_option, fields  # noqa: E402
 
@@ -87,10 +105,24 @@ TOUTES_LES_RAISONS = [
     ("run-worktree", "off_history"), ("run-worktree", "dirty"),
     ("mothra-npm", "ok"), ("mothra-npm", "no_lock"), ("mothra-npm", "node_version"), ("mothra-npm", "node_missing"),
     ("mothra-npm", "modules_missing"), ("mothra-npm", "modules_stale"),
+    ("pretooluse", "ok"), ("pretooluse", "claude_missing"), ("pretooluse", "claude_version_unreadable"),("pretooluse", "no_trial"), ("pretooluse", "state_unreadable"),
+    ("pretooluse", "version_changed"), ("pretooluse", "not_read"),
+    ("ci-container", "ok"), ("ci-container", "colima_missing"), ("ci-container", "colima_stopped"), ("ci-container", "image_absent"),
+    ("ci-container", "image_unreadable"),
+    ("sandbox", "ok"), ("sandbox", "absent"), ("sandbox", "differs"), ("sandbox", "unprotected"), ("sandbox", "version_low"),
+    ("sandbox", "frozen_differs"), ("sandbox", "claude_missing"), ("sandbox", "claude_version_unreadable"),
+    ("interpreteur-crochets", "ok"), ("interpreteur-crochets", "missing"), ("interpreteur-crochets", "owner"),
+    ("interpreteur-crochets", "writable"), ("interpreteur-crochets", "not_mac"), ("interpreteur-crochets", "outside"),
+    ("train-auto-plist", "ok"), ("train-auto-plist", "not_set_up"), ("train-auto-plist", "unreadable"), ("train-auto-plist", "python_absent"),
+    ("train-auto-plist", "python_old"), ("train-auto-plist", "different"),
+    ("crochet-reference-transaction", "ok"), ("crochet-reference-transaction", "no_repo"), ("crochet-reference-transaction", "source_absent"),
+    ("crochet-reference-transaction", "wrong_dir"), ("crochet-reference-transaction", "missing"), ("crochet-reference-transaction", "differs"),
+    ("jira", "module_missing"),
 ]
 
 
-ORDRE = ["db", "ollama", "models", "launchd", "watch", "backup", "offsite", "disk", "jira", "branches", "run-worktree", "mothra-npm"]
+ORDRE = ["db", "ollama", "models", "launchd", "watch", "backup", "offsite", "disk", "jira", "branches", "run-worktree", "mothra-npm",
+         "pretooluse", "ci-container", "interpreteur-crochets", "train-auto-plist", "crochet-reference-transaction", "sandbox"]
 
 
 class ImpossibleDeLancer(Exception):
@@ -501,6 +533,21 @@ def worktrees(principale: Path) -> list[dict] | None:
     return entrees
 
 
+def passage_en_cours(dossier: Path) -> bool:
+    """Vrai quand un passage du jeu d'essai tient le verrou `.passage.lock` de `dossier` (sonde en lecture : fichier ouvert en lecture
+    seule, verrou partagé non bloquant relâché aussitôt ; aucun fichier créé). Verrou absent : aucun passage."""
+    try:
+        with open(dossier / ".passage.lock", "r") as poignee:
+            try:
+                fcntl.flock(poignee, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(poignee, fcntl.LOCK_UN)
+    except OSError:
+        return False
+    return False
+
+
 def controle_branches(ctx: Contexte, _precedents) -> Resultat:
     principale = copie_principale(ctx)
     if principale is None:
@@ -514,12 +561,20 @@ def controle_branches(ctx: Contexte, _precedents) -> Resultat:
     fusionnes_wt, inactifs, elagables, noms = [], [], [], []
     avec_worktree = set()
     execution = (dossier_execution(ctx) or Path(os.sep)).resolve()
+    essais = (ctx.donnees / "essais").resolve()
+    en_cours = passage_en_cours(essais)
+    essais_orphelins = []
     for entree in entrees[1:]:                       # la première entrée est la copie principale
-        if Path(entree["chemin"]).resolve() == execution:   # le dossier d'exécution n'est ni une branche ni jamais inactif (D8)
+        chemin = Path(entree["chemin"]).resolve()
+        if chemin == execution:   # le dossier d'exécution n'est ni une branche ni jamais inactif (D8)
             continue
         branche = entree["branche"]
         if entree["elaguable"]:
             elagables.append(branche or "?")
+            continue
+        if essais in chemin.parents:     # copie de séance du jeu d'essai : orpheline quand aucun passage ne tient le verrou
+            if not en_cours:
+                essais_orphelins.append(chemin.name)
             continue
         if branche is None:
             continue
@@ -533,11 +588,12 @@ def controle_branches(ctx: Contexte, _precedents) -> Resultat:
             if age > seuil:
                 inactifs.append(branche)
     locales = sorted(b for b in fusionnees if b != "main" and b not in avec_worktree and b not in elagables)
-    noms = fusionnes_wt + inactifs + locales + elagables
+    noms = fusionnes_wt + inactifs + locales + elagables + essais_orphelins
     if not noms:
         return Resultat("branches", "ok", "ok")
     return Resultat("branches", "warning", "stale",
-                    {"merged_worktrees": len(fusionnes_wt), "stale_worktrees": len(inactifs), "merged_branches": len(locales), "prunable": len(elagables)}, noms)
+                    {"merged_worktrees": len(fusionnes_wt), "stale_worktrees": len(inactifs), "merged_branches": len(locales), "prunable": len(elagables),
+                     "trial_orphans": len(essais_orphelins)}, noms)
 
 
 def dossier_execution(ctx: Contexte) -> Path | None:
@@ -654,15 +710,280 @@ def controle_mothra_npm(ctx: Contexte, _precedents) -> Resultat:
     return Resultat("mothra-npm", "warning", premier.cle, {"findings": len(constats)}, valeurs=premier.valeurs, constats=constats)
 
 
+# --- pretooluse (idée 399) -------------------------------------------------------------------------------------------------
+ESSAI_ETAT = "essai-crochet-pretooluse.json"
+
+
+def version_claude() -> tuple[str | None, str]:
+    """(numéro, état) de `claude --version` (commande prise dans le PATH, la couture des tests). État : « ok », « missing » (commande
+    introuvable) ou « unreadable » (sortie en erreur, délai dépassé ou aucun numéro). Le numéro est le premier de la forme chiffres et
+    points trouvé dans la sortie (préfixe `v` toléré), comme dans tools/essai_crochet_pretooluse.sh."""
+    try:
+        sortie = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return None, "missing"
+    except (OSError, subprocess.SubprocessError):
+        return None, "unreadable"
+    trouve = re.search(r"\d+(?:\.\d+)+", sortie.stdout) if sortie.returncode == 0 else None
+    return (trouve.group(0), "ok") if trouve else (None, "unreadable")
+
+
+def controle_pretooluse(ctx: Contexte, _precedents) -> Resultat:
+    """Lecture seule : le garde des tubes (forme B) repose sur un canal non documenté ; la version de Claude Code installée est comparée
+    à celle du dernier essai enregistré par tools/essai_crochet_pretooluse.sh (jamais lancé ici, il coûte deux sessions). Même version,
+    essai « lu » : ok. Version différente, aucun essai ou état illisible : avertissement. Essai enregistré « non lu » : problème."""
+    vue, etat_claude = version_claude()
+    if vue is None:
+        return Resultat("pretooluse", "skipped", "claude_missing" if etat_claude == "missing" else "claude_version_unreadable")
+    try:
+        brut = (ctx.donnees / ESSAI_ETAT).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Resultat("pretooluse", "warning", "no_trial", valeurs={"version": vue})
+    except (OSError, UnicodeDecodeError):
+        return Resultat("pretooluse", "warning", "state_unreadable")
+    try:
+        etat = json.loads(brut)
+    except ValueError:
+        etat = None
+    if not isinstance(etat, dict) or etat.get("verdict") not in ("lu", "non lu") or not isinstance(etat.get("claude_version"), str):
+        return Resultat("pretooluse", "warning", "state_unreadable")
+    essayee = etat["claude_version"]
+    if etat["verdict"] == "non lu":
+        return Resultat("pretooluse", "problem", "not_read", valeurs={"tried": essayee})
+    if essayee != vue:
+        return Resultat("pretooluse", "warning", "version_changed", valeurs={"version": vue, "tried": essayee})
+    return Resultat("pretooluse", "ok", "ok")
+
+
+# --- ci-container (R-20261103-6, Q9) -------------------------------------------------------------------------------------------
+def etat_colima() -> str:
+    """« ok » (`colima status` rend 0), « stopped » (autre code, délai dépassé) ou « missing » (commande introuvable : absente du PATH, ou code
+    127 d'une commande trouvée, le code du shell pour « commande introuvable », par exemple une enveloppe dont la cible manque). Commande prise
+    dans le PATH, la couture des tests ; lecture seule, le doctor ne démarre jamais Colima."""
+    try:
+        sortie = subprocess.run(["colima", "status"], capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, subprocess.SubprocessError):
+        return "stopped"
+    if sortie.returncode == 127:
+        return "missing"
+    return "ok" if sortie.returncode == 0 else "stopped"
+
+
+def code_image_ci(ctx: Contexte) -> int | None:
+    """Le code de `bash tools/ci_local.sh cle` (lecture seule : clé d'image de HEAD, calculée par ci_local lui-même, une seule source) : 0 image
+    présente, 5 image absente, 3 Docker ne répond pas. DOCTOR_CI_LOCAL remplace la commande pour les tests (elle reçoit « cle »). None si la
+    commande ne peut pas être lancée ou dépasse le délai."""
+    commande = [ctx.env["DOCTOR_CI_LOCAL"]] if ctx.env.get("DOCTOR_CI_LOCAL") else ["bash", str(RACINE / "tools" / "ci_local.sh")]
+    try:
+        return subprocess.run([*commande, "cle"], capture_output=True, text=True, timeout=60, cwd=str(RACINE)).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def controle_ci_container(ctx: Contexte, _precedents) -> Resultat:
+    """Garde neuve (R-20261103-6, Q9). Remplace : rien. Retrait : permanent, tant que la preuve passe par le conteneur.
+    Lecture seule : Colima tourne-t-il (`colima status`), et l'image de CI de la clé courante existe-t-elle (`ci_local.sh cle`). Colima arrêté ou
+    image absente : avertissement avec la commande de l'auteur (le doctor ne répare rien) ; commande colima introuvable : ignoré."""
+    colima = etat_colima()
+    if colima == "missing":
+        return Resultat("ci-container", "skipped", "colima_missing")
+    if colima == "stopped":
+        return Resultat("ci-container", "warning", "colima_stopped")
+    code = code_image_ci(ctx)
+    if code == 0:
+        return Resultat("ci-container", "ok", "ok")
+    return Resultat("ci-container", "warning", "image_absent" if code == 5 else "image_unreadable")
+
+
+# --- sandbox (change bash-sandbox-n2, design D8) --------------------------------------------------------------------------------
+def reglages_sandbox(env) -> tuple:
+    """(propriétaire attendu, version minimale) du contrôle sandbox. Les variables d'essai DOCTOR_SANDBOX_OWNER_UID et DOCTOR_SANDBOX_MIN_VERSION ne
+    sont honorées que si DOCTOR_SANDBOX_FILE est posé et différent du chemin installé (sandbox_config.INSTALLE) ; sinon le propriétaire est root (0) et
+    le minimum est sandbox_config.VERSION_MINIMALE, quoi que l'environnement dise."""
+    fichier = env.get("DOCTOR_SANDBOX_FILE")
+    if not fichier or fichier == sandbox_config.INSTALLE:
+        return 0, sandbox_config.VERSION_MINIMALE
+    try:
+        proprietaire = int(env.get("DOCTOR_SANDBOX_OWNER_UID", 0))
+    except ValueError:
+        proprietaire = 0
+    return proprietaire, env.get("DOCTOR_SANDBOX_MIN_VERSION") or sandbox_config.VERSION_MINIMALE
+
+
+def controle_sandbox(ctx: Contexte, _precedents) -> Resultat:
+    """Garde neuve (change bash-sandbox-n2, D8). Remplace : rien. Retrait : tombe avec le fichier géré. Variables d'essai DOCTOR_SANDBOX_FILE,
+    DOCTOR_SANDBOX_OWNER_UID et DOCTOR_SANDBOX_MIN_VERSION : remplace / retrait : tombent avec le contrôle (les deux dernières ne valent que si la
+    première est posée et différente du chemin installé : voir reglages_sandbox). Lecture seule : ne lit que le fichier
+    géré installé (son propriétaire, ses droits, son contenu), sa source suivie, le relevé des outils figés et `claude --version` ; n'écrit,
+    n'installe et ne répare rien. Premier constat trouvé, dans l'ordre : fichier absent (avertissement, non posé), non protégé (lien, pas
+    root, inscriptible par le groupe ou les autres), différent de sa source, outil figé différent de son relevé, version de Claude Code
+    inférieure au minimum (problèmes) ; commande claude introuvable ou version illisible : ignoré."""
+    chemin = Path(ctx.env.get("DOCTOR_SANDBOX_FILE") or sandbox_config.INSTALLE)
+    # Source suivie absente (l'édition publique ne livre pas config/gere/, décision R-20261108-03, question 11) : rien à comparer, le fichier
+    # géré est « non posé ». Remplace : rien. Retrait : tombe avec R-20261108-03 (si l'édition livre un jour un modèle de bac à sable).
+    if not (RACINE / sandbox_config.SOURCE_RELATIVE).is_file():
+        return Resultat("sandbox", "warning", "absent")
+    try:
+        info = os.lstat(chemin)
+    except FileNotFoundError:
+        return Resultat("sandbox", "warning", "absent")
+    except OSError:
+        return Resultat("sandbox", "problem", "unprotected")
+    proprietaire, version_minimale = reglages_sandbox(ctx.env)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != proprietaire
+            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+        return Resultat("sandbox", "problem", "unprotected")
+    if proprietaire != os.geteuid() and os.access(chemin, os.W_OK):
+        return Resultat("sandbox", "problem", "unprotected")      # inscriptible par l'utilisateur malgré un autre propriétaire (liste de contrôle d'accès)
+    try:
+        attendue = sandbox_config.empreinte_source(RACINE)
+    except (OSError, ValueError):
+        attendue = None
+    if attendue is None or sandbox_config.empreinte_installe(chemin) != attendue:
+        return Resultat("sandbox", "problem", "differs")
+    ecarts = sandbox_config.ecarts_releve(ctx.donnees / sandbox_config.DOSSIER_FIGES, RACINE)
+    if ecarts:
+        return Resultat("sandbox", "problem", "frozen_differs", {"differing": len(ecarts)}, noms=ecarts)
+    vue, etat_claude = version_claude()
+    if vue is None:
+        return Resultat("sandbox", "skipped", "claude_missing" if etat_claude == "missing" else "claude_version_unreadable")
+    # Un minimum d'essai illisible retombe sur le minimum par défaut (jamais d'exception) ; une version vue illisible est « illisible ».
+    minimum = sandbox_config.version_en_tuple(version_minimale) or sandbox_config.version_en_tuple(sandbox_config.VERSION_MINIMALE)
+    vue_tuple = sandbox_config.version_en_tuple(vue)
+    if vue_tuple is None:
+        return Resultat("sandbox", "skipped", "claude_version_unreadable")
+    if vue_tuple < minimum:
+        return Resultat("sandbox", "problem", "version_low")
+    return Resultat("sandbox", "ok", "ok")
+
+
+# --- interpreteur_crochets (R-20261108-10) ---------------------------------------------------------------------------------------
+INTERPRETE_CROCHETS = "/Library/Developer/CommandLineTools/usr/bin/python3"
+RACINE_OUTILS_CLT = "/Library/Developer/CommandLineTools"
+
+
+def verifier_interpreteur(chemin=INTERPRETE_CROCHETS, lstat=os.lstat, stat_=os.stat, resoudre=os.path.realpath,
+                          plateforme=sys.platform) -> str:
+    """Clé de raison : ok, missing, outside, owner, writable ou not_mac. Le lien (lstat), sa cible résolue (stat) et les dossiers de l'un et de
+    l'autre qui sont sous /Library/Developer/CommandLineTools, celui-ci compris, doivent appartenir à root (uid 0) et n'être inscriptibles ni
+    par le groupe ni par les autres. Les liens intermédiaires d'une chaîne ne sont pas lus un par un : seuls le lien et la cible résolue le
+    sont, et la cible doit rester sous la racine (sinon `outside`). Lecture seule ; les fonctions de lecture et de résolution sont injectables
+    pour les tests."""
+    if plateforme != "darwin":
+        return "not_mac"
+    try:
+        cible = str(resoudre(chemin))
+        racine = Path(RACINE_OUTILS_CLT)
+        if racine not in Path(cible).parents:
+            return "outside"
+        a_lire = [(lstat, chemin), (stat_, cible)]
+        for lecteur, fichier in ((lstat, chemin), (stat_, cible)):
+            for parent in Path(fichier).parents:
+                if parent == racine or racine in parent.parents:
+                    a_lire.append((lecteur, str(parent)))
+        infos = [lecteur(fichier) for lecteur, fichier in a_lire]
+    except OSError:
+        return "missing"
+    if any(info.st_uid != 0 for info in infos):
+        return "owner"
+    if any(info.st_mode & (stat.S_IWGRP | stat.S_IWOTH) for info in infos):
+        return "writable"
+    return "ok"
+
+
+def controle_interpreteur_crochets(_ctx, _precedents) -> Resultat:
+    """R-20261108-10. Remplace : rien. Retrait : avec l'interpréteur absolu des crochets. Alerte (problème, lu par la veille du matin dans
+    `doctor-etat.json`) quand l'interpréteur des crochets manque, n'est pas à root ou est inscriptible par un autre que root ; sans objet hors
+    du Mac (ignoré)."""
+    # R-20261108-10 : pour les tests. Remplace : rien. Retrait : avec le contrôle.
+    # DOCTOR_INTERPRETEUR_CROCHETS : chemin à vérifier ; vide, le contrôle est ignoré (sans objet).
+    chemin = os.environ.get("DOCTOR_INTERPRETEUR_CROCHETS")
+    if chemin is None:
+        cle = verifier_interpreteur()
+    elif chemin == "":
+        cle = "not_mac"
+    else:
+        cle = verifier_interpreteur(chemin)
+    niveau = {"ok": "ok", "not_mac": "skipped"}.get(cle, "problem")
+    return Resultat("interpreteur-crochets", niveau, cle)
+
+
+# --- train-auto-plist (faux 65 du train automatique, D11 ; R-20261110-14) ---------------------------------------------------------------
+ETATS_TRAIN_AUTO_PLIST = {"absent": ("skipped", "not_set_up"), "illisible": ("problem", "unreadable"), "python-absent": ("problem", "python_absent"),
+                          "python-ancien": ("problem", "python_old"), "different": ("problem", "different"), "ok": ("ok", "ok")}
+
+
+def controle_train_auto_plist(ctx: Contexte, _precedents) -> Resultat:
+    """Le modèle launchd installé du train automatique (`~/Library/LaunchAgents/com.pmzilla.train-auto.plist`) : ignoré s'il n'est pas installé ; problème s'il est illisible, si le
+    `python3` du premier dossier de son PATH manque ou est plus ancien que 3.10, ou s'il diffère du modèle de `train_auto.py plist` reconstruit avec le dossier de ce `python3` (R-20261110-34 : l'interpréteur de ProgramArguments qui n'est pas ce `python3` est l'écart de la clé ProgramArguments ; remplace : rien ; retrait : avec la tâche). Mise en
+    forme seulement : tout le calcul, dont la lecture de la version de ce `python3` (la troisième comparaison de versions permise, R-20261110-14), est dans
+    `train_auto.installed_plist_check()`. Lecture seule : ne charge, n'écrit ni ne régénère rien, n'appelle pas launchctl. Remplace : rien. Retrait : avec la tâche du train automatique (R-20261110-14)."""
+    try:
+        import train_auto
+        verdict = train_auto.installed_plist_check(home=ctx.maison, run=dossier_execution(ctx))
+        niveau, cle = ETATS_TRAIN_AUTO_PLIST[verdict["state"]]
+    except Exception:   # noqa: BLE001 : un contrôle qui ne peut pas lire se dit, il ne tait rien
+        return Resultat("train-auto-plist", "problem", "unreadable")
+    return Resultat("train-auto-plist", niveau, cle, valeurs={"keys": ", ".join(verdict["differences"])})
+
+
+# --- crochet-reference-transaction (R-20261110-42) -----------------------------------------------------------------------------------
+CROCHET_REFERENCE = "reference-transaction"
+
+
+def verifier_crochet(depot: Path, crochet: str = CROCHET_REFERENCE) -> str:
+    """Clé de raison : ok, no_repo, source_absent, wrong_dir, missing ou differs. Même règle que `bash tools/install_hooks.sh --verify` pour ce crochet
+    (le fichier suivi tools/hooks/<crochet> existe ; le lien <dossier des hooks>/<crochet> pointe vers ../../tools/hooks/<crochet> et est exécutable),
+    reproduite en lecture seule parce que le script suppose `.git/hooks` et refuse un worktree (dossier des hooks du dépôt commun). Le dossier des
+    hooks est celui du dépôt commun (`git rev-parse --git-path hooks`, qui suit core.hooksPath) ; il doit être `<dépôt commun>/hooks`, comme l'installeur l'exige."""
+    hooks = git_lire(depot, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
+    commun = git_lire(depot, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if hooks is None or commun is None:
+        return "no_repo"
+    if not (depot / "tools" / "hooks" / crochet).is_file():
+        return "source_absent"
+    hooks, commun = Path(hooks.strip()), Path(commun.strip())
+    if os.path.realpath(hooks) != os.path.realpath(commun / "hooks"):
+        return "wrong_dir"
+    lien = hooks / crochet
+    if not (lien.is_symlink() or lien.exists()):
+        return "missing"
+    if lien.is_symlink() and os.readlink(lien) == f"../../tools/hooks/{crochet}" and os.access(lien, os.X_OK):
+        return "ok"
+    return "differs"
+
+
+def controle_crochet_reference_transaction(ctx: Contexte, _precedents) -> Resultat:
+    """R-20261110-42 (D17 du change autonomous-trains-merge : le passage en mode fusion lit ce contrôle). Le crochet Git reference-transaction est-il
+    installé et conforme à l'installeur ; problème sinon, avec la commande de réparation dans la raison. DOCTOR_CROCHETS_DEPOT remplace le dépôt
+    contrôlé (la racine du code par défaut), pour les tests. Remplace : rien. Retrait : permanent."""
+    depot = Path(ctx.env.get("DOCTOR_CROCHETS_DEPOT") or RACINE)
+    cle = verifier_crochet(depot)
+    return Resultat("crochet-reference-transaction", "ok" if cle == "ok" else "problem", cle)
+
+
 # --- les contrôles, dans l'ordre d'affichage ---------------------------------------------------------------------------
 CONTROLES: list = [controle_db, controle_ollama, controle_models, controle_launchd, controle_watch, controle_backup, controle_offsite,
-                   controle_disk, controle_jira, controle_branches, controle_run_worktree, controle_mothra_npm]
+                   controle_disk, controle_jira, controle_branches, controle_run_worktree, controle_mothra_npm, controle_pretooluse,
+                   controle_ci_container, controle_sandbox, controle_interpreteur_crochets, controle_train_auto_plist,
+                   controle_crochet_reference_transaction]
 
 
 def lancer_controles(ctx: Contexte) -> list[Resultat]:
     resultats: list[Resultat] = []
     for controle in CONTROLES:
-        sortie = controle(ctx, resultats)
+        try:
+            sortie = controle(ctx, resultats)
+        except ImportError as erreur:
+            # R-20261110-42 : un import tiers absent (yaml, sans pyyaml) rend ce seul contrôle « ignoré », il ne fait pas tomber le doctor.
+            # R-20261110-43 : seulement un module tiers ; un module du dépôt (tools/<nom>.py) en défaut, ou une erreur sans nom, relève l'erreur.
+            # Remplace : rien. Retrait : permanent.
+            if not erreur.name or (RACINE / "tools" / f"{erreur.name.split('.')[0]}.py").exists():
+                raise
+            identifiant = controle.__name__.removeprefix("controle_").replace("_", "-")
+            sortie = Resultat(identifiant, "skipped", "module_missing", valeurs={"module": erreur.name or "?"})
         resultats.extend(sortie if isinstance(sortie, list) else [sortie])
     return sorted(resultats, key=lambda r: ORDRE.index(r.id))
 

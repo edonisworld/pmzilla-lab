@@ -91,7 +91,7 @@ if ! ls "$SAUVEGARDE"/*.dump >/dev/null 2>&1; then echo "Aucun fichier .dump dan
 command -v docker >/dev/null 2>&1 || { echo "Docker est introuvable (brew install colima docker docker-compose)"; exit 2; }
 command -v uv >/dev/null 2>&1 || { echo "uv est introuvable (nécessaire pour appliquer les migrations : uv run tools/db.py migrate)"; exit 2; }
 if ! docker info >/dev/null 2>&1; then
-  echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 4 --memory 6)"; exit 2
+  echo "Docker ne répond pas. Vérifier Colima : colima status (puis colima start --cpu 8 --memory 16)"; exit 2
 fi
 if [ -z "$(docker compose ps -q --status running db 2>/dev/null)" ]; then
   echo "Le conteneur de la vraie base est arrêté : le test compare avec elle. Le démarrer : bash tools/db_up.sh"; exit 2

@@ -2,7 +2,7 @@
 Tests de l'étape 1 des figures dans `convert_books.py` : blocs de figures dans le Markdown, filtre des textes
 alternatifs, images extraites seulement pour les figures retenues, option --redo-figures.
 
-    uv run --with pymupdf4llm --with ebooklib --with markdownify --with beautifulsoup4 \
+    uv run --with "pymupdf4llm<2" --with ebooklib --with markdownify --with beautifulsoup4 \
         python -m unittest discover -s tests/convert_books -v
 
 Livres fabriqués dans un dossier temporaire (EPUB avec images, PDF avec image et dessin vectoriel) ; le dossier des

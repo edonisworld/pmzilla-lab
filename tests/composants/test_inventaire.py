@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aide_composants import (DIGEST_BASE_CI, DIGEST_UV_CI, RACINE, AvecDepot, ConnexionInterdite, SansReseau,  # noqa: E402
-                             composants, entete, lancer, verrou)
+                             composants, entete, entree, lancer, verrou)
 
 
 class Garde(SansReseau):
@@ -31,7 +31,7 @@ class Format(AvecDepot):
     def test_inventaire_coherent(self):
         code, sortie, _ = self.inventaire("--verify")
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Inventaire à jour : 21 composant(s)", sortie)
+        self.assertIn("Inventaire à jour : 20 composant(s)", sortie)
 
     def test_champ_manquant(self):
         self.depot.modifier_inventaire(lambda e: e[0].pop("upstream"))
@@ -128,7 +128,6 @@ class Resolution(AvecDepot):
         self.assertIn("bmad-method · bmad-module · 6.1.0 · BMAD manifest", lignes["bmad-method"])
         self.assertIn("ext · bmad-module · v2.0.0 · BMAD manifest", lignes["ext"])
         self.assertIn("core · bmad-module · 6.1.0", lignes["core"])
-        self.assertIn("graphes · vendored · 5.6.0 · vendor version file", lignes["graphes"])
         self.assertIn("modele-a · ollama-model · latest · library tool constant", lignes["modele-a"])
         self.assertIn("modele-b · ollama-model · 7b · sorting configuration", lignes["modele-b"])
         self.assertIn("uv · tool · non épinglé · not pinned (Homebrew formula)", lignes["uv"])
@@ -231,10 +230,23 @@ class Reconstruction(AvecDepot):
         code, sortie = self.verifier()
         self.assertIn("Composant à retirer de l'inventaire : openspec", sortie)
 
-    def test_fichier_de_version_du_dossier_vendor(self):
+    # test_fichier_de_version_du_dossier_vendor retiré (R-146) : le genre « vendored » et la lecture de tools/vendor/*.version sont supprimés.
+
+    def test_le_genre_vendored_n_existe_plus(self):
+        """Remplace le test du dossier vendor : un fichier tools/vendor/*.version n'est plus une source de composant, et le genre
+        « vendored » n'est plus accepté dans l'inventaire."""
         self.depot.ecrire("tools/vendor/autre.version", "1.0.0\n")
         code, sortie = self.verifier()
-        self.assertIn("Composant à ajouter à l'inventaire : autre (déclaré dans tools/vendor/autre.version)", sortie)
+        self.assertNotIn("autre", sortie)
+        self.assertNotIn("vendored", composants.GENRES)
+        self.assertNotIn("vendor version file", composants.LIEUX)
+
+    def test_une_entree_de_genre_vendored_est_refusee_avec_le_genre_nomme(self):
+        self.depot.modifier_inventaire(lambda entrees: entrees.append(
+            entree("graphes", "vendored", "tools/vendor", "GitHub releases", "Update a Python package of the scripts")))
+        code, sortie, erreurs = self.inventaire("--verify")
+        self.assertEqual(code, 1, sortie + erreurs)
+        self.assertIn("vendored", sortie + erreurs)
 
     def test_dependances_du_lanceur_de_tests(self):
         self.depot.ecrire("tests/run_all.sh", '#!/bin/bash\nDEPS="${RUN_ALL_DEPS---with numpy --with pyyaml --with "psycopg[binary]" --with lxml}"\n')
@@ -302,7 +314,7 @@ class ImageCI(AvecDepot):
     def test_entrees_coherentes(self):
         code, sortie = self.verifier()
         self.assertEqual(code, 0, sortie)
-        self.assertIn("Inventaire à jour : 24 composant(s)", sortie)
+        self.assertIn("Inventaire à jour : 23 composant(s)", sortie)
 
     def test_versions_lues_dans_le_dockerfile(self):
         code, sortie, _ = self.inventaire()
@@ -395,6 +407,15 @@ class DepotReel(SansReseau):
         self.assertEqual(code, 0, sortie + erreurs)
         self.assertIn("Inventaire à jour", sortie)
 
+    def test_echarts_inventorie_avec_la_version_du_verrou(self):
+        # Tâche 19.1 : ECharts (Apache-2.0), version lue dans le verrou, jamais écrite dans l'inventaire.
+        code, sortie, erreurs = lancer(["inventory", "--verify", "--root", str(RACINE)])
+        self.assertEqual(code, 0, sortie + erreurs)
+        self.assertRegex(sortie, r"(?m)^echarts · npm-package · \d+\.\d+\.\d+ · mothra/package-lock\.json$")
+        texte = (RACINE / "docs/pmzilla/composants.yaml").read_text(encoding="utf-8")
+        self.assertRegex(texte, r"name: echarts,")
+        self.assertNotRegex(texte, r"echarts[^\n]*\d+\.\d+\.\d+")
+
     def test_l_etude_laya_est_retiree(self):
         self.assertFalse((RACINE / "tools/etude_laya.py").exists())
         self.assertFalse((RACINE / "tools/etude_laya.py.lock").exists())
@@ -411,7 +432,7 @@ class DepotReel(SansReseau):
         for nom in ("library/node", "ghcr.io/astral-sh/uv", "@fission-ai/openspec"):
             self.assertIn(nom, lignes)
             self.assertTrue(lignes[nom].endswith(" · CI Dockerfile"), lignes[nom])
-        self.assertIn("library/node · docker-image · 26.12.0-slim", lignes["library/node"])   # version exacte, égale à celle de mothra/.node-version (mothra-node-lts D4)
+        self.assertIn("library/node · docker-image · 26.13.0-slim", lignes["library/node"])   # version exacte, égale à celle de mothra/.node-version (mothra-node-lts D4) ; 26.12.1 → 26.13.0 par R-20261104-64
 
     def test_dockerfile_ci_sans_secret_ni_telechargement(self):
         """local-ci-container D4 : aucun secret, aucun ARG qui en porte un, aucun ADD depuis une adresse."""
@@ -425,7 +446,7 @@ class Fonctions(unittest.TestCase):
     def test_noms_normalises(self):
         self.assertEqual(composants.normaliser("PyYAML"), "pyyaml")
         self.assertEqual(composants.normaliser("psycopg[binary]"), "psycopg")
-        self.assertEqual(composants.normaliser("mcp>=1.2,<2"), "mcp")
+        self.assertEqual(composants.normaliser("mcp>=2,<3"), "mcp")
         self.assertEqual(composants.normaliser("Foo_Bar.baz"), "foo-bar-baz")
 
     def test_en_tete_sur_plusieurs_lignes(self):

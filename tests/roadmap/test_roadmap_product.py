@@ -1,6 +1,6 @@
 """
-Tests du label product: dans le lecteur de la file (tools/roadmap.py) : contrôle de `check`, filtre `--product` de next, status,
-board et batch. Même faux gh que test_roadmap_github.py.
+Tests du label product: dans le lecteur de la file (tools/roadmap.py) : contrôle de `check`, filtre `--product` de next, status
+et batch. Même faux gh que test_roadmap_github.py.
 
     uv run --with pyyaml python -W ignore -m unittest discover -s tests/roadmap -q -f
 """
@@ -116,14 +116,6 @@ class TestStatusFiltre(Base):
         self.assertEqual(code, 0, m)
         self.assertIn("R-2 | Travail | attend R-1", m)
         self.assertNotIn("R-1 |", m)
-
-    def test_board_filtre(self):
-        self.depot(feature(1), mothra(2))
-        code, sortie, _ = self.lance("board", "--product", "mothra")
-        self.assertEqual(code, 0, sortie)
-        page = (self.dir / "data" / "feuille-de-route.html").read_text(encoding="utf-8")
-        self.assertIn("R-2", page)
-        self.assertNotIn("R-1<", page)
 
 
 class TestBatchFiltre(Base):

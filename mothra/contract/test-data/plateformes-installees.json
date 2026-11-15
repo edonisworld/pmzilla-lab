@@ -1,0 +1,7 @@
+{
+  "note": "Platforms the author installs on (npm os, cpu and libc values): the Mac and the CI image. The npm lock check ignores an optional entry in two cases: it is marked os or cpu for none of these platforms; or it matches the os and cpu of some of them, carries a libc field, and that libc includes the libc of none of the platforms of the same os and cpu that carry a libc. A platform without a libc field (the Mac) never makes an entry ignored by libc; a mandatory entry, or an optional one without a libc field, is always checked. Extended only by a commit the author reviews.",
+  "plateformes": [
+    { "os": "darwin", "cpu": "arm64" },
+    { "os": "linux", "cpu": "arm64", "libc": "glibc" }
+  ]
+}

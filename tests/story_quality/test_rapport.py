@@ -188,21 +188,149 @@ class GardeAntiComparaison(EspaceRapport):
         self.assertIn("No results in the story quality views", self.rapport())
 
 
+class EquipesVisibles(EspaceRapport):
+    """R-124 (idée #460) : une section par équipe seulement si un compte audité y est visible ; les autres tiennent en une ligne, sans nom
+    ni nombre (la spec interdit de compter les équipes) ; le JSON garde toutes les équipes."""
+
+    def setUp(self):
+        super().setUp()
+        from test_donnees_rapport import GAMMA, ligne_equipe as ligne, couverture
+        self.gamma = GAMMA
+        self.delta = "Equipe Zzdelta"
+        self.vues = dict(self.vues)
+        self.vues["quality_by_team"] = VUE_EQUIPE + [ligne(GAMMA, "story", "story-un", "ticket_template", None, None, None, None, None),
+                                                      ligne(self.delta, "story", "story-un", "ticket_template", 3, None, None, None, None)]
+        self.vues["quality_coverage_by_team"] = VUE_COUVERTURE + [couverture(GAMMA, "story", None, None, None),
+                                                                  couverture(self.delta, "story", 4, 3, None)]
+
+    def test_les_equipes_sans_compte_audite_visible_n_ont_pas_de_section(self):
+        self.lancer("report", "--name", "serie", "--language", "en")
+        texte = self.rapport()
+        self.assertEqual(re.findall(r"^## (.*)$", texte, flags=re.M), [ALPHA, BETA, "Product chain"])
+        for nom in (self.gamma, self.delta):
+            self.assertNotIn(nom, texte)
+
+    def test_une_seule_ligne_resume_les_autres_sans_nom_avec_leur_nombre(self):
+        self.lancer("report", "--name", "serie", "--language", "en")
+        lignes = [l for l in self.rapport().splitlines() if l.startswith("Other teams")]
+        self.assertEqual(lignes, ["Other teams without a section (not reviewed or under the masking threshold): 2"])
+
+    def test_la_ligne_en_francais(self):
+        self.lancer("report", "--name", "serie", "--language", "fr")
+        self.assertIn("Autres équipes sans section (non relues ou sous le seuil de masquage) : 2", self.rapport().splitlines())
+
+    def test_un_nombre_d_une_equipe_s_ecrit_sans_accord(self):
+        self.vues = dict(self.vues, quality_by_team=VUE_EQUIPE + self.vues["quality_by_team"][5:6],
+                         quality_coverage_by_team=VUE_COUVERTURE + self.vues["quality_coverage_by_team"][3:4])
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertIn("Other teams without a section (not reviewed or under the masking threshold): 1", self.rapport().splitlines())
+
+    def test_le_seuil_releve_augmente_le_nombre_ecrit(self):
+        self.reglages = (0.45, 25)
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertIn("Other teams without a section (not reviewed or under the masking threshold): 3", self.rapport().splitlines())
+
+    def test_pas_de_ligne_quand_toutes_les_equipes_sont_visibles(self):
+        self.vues = dict(self.vues, quality_by_team=VUE_EQUIPE, quality_coverage_by_team=VUE_COUVERTURE)
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertNotIn("Other teams", self.rapport())
+
+    def test_aucune_equipe_visible_donne_la_ligne_et_la_chaine_du_produit(self):
+        self.vues = dict(self.vues, quality_by_team=self.vues["quality_by_team"][5:],
+                         quality_coverage_by_team=self.vues["quality_coverage_by_team"][3:])
+        self.lancer("report", "--name", "serie", "--language", "en")
+        texte = self.rapport()
+        self.assertEqual(re.findall(r"^## (.*)$", texte, flags=re.M), ["Product chain"])
+        self.assertIn("Other teams without a section (not reviewed or under the masking threshold): 2", texte)
+        self.assertNotIn("No results", texte)
+
+    def test_le_seuil_releve_masque_aussi_la_section(self):
+        self.reglages = (0.45, 25)           # Alpha : 20 audités, sous 25 ; Beta : 30 audités, visible
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertEqual(re.findall(r"^## (.*)$", self.rapport(), flags=re.M), [BETA, "Product chain"])
+
+    def test_aucune_autre_ligne_ne_compte_les_equipes(self):
+        self.lancer("report", "--name", "serie", "--language", "en")
+        lignes = [l for l in self.rapport().splitlines() if re.search(r"\bteams?\b", l, flags=re.I) and re.search(r"\d", l)]
+        self.assertEqual(lignes, ["Other teams without a section (not reviewed or under the masking threshold): 2"])
+
+    def test_le_json_garde_toutes_les_equipes(self):
+        import json
+        code, sortie, _ = self.lancer("report", "--name", "serie", "--json", "--language", "en")
+        self.assertEqual(code, 0)
+        self.assertEqual([e["team"] for e in json.loads(sortie)["teams"]], [ALPHA, BETA, self.delta, self.gamma])
+
+
+class UneSeuleEquipeRelue(EspaceRapport):
+    """R-128 (D3, D6) : la chaîne du produit dit qu'elle ne repose que sur une équipe relue, sans la nommer."""
+    EN = "This chain rests on one reviewed team only: its lines are that team's results, not the whole product's"
+    FR = "Cette chaîne ne repose que sur une équipe relue : ses lignes sont les résultats de cette équipe, pas ceux du produit entier"
+
+    def une_equipe(self):
+        self.vues = dict(self.vues, quality_by_team=[l for l in VUE_EQUIPE if l["team"] == ALPHA],
+                         quality_coverage_by_team=[l for l in VUE_COUVERTURE if l["team"] == ALPHA])
+
+    def chaine(self):
+        return self.rapport().split("## Product chain")[-1].split("## Chaîne du produit")[-1]
+
+    def test_la_phrase_suit_la_notice_de_la_chaine_en_anglais(self):
+        self.une_equipe()
+        self.lancer("report", "--name", "serie", "--language", "en")
+        lignes = self.rapport().splitlines()
+        self.assertEqual(lignes.count(self.EN), 1)
+        self.assertGreater(lignes.index(self.EN), lignes.index("## Product chain"))
+        self.assertNotIn(ALPHA, self.chaine())
+
+    def test_la_phrase_en_francais(self):
+        self.une_equipe()
+        self.lancer("report", "--name", "serie", "--language", "fr")
+        lignes = self.rapport().splitlines()
+        self.assertEqual(lignes.count(self.FR), 1)
+        self.assertGreater(lignes.index(self.FR), lignes.index("## Chaîne du produit"))
+
+    def test_pas_de_phrase_avec_deux_equipes_relues(self):
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertNotIn(self.EN, self.rapport())
+        self.lancer("report", "--name", "serie", "--language", "fr")
+        self.assertNotIn(self.FR, self.rapport())
+
+    def test_la_marque_ne_change_aucune_ligne_de_la_chaine(self):
+        self.lancer("report", "--name", "serie", "--language", "en")
+        deux = [l for l in self.chaine().splitlines() if l.startswith("- ")]
+        self.une_equipe()
+        self.lancer("report", "--name", "serie", "--language", "en")
+        self.assertEqual([l for l in self.chaine().splitlines() if l.startswith("- ")], deux)
+
+
 class LaMiseEnFormeNeCalculeRien(EspaceRapport):
     def resultat_fabrique(self):
         rien = {"state": "masked", "threshold": 5}
         zero = {"state": "value", "value": 99}
-        equipe = lambda nom: {"team": nom, "single_po": False, "single_po_notice": None,
+        equipe = lambda nom: {"team": nom, "section": True, "single_po": False, "single_po_notice": None,
                               "coverage": {"story": {"collected": zero, "audited": zero, "empty_acceptance_criteria": rien}},
                               "criteria": {"story": [{"code": "c-z", "label": "Libellé Z", "origin": "core", "link": "refinement",
                                                       "counts": {}, "share_met": {"state": "value", "numerator": {"state": "value", "value": 98},
                                                                     "denominator": {"state": "value", "value": 99}},
                                                       "share_not_met": rien}], "epic": []},
                               "probable_causes": {"notice": {"code": "x", "text": "x"}, "lines": []}}
-        return {"contract": "story_quality_report", "contract_version": 1,
+        return {"contract": "story_quality_report", "contract_version": 2,
                 "grid": {"core_version": 1, "overlay_version": None, "disabled_codes": []},
                 "notice": {"code": "team_results_notice", "text": "NOTICE FABRIQUÉE"},
-                "teams": [equipe("Zz-dernière"), equipe("Aa-première")], "product_chain": {"notice": {"code": "x", "text": "x"}, "lines": []}}
+                "teams": [equipe("Zz-dernière"), equipe("Aa-première")], "teams_without_section": 0,
+                "product_chain": {"notice": {"code": "x", "text": "x"}, "lines": [], "single_team": False}}
+
+    def test_le_markdown_reprend_section_et_nombre_du_service(self):
+        resultat = self.resultat_fabrique()
+        resultat["teams"][0]["section"] = False
+        resultat["teams_without_section"] = 7           # le Markdown ne recompte rien
+        resultat["product_chain"]["single_team"] = True
+        with mock.patch.object(sr.data, "report_data", return_value=resultat):
+            self.lancer("report", "--name", "serie", "--language", "en")
+        texte = self.rapport()
+        self.assertNotIn("Zz-dernière", texte)
+        self.assertIn("Aa-première", texte)
+        self.assertIn("Other teams without a section (not reviewed or under the masking threshold): 7", texte)
+        self.assertIn(UneSeuleEquipeRelue.EN, texte)
 
     def test_le_markdown_reprend_tel_quel_le_resultat_du_service(self):
         with mock.patch.object(sr.data, "report_data", return_value=self.resultat_fabrique()):

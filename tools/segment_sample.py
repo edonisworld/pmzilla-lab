@@ -32,7 +32,7 @@ Avec --by-state, trois sections de plus :
   8. pour les plus longs, le nombre d'autres tickets de la population dont une visite du segment se termine le même jour
      que leur visite la plus longue (sorties groupées), avec le nombre de sorties par jour de la population en repère.
 Avec --starts, une section de plus :
-  9. les passages de « Ready for Verification » à « Verification - Ongoing » de la population, par projet (jamais de
+  9. les passages de « Awaiting Testing » à « Testing - Active » (réglables par `sample_starts`) de la population, par projet (jamais de
      clé) : pour chaque projet d'au moins --min-passes passages (20 par défaut), nombre de passages, nombre de jours
      distincts où il y en a eu, part des passages tombés sur les 20 % de jours les plus chargés (arrondis au-dessus,
      au moins un jour), puis deux mesures contre le hasard (1000 tirages, graine --seed, passages du projet tirés
@@ -44,13 +44,13 @@ Avec --starts, une section de plus :
        - les jours actifs, sans condition : nombre de jours distincts attendu (moyenne des tirages), 5e centile, rapport
          observé / attendu et indicateur « moins de jours actifs que le hasard » (« oui » si le nombre de jours distincts
          observé est strictement sous le 5e centile) ;
-     et le P50 de l'attente en « Ready for Verification » avant chaque passage.
+     et le P50 de l'attente en « Awaiting Testing » (réglable par `sample_starts`) avant chaque passage.
 Avec --exclude-batch-closures, les tickets sortis du segment dans une fermeture en lot sont retirés de la population
 avant tout calcul : la règle est celle de la section « Fermetures groupées » de flux_jira.py (fonction partagée
 flux_jira.tickets_en_fermeture_groupee) : un ticket livré (motif de résolution hors motifs_exclus) dont la résolution
 tombe dans la même minute que celle d'au moins seuil_fermetures_groupees - 1 autres du même projet (5 par défaut), parmi
 les motifs de motifs_fermetures_groupees (« Done » par défaut), sur les semaines analysées. La sortie dit en tête combien
-de tickets et combien de passages (de Ready for Verification à Verification - Ongoing) sont écartés ; la population, le
+de tickets et combien de passages (de Awaiting Testing à Testing - Active, réglables par `sample_starts`) sont écartés ; la population, le
 temps par état, les passages par projet et les jours actifs contre le hasard sont calculés sans eux. Il faut l'heure
 dans la date de résolution : sans heure, un ticket n'est jamais en lot. Sans l'option, la sortie ne change pas.
 Pour chaque ticket : clé, projet, jours, nombre de visites, dates d'entrée et de sortie de la visite la plus longue,
@@ -84,8 +84,10 @@ from messages import Messages, add_language_option
 from segment_sample_messages import CATALOGS
 
 commun = fj.commun
-ETAT_ATTENTE = "Ready for Verification"       # états du passage suivi par --starts
-ETAT_DEBUT = "Verification - Ongoing"
+# États du passage suivi par --starts : valeurs par défaut (neutres), réglables par `sample_starts` de flux.yaml (waiting, started).
+# Remplace : les états écrits en dur. Retrait : permanent (R-20261112-27).
+ETAT_ATTENTE = cfg.SAMPLE_STARTS_DEFAUTS["waiting"]      # source : flux_config.SAMPLE_STARTS_DEFAUTS (R-20261112-29)
+ETAT_DEBUT = cfg.SAMPLE_STARTS_DEFAUTS["started"]
 PART_JOURS_CHARGES = 0.20
 TIRAGES = 1000                                 # tirages de la part attendue au hasard (--starts)
 ORIGINE_CREATION = "(création)"
@@ -120,10 +122,19 @@ def jours_par_etat(periodes_t: list, visites: list[dict], canon: dict[str, str])
     return jours
 
 
-def passages(periodes_t: list, visites: list[dict]) -> list[tuple[dt.date, int]]:
-    """(date, attente) de chaque passage direct de ETAT_ATTENTE à ETAT_DEBUT à l'intérieur des visites données : la date
-    de la transition, et les jours passés dans ETAT_ATTENTE juste avant (la période qui précède le passage)."""
-    de, vers = ETAT_ATTENTE.casefold(), ETAT_DEBUT.casefold()
+def etats_du_passage(settings: dict) -> tuple[str, str]:
+    """(état d'attente, état de début) suivis par --starts : ceux de `sample_starts` (déjà validé par flux_config), ou les
+    défauts ETAT_ATTENTE et ETAT_DEBUT pour la clé ou la sous-clé absente."""
+    bloc = settings.get("sample_starts") or {}
+    return bloc.get("waiting", ETAT_ATTENTE).strip(), bloc.get("started", ETAT_DEBUT).strip()
+
+
+def passages(periodes_t: list, visites: list[dict], etats: tuple[str, str] | None = None) -> list[tuple[dt.date, int]]:
+    """(date, attente) de chaque passage direct de l'état d'attente à l'état de début (`etats`, par défaut ETAT_ATTENTE et
+    ETAT_DEBUT) à l'intérieur des visites données : la date de la transition, et les jours passés dans l'état d'attente
+    juste avant (la période qui précède le passage)."""
+    attente, debut_etat = etats or (ETAT_ATTENTE, ETAT_DEBUT)
+    de, vers = attente.casefold(), debut_etat.casefold()
     trouves = []
     for v in visites:
         for i in range(v["premier"], v["dernier"]):
@@ -134,10 +145,11 @@ def passages(periodes_t: list, visites: list[dict]) -> list[tuple[dt.date, int]]
 
 
 def analyser(tickets: list[dict], periodes: dict, segment_de: dict[str, str], segment: str,
-             debut_periode: dt.date, fin_periode: dt.date, canon: dict[str, str]) -> tuple[list[dict], list[dict]]:
+             debut_periode: dt.date, fin_periode: dt.date, canon: dict[str, str],
+             etats: tuple[str, str] | None = None) -> tuple[list[dict], list[dict]]:
     """(sortis, dedans). Mêmes règles que flux_jira.temps_par_segment : un ticket est « sorti » si une de ses visites
     terminées du segment finit dans la période ; son temps est la somme de toutes ses visites terminées. `canon` range
-    le nom d'un état en minuscules vers son nom dans la liste du segment."""
+    le nom d'un état en minuscules vers son nom dans la liste du segment ; `etats` : états de --starts (voir `passages`)."""
     sortis, dedans = [], []
     for t in tickets:
         periodes_t = periodes.get(t["cle"].upper())
@@ -152,7 +164,7 @@ def analyser(tickets: list[dict], periodes: dict, segment_de: dict[str, str], se
                            "jours_visite": longue["jours"], "origine": origine(periodes_t, longue),
                            "destination": destination(periodes_t, longue),
                            "par_etat": jours_par_etat(periodes_t, terminees, canon),
-                           "fins": {v["fin"] for v in terminees}, "passages": passages(periodes_t, terminees)})
+                           "fins": {v["fin"] for v in terminees}, "passages": passages(periodes_t, terminees, etats)})
         courante = next((v for v in vues if v["en_cours"]), None)
         if courante:
             dedans.append({"cle": t["cle"], "projet": t["projet"], "jours": courante["jours"],
@@ -352,12 +364,14 @@ def debuts_par_projet(sortis: list[dict], minimum: int) -> tuple[list[dict], dic
     return lignes, total
 
 
-def affichage_debuts(sortis: list[dict], minimum: int, debut: dt.date, fin: dt.date, graine: int, t: Messages) -> list[str]:
+def affichage_debuts(sortis: list[dict], minimum: int, debut: dt.date, fin: dt.date, graine: int, t: Messages,
+                     etats: tuple[str, str] | None = None) -> list[str]:
+    attente, debut_etat = etats or (ETAT_ATTENTE, ETAT_DEBUT)
     lignes, total = debuts_par_projet(sortis, minimum)
     ouvres = jours_ouvres(debut, fin)
     ouvres_set = set(ouvres)
     hors = sum(1 for r in sortis for date, _ in r["passages"] if date not in ouvres_set)
-    sortie = [t("starts_header", waiting=ETAT_ATTENTE, start=ETAT_DEBUT),
+    sortie = [t("starts_header", waiting=attente, start=debut_etat),
               t("starts_summary", passages=total['passages'], tickets=total['tickets'], minimum=minimum,
                 below=total['sous_seuil'], below_passages=total['passages_sous_seuil'])]
     if not lignes:
@@ -377,7 +391,7 @@ def affichage_debuts(sortis: list[dict], minimum: int, debut: dt.date, fin: dt.d
         sortie.append(f"| {nom} | {r['passages']} | {r['jours']} | {r['retenus']} | {pct(100 * r['part'])} | "
                       f"{pct(100 * moyenne)} | {pct(100 * centile_95)} | {concentre} | "
                       f"{jours_attendus:.1f} | {centile_5:.1f} | {r['jours'] / jours_attendus:.2f} | {moins} | {r['p50']:.0f} |")
-    sortie.append(t("starts_wait_note", waiting=ETAT_ATTENTE))
+    sortie.append(t("starts_wait_note", waiting=attente))
     sortie.append(t("starts_expected_note", days=len(ouvres), start=debut, end=fin, draws=TIRAGES, seed=graine, outside=hors))
     return sortie
 
@@ -399,7 +413,7 @@ def lot_fermetures(tickets: list[dict], settings: dict, premiere: dt.date, derni
 
 
 def ecarter_lots(sortis: list[dict], lot: dict) -> tuple[list[dict], dict]:
-    """(sortis sans les tickets en lot, comptes écartés : tickets et passages de ETAT_ATTENTE à ETAT_DEBUT)."""
+    """(sortis sans les tickets en lot, comptes écartés : tickets et passages de l'état d'attente à l'état de début de --starts)."""
     gardes = [r for r in sortis if r["cle"].upper() not in lot["cles"]]
     ecartes = [r for r in sortis if r["cle"].upper() in lot["cles"]]
     return gardes, {"tickets": len(ecartes), "passages": sum(len(r["passages"]) for r in ecartes)}
@@ -441,6 +455,7 @@ def preparer(args: argparse.Namespace, t: Messages) -> dict:
     etats = {nom: list(liste or []) for nom, liste in (settings.get("segments") or commun.SEGMENTS_PAR_DEFAUT).items()}
     return {"tickets": tickets, "periodes": periodes, "segment_de": segment_de, "etats": etats,
             "personnalises": bool(settings.get("segments")), "ecartes": ecartes, "today": today, "lot": lot,
+            "passage": etats_du_passage(settings),
             "debut": first_week, "fin": last_week + dt.timedelta(days=6)}
 
 
@@ -460,7 +475,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--by-state", dest="par_etat", action="store_true",
                         help="ajoute le temps par état du segment, le détail de l'échantillon et les sorties groupées")
     parser.add_argument("--starts", dest="debuts", action="store_true",
-                        help="ajoute les passages de Ready for Verification à Verification - Ongoing, par projet")
+                        help="ajoute les passages de Awaiting Testing à Testing - Active, par projet (les deux états se règlent par la clé sample_starts de flux.yaml, neutres par défaut)")
     parser.add_argument("--min-passes", dest="min_passages", type=int, default=20, help="passages minimum d'un projet pour --starts (défaut 20)")
     parser.add_argument("--exclude-batch-closures", dest="exclure_lots", action="store_true",
                         help="retire de la population les tickets sortis du segment dans une fermeture en lot "
@@ -486,7 +501,7 @@ def main(argv: list[str] | None = None) -> None:
     p = preparer(args, t)
     etats_segment = p["etats"][args.segment]
     canon = {e.strip().casefold(): e for e in etats_segment}
-    sortis, dedans = analyser(p["tickets"], p["periodes"], p["segment_de"], args.segment, p["debut"], p["fin"], canon)
+    sortis, dedans = analyser(p["tickets"], p["periodes"], p["segment_de"], args.segment, p["debut"], p["fin"], canon, p["passage"])
     sans_historique = sum(1 for t in p["tickets"] if t["cle"].upper() not in p["periodes"])
     lots = None
     if p["lot"] is not None:
@@ -495,7 +510,7 @@ def main(argv: list[str] | None = None) -> None:
     print(t("title", segment=nom_segment(args.segment, t)))
     print(t("period", start=p['debut'], end=p['fin'], weeks=args.semaines, today=p['today']))
     if lots is not None:
-        print(t("batch_discarded", tickets=lots["tickets"], passages=lots["passages"], waiting=ETAT_ATTENTE, start=ETAT_DEBUT))
+        print(t("batch_discarded", tickets=lots["tickets"], passages=lots["passages"], waiting=p["passage"][0], start=p["passage"][1]))
         if p["lot"]["sans_heure"]:
             print(t("batch_no_time", count=p["lot"]["sans_heure"]))
     print(t("key_and_states_only"))
@@ -528,10 +543,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.par_etat:
         print("\n".join(affichage_par_etat(sortis, ech, anciens, etats_segment, t)))
     if args.debuts:
-        manquants = [e for e in (ETAT_ATTENTE, ETAT_DEBUT) if e.casefold() not in canon]
+        manquants = [e for e in p["passage"] if e.casefold() not in canon]
         if manquants:
             sys.exit(t("starts_states_outside", segment=nom_segment(args.segment, t), states=", ".join(manquants)))
-        print("\n".join(affichage_debuts(sortis, args.min_passages, p["debut"], p["fin"], args.graine, t)))
+        print("\n".join(affichage_debuts(sortis, args.min_passages, p["debut"], p["fin"], args.graine, t, p["passage"])))
 
 
 if __name__ == "__main__":

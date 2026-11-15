@@ -155,15 +155,25 @@ The system SHALL, when a run without any suite filter ends with every suite pass
 Source: tests/run_all/test_run_all.py (EmpreinteDeCommit)
 
 ### Requirement: Suites are selected from the staged files
-The system SHALL provide a selector that reads the staged paths (added, copied, modified, renamed and deleted; a rename counts as its old and its new path) and selects a suite when a staged path is inside the suite folder, when a test file of the suite names the staged path or its module name (its file name for a data file), or when the staged path is a listed shell test script; it SHALL always select the guard suites that scan every tracked file. Documentation-only paths (the documentation and OpenSpec folders, the changelog, the readme, Markdown files of the output folder) SHALL need no other suite. Any other staged path that selects no suite, and any staged change to the session instructions file, the settings files, the runner, the hooks or the selector, SHALL make the selector require the complete run, even when other staged paths select suites. The selector SHALL print one line per selected suite with its reason and exit 0, or print that the complete run is required with the paths that caused it and exit 3; it SHALL exit 2 on a usage error or outside a git repository. It SHALL NOT run tests, write files, or select fewer suites than these rules give.
+The system SHALL provide a selector that reads the staged paths (added, copied, modified, renamed and deleted; a rename counts as its old and its new path) and selects a suite when a staged path is inside the suite folder, when a test file of the suite names the staged path or its module name (its file name for a data file), or when the staged path is a listed shell test script; it SHALL always select the guard suites that scan every tracked file.
 
 #### Scenario: Tool changed
 - **WHEN** a tool file is staged and the test files of one suite name it
 - **THEN** that suite and the always-selected guard suites are selected, each with its reason
 
+Source: tests/select_suites/test_select_suites.py
+
+### Requirement: Documentation-only paths need no other suite
+Documentation-only paths (the documentation and OpenSpec folders, the changelog, the readme, Markdown files of the output folder) SHALL need no other suite.
+
 #### Scenario: Documentation only
 - **WHEN** only documentation and OpenSpec files are staged
 - **THEN** only the always-selected guard suites are selected
+
+Source: tests/select_suites/test_select_suites.py
+
+### Requirement: Unmapped paths and guarded files require the complete run
+Any other staged path that selects no suite, and any staged change to the session instructions file, the settings files, the runner, the hooks or the selector, SHALL make the selector require the complete run, even when other staged paths select suites.
 
 #### Scenario: Unmapped code file
 - **WHEN** a code file that no suite names is staged
@@ -181,6 +191,11 @@ The system SHALL provide a selector that reads the staged paths (added, copied, 
 - **WHEN** a mapped tool file and an unmapped code file are staged together
 - **THEN** the selector requires the complete run and lists no suite
 
+Source: tests/select_suites/test_select_suites.py
+
+### Requirement: The selector reports its selection with one exit code per outcome and changes nothing
+The selector SHALL print one line per selected suite with its reason and exit 0, or print that the complete run is required with the paths that caused it and exit 3; it SHALL exit 2 on a usage error or outside a git repository. It SHALL NOT run tests, write files, or select fewer suites than these rules give.
+
 #### Scenario: Outside a repository
 - **WHEN** the selector runs on a folder that is not a git repository
 - **THEN** it exits with code 2 and says so
@@ -188,7 +203,8 @@ The system SHALL provide a selector that reads the staged paths (added, copied, 
 Source: tests/select_suites/test_select_suites.py
 
 ### Requirement: A targeted green run records a targeted fingerprint
-The system SHALL offer a runner option that runs the selector on the index and then the selected suites, or every suite when the selector requires the complete run, in which case the run SHALL behave exactly as a complete run, fingerprint included. A targeted run SHALL first erase the previous targeted fingerprint and, when every selected suite passes inside a git repository, SHALL write the tree fingerprint of the current index as the targeted fingerprint in the repository's private git folder, separate from the complete-run fingerprint. A targeted run SHALL NOT write or erase the complete-run fingerprint unless it escalated to a complete run, and runs filtered by suite name SHALL still write and erase nothing. The targeted option SHALL NOT be combined with suite names: the runner SHALL then exit with code 2, saying the option does not combine with names, and run nothing. When the selector fails with any other code than a selection or a complete-run requirement, the runner SHALL say so and run every suite as a complete run.
+The system SHALL offer a runner option that runs the selector on the index and then the selected suites, first erasing the targeted fingerprint and, when all pass in a git repository, writing the index tree as the targeted fingerprint in the private git folder, apart from the complete one. In a session it SHALL NOT write it unless the conditions of design D1 hold. Replaces the Mac-written fingerprint in a session.
+Source: tests/run_all/test_run_all.py (LancementCible)
 
 #### Scenario: Targeted green run
 - **WHEN** the targeted option runs and every selected suite passes
@@ -198,19 +214,75 @@ The system SHALL offer a runner option that runs the selector on the index and t
 - **WHEN** a selected suite fails
 - **THEN** no targeted fingerprint remains and the exit code is 1
 
+#### Scenario: Session run proven by the container
+- **WHEN** in a session the index-proof file holds a green line for the index tree with the selected portable suites, the Mac-bound part passes and the index did not change
+- **THEN** the output holds `run_all : empreinte ciblée écrite (conteneur et Mac) pour l'index <court>` and the targeted fingerprint equals the index tree
+
+#### Scenario: No container proof for the index
+- **WHEN** in a session the index-proof file holds no green line for the index tree
+- **THEN** the output holds `run_all : empreinte ciblée non écrite (preuve du conteneur absente pour cet index)` and no targeted fingerprint remains
+
+#### Scenario: Container red
+- **WHEN** in a session the container exits 1, even when the index-proof file already holds a green line for the index tree
+- **THEN** the output holds `run_all : empreinte ciblée non écrite (conteneur rouge (code 1) : sa sortie est plus haut, les lignes ci_passage et ci_local)`, no targeted fingerprint remains and the exit code is 1
+
+#### Scenario: Index changed during the run
+- **WHEN** in a session `git write-tree` differs at the end of the run from its start
+- **THEN** the output holds `run_all : empreinte ciblée non écrite (index modifié pendant le passage)` and no targeted fingerprint remains
+
+#### Scenario: Mac-bound part red
+- **WHEN** in a session a selected Mac-bound suite fails
+- **THEN** the output holds `run_all : empreinte ciblée non écrite (suites propres au Mac rouges)` and the exit code is 1
+
+#### Scenario: Mac-bound suites only
+- **WHEN** in a session the selector selects only Mac-bound suites, they pass, and `git write-tree` did not change
+- **THEN** the fake CI script is not called, no index-proof line is required, the output holds `run_all : empreinte ciblée écrite (conteneur et Mac) pour l'index <court>`, and the targeted fingerprint equals the index tree (design D1, R-20261104-17)
+
+#### Scenario: Mac-bound suites only, red
+- **WHEN** in a session the selector selects only Mac-bound suites and one fails
+- **THEN** the output holds `run_all : empreinte ciblée non écrite (suites propres au Mac rouges)` and no targeted fingerprint remains
+
+### Requirement: A targeted run escalates to a complete run when the selector requires it
+When the selector requires the complete run, the targeted option SHALL run every suite and, outside a session, behave exactly as a complete run, fingerprint included. In a session it SHALL run as design D4 states for an escalated run and SHALL NOT write the complete-run fingerprint.
+Source: tests/run_all/test_run_all.py (LancementCible)
+
 #### Scenario: Escalation
-- **WHEN** the selector requires the complete run
+- **WHEN** the selector requires the complete run outside a session
 - **THEN** every suite runs and, on success, the complete-run fingerprint is written
+
+#### Scenario: Escalation in a session
+- **WHEN** the selector requires the complete run in a session and the run passes
+- **THEN** the complete-run fingerprint is unchanged and only the targeted fingerprint may be written, under the conditions of design D1
+
+### Requirement: A targeted or filtered run leaves the complete-run fingerprint alone
+A targeted run SHALL NOT write or erase the complete-run fingerprint unless it escalated to a complete run, and runs filtered by suite name SHALL still write and erase nothing.
 
 #### Scenario: Filtered run
 - **WHEN** a run filtered by suite name passes
 - **THEN** neither fingerprint is written nor erased
 
+Source: tests/run_all/test_run_all.py (LancementCible)
+
+### Requirement: The targeted option does not combine with suite names
+The targeted option SHALL NOT be combined with suite names: the runner SHALL then exit with code 2, saying the option does not combine with names, and run nothing.
+
 #### Scenario: Option combined with names
 - **WHEN** the targeted option is given together with a suite name
 - **THEN** the runner exits with code 2 and runs no suite
 
-Source: tests/run_all/test_run_all.py (LancementCible); tests/run_all/test_run_all.py (LancementCible.test_selecteur_en_echec_fait_un_passage_complet_avec_empreinte_complete)
+Source: tests/run_all/test_run_all.py (LancementCible)
+
+### Requirement: A failing selector gives a complete run
+When the selector fails with any other code than a selection or a complete-run requirement, the runner SHALL say so and run every suite as a complete run; in a session, as the escalated run of design D4, without writing the complete-run fingerprint.
+Source: tests/run_all/test_run_all.py (LancementCible.test_selecteur_en_echec_fait_un_passage_complet_avec_empreinte_complete)
+
+#### Scenario: Selector failure
+- **WHEN** the selector fails with another code during a targeted run outside a session
+- **THEN** the runner says so, runs every suite and, on success, writes the complete-run fingerprint
+
+#### Scenario: Selector failure in a session
+- **WHEN** the selector fails with another code during a targeted run in a session
+- **THEN** the runner says so, runs as an escalated run of design D4, and the complete-run fingerprint is unchanged
 
 ### Requirement: The runner closes its standard input
 The system SHALL close the runner's standard input before it runs any suite, so that no suite and no tool a suite launches can wait on the keyboard, whether the runner is launched in the foreground of a terminal, by a hook or by the session's shell. It SHALL NOT depend on the caller to redirect the input.
@@ -286,7 +358,7 @@ The system SHALL, when the lab data folder cannot be resolved or the durations f
 Source: untested until implemented (tests/run_all/test_run_all.py, task 1.2)
 
 ### Requirement: Speed work keeps the runner's guards
-The system SHALL keep, through every group of changes test-speed and test-speed-2, the runner's exit codes, the writing and erasing of its two fingerprints, its refusal of the variable reserved to git commit, its time limit and closed input, and the selection and fingerprint rules of the targeted option, in serial and parallel runs. The runner SHALL read the finish lock only as the requirement "The runner refuses to start during another process's finish" states (multi-session-piloting design D7). It SHALL NOT write or remove a test-freeze file or a lock, bypass the finish lock, nor gain an option that skips suites.
+The system SHALL keep, through every group of changes test-speed and test-speed-2, the runner's exit codes, the writing and erasing of its two fingerprints, its refusal of the variable reserved to git commit, its time limit and closed input, and the selection and fingerprint rules of the targeted option, in serial and parallel runs. The runner SHALL NOT gain an option that skips suites.
 
 #### Scenario: Existing runner tests
 - **WHEN** the runner's suite runs after each group of the change
@@ -299,6 +371,9 @@ The system SHALL keep, through every group of changes test-speed and test-speed-
 #### Scenario: Parallel complete run
 - **WHEN** a complete run with several jobs passes inside a git repository
 - **THEN** the complete-run fingerprint equals the index, as in a serial run
+
+### Requirement: The runner reads the finish lock only as stated and never writes a lock or a test-freeze file
+The runner SHALL read the finish lock only as the requirement "The runner refuses to start during another process's finish" states (multi-session-piloting design D7). It SHALL NOT write or remove a test-freeze file or a lock, nor bypass the finish lock.
 
 #### Scenario: Lock untouched
 - **WHEN** a run ends, refused or not, while a lock folder exists
@@ -361,17 +436,17 @@ The system SHALL make the gh_issue test of an idea closed or commented without a
 Source: tests/gh_issue/test_gh_issue_ideas.py (test_fermer_etat_inconnu_code_8), tests/gh_issue/test_gh_issue.py (Bornes); task 6.2
 
 ### Requirement: Speed changes keep the real-launch checks and the case isolation
-The system SHALL stop the doctor suite's fake model server within milliseconds, keep on the real process the launch checks listed in test-speed-2 design D16, and give each case of the three finishing shell suites its own copy of a template repository (D17). It SHALL NOT change a check line of those shell suites, share a repository between cases, nor run in the process a test that checks the launch itself.
+The system SHALL stop the doctor suite's fake model server within milliseconds, keep on the real process the launch checks listed in test-speed-2 design D16, and give each case of the run-tree shell suite its own copy of a template repository built once per run of the suite (D17; the two other suites of D17 left with B9). It SHALL NOT change a check line of that shell suite, share a repository between cases, nor run in the process a test that checks the launch itself.
 
 #### Scenario: Shell suite cases
-- **WHEN** a case of a finishing shell suite changes its repository
+- **WHEN** a case of the run-tree shell suite changes its repository
 - **THEN** the next case starts from an unchanged copy of the template, and the suite reports the same check count as before
 
 #### Scenario: Launch checks
 - **WHEN** the gh_issue and doctor suites run after the in-process changes
 - **THEN** the closed input, disabled prompts, missing executable, unknown option, help and no-traceback checks still run on a real process
 
-Source: untested until implemented (tests/doctor, tests/gh_issue, tests/finish_worktree, tests/finish_branch, tests/run_worktree; tasks 6.3 to 6.7)
+Source: tests/run_worktree/test_run_worktree.sh (template built once per run, test-speed-2 D17); tests/doctor and tests/gh_issue: untested until implemented, as before (tasks 6.3 to 6.7 of test-speed-2, not re-checked by change tooling-specs-apres-b9)
 
 ### Requirement: Suites run in parallel with a settable number of jobs
 The system SHALL run suites in parallel, up to the count of `RUN_ALL_JOBS` or the default of test-speed-2 design D19, each with its own process group, time limit, closed input, output file and temporary folder, and with `PYTHONDONTWRITEBYTECODE=1` (D21). A count of 1 SHALL give the serial run. An invalid count SHALL exit 2 before any suite. It SHALL NOT let a suite share another's temporary folder or process group.
@@ -391,11 +466,39 @@ The system SHALL run suites in parallel, up to the count of `RUN_ALL_JOBS` or th
 Source: untested until implemented (tests/run_all/test_run_all.py, task 7.2)
 
 ### Requirement: Declared suites run alone
-The system SHALL run the suites of its declared serial list, each with its reason, one at a time after every parallel suite has ended, and every suite one at a time when the throwaway-database mark is set (test-speed-2 design D20). A test SHALL fail when an entry of the list names no existing suite of its kind. It SHALL NOT run a serial suite beside another suite.
+The system SHALL give each entry of its declared serial list a reason and a mode of run-all-faster-and-guarded design D2, and SHALL start each entry by the starting rules of the scenarios below. It SHALL NOT run two serial suites at the same time, start a parallel suite beside a serial suite, or start a `chevauche` entry beside an entry of the never-overlap list.
+
+#### Scenario: Starting rule of a seule entry
+- **WHEN** an entry of mode `seule` is due to start
+- **THEN** it starts only when no other suite runs
+
+#### Scenario: Starting rule of a chevauche entry
+- **WHEN** an entry of mode `chevauche` is due to start
+- **THEN** it starts only when four conditions hold: every parallel suite has started; at most half the jobs (at least one) are still running; no running entry is in the never-overlap list; and no other serial suite runs
+
+#### Scenario: Starting rule without overlap
+- **WHEN** the overlap switch is set to 0, or the run has one job or the throwaway-database mark
+- **THEN** with the switch at 0 every serial entry starts only when no other suite runs, and with one job or the mark every suite runs one at a time
+
+#### Scenario: Malformed serial list
+- **WHEN** an entry of the serial list names no existing suite of its kind or has no mode
+- **THEN** a test fails
+
+#### Scenario: Run_all overlaps the tail
+- **WHEN** a fake root holds the `run_all` serial suite in mode `chevauche`, several parallel suites that record their start and end, and two jobs
+- **THEN** `run_all` starts after every parallel suite has started and may start before the last one ends, and no parallel suite starts after it
 
 #### Scenario: Serial suite
-- **WHEN** a fake root holds a serial suite and parallel suites that record their start and end
-- **THEN** the serial suite starts after every parallel suite has ended and no other suite runs during it
+- **WHEN** a fake root holds the `dbtest` serial suite in mode `seule` and parallel suites that record their start and end
+- **THEN** it starts after every other suite, serial ones included, has ended, and no other suite runs during it
+
+#### Scenario: Never-overlap suite still running
+- **WHEN** an entry of the never-overlap list is still running when the other conditions hold
+- **THEN** `run_all` starts only after that entry ends
+
+#### Scenario: Overlap switched off
+- **WHEN** `RUN_ALL_OVERLAP` is 0
+- **THEN** every serial suite starts after every parallel suite has ended and the output holds `chevauchement coupé (RUN_ALL_OVERLAP=0)`
 
 #### Scenario: Throwaway run
 - **WHEN** `DBTEST_PORT` is set
@@ -405,7 +508,7 @@ The system SHALL run the suites of its declared serial list, each with its reaso
 - **WHEN** the serial list names a suite that does not exist
 - **THEN** the list test fails and names it
 
-Source: untested until implemented (tests/run_all/test_run_all.py, tasks 7.2 and 7.4)
+Source: untested until implemented (tests/run_all/test_run_all.py, tasks 2.4 and 2.5)
 
 ### Requirement: Parallel output keeps the declared order
 The system SHALL print suite lines in the declared order, each once it and every earlier suite have ended, with its own wall-clock duration, then the slowest list, the skipped line and the total line, and SHALL write fingerprints only after every suite ended green (test-speed-2 design D22, D23). A Python and a shell suite of one name SHALL be two suites. On an interruption it SHALL stop every running suite and write no fingerprint.
@@ -443,11 +546,19 @@ The system SHALL import the migration suite's helper in the views suite without 
 Source: untested until implemented (tests/db, tests/flow_views; tasks 8.3 and 8.4)
 
 ### Requirement: The runner refuses to start during another process's finish
-The system SHALL make the runner, before any suite, exit 4 with the phrase of multi-session-piloting design D7 when the common Git folder of its root holds a live finish lock whose token the caller does not carry, in complete, targeted and filtered runs alike. A matching token, or a stale lock reported as design D6 states, SHALL change nothing. A refused run SHALL NOT run a suite, touch a fingerprint, write a durations line or wait.
+The system SHALL make the runner, before any suite, exit 4 with the phrase of multi-session-piloting design D7 when the common Git folder of its root holds a live finish lock whose token the caller does not carry and the targeted freeze of change autonomous-trains-merge (design D18, through `freeze_scope()`) covers the run: the root's worktree is in the lock's list, the run writes `main`, the run tree or the ready list, or the lock holds no readable list; in complete, targeted and filtered runs alike. A matching token, a stale lock reported as design D6 states, or a root whose worktree the lock does not list SHALL change nothing. A refused run SHALL NOT run a suite, touch a fingerprint, write a durations line or wait. The runner SHALL NOT keep a freeze rule of its own beside `freeze_scope()`.
 
 #### Scenario: Agent run during a finish
-- **WHEN** a lock of a live process exists and the runner starts without a token, filtered on one suite
+- **WHEN** a lock of a live process lists the root's worktree and the runner starts without a token, filtered on one suite
 - **THEN** it exits 4 with `run_all : fin de branche en cours (<branche>), lancement refusé`, no suite runs, and both fingerprints are unchanged
+
+#### Scenario: Run in a worktree outside the train
+- **WHEN** a lock of a live process lists other worktrees and the runner starts without a token, filtered on one suite, in a worktree that the lock does not list
+- **THEN** the run proceeds as without a lock
+
+#### Scenario: Lock without a readable list
+- **WHEN** a lock of a live process holds no readable list and the runner starts without a token
+- **THEN** it exits 4 and no suite runs
 
 #### Scenario: The finish's own runner
 - **WHEN** the caller's token equals the lock's token
@@ -535,7 +646,7 @@ The system SHALL provide a coverage test that fails, naming the suite, when a su
 
 #### Scenario: Real tree today
 - **WHEN** the coverage test runs on the repository
-- **THEN** it passes with the readers `workflow_commands`, `roadmap_model`, `build_edition` and `correspondance_suites` listed, and `finish_branch` and `finish_worktree` not listed
+- **THEN** it passes with the readers `workflow_commands`, `roadmap_model`, `build_edition` and `correspondance_suites` listed
 
 ### Requirement: The selector treats the hook modules as hooks
 The system SHALL make the suite selector require the complete run when the secret scanner module or the sensitive-names module, both imported by the pre-commit hook, is staged, and SHALL always select the secret guard suite with its reason. It SHALL NOT let a targeted run cover a change to either module. Untested until implemented (suite `select_suites`).
@@ -549,7 +660,12 @@ The system SHALL make the suite selector require the complete run when the secre
 - **THEN** the secret guard suite is selected with the reason "toujours sélectionnée : parcourt tous les fichiers suivis"
 
 ### Requirement: Mac-bound suites are declared in one list
-The system SHALL read the Mac-bound suites from `tests/suites_mac.txt`, one `<suite>:<python|shell> # <raison>` line each, shell suites listed by default with the reason `outils BSD et bash 3.2 du Mac` (local-ci-container design D3). A coverage test SHALL fail, naming the entry, for a missing suite, a missing reason or a duplicate.
+The system SHALL read the Mac-bound suites from `tests/suites_mac.txt`, one `<suite>:<python|shell> # <raison>` line each, a suite being portable unless it has a verified reason of design D6. A coverage test SHALL fail, naming the entry, for a missing suite, a missing reason or a duplicate. An entry SHALL NOT leave the list before two green container replays, one commit per entry. Replaces "shell suites listed by default"; falls when the list is empty.
+Source: tests/run_all/test_run_all.py
+
+#### Scenario: Count of the Mac pass at the archive of tooling-proof-in-container
+- **WHEN** the uncommented entries of `tests/suites_mac.txt` on main are counted on 2026-11-12 (design D6 of that change)
+- **THEN** they are 22 suites, 18 shell and 4 Python, `forme_p_mac` included, added after T3 by change bash-sandbox-n2
 
 #### Scenario: Entry for a missing suite
 - **WHEN** the list names a suite that does not exist in that kind
@@ -558,6 +674,10 @@ The system SHALL read the Mac-bound suites from `tests/suites_mac.txt`, one `<su
 #### Scenario: Entry without reason
 - **WHEN** a line of the list has no reason after `#`
 - **THEN** the coverage test fails and names the line
+
+#### Scenario: Suite moved into the image
+- **WHEN** a suite retained as portable has had two green replays through `bash tools/ci_local.sh run --rejeu portable <suite>`
+- **THEN** its line is removed in a commit of its own, and a `--portable` run launches it while a `--mac` run does not
 
 ### Requirement: The runner runs the portable or the Mac-bound suites on request
 The system SHALL run with `--portable` every suite absent from the Mac-bound list, after the line `run_all : suites propres au Mac non lancées : <n> (<liste>)`, and with `--mac` only the listed suites (design D3). Neither SHALL write or erase a fingerprint, and each SHALL refuse `--staged` or a suite name with code 2.
@@ -576,3 +696,292 @@ The system SHALL, without `RUN_ALL_JOBS` and when `sysctl -n hw.logicalcpu` is u
 #### Scenario: No sysctl
 - **WHEN** a fake `sysctl` fails and a fake `getconf` answers 8
 - **THEN** the runner announces 4 suites at a time
+
+### Requirement: The shell suites are listed in one sorted data file
+The system SHALL read the shell suites from `tests/suites_shell.txt`, one `<path> <name> <interpreter>` line each, sorted by path, and the runner and the selector SHALL both read it. A line with a missing or extra field, an unknown interpreter or a path outside `tests/*.sh` SHALL make the runner exit 2 and name the line number. A test SHALL fail when the file is not sorted.
+
+#### Scenario: Malformed line
+- **WHEN** line 3 of the file has only two fields
+- **THEN** the runner exits 2 with `run_all : tests/suites_shell.txt, ligne 3 mal formée` and launches no suite
+
+### Requirement: The Source lines of the main specs are checked
+The system SHALL provide a suite `spec_sources` that reads every `Source:` line of `openspec/specs/*/spec.md` and fails, naming the spec and the line, when a cited path or a cited test class or method does not exist. Known broken references SHALL be declared with a reason; lines marked untested until implemented SHALL be listed apart without failing.
+
+#### Scenario: Cited method absent
+- **WHEN** a `Source:` line cites `tests/x/test_x.py (Cas.test_trois)` and the file has no such method
+- **THEN** the suite fails naming the spec, `tests/x/test_x.py::Cas.test_trois` and the line
+
+Source: tests/spec_sources/test_spec_sources.py (SurUnDepotFactice.test_chemin_et_noms_casses_sont_nommes)
+
+### Requirement: The longest suites start first
+The system SHALL, when more than one job runs, start the parallel suites in the order of run-all-faster-and-guarded design D1, and print its order line, as the scenarios "Order by measure", "Declared order" and "Order line" state. It SHALL NOT change the suite selection, the order of the printed lines, or the start order of a one-job run. It SHALL NOT write to the durations file in order to compute the order, nor keep a static list of the longest suites.
+
+#### Scenario: Order by measure
+- **WHEN** more than one job runs, without the throwaway-database mark, and usable measures exist
+- **THEN** suites without a measure start first, in declared order, and measured suites follow by decreasing estimate: the median of their last green complete-run durations read from the durations file, divided by their chunk count
+
+#### Scenario: Declared order
+- **WHEN** the run has one job, carries the throwaway-database mark, or has no usable measures
+- **THEN** the runner uses the declared order
+
+#### Scenario: Order line
+- **WHEN** more than one job runs
+- **THEN** the runner prints the order line of D1 once before the first suite
+
+#### Scenario: Two jobs
+- **WHEN** `RUN_ALL_JOBS` is 2 and the durations file gives suite B a longer median than suite A, both declared before B
+- **THEN** B starts before A, the lines keep the declared order, and the output holds `ordre de départ selon les durées mesurées`
+
+#### Scenario: Unmeasured suite
+- **WHEN** a suite has no green complete line in the durations file
+- **THEN** it starts before every measured suite
+
+#### Scenario: Unusable durations file
+- **WHEN** the durations file is missing or holds no usable line and two jobs run
+- **THEN** the declared order applies and the output holds `ordre de départ déclaré (durées indisponibles)`
+
+#### Scenario: One job
+- **WHEN** `RUN_ALL_JOBS` is 1
+- **THEN** the suites start in declared order and no order line is printed
+
+Source: untested until implemented (tests/run_all/test_run_all.py, tests/suite_order/test_suite_order.py; tasks 2.2 and 2.3)
+
+### Requirement: Test fake servers poll quickly
+The system SHALL fail a test when a line under `tests/` writes `serve_forever` without `poll_interval`, because the default 0.5 s polling adds about 0.5 s to every test's shutdown. It SHALL NOT accept the call on that line alone.
+
+#### Scenario: Call without a polling interval
+- **WHEN** a helper under `tests/` calls `serve_forever` with no `poll_interval`
+- **THEN** the guard test fails and names the file and line
+
+Source: tests/run_all/test_sondage_serveur.py (SondageDesFauxServeurs)
+
+### Requirement: A red suite lists all its failures
+The system SHALL print, for a red suite and before the usual tail, every `FAIL:` and `ERROR:` line of a Python suite with its first exception line, or every `ECHEC`, `ÉCHEC` and `not ok` line of a shell suite. It SHALL print nothing the suite did not print.
+
+#### Scenario: Four failures
+- **WHEN** a suite has four failures
+- **THEN** the four names appear before the tail, each with its assertion line
+
+Source: tests/run_all/test_run_all.py (Lanceur)
+
+### Requirement: The never-overlap suites are declared with a reason
+The system SHALL declare in the runner one list of suites whose tests rely on short timing windows, bounded waits or duration measures, one `<suite>:<type>` entry each with its reason (run-all-faster-and-guarded design D2). A test SHALL fail, naming the entry, when an entry names no existing suite of its type or has no reason. It SHALL NOT start a serial suite of mode `chevauche` while an entry of this list runs.
+
+#### Scenario: Entry without reason
+- **WHEN** an entry of the list has no reason
+- **THEN** the coverage test fails and names the entry
+
+#### Scenario: Entry for a missing suite
+- **WHEN** an entry names a suite that does not exist in that type
+- **THEN** the coverage test fails and names the entry
+
+Source: untested until implemented (tests/run_all/test_run_all.py, task 2.5)
+
+### Requirement: Every complete run writes one journal line
+The system SHALL append, at the end of every complete run (interruption included), one line with the fields of run-all-faster-and-guarded design D4 to the journal of complete runs: duration, verdict, context, `seul` or `concurrent`, highest load. Lines older than one year SHALL be purged at each write. It SHALL NOT write a line for a run that ended before its first suite or for a targeted or filtered run, nor write a path, a name, suite output or a person.
+
+#### Scenario: Run alone
+- **WHEN** a complete run on a fake root with the journal variable set passes and no other presence entry exists
+- **THEN** the journal gains one line with verdict `vert` and `seul`, and its duration matches the total line
+
+#### Scenario: Run beside a targeted run
+- **WHEN** a live fake presence entry of kind `ciblé` exists during the complete run
+- **THEN** the line holds `concurrent`, `1` others at most, and `ciblé` in the kinds
+
+#### Scenario: Dead presence entry
+- **WHEN** a presence entry names a dead process
+- **THEN** it is ignored, removed, and the line holds `seul`
+
+#### Scenario: Refused run
+- **WHEN** a complete run exits with code 4, 6 or 7
+- **THEN** no journal line is written
+
+#### Scenario: Old lines
+- **WHEN** the journal holds a line more than one year old before a complete run
+- **THEN** that line is gone after the run and the header stays
+
+Source: untested until implemented (tests/run_all/test_run_all.py, task 2.8)
+
+### Requirement: The journal never changes the outcome of a run
+The system SHALL, when the journal of complete runs cannot be written, print once, after the total line and before the fingerprint line, `run_all : journal des runners complets non écrit (<cause>)`, without a path. It SHALL keep the exit code, the suite lines and the fingerprints as they would be without the journal. It SHALL NOT fail, stop or skip a suite because of the journal or of the presence entries.
+
+#### Scenario: Unwritable journal
+- **WHEN** the journal variable names a file in a folder that cannot be written and every suite passes
+- **THEN** the output holds `journal des runners complets non écrit`, the exit code is 0, and the complete-run fingerprint is written
+
+Source: untested until implemented (tests/run_all/test_run_all.py, task 2.8)
+
+### Requirement: A branch run proves the branch's suites on its tip
+The system SHALL offer the runner option `--branch`, which runs on the clean tip the suites selected from the whole difference with `origin/main` and, when all pass, writes the branch fingerprint (change targeted-suites-admission, design D2). When the selector requires the complete run or fails, it SHALL run as a complete run. It SHALL NOT otherwise write or erase the complete or targeted fingerprint, nor skip a selected suite. Untested until implemented (suite `run_all`).
+
+#### Scenario: Green branch run
+- **WHEN** `--branch` runs on a clean work branch whose difference selects two suites, and both pass
+- **THEN** the branch fingerprint in the worktree's private Git folder holds the tip's tree and both suites, `run_all : empreinte de branche écrite (2 suite(s))` is printed after the total line, and the complete and targeted fingerprints are unchanged
+
+#### Scenario: Selector fails
+- **WHEN** the selector exits with a code other than 0 or 3 during a `--branch` run
+- **THEN** every suite runs as in a complete run, and on success the complete fingerprint holds the tip's tree
+
+#### Scenario: Red branch run
+- **WHEN** one selected suite fails
+- **THEN** the runner exits 1 and no branch fingerprint exists afterwards
+
+#### Scenario: Escalation
+- **WHEN** the branch changes the runner itself
+- **THEN** every suite runs and, on success, the complete fingerprint holds the tip's tree
+
+#### Scenario: A selected name launched nothing
+- **WHEN** the selector names a suite that the runner does not launch, so fewer suites ran than were selected
+- **THEN** no branch fingerprint is written (it records only suites actually run), and `run_all : empreinte de branche non écrite (suites lancées : <n>, suites sélectionnées : <m>)` is printed
+
+#### Scenario: The worktree changed during the run
+- **WHEN** the tip's tree differs at the end of the run, or the worktree is no longer clean
+- **THEN** no branch fingerprint is written, and `run_all : empreinte de branche non écrite (l'arbre du sommet a changé ou le worktree n'est plus propre)` is printed
+
+### Requirement: The branch option refuses what it cannot prove
+The system SHALL make `--branch` exit 2, running no suite and touching no fingerprint, on `main`, on a detached head, in a worktree that is not clean, or combined with suite names, `--staged`, `--portable` or `--mac` (design D2). It SHALL NOT record a branch fingerprint for a tree other than the tip's, and SHALL NOT bypass the guard of non-complete runs or the finish lock. During another process's finish, `--branch` SHALL follow the targeted freeze of change autonomous-trains-merge (design D18, through `freeze_scope()`), as the runner does: it exits 4 only when the lock's list holds the worktree or the lock holds no readable list (R-20261106-13 Q1).
+
+#### Scenario: Dirty worktree
+- **WHEN** `--branch` runs with a modified tracked file
+- **THEN** it exits 2 with `run_all : --branch exige une branche de travail et un worktree propre`, and no suite runs
+
+#### Scenario: During a finish
+- **WHEN** `--branch` runs in a worktree that the live finish lock of another process lists
+- **THEN** it exits 4 and no suite runs
+
+#### Scenario: During a finish in other worktrees
+- **WHEN** `--branch` runs in a clean worktree that the live finish lock of another process does not list
+- **THEN** it runs as without a lock
+
+#### Scenario: Lock without a readable list
+- **WHEN** `--branch` runs while a live finish lock of another process holds no readable list
+- **THEN** it exits 4 and no suite runs
+
+### Requirement: The selector reads a range
+The system SHALL give the selector the option `--range <base>...<tip>`, applying the rules of the index mode to the paths of that range and the tests of the given root, with the same output and codes (design D3). It SHALL NOT read the index in that mode, run a test, write a file, or select fewer suites than the index mode would for the same paths.
+
+#### Scenario: Same rules as the index
+- **WHEN** a range changes a tool that one suite names
+- **THEN** the selector prints that suite and the always-selected guards and exits 0
+
+#### Scenario: Guarded path in the range
+- **WHEN** a range changes a hook
+- **THEN** the selector exits 3 naming the hook
+
+### Requirement: A green Mac pass records the Mac fingerprint
+The system SHALL, when `bash tests/run_all.sh --mac` ends green on a clean worktree whose `HEAD` tree did not change, append that tree to `pmzilla-run-mac-ok` in the common Git folder, owner-only, having removed its line at start, and print `run_all : empreinte Mac écrite pour l'arbre <court>`; otherwise it SHALL print `run_all : empreinte Mac non écrite (<raison>)` (change ci-local-runner, design D7). It SHALL NOT write the complete, targeted or branch fingerprint, nor be read by pre-commit.
+
+#### Scenario: Green Mac pass
+- **WHEN** a `--mac` run ends green on a clean worktree
+- **THEN** the Mac record holds the tree of `HEAD` and no other fingerprint changed
+
+#### Scenario: Unclean worktree
+- **WHEN** the worktree holds an untracked non-ignored file
+- **THEN** the run prints `run_all : empreinte Mac non écrite (arbre non propre)` and writes nothing
+
+### Requirement: A free-space refusal of the CI script stops a session run
+The system SHALL treat code 8 of the CI script (free space below the minimum of the Colima machine) like codes 3, 5, 6 and 7 in a session run: exit 9 with the "container unavailable" phrase naming code 8 (change ci-local-image-prune, design D6). It SHALL NOT run the portable suites on the Mac instead, launch the Mac-bound suites of that run, write or erase a fingerprint, nor report code 8 as an unexpected code.
+
+#### Scenario: CI script out of space
+- **WHEN** in a session a targeted run selects a portable suite and the fake CI script exits 8
+- **THEN** the runner exits 9 with `run_all : conteneur indisponible (code 8) : aucune suite portable lancée ; rien n'est écrit`, and the portable suite did not run on the Mac
+
+### Requirement: In a session the bare complete run and the branch run are refused
+The system SHALL, in a session, refuse a run without suite name, `--staged`, `--portable` or `--mac`, any `--branch` run and, from T2, any `--portable` run, with exit 6 and the phrase of design D3, before the freeze check, journaling it. It SHALL NOT run a suite, the selector or a guard, take a lock, or touch a fingerprint or the durations file. Replaces their session guard; permanent.
+Source: tests/run_all/test_run_all.py (SessionPreuveParLeConteneur)
+
+#### Scenario: Bare complete run in a session
+- **WHEN** `bash tests/run_all.sh` runs with the session marker set, empty or not
+- **THEN** the whole output is `run_all : lancement complet refusé en session : la preuve passe par le conteneur (bash tools/ci_local.sh run <branche>, puis bash tests/run_all.sh --mac)`, the exit code is 6, the complete, targeted and branch fingerprints are unchanged, no durations line is written, and neither the morning guard nor the runner guard is called
+
+#### Scenario: Branch run in a session
+- **WHEN** `bash tests/run_all.sh --branch` runs in a session
+- **THEN** the whole output is `run_all : --branch refusé en session : la preuve passe par le conteneur (bash tools/ci_local.sh run <branche>, puis bash tests/run_all.sh --mac)`, the exit code is 6, the selector is not launched and no fingerprint changes
+
+#### Scenario: Refusal during a finish
+- **WHEN** a live finish lock is held and a session starts a bare complete run, then a `--branch` run, then a run filtered on one suite
+- **THEN** the first two exit 6 with their phrase and the filtered run exits 4
+
+#### Scenario: Refusals journaled
+- **WHEN** a session starts a bare complete run, then a `--branch` run
+- **THEN** the session journal gains two lines with verdict `refusé` and motives `conteneur-complet` then `conteneur-branche`, and holds no path
+
+#### Scenario: Outside a session
+- **WHEN** the session marker is absent and a complete run passes
+- **THEN** it runs every suite and its total line holds `tous réussis`, and no output holds `refusé en session`
+
+#### Scenario: Portable run in a session
+- **WHEN** `bash tests/run_all.sh --portable` runs in a session, with the session marker empty or not, with or without a live finish lock
+- **THEN** the whole output is `run_all : --portable refusé en session : la preuve passe par le conteneur (bash tools/ci_local.sh run <branche>, puis bash tests/run_all.sh --mac)`, the exit code is 6, no suite runs, no fingerprint changes, and the session journal gains one line with verdict `refusé` and motive `conteneur-portable`
+
+#### Scenario: Other runs in a session
+- **WHEN** a session starts a run filtered on one suite, a `--mac` run, or a `--staged` run whose selector selects a suite
+- **THEN** none of them exits 6 or prints `refusé en session`
+
+### Requirement: In a session the portable suites of a targeted or named run go to the container
+The system SHALL, in a session, split `--staged` and named runs by the Mac-bound list (design D4), sending the portable suites to `ci_local.sh run --index` for `--staged`, `run --travail` for a named run, the others running here; an escalated `--staged` runs the complete container phases and the whole Mac pass. It SHALL NOT run a portable suite on the Mac in a session. Replaces session Mac targeted runs; permanent while the CI is the runner.
+Source: untested until implemented (T2)
+
+#### Scenario: Split of a targeted run
+- **WHEN** in a session the selector selects one portable suite and one Mac-bound suite, and a fake CI script records its calls
+- **THEN** the output holds `run_all : suites portables envoyées au conteneur : 1 ; suites propres au Mac lancées ici : 1`, the fake CI script received `run --index` with the portable suite, and only the Mac-bound suite ran on the Mac
+
+#### Scenario: Named run in a session
+- **WHEN** in a session `bash tests/run_all.sh a m` names one portable suite `a` and one Mac-bound suite `m`, and a fake CI script records its calls
+- **THEN** the fake CI script received `run --travail a`, never `run --index`, only `m` ran on the Mac, and the targeted fingerprint is neither written nor erased
+
+#### Scenario: Escalated targeted run in a session
+- **WHEN** in a session the selector requires the complete run
+- **THEN** the fake CI script receives the complete mode, every Mac-bound suite runs here, and the complete-run fingerprint is neither written nor erased
+
+#### Scenario: Outside a session
+- **WHEN** the session marker is absent and a targeted run selects a portable suite
+- **THEN** the suite runs on the Mac as before and the CI script is not called
+
+### Requirement: In a session an escalated targeted run keeps the morning guard
+The system SHALL, in a session, refuse with exit 6 and motive `matin` an escalated `--staged` when `tools/morning_state.sh runner` answers a code other than 0 or is missing, after the root and data-folder refusals (design D3). It SHALL NOT then call the container or erase a fingerprint, nor read the module for a named run, a targeted `--staged` or `--mac`. Kept by R-20261104-17; falls with the escalation.
+Source: tests/run_all/test_run_all.py (SessionClaudeCode)
+
+#### Scenario: Watch or backup of the day running
+- **WHEN** in a session a `--staged` run escalates (selector absent, failing or requiring the complete run) and the fake morning module exits 1
+- **THEN** the runner exits 6 with `veille ou sauvegarde du jour en cours`, the fake CI script is not called, no suite runs, the targeted and complete fingerprints are unchanged, and the session journal gains a line with verdict `refusé` and motive `matin`
+
+#### Scenario: Unreadable or missing morning module
+- **WHEN** the fake morning module exits with a code other than 0 and 1, or is absent next to the runner, during an escalated `--staged` in a session
+- **THEN** the runner exits 6, the refusal stays closed, and the fake CI script is not called
+
+#### Scenario: Environment of the morning module
+- **WHEN** the fake morning module records its arguments and environment during an escalated `--staged` in a session
+- **THEN** it received `runner` without option, the account's home and data folder and the fixed `PATH` `/usr/bin:/bin:/usr/sbin:/sbin`, and no variable of the caller
+
+#### Scenario: Runs that do not read the morning module
+- **WHEN** in a session a named run, a targeted `--staged` and a `--mac` run start
+- **THEN** the fake morning module is not called
+
+### Requirement: An unavailable container stops a session run without a Mac fallback
+The system SHALL exit 9 with `run_all : conteneur indisponible (code <c>) : aucune suite portable lancée ; rien n'est écrit` when `ci_local.sh` answers 3, 5, 6 or 7, or is not found next to the runner (code 127), to a session run of design D4. It SHALL NOT run the portable suites on the Mac instead, launch the Mac-bound suites of that run, nor write or erase a fingerprint. New exit code; replaces nothing; permanent while the CI is the runner.
+Source: untested until implemented (T2)
+
+#### Scenario: Stale image
+- **WHEN** in a session a targeted run selects a portable suite and the fake CI script exits 5
+- **THEN** the runner exits 9 with `run_all : conteneur indisponible (code 5) : aucune suite portable lancée ; rien n'est écrit`, the portable suite did not run on the Mac, and the targeted fingerprint is absent
+
+#### Scenario: Nothing launched on exit 9
+- **WHEN** in a session a targeted run selects one portable suite and one Mac-bound suite, and the fake CI script exits 3
+- **THEN** the runner exits 9, neither suite ran on the Mac, no fingerprint is written or erased, and no durations line is written
+
+#### Scenario: CI script not found
+- **WHEN** in a session a targeted run selects a portable suite and `tools/ci_local.sh` is absent next to the runner
+- **THEN** the runner exits 9 with `run_all : conteneur indisponible (code 127) : aucune suite portable lancée ; rien n'est écrit`, and the session journal gains a line with verdict `refusé` and motive `conteneur-indisponible`
+
+#### Scenario: Container answering
+- **WHEN** the fake CI script exits 0 or 1
+- **THEN** the runner never exits 9
+
+### Requirement: An unexpected container code stops a session run
+The system SHALL exit 1 with the "code inattendu" phrase of design D4 when `ci_local.sh` answers a session run with a code other than 0, 1, 3, 5, 6, 7 and 127 (R-20261104-17). It SHALL NOT then run a Mac-bound suite, write or erase a fingerprint, or write a durations line. Replaces the Mac part run after such a code; permanent while the CI is the runner.
+Source: tests/run_all/test_session_conteneur.py
+
+#### Scenario: Usage, refused input or interruption
+- **WHEN** in a session a named run and a targeted `--staged`, each with one portable and one Mac-bound suite, and an escalated `--staged` start while the fake CI script exits 2, 4 or 130
+- **THEN** each run exits 1 with `run_all : le script du conteneur a rendu un code inattendu (<c>) : aucune suite lancée ; rien n'est écrit`, no Mac-bound suite runs, no durations line is written, the fingerprints are unchanged, and the session journal gains a line with verdict `refusé` and motive `conteneur-code-inattendu`

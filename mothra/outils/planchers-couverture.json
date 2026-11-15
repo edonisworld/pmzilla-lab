@@ -1,0 +1,22 @@
+{
+  "_regle": "Coverage floors (task 17.2, decision F10), reviewed file, never lowered, only raised. Replaces: nothing (decision F10). Duration: permanent, a safety net on the masking and verdict code. A floor is the coverage measured at the first run, rounded down. While \"provisoire\" is true the floors below are 0 and not applied: the session measures, writes the rounded-down values and sets \"provisoire\" to false; every provisional package carries \"mesure_prevue\" and \"retrait\" (a test fails otherwise); never a provisional floor without a deadline (R-20261102-74). test:coverage also runs the tests without database at concurrency 1, slower than test.",
+  "paquets": {
+    "contract": {
+      "include": ["src/*.ts", "src/cycle-preparation/*.ts"],
+      "tests": ["test/*.test.ts"],
+      "lignes": 98,
+      "branches": 94,
+      "provisoire": false
+    },
+    "server": {
+      "include": ["src/service.ts", "src/routes/*.ts", "src/db/*.ts", "src/config/*.ts"],
+      "tests": ["test/*.test.ts", "test/db/*.test.ts"],
+      "concurrence": 1,
+      "lignes": 0,
+      "branches": 0,
+      "provisoire": true,
+      "mesure_prevue": "npm run test:coverage dans la phase base du passage en conteneur (base jetable du passage, aucune base sur le Mac) ; la première mesure fixe le plancher (valeur mesurée arrondie vers le bas) et retire provisoire (R-20261102-74)",
+      "retrait": "cette mesure, au plus tard à la revue de tranche du 2026-11-19 (22.1) ; sinon la revue fixe une nouvelle échéance : jamais de provisoire sans échéance (R-20261102-74)"
+    }
+  }
+}

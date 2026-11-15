@@ -93,3 +93,43 @@ The system SHALL print in French by default and in English with `--language en`,
 #### Scenario: Distinctive strings absent
 - **WHEN** the fixtures hold a distinctive string in every key, team, title, description and acceptance criterion
 - **THEN** none of them appears in the output of `collect`
+
+### Requirement: Read-only client in the collection
+The `collect` subcommand of the story quality tool SHALL reach Jira only through the read-only client of the history tool. A refused request SHALL stop the run with exit code 5, as in the history tool and the export, instead of the Jira error exit, print the fixed phrase in full on the error output, and write nothing to the `quality` schema. Exit code 5 SHALL NOT be used for another cause.
+
+Source: tests/story_quality (test file located at step 0, to be written). Untested until implemented.
+
+#### Scenario: Refusal during the collection
+- **WHEN** the search function is replaced by one that sends a write request, and `collect` runs against the fake server
+- **THEN** the exit code is 5, the error output holds the fixed phrase, nothing is stored, and the server received no write request
+
+### Requirement: Real probe of the collection
+The system SHALL keep tests that run `collect`, with the acceptance-criteria and team fields configured, and `collect --query <name>` against a local fake server logging every request. Every logged request SHALL be an allowlisted pair; the collection SHALL send no request other than the field list read and the ticket search.
+
+Source: tests/story_quality (test file located at step 0, to be written). Untested until implemented.
+
+#### Scenario: Probe of the collection
+- **WHEN** both runs go against the fake server
+- **THEN** every logged request is the field list read or the ticket search, and at least one request was received
+
+### Requirement: Scope guard in the collection
+The `collect` subcommand SHALL send only ticket searches restricted to the declared projects (design D8) and SHALL store only the tickets kept by the client's filter (design D9). It SHALL NOT store the text, the key or any field of a removed ticket, nor any field of a linked ticket, a parent or a sub-task other than its identifier and type.
+
+Source: tests/story_quality (test file located at step 0, to be written). Untested until implemented.
+
+#### Scenario: Planted ticket of another project
+- **WHEN** the fake server answers a restricted search with stories of a declared fictitious project and one story of an undeclared one
+- **THEN** only the stories of the declared project are stored, the count line shows 1, and neither the key nor the text of the removed story is stored or printed
+
+### Requirement: Scope refusal exits with code 6 in the collection
+In `collect`, a scope refusal SHALL stop the run with exit code 6, as in the history tool and the export, instead of the Jira error exit, print the fixed scope phrase in full on the error output, and write nothing to the `quality` schema. Exit code 6 SHALL NOT be used for another cause.
+
+Source: tests/story_quality (test file located at step 0, to be written). Untested until implemented.
+
+#### Scenario: Unrestricted collection query
+- **WHEN** the named query of the test configuration does not restrict the result to the declared fictitious projects, and `collect` runs
+- **THEN** the exit code is 6, the error output holds the scope phrase, nothing is stored and the server received no search
+
+#### Scenario: Missing forbidden list
+- **WHEN** `collect` runs with a test configuration whose `forbidden_projects` is an empty list
+- **THEN** the exit code is 6, the error output holds the missing-setting phrase, nothing is stored and the server's raw log is empty

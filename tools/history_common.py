@@ -17,22 +17,33 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 FUSEAU_PAR_DEFAUT = "Europe/Paris"
 REGLAGE_FUSEAU = "export_timezone"          # nom public du réglage (clé interne : export_fuseau)
 
+# États neutres génériques (R-20261112-17) : les états réels du workflow de l'organisation viennent de `segments` et de
+# `segments_hors_calcul` de flux.yaml, qui remplacent ces défauts (table_segments). Aucun nom réel dans l'arbre public.
 SEGMENTS_PAR_DEFAUT = {
-    "definition": ["Definition", "Definition - Ongoing", "Definition - On Hold", "Ready for Review (Definition)",
-                   "Analysis", "Analysis - ongoing", "Analysis - on hold", "Ready for Enhancement Check"],
-    "pret": ["Ready for Implementation"],
-    "implementation": ["Implementation", "Implementation - Ongoing", "Implementation - On Hold", "Analysis (Impl)",
-                       "Code Review (Impl)", "R&D Test (Impl)"],
-    "revue_verification": ["Ready for Review (Implementation)", "Review - Ongoing (Impl.)",
-                           "Review - On Hold (Impl.)", "Ready for Verification", "Verification",
-                           "Verification - Ongoing", "Verification - On Hold"],
-    "acceptation": ["Ready for Acceptance", "Documentation (Impl)"],
+    "definition": ["Specification", "Specification - Active", "Specification - Blocked", "Awaiting Review (Specification)",
+                   "Investigation", "Investigation - active", "Investigation - blocked", "Awaiting Sizing Check"],
+    "pret": ["Awaiting Development"],
+    "implementation": ["Development", "Development - Active", "Development - Blocked", "Investigation (Dev)",
+                       "Peer Review (Dev)", "Lab Test (Dev)"],
+    "revue_verification": ["Awaiting Review (Development)", "Review - Active (Dev.)",
+                           "Review - Blocked (Dev.)", "Awaiting Testing", "Testing",
+                           "Testing - Active", "Testing - Blocked"],
+    "acceptation": ["Awaiting Acceptance", "Handover Notes (Dev)"],
 }
 # états connus de début et de fin du workflow : pas de temps calculé, mais jamais signalés comme oubliés
 SEGMENTS_HORS_CALCUL_PAR_DEFAUT = {
     "a_faire": ["Open", "Draft"],
-    "termine": ["Closed", "Resolved", "Accepted & Released", "Rejected"],
+    "termine": ["Closed", "Resolved", "Shipped", "Rejected"],
 }
+
+# Point d'engagement du lead time de livraison (nom interne du segment) : défaut unique du rapport de flux et du chargeur des
+# définitions de flux (change flow-definitions-loader, conception D2). Permanent tant qu'un rapport a un défaut de code.
+POINT_ENGAGEMENT_PAR_DEFAUT = "pret"
+
+
+def point_engagement(settings: dict) -> str:
+    """Point d'engagement des réglages (clé interne `point_engagement`), ou le défaut commun ; lecteur partagé."""
+    return settings.get("point_engagement") or POINT_ENGAGEMENT_PAR_DEFAUT
 
 
 class ErreurFuseau(ValueError):
@@ -111,6 +122,19 @@ def trier(transitions: list) -> list[list]:
     """Transitions [date, de, vers] normalisées et triées par instant (tri stable)."""
     propres = [[normaliser_date(t[0]), t[1], t[2]] for t in transitions or []]
     return sorted(propres, key=lambda t: instant(t[0]))
+
+
+def meme_statut(depart, arrivee) -> bool:
+    """Vrai quand le statut de départ et le statut d'arrivée ont le même nom (espaces et casse ignorés) ; un statut vide n'est jamais
+    compté. Une telle transition n'est ni un passage ni un changement d'état (idée 492) : les comptes de transitions et de passages
+    l'écartent (les segments et les temps par segment n'en dépendent pas)."""
+    nom = (depart or "").strip()
+    return bool(nom) and nom.casefold() == (arrivee or "").strip().casefold()
+
+
+def sans_meme_statut(transitions: list) -> list:
+    """Les transitions [date, de, vers, ...] dont le départ et l'arrivée n'ont pas le même nom (voir `meme_statut`)."""
+    return [t for t in transitions if not meme_statut(t[1], t[2])]
 
 
 def trier_evenements(evenements: list) -> list[list]:

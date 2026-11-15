@@ -211,6 +211,45 @@ class EquipesSansIdentifiant(Socle):
         self.assertIn("équipes du référentiel sans identifiant : 0", sortie)
         self.assertNotIn("équipes sans identifiant", sortie)
 
+    def test_equipe_marquee_sans_equipe_jira_comptee_a_part(self):
+        marquee = REF.replace("  - name: Equipe D\n    headcount: 4\n",
+                              f"  - name: Equipe D\n    headcount: 4\n    jira_team: none\n    jira_team_reason: effectifs\n"
+                              f"  - name: Equipe {SENTINELLE}\n    headcount: 1\n").replace("Equipe C, Equipe D]", "Equipe C, Equipe D, Equipe " + SENTINELLE + "]")
+        self.ecrire("organisation.yaml", marquee)
+        code, sortie = self.lancer("check-teams")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("équipes du référentiel sans identifiant : 1", sortie)          # le vrai manque seul
+        self.assertIn("équipes sans identifiant : teams[4] (L", sortie)
+        self.assertNotIn("teams[3]", sortie)
+        self.assertIn("sans équipe Jira par construction : 1", sortie)
+        self.assertNotIn("effectifs", sortie)                                         # ni la raison ni un nom
+        self.assertNotIn(SENTINELLE, sortie)
+        code, sortie = self.lancer("check-teams", "--language", "en")
+        self.assertIn("referential teams without identifier: 1", sortie)
+        self.assertIn("without a Jira team by construction: 1", sortie)
+
+    def test_aucune_marquee_compte_zero(self):
+        self.ecrire("organisation.yaml", REF)
+        _, sortie = self.lancer("check-teams")
+        self.assertIn("sans équipe Jira par construction : 0", sortie)
+        self.assertIn("équipes du référentiel sans identifiant : 1", sortie)
+
+    def test_toutes_marquees_le_manque_tombe_a_zero(self):
+        self.ecrire("organisation.yaml", REF.replace("  - name: Equipe D\n    headcount: 4\n",
+                                                    "  - name: Equipe D\n    headcount: 4\n    jira_team: none\n    jira_team_reason: site\n"))
+        code, sortie = self.lancer("check-teams")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("équipes du référentiel sans identifiant : 0", sortie)
+        self.assertNotIn("équipes sans identifiant :", sortie)
+        self.assertIn("sans équipe Jira par construction : 1", sortie)
+
+    def test_marqueur_et_identifiants_refuses_par_check_teams_code_1(self):
+        self.ecrire("organisation.yaml", REF.replace("    jira_team_ids: ['2']\n", "    jira_team_ids: ['2']\n    jira_team: none\n    jira_team_reason: site\n"))
+        code, sortie = self.lancer("check-teams")
+        self.assertEqual(code, 1, sortie)
+        self.assertIn("incohérents", sortie)
+        self.assertNotIn("Equipe B", sortie)
+
     def test_controle_fait_aussi_sans_liste_assets(self):
         self.ecrire("organisation.yaml", REF)
         _, sortie = self.lancer("check-teams")

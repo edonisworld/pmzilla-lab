@@ -2,8 +2,8 @@
 
 1. Fichier temporaire du catalogue des équipes (`equipes-jira.tmp`, écrit par migrate-teams avant son renommage) : 3 règles Read et
    34 lecteurs du terminal, mêmes formes que le catalogue (`equipes-jira.yaml`). Le motif `*equipes-jira.yaml*` ne le couvre pas.
-2. Dossier d'archive de l'ancienne table des équipes : 42 règles (3 Read, 34 lecteurs, 5 commandes de listage), transférées de
-   ~/.claude/settings.json vers .claude/settings.json.
+2. Dossier d'archive de l'ancienne table des équipes : 40 règles (1 Read, 34 lecteurs, 5 listages), transférées de
+   ~/.claude/settings.json vers .claude/settings.json ; les deux Read de l'ancien emplacement sont retirées (désherbage du 2026-10-28, D39).
 3. Six règles `Write(...)` et `NotebookEdit(...)` sur le dossier d'exécution, ignorées par Claude Code, à retirer : la protection
    tient par les trois règles `Edit(...)` du même chemin.
 
@@ -37,7 +37,7 @@ READ_TMP = [f"Read(./Flux-Lab/{TMP})", f"Read(//**/Flux-Lab/{TMP})", f"Read(~/**
 VOLET1 = READ_TMP + [f"Bash({r} *{TMP}*)" for r in LECTEURS]
 
 ARCHIVE = "archives-equipes"
-READ_ARCHIVE = [f"Read(~/PMZilla-Lab/{ARCHIVE}/**)", f"Read(//**/PMZilla-Lab/{ARCHIVE}/**)", f"Read(**/{ARCHIVE}/**)"]
+READ_ARCHIVE = [f"Read(**/{ARCHIVE}/**)"]
 VOLET2 = (READ_ARCHIVE + [f"Bash({r} *{ARCHIVE}*)" for r in LECTEURS] + [f"Bash({r} *{ARCHIVE}*)" for r in LISTAGES])
 
 VOLET3_A_RETIRER = [f"{outil}({chemin})" for outil in ("Write", "NotebookEdit")
@@ -102,8 +102,8 @@ class ReglesProposees(Verifications, unittest.TestCase):
         return any(m.fullmatch(commande) for m in self.motifs)
 
     def test_comptes(self):
-        self.assertEqual((len(VOLET1), len(VOLET2)), (37, 42))
-        self.assertEqual((len(LECTEURS), len(LISTAGES), len(READ_TMP), len(READ_ARCHIVE)), (34, 5, 3, 3))
+        self.assertEqual((len(VOLET1), len(VOLET2)), (37, 40))
+        self.assertEqual((len(LECTEURS), len(LISTAGES), len(READ_TMP), len(READ_ARCHIVE)), (34, 5, 3, 1))
         self.assertEqual(len(VOLET1 + VOLET2), len(set(VOLET1 + VOLET2)))
         self.assertEqual(len(VOLET3_A_RETIRER), 6)
 

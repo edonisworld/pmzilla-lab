@@ -58,7 +58,16 @@ The system SHALL declare dependencies by package name without pinned versions in
 Source: docs/pmzilla/installation.md (section 16, "Script dependencies"); tests/script_dependencies/test_script_dependencies.py (SansVersionEpinglee)
 
 ### Requirement: One lock file per entry script with dependencies
-The system SHALL keep, next to each entry script of tools/ that declares dependencies, the lock file written by `uv lock --script`, tracked in the repository and read by `uv run` for daily use and in the edition (decision of 2026-10-11, job R-36, build-edition D1; it replaces the unpinned daily use of R-10). The versions SHALL move only through a deliberate refresh (`uv lock --script --upgrade`, then the full test runner). The check SHALL fail when an entry script with dependencies has no lock file, when a lock file no longer lists the packages of its script's header, or when a lock file has no entry script with dependencies.
+The system SHALL keep, next to each entry script of tools/ that declares dependencies, the lock file written by `uv lock --script`, tracked in the repository and read by `uv run` for daily use and in the edition (decision of 2026-10-11, job R-36, build-edition D1; it replaces the unpinned daily use of R-10). The versions SHALL move only through a deliberate refresh (`uv lock --script --upgrade`, then the full test runner).
+
+#### Scenario: Deliberate refresh
+- WHEN the locked versions change
+- THEN they change through `uv lock --script --upgrade` followed by the full test runner
+
+Source: docs/pmzilla/installation.md (section 16, "Script dependencies"); tests/script_dependencies/test_script_dependencies.py (VersionsFigees)
+
+### Requirement: The lock check fails on a missing, stale or orphan lock file
+The check SHALL fail when an entry script with dependencies has no lock file, when a lock file no longer lists the packages of its script's header, or when a lock file has no entry script with dependencies.
 
 #### Scenario: Missing lock
 - WHEN an entry script declares dependencies and has no lock file

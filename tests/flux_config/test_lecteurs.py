@@ -11,7 +11,6 @@ from unittest import mock
 RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE / "tools"))
 import dependencies_jira  # noqa: E402
-import flow_board  # noqa: E402
 import flux_jira  # noqa: E402
 import history_jira  # noqa: E402
 import watch_lab  # noqa: E402
@@ -35,8 +34,24 @@ class Lecteurs(unittest.TestCase):
             "flux_jira": (lambda: flux_jira.config(), mock.patch.object(flux_jira, "CONFIG_FILE", self.fichier)),
             "dependencies_jira": (lambda: dependencies_jira.config(), mock.patch.object(dependencies_jira, "CONFIG_FILE", self.fichier)),
             "history_jira": (lambda: history_jira.reglages(), mock.patch.object(history_jira, "CONFIG_FILE", self.fichier)),
-            "flow_board": (lambda: flow_board.reglages(), mock.patch.object(flow_board, "CONFIG", self.fichier)),
         }
+
+    def test_trois_lecteurs(self):
+        """R-146 : le lecteur du tableau des flux est retiré avec lui ; restent le rapport de flux, la carte des dépendances et la
+        collecte de l'historique."""
+        self.assertEqual(set(self.lecteurs()), {"flux_jira", "dependencies_jira", "history_jira"})
+
+    def test_bloc_des_tableaux_retire_refuse_par_chaque_lecteur(self):
+        """R-146 (D5) : `boards` et `tableaux` sont refusés par les trois lecteurs, avec la ligne et la clé exacte, sans la valeur."""
+        for cle in ("boards", "tableaux"):
+            self.ecrire(f"todo_states: a\n{cle}:\n  series:\n    - nom: ValeurSecrete\n")
+            for nom, (lire, patch) in self.lecteurs().items():
+                with self.subTest(nom=nom, cle=cle), patch, self.assertRaises(ErreurConfig) as c:
+                    lire()
+                m = str(c.exception)
+                self.assertIn(f"L2 : réglage retiré : {cle}, le tableau visuel des flux n'existe plus ; supprimer le bloc", m)
+                self.assertIn(f"retired setting: {cle}, the visual flow dashboard no longer exists; delete the block", m)
+                self.assertNotIn("ValeurSecrete", m)
 
     def test_cle_ecrite_deux_fois_refusee_avec_les_deux_lignes(self):
         self.ecrire(DOUBLON)

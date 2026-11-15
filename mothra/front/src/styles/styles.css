@@ -1,0 +1,1310 @@
+/* Component styles: every visual value comes from tokens.css (no literal colour, size or spacing here). */
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+}
+
+.logo {
+  height: var(--logo-height);
+}
+
+.langue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.page h2,
+.page > h1 {
+  font-size: var(--font-size-section);
+}
+
+.page-erreur {
+  color: var(--color-state-error);
+}
+
+.tableau-seuil {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.tableau-conteneur {
+  overflow-x: auto;
+}
+
+.cellule {
+  vertical-align: top;
+}
+
+.tableau {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+}
+
+.tableau th,
+.tableau td {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  text-align: left;
+}
+
+.tableau th {
+  background: var(--color-bg);
+}
+
+.cellule-valeur {
+  text-align: right;
+}
+
+.cellule-masquee {
+  text-align: right;
+  background: var(--cell-masked-background);
+  color: var(--cell-masked-color);
+  font-style: var(--cell-masked-font-style);
+  border-style: var(--cell-masked-border-style);
+  border-color: var(--cell-masked-border-color);
+}
+
+.cellule-insuffisante {
+  text-align: right;
+  border-style: var(--cell-insufficient-border-style);
+  border-color: var(--cell-insufficient-border-color);
+}
+
+/* The icon of the insufficient sample in a cell: an outlined shape apart from the label, the same outline as the sample's other marks. */
+.icone-etat {
+  display: inline-block;
+  margin-inline-end: var(--space-1);
+  padding: 0 var(--space-1);
+  border-width: var(--border-width);
+  border-style: var(--cell-insufficient-border-style);
+  border-color: var(--cell-insufficient-border-color);
+}
+
+.cellule-vide {
+  background: var(--color-surface);
+}
+
+.tableau-de-bord {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.lien {
+  color: var(--color-accent-text);
+  text-decoration: underline;
+}
+
+/* The sheets in progress (audit #629, A-04): one link per line, spaced by the scale of the screen. */
+.liste-fiches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.donnees-simulees,
+.tableau-hypothese,
+.tableau-date {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+/* The missing-date message is an error: the error colour wins over the muted colour above (two classes, more specific). */
+.tableau-date.page-erreur {
+  color: var(--color-state-error);
+}
+
+.portee {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+}
+
+.tableau-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.graphique {
+  width: 100%;
+  aspect-ratio: 2 / 1;
+}
+
+/* The filter bar and the panels of the second screen (D35): layout only, one look for every team (no colour per team). */
+.barre-filtres fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.panneaux {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.panneau {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.tableau-total th,
+.tableau-total td {
+  font-weight: bold;
+}
+
+.bouton {
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-accent-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  cursor: pointer;
+}
+
+/* The native forms (audit #629, A-10 point 12): one look for the fields, the fieldset, its legend and the radio buttons, from the tokens
+   only (text on surface is a declared pair). The rules name no filter bar: its own rules may carry neither colour nor background. */
+.page select,
+.page input[type="text"],
+.page textarea,
+.nav-bas select,
+.nav-bas input[type="text"] {
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+}
+
+.page fieldset {
+  margin: 0;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.page legend {
+  padding: 0 var(--space-1);
+  font-weight: bold;
+}
+
+.page input[type="radio"] {
+  margin: 0;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.fiche-brouillon {
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* The argument sheet (task 19.3). Colour never stands alone: each verdict has its label, its icon and its outline. A border carries
+   the verdict colour; the text stays in the text token. */
+.fiche {
+  display: block;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.fiche-entete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.fiche-etat {
+  font-weight: bold;
+}
+
+.fiche-figee-note,
+.fiche-note {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.fiche-graphique {
+  min-height: var(--fiche-chart-min-height);
+  padding: var(--space-4);
+  border: var(--border-width) dashed var(--color-text-muted);
+  color: var(--color-text-muted);
+}
+
+.fiche-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-text-muted);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: bold;
+}
+
+/* One look per state (D32): the outline is the one of the token source (states); solid is the default of the rule above. */
+.fiche-verdict[data-contour="dotted"] {
+  border-style: var(--cell-insufficient-border-style);
+  background: transparent;
+}
+
+.fiche-verdict-insufficient {
+  border-color: var(--cell-insufficient-border-color);
+}
+
+.fiche-verdict-confirmed {
+  border-color: var(--color-verdict-confirmed);
+}
+
+.fiche-verdict-refuted {
+  border-color: var(--color-verdict-refuted);
+}
+
+.fiche-verdict-not-settled {
+  border-color: var(--color-verdict-not-settled);
+}
+
+.fiche-icone[data-icone="check"]::before {
+  content: "\2713";
+}
+
+.fiche-icone[data-icone="cross"]::before {
+  content: "\2715";
+}
+
+.fiche-icone[data-icone="tilde"]::before {
+  content: "\223c";
+}
+
+.fiche-icone[data-icone="ellipsis"]::before {
+  content: "\2026";
+}
+
+.fiche-signal {
+  padding: var(--space-2) var(--space-3);
+  border: var(--fiche-signal-border-width) double var(--color-text-muted);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.fiche-explications ul {
+  list-style: none;
+  padding: 0;
+}
+
+.fiche-explication {
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.fiche-explication-ecartee {
+  border-style: solid;
+}
+
+.fiche-explication-non-ecartee {
+  border-style: double;
+}
+
+.fiche-explication-non-mesurable {
+  border-style: dotted;
+}
+
+.fiche-etat-explication {
+  margin-inline-start: var(--space-2);
+  font-style: italic;
+}
+
+.fiche-motif,
+.fiche-part {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-small);
+}
+
+.fiche-part-masquee {
+  padding: 0 var(--space-1);
+  border-width: var(--border-width);
+  background: var(--cell-masked-background);
+  color: var(--cell-masked-color);
+  font-style: var(--cell-masked-font-style);
+  border-style: var(--cell-masked-border-style);
+  border-color: var(--cell-masked-border-color);
+}
+
+.fiche-part-insuffisante {
+  padding: 0 var(--space-1);
+  border-width: var(--border-width);
+  border-style: var(--cell-insufficient-border-style);
+  border-color: var(--cell-insufficient-border-color);
+}
+
+.fiche-bouton {
+  margin: var(--space-3) var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-text);
+  background: var(--color-accent-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-base);
+}
+
+.fiche-methode {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.fiche-ligne {
+  margin-bottom: var(--space-3);
+}
+
+.fiche-ligne dt {
+  font-weight: bold;
+}
+
+.fiche-ligne dd {
+  margin: var(--space-1) 0 0;
+}
+
+.fiche-seuil-modifie {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-small);
+}
+
+.fiche-publiee-le {
+  font-size: var(--font-size-small);
+}
+
+.fiche-raisons ul,
+.fiche-ecartes {
+  list-style: none;
+  padding: 0;
+}
+
+.fiche-refus {
+  margin: var(--space-2) 0 0;
+  color: var(--color-state-error);
+  font-weight: bold;
+}
+
+.fiche-champs,
+.fiche-completion {
+  margin: var(--space-3) 0 0;
+}
+
+.fiche-champ {
+  display: block;
+  margin: var(--space-2) 0 0;
+}
+
+.fiche-champ label,
+.fiche-champ textarea,
+.fiche-champ select {
+  display: block;
+  font-family: inherit;
+}
+
+.fiche-champ textarea {
+  width: 100%;
+}
+
+.fiche-champ-langue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-small);
+}
+
+.fiche-mentions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fiche-mention {
+  display: inline-block;
+  margin: 0 var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+}
+
+.cellule .fiche-mention {
+  display: block;
+}
+
+/* The title of a page and the title of the dashboard page share the heading face (design review pass 1, point 14). */
+h1,
+.page > h2 {
+  font-family: var(--font-family-heading);
+}
+
+/* ---- The demo dressing (mothra-demo-habillage, lot 3a): shell, side navigation, banner, badge, cards, templates. Role-named tokens only;
+   every colour pair set by one rule is declared in tokens.json. A size that has no token is a multiple of a spacing token. ---- */
+
+.coquille {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: var(--shell-min-height);
+}
+
+.coquille-colonne {
+  flex: 999 1 60%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.coquille-principal {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--content-max-width);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.nav-laterale {
+  flex: 1 1 20%;
+  min-width: calc(var(--space-3) * 12);
+  max-width: calc(var(--space-3) * 15);
+  box-sizing: border-box;
+  padding: var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-nav-bg);
+  color: var(--color-nav-text);
+}
+
+.nav-marque {
+  padding: 0 var(--space-2);
+}
+
+.nav-logo {
+  display: inline-block;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.nav-logo .logo {
+  display: block;
+}
+
+.nav-liste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.nav-titre {
+  margin: var(--space-3) var(--space-2) var(--space-1);
+  font-size: var(--font-size-small);
+  text-transform: uppercase;
+  color: var(--color-nav-heading);
+}
+
+.nav-entree {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  color: var(--color-nav-text-muted);
+  text-decoration: none;
+}
+
+.nav-entree-courante {
+  background: var(--color-nav-current-bg);
+  color: var(--color-nav-current-text);
+  font-weight: 600;
+}
+
+.nav-bas {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--font-size-small);
+}
+
+.nav-bas .langue,
+.nav-bas .tableau-date {
+  color: var(--color-nav-text-muted);
+}
+
+.nav-bas input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.nav-bas .bouton {
+  background: transparent;
+  color: var(--color-nav-text);
+  border-color: var(--color-nav-line);
+}
+
+.banniere {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-small);
+  background: var(--color-banner-bg);
+  color: var(--color-banner-text);
+  border-color: var(--color-banner-line);
+  border-style: none none solid none;
+  border-width: 0 0 var(--border-width) 0;
+}
+
+.banniere-ligne {
+  display: block;
+}
+
+.gabarit-fiche,
+.gabarit-indicateurs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fiche-tete,
+.indicateurs-tete {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.surtitre {
+  margin: 0;
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.enonce {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-statement);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.indicateurs-introduction {
+  margin: 0;
+  max-width: calc(var(--space-4) * 24);
+}
+
+.fiche-ligne-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fiche-contexte {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+/* The cards: surface and a line that meets 3:1; the state changes the outline and the fill, never the colour alone. */
+.carte,
+.carte-conviction {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--space-3);
+  border-style: solid;
+  border-width: var(--border-width);
+  border-color: var(--color-card-line);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.carte-preuve[data-etat="insufficient_sample"] {
+  background: transparent;
+  border-style: dotted;
+  border-width: calc(var(--border-width) * 2);
+  border-color: var(--color-state-insufficient-border);
+}
+
+.carte-preuve[data-etat="masked"] {
+  background: var(--color-state-masked-bg);
+  color: var(--color-state-masked);
+  border-style: dashed;
+  border-width: calc(var(--border-width) * 2);
+  border-color: var(--color-state-masked-border);
+}
+
+.encarts,
+.grille-cartes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-4) * 12), 1fr));
+  gap: var(--space-3);
+}
+
+.carte-conviction {
+  text-decoration: none;
+}
+
+/* The state of the card link: the border takes the accent text colour (the pair of the link on a card is declared); the focus ring is the
+   global one. */
+.carte-conviction:hover,
+.carte-conviction:focus-visible {
+  border-color: var(--color-accent-text);
+}
+
+.carte-lien {
+  color: var(--color-accent-text);
+  text-decoration: underline;
+}
+
+.carte-entete {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.carte-theme {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.carte-enonce {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.carte-phrase {
+  margin: 0;
+}
+
+.etat-vide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.etat-vide p {
+  margin: 0;
+}
+
+/* The disabled choice with its reason (D18): the muted text colour, the reason under the label and aligned with it. */
+.choix-desactive {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+}
+
+.choix-raison {
+  margin: 0 0 0 var(--space-4);
+  font-size: var(--font-size-small);
+}
+
+/* The verdict badge: one shape, a label, an icon and an outline per state. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--space-4);
+  border-style: solid;
+  border-width: var(--border-width);
+  border-color: transparent;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.badge-discret {
+  font-size: var(--font-size-small);
+}
+
+.badge-confirmee {
+  background: var(--color-verdict-confirmed-tint);
+  color: var(--color-verdict-confirmed);
+}
+
+.badge-refutee {
+  background: var(--color-verdict-refuted-tint);
+  color: var(--color-verdict-refuted);
+}
+
+.badge-non-tranchee {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-verdict-not-settled);
+}
+
+.badge-insuffisante {
+  color: var(--color-state-insufficient);
+  border-style: dotted;
+  border-color: var(--color-state-insufficient-border);
+}
+
+.badge-masquee {
+  background: var(--color-state-masked-bg);
+  color: var(--color-state-masked);
+  border-style: dashed;
+  border-color: var(--color-state-masked-border);
+}
+
+.pied-de-fiche {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.pied-de-fiche p {
+  margin: 0;
+}
+
+/* The sheet of a conviction (lot 3b): status, evidence figures, ratios and thresholds as text, insets, competing explanations. Role-named
+   tokens only; no rule sets a foreground and a background that are not a declared pair. */
+.statut-fiche {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-small);
+}
+
+/* The published sheet: one pill with a lock (the text on the tint of the not settled verdict: a declared pair). */
+.statut-publiee {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--space-3);
+  background: var(--color-verdict-not-settled-tint);
+  color: var(--color-text);
+}
+
+/* The lock is an inline vector icon, monochrome: it takes the colour of the text of its pill. */
+.fiche-icone-vecteur {
+  width: var(--font-size-base);
+  height: var(--font-size-base);
+  flex: none;
+  fill: currentColor;
+}
+
+.verdict-calcule {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.explications-intro {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.statut-etat {
+  font-weight: 600;
+}
+
+.statut-detail {
+  color: var(--color-text-muted);
+}
+
+.statut-fige {
+  font-style: italic;
+}
+
+.preuve-periode,
+.preuve-constat {
+  margin: 0;
+}
+
+.preuve-periode {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.chiffres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.chiffre {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.chiffre-valeur {
+  margin: 0;
+  font-size: var(--font-size-figure);
+  line-height: 1;
+  font-weight: 700;
+}
+
+/* The key figures: the work in the strong work blue, the waiting in the strong waiting amber (pairs declared on the surface). The two
+   cycle-time figures of hypothesis 5 (median and P85) share the work colour: no legend needed (audit #629, A-10 point 21). */
+.chiffre[data-chiffre="cycle_p85"] .chiffre-valeur,
+.chiffre[data-chiffre="cycle_median"] .chiffre-valeur,
+.chiffre[data-chiffre="work"] .chiffre-valeur {
+  color: var(--color-data-work-strong);
+}
+
+.chiffre[data-chiffre="wait"] .chiffre-valeur {
+  color: var(--color-data-wait-strong);
+}
+
+.chiffre-libelle {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.rapports,
+.reperes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rapport {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.rapport dt {
+  color: var(--color-text-muted);
+}
+
+.rapport dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.repere {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.mesure-masquee {
+  padding: 0 var(--space-1);
+  border-width: var(--border-width);
+  background: var(--cell-masked-background);
+  color: var(--cell-masked-color);
+  font-style: var(--cell-masked-font-style);
+  border-style: var(--cell-masked-border-style);
+  border-color: var(--cell-masked-border-color);
+}
+
+.mesure-insuffisante {
+  padding: 0 var(--space-1);
+  border-width: var(--border-width);
+  border-style: var(--cell-insufficient-border-style);
+  border-color: var(--cell-insufficient-border-color);
+}
+
+.mesure-non-comparable {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+/* Hypothesis 5 (lot 3c): the reason under the badge, the throughput line, the band and floors, and the stability table. No colour of its own:
+   the judged quarter is marked by weight and by a thicker line. The one definition of `.fiche-raison` (R-20261103-20; the earlier one, whose
+   margin this one overrode, is removed, so the rendering is unchanged). */
+/* The sentence of the finding of a verdict (audit #629, A-01) is the same line under the badge: one definition for both. */
+.fiche-raison,
+.fiche-constat {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+/* The attachment signal beside the verdict (A-02) is the signal of the workflow screen, on its own line under the badge. */
+.fiche-ligne-badge > .fiche-signal {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.chiffre-debit {
+  margin: 0;
+  font-weight: 600;
+}
+
+.preuve-seuil {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.tableau-stabilite caption {
+  caption-side: top;
+  padding-bottom: var(--space-2);
+  font-weight: 600;
+  text-align: left;
+}
+
+.ligne-jugee th,
+.ligne-jugee td {
+  font-weight: 700;
+  border-width: calc(var(--border-width) * 2);
+}
+
+/* The parts bar and the composition chart (lot 3b, phase B). Colours are on the drawing through fill and stroke, from role tokens; positions and
+   lengths are attributes of the elements; nothing here depends on a value of the data. */
+.barre-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.barre-titre {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* R-20261103-5 (3): the short label of one bar ("median", "P85"), lighter than the title common to the two bars. */
+.barre-etiquette {
+  margin: 0;
+}
+
+.barre-svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+/* A row of the chart is clipped to its box; the bar of the share keeps its labels and markers visible outside the band. */
+.barre-svg-ligne {
+  overflow: hidden;
+}
+
+.part-attente {
+  fill: var(--color-data-wait);
+}
+
+.part-travail {
+  fill: var(--color-data-work-tint);
+  stroke: var(--color-data-work);
+  stroke-width: var(--border-width);
+}
+
+/* The P85 bar is thinner than the median one (R-20261103-4 (3), the mock-up of the published sheet): the band takes the role token. */
+.barre-parts[data-epaisseur="fine"] .part-attente,
+.barre-parts[data-epaisseur="fine"] .part-travail,
+.barre-parts[data-epaisseur="fine"] .bande-masquee,
+.barre-parts[data-epaisseur="fine"] .bande-insuffisante {
+  height: var(--barre-p85-hauteur);
+}
+
+.part-etiquette,
+.repere-etiquette,
+.bande-etiquette {
+  font-family: var(--font-family);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.part-etiquette-attente {
+  fill: var(--color-data-wait-text);
+}
+
+.part-etiquette-travail {
+  fill: var(--color-text);
+}
+
+.repere-etiquette {
+  fill: var(--color-text);
+}
+
+.etiquette-debut {
+  text-anchor: start;
+}
+
+.etiquette-fin {
+  text-anchor: end;
+}
+
+.etiquette-milieu {
+  text-anchor: middle;
+}
+
+.repere-trait {
+  stroke-width: calc(var(--border-width) * 3);
+}
+
+.repere-refutation {
+  stroke: var(--color-verdict-refuted);
+}
+
+.repere-confirmation {
+  stroke: var(--color-verdict-confirmed);
+}
+
+/* A marker that does not apply (insufficient sample): grey and dotted, as the dotted outline of the card. */
+.repere-pointille {
+  stroke: var(--color-state-insufficient-border);
+  stroke-dasharray: var(--border-width) calc(var(--border-width) * 3);
+}
+
+.bande-insuffisante {
+  fill: none;
+  stroke: var(--color-state-insufficient-border);
+  stroke-width: calc(var(--border-width) * 2);
+  stroke-dasharray: var(--border-width) calc(var(--border-width) * 3);
+}
+
+.bande-masquee {
+  fill: var(--color-state-masked-bg);
+  stroke: var(--color-state-masked-border);
+  stroke-width: calc(var(--border-width) * 2);
+  stroke-dasharray: calc(var(--border-width) * 6) calc(var(--border-width) * 4);
+}
+
+.bande-etiquette {
+  fill: var(--color-state-masked);
+  font-style: italic;
+}
+
+.barre-rapport {
+  margin: 0;
+}
+
+.barre-hors-echelle {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.composition {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.composition-legende {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.legende::before {
+  content: "";
+  display: inline-block;
+  width: var(--space-3);
+  height: var(--space-2);
+  margin-right: var(--space-1);
+  border-style: solid;
+  border-width: var(--border-width);
+  border-color: var(--color-data-work);
+}
+
+.legende-travail::before {
+  background: var(--color-data-work-tint);
+}
+
+.legende-attente::before {
+  background: var(--color-data-wait);
+}
+
+.composition-lignes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.composition-ligne {
+  display: grid;
+  grid-template-columns: calc(var(--space-4) * 4) 1fr calc(var(--space-4) * 3);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.composition-trimestre {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.composition-total {
+  font-weight: 600;
+  text-align: right;
+}
+
+.ligne-axe {
+  overflow: hidden;
+}
+
+/* Visually hidden, still read by assistive technology: the table that holds the figures of the chart. */
+.cache-visuel {
+  position: absolute;
+  width: var(--border-width);
+  height: var(--border-width);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.encart {
+  gap: var(--space-2);
+}
+
+.encart-titre {
+  margin: 0;
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.encart-texte {
+  margin: 0;
+}
+
+/* The label of the management question is a lower-case catalogue word: its first letter is raised by the style, the key is unchanged. */
+.encart-question::first-letter {
+  text-transform: uppercase;
+}
+
+.bloc-explications,
+.explications-concurrentes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.explications-titre {
+  margin: 0;
+  font-size: var(--font-size-section);
+}
+
+.explications-liste {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One row per explanation: name, state pill, reason. The attachment signal is the last row of the same grid. */
+.explication-ligne {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.explication-nom {
+  font-weight: 600;
+}
+
+.explication-motif {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-small);
+}
+
+.explication-suite {
+  grid-column: 2 / -1;
+}
+
+/* The state pills: a fill or an outline tells them apart besides the colour. Each pair is already declared. */
+.pastille {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--space-4);
+  border-style: solid;
+  border-width: var(--border-width);
+  border-color: transparent;
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+.pastille-neutre {
+  background: var(--color-verdict-not-settled-tint);
+  color: var(--color-text);
+}
+
+/* Ruled out: the same tint with a solid outline in the ink and a mark (the icon is drawn in the component), so that it is not told apart
+   from the neutral pill by the fill alone. */
+.pastille-ecartee {
+  gap: var(--space-1);
+  background: var(--color-verdict-not-settled-tint);
+  color: var(--color-text);
+  border-color: var(--color-text);
+}
+
+.pastille-non-ecartee {
+  background: var(--color-banner-bg);
+  color: var(--color-banner-text);
+}
+
+.pastille-non-mesurable {
+  background: var(--color-state-masked-bg);
+  color: var(--color-state-masked);
+  border-style: dashed;
+  border-color: var(--color-state-masked-border);
+}
+
+.explications-signal {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+}

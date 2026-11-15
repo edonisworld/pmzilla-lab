@@ -1,6 +1,6 @@
 # Capabilities
 
-Four actions; each produces a structuring deliverable that the `pmzilla-critic` subagent examines before it is returned.
+Four actions; each produces a structuring answer. The `pmzilla-critic` subagent examines it only when it is a deliverable (CLAUDE.md, routing protocol, step 4): a diagnosis, a plan, a workshop design or a synthesis that the user asks to keep, or a diagnosis built from data the user supplied; never a framing answer or an informative answer.
 
 ## Built-in
 

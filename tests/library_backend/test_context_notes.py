@@ -118,7 +118,7 @@ class EnTeteEtMarque(unittest.TestCase):
         reponses = iter([[(5, 0)], [(7,), (8,)]])
         lib._query = lambda sql, params=(): next(reponses)
         lib._describe_many = lambda ids: {7: ligne_de_note(position=0), 8: {**ligne_de_note(position=1), "id": 8}}
-        lu = lib.read(7, 0, 1)
+        lu = lib.read(7, 0, 1, [CONTEXTE])
         for champ in ("note_date", "nature", "source", "review_date", "stale"):
             self.assertIn(champ, lu)
             self.assertTrue(all(champ in p for p in lu["passages"]), champ)

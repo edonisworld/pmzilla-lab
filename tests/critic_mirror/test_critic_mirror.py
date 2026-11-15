@@ -132,11 +132,18 @@ class Sections(unittest.TestCase):
         self.assertEqual(miroir.objections(corps),
                          ["Première objection citée", "Seconde objection citée", "Troisième"])
 
-    def test_titre_avec_marque_de_posture_n_ouvre_pas_de_section(self):
-        """Comportement actuel (à connaître) : un titre qui porte « [Posture : … » n'ouvre jamais de section,
-        même s'il nomme Critic ; une section écrite sous « ## [Posture : Critic] » seul n'est donc pas lue."""
-        lignes = ["## [Posture : Critic]", "", "- une objection", "- une autre"]
-        self.assertEqual(miroir.critic_sections(lignes), [])
+    def test_titre_reduit_a_la_balise_de_critic_ouvre_une_section(self):
+        """CLAUDE.md demande la section Critic introduite par sa balise : « ## [Posture : Critic] » (ou « ## [Posture: Critic] »)
+        ouvre une section, et la balise n'est pas une objection."""
+        for titre in ("## [Posture : Critic]", "## [Posture: Critic]", "### [Posture : Critic]"):
+            with self.subTest(titre):
+                sections = miroir.critic_sections([titre, "", "- une objection", "- une autre", "", "## Suite", "texte"])
+                self.assertEqual(len(sections), 1)
+                self.assertEqual(miroir.objections(sections[0]), ["une objection", "une autre"])
+
+    def test_titre_avec_la_balise_d_une_autre_posture_n_ouvre_pas_de_section(self):
+        self.assertEqual(miroir.critic_sections(["## [Posture : Scaling]", "", "- une ligne"]), [])
+        self.assertEqual(miroir.critic_sections(["## [Posture : Scaling] revue de Critic", "", "- une ligne"]), [])
 
 
 LECTURE_FR = """\

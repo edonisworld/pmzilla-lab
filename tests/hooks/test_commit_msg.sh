@@ -89,6 +89,35 @@ verifie "module des noms en échec : commit refusé" "$([ $code -ne 0 ] && echo 
 verifie "module des noms en échec : ni le nom ni une trace dans la sortie" "$(grep -qi -e "$NOM" -e "Traceback" "$tmp/sortie" && echo 1 || echo 0)"
 cp "$tools/sensitive_names.py" tools/sensitive_names.py
 
+# --- correction 8 (change session-guard-n1, D5) : le détecteur lancé est celui du dossier tools/ voisin du crochet, jamais celui du worktree
+# qui commite. Le worktree porte ici une copie ALTÉRÉE du détecteur (elle ne trouve jamais rien) : un message avec identifiant doit être refusé.
+git worktree add -q -b wt-corr8 "$tmp/wt" > /dev/null 2>&1 || { echo "ECHEC : worktree de l'essai non créé"; exit 1; }
+mkdir -p "$tmp/wt/tools"
+printf '%s\n' 'raise SystemExit(0)' > "$tmp/wt/tools/identifiants_personnels.py"
+( cd "$tmp/wt" && echo w > w && git add w && git commit -q -m "ajoute w, chemin /Users/$ID/x" ) > "$tmp/sortie" 2>&1; code=$?
+verifie "worktree au détecteur altéré : message avec identifiant, commit refusé" "$([ $code -ne 0 ] && echo 0 || echo 1)"
+verifie "worktree au détecteur altéré : le refus dit l'identifiant" "$(grep -qi 'identifiant' "$tmp/sortie" && echo 0 || echo 1)"
+verifie "worktree au détecteur altéré : ni l'identifiant ni le texte dans la sortie" "$(grep -qi -e "$ID" -e "ajoute w" "$tmp/sortie" && echo 1 || echo 0)"
+( cd "$tmp/wt" && git commit -q -m "ajoute w" ) > "$tmp/sortie" 2>&1; code=$?
+verifie "worktree au détecteur altéré : message propre, commit réussi" "$code"
+# worktree sans copie du détecteur : c'est le crochet qui le fournit, le message propre passe aussi
+rm -rf "$tmp/wt/tools"
+( cd "$tmp/wt" && echo w2 > w2 && git add w2 && git commit -q -m "ajoute w2" ) > "$tmp/sortie" 2>&1; code=$?
+verifie "worktree sans détecteur : message propre, commit réussi (le crochet fournit le sien)" "$code"
+
+# --- R-20261108-04, décision 2 (a) : les deux scanners sont lancés par python3 -I, qui ignore PYTHONPATH. Un dossier piégé, qui masque le module argparse
+# par un module qui sort en 0, est placé dans PYTHONPATH : sans -I les scanners sortiraient en 0 et le message avec identifiant ou nom passerait.
+mkdir -p "$tmp/piege"; printf '%s\n' 'raise SystemExit(0)' > "$tmp/piege/argparse.py"
+echo p1 > p1; git add p1
+PYTHONPATH="$tmp/piege" git commit -q -m "ajoute p1, chemin /Users/$ID/x" > "$tmp/sortie" 2>&1; code=$?
+verifie "PYTHONPATH piégé : message avec identifiant, commit refusé" "$([ $code -ne 0 ] && echo 0 || echo 1)"
+verifie "PYTHONPATH piégé : le refus dit l'identifiant" "$(grep -qi 'identifiant' "$tmp/sortie" && echo 0 || echo 1)"
+PYTHONPATH="$tmp/piege" git commit -q -m "revue de $NOM" > "$tmp/sortie" 2>&1; code=$?
+verifie "PYTHONPATH piégé : message avec nom sensible, commit refusé" "$([ $code -ne 0 ] && echo 0 || echo 1)"
+verifie "PYTHONPATH piégé : le refus dit le nom sensible" "$(grep -q 'nom sensible' "$tmp/sortie" && echo 0 || echo 1)"
+PYTHONPATH="$tmp/piege" git commit -q -m "ajoute p1" > "$tmp/sortie" 2>&1; code=$?
+verifie "PYTHONPATH piégé : message propre, commit réussi (les scanners retrouvent leur module voisin sous -I)" "$code"
+
 echo c > h; git add h
 printf '%s\n' 'raise SystemExit(2)' > tools/identifiants_personnels.py
 git commit -q -m "autre" > "$tmp/sortie" 2>&1; code=$?

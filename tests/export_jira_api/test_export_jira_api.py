@@ -13,6 +13,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -23,6 +24,9 @@ from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "flow_delivery"))          # table FACTICE des champs de livraison (R-20261114-108)
+import table_factice          # noqa: E402
+import flow_delivery          # noqa: E402
 import export_jira_api as ex          # noqa: E402
 import history_jira as hj          # noqa: E402
 from aide_couche_brute import MagasinMemoire          # noqa: E402
@@ -54,7 +58,7 @@ TICKETS = {
                     parent="ABC-9", equipes=["Equipe A", "Equipe B"],
                     liens=[lien("Blocks", "Outward", "ABC-2"), lien("Blocks", "Outward", "ABC-3"),
                            lien("Relates", "Inward", "ABC-3")]),
-    "ABC-2": champs("Task", "Implementation - Ongoing", "In Progress", "2026-08-03T09:15:00.000+0200",
+    "ABC-2": champs("Task", "Development - Active", "In Progress", "2026-08-03T09:15:00.000+0200",
                     equipes=["Equipe A"], liens=[lien("Blocks", "Inward", "ABC-1")]),
     "ABC-3": champs("Story", "Open", "To Do", "2026-09-01T16:45:00.000+0200", equipes=[],
                     liens=[lien("Blocks", "Inward", "ABC-1"), lien("Relates", "Outward", "ABC-1")]),
@@ -68,6 +72,8 @@ class FauxJira:
         self.taille_page = 100
         self.jeton_repete = False
         self.requetes = []
+        self.brut = []                # (méthode, chemin complet, en-tête d'authentification présent) de chaque requête reçue, avant tout contrôle
+        self.projets = None           # None : tout projet existe ; sinon l'ensemble des clés connues (les autres : HTTP 400)
         self.appels_get = []
         self.hors_passerelle = []     # chemins appelés avec authentification en dehors de la passerelle
         self.appels = []              # (méthode, chemin) de chaque appel reçu, écritures comprises (aucune n'est admise)
@@ -101,7 +107,12 @@ def fabriquer_serveur(faux: FauxJira):
             self.path = self.path[len(PASSERELLE):] if self.path.startswith(PASSERELLE + "/") else self.path
             return False
 
+        def noter_brut(self, methode):
+            """Journal brut (design D6) : première ligne de chaque gestionnaire, avant tout contrôle."""
+            faux.brut.append((methode, self.path, "Authorization" in self.headers))
+
         def do_GET(self):
+            self.noter_brut("GET")
             if self.hors():
                 return self.repondre(404)
             faux.appels.append(("GET", self.path))
@@ -113,6 +124,7 @@ def fabriquer_serveur(faux: FauxJira):
             return self.repondre(200, faux.champs)
 
         def do_POST(self):
+            self.noter_brut("POST")
             corps = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             if self.hors():
                 return self.repondre(404)
@@ -122,6 +134,9 @@ def fabriquer_serveur(faux: FauxJira):
             if self.path != "/rest/api/3/search/jql":
                 return self.repondre(404)
             faux.requetes.append(corps)
+            projet = re.match(r'project = "([^"]*)"', str(corps.get("jql", "")))
+            if projet and faux.projets is not None and projet.group(1) not in faux.projets:
+                return self.repondre(400, {"errorMessages": ["projet inconnu"]})
             demandes = corps.get("fields") or []
             cles = list(faux.tickets)
             if str(corps.get("jql", "")).startswith("key in ("):
@@ -137,21 +152,23 @@ def fabriquer_serveur(faux: FauxJira):
 
         def ecriture(self):
             """Toute méthode d'écriture est notée puis refusée : l'export ne doit jamais en émettre."""
+            self.noter_brut(self.command)
             self.hors()
             faux.appels.append((self.command, self.path))
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
             return self.repondre(405)
 
-        do_PUT = do_DELETE = do_PATCH = ecriture
+        do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = ecriture
 
     return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 
 
 class Base(unittest.TestCase):
     def setUp(self):
+        self.addCleanup(flow_delivery.configurer, None)          # l'état des champs de livraison est global : jamais d'un test à l'autre
         self.faux = FauxJira()
         self.serveur = fabriquer_serveur(self.faux)
-        threading.Thread(target=self.serveur.serve_forever, daemon=True).start()
+        threading.Thread(target=self.serveur.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.addCleanup(self.serveur.server_close)
         self.addCleanup(self.serveur.shutdown)
         self.url = f"http://127.0.0.1:{self.serveur.server_address[1]}"
@@ -161,7 +178,14 @@ class Base(unittest.TestCase):
         flux = self.ws / "Flux-Lab"
         flux.mkdir()
         self.magasin = MagasinMemoire()         # couche brute en mémoire : l'export ne se connecte à aucune base dans ces tests
-        for p in (mock.patch.object(ex, "ouvrir_magasin", lambda: self.magasin),
+        # jira-delivery-fields, R-20261102-41 (Q326) : la liste des noms sensibles est chargée avant le premier appel à Jira ; une liste inventée,
+        # hors de l'espace de travail (un test compte les fichiers qu'il contient), la fournit
+        self.tmp_noms = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp_noms.cleanup)
+        self.liste_noms = Path(self.tmp_noms.name) / "noms-sensibles.txt"
+        self.liste_noms.write_text("ZzNomSensibleDeBase\n", encoding="utf-8")
+        for p in (mock.patch.dict(os.environ, {"PMZILLA_LAB_SENSITIVE_NAMES": str(self.liste_noms)}),
+                  mock.patch.object(ex, "ouvrir_magasin", lambda: self.magasin),
                   mock.patch.object(hj, "WORKSPACE", self.ws), mock.patch.object(hj, "FLUX_DIR", flux),
                   mock.patch.object(hj, "CONFIG_FILE", flux / "flux.yaml"),
                   mock.patch.object(hj, "lire_jeton", lambda: JETON),
@@ -172,12 +196,19 @@ class Base(unittest.TestCase):
             self.addCleanup(p.stop)
         self.ecrire_reglages()
 
-    def ecrire_reglages(self, extra: str = None, jeton: str | None = "scoped", cloud: str | None = CLOUD_ID):
-        """jeton et cloud : None retire le réglage ; « classic » est refusé par l'outil."""
+    def ecrire_reglages(self, extra: str = None, jeton: str | None = "scoped", cloud: str | None = CLOUD_ID, garde: str | None = None,
+                        livraison: bool = True):
+        """jeton et cloud : None retire le réglage ; « classic » est refusé par l'outil. garde : les lignes des réglages du périmètre
+        (clés fictives de R-20261028-96 par défaut, « » pour n'en écrire aucune). livraison : écrit en dernier le bloc `delivery_fields` de
+        la table FACTICE (R-20261114-108), faux pour tester l'absence de la table."""
         extra = f"jql_export: project = ABC\nexport_team_field: {CHAMP}\n" if extra is None else extra
         connexion = f"jira_site: {self.url}\njira_email: {EMAIL}\n"
+        connexion += (f"scope_projects: [ABC, AAA, BBB, ZZZ, ZZKEY, ZZKEYSEPT,{'A' * 50}]\nforbidden_projects: [SUPX]\n"
+                      if garde is None else garde)
         connexion += f"jira_token_type: {jeton}\n" if jeton else ""
         connexion += f"jira_cloud_id: {cloud}\n" if cloud else ""
+        if livraison:
+            extra += ("" if extra.endswith("\n") or not extra else "\n") + table_factice.yaml()
         (self.ws / "Flux-Lab" / "flux.yaml").write_text(connexion + extra, encoding="utf-8")
 
     def lancer(self, *argv):
@@ -232,7 +263,8 @@ class JetonAScopes(Base):
     """Le client de l'export est celui de history_jira.py : passerelle seule, cloudId des réglages, « classic » refusé."""
 
     def commandes(self):
-        return (("export",), ("fields", "--search", "team"), ("diagnose",))
+        return (("export",), ("fields", "--search", "team"), ("diagnose",),
+                ("fields", "--project", "ABC", "--field", "customfield_10003"))
 
     def test_les_appels_passent_par_la_passerelle(self):
         for argv in self.commandes():
@@ -252,6 +284,7 @@ class JetonAScopes(Base):
         for argv, attendu in ((self.commandes()[0], "jeton classique refusé : utiliser un jeton à scopes"),
                               (self.commandes()[1], "jeton classique refusé : utiliser un jeton à scopes"),
                               (self.commandes()[2], "jeton classique refusé : utiliser un jeton à scopes"),
+                              (self.commandes()[3], "jeton classique refusé : utiliser un jeton à scopes"),
                               (self.commandes()[0] + ("--language", "en"), "classic token refused: use a scoped token")):
             with self.subTest(argv=argv), mock.patch.object(hj, "lire_jeton", jeton):
                 code, sortie = self.lancer(*argv)
@@ -329,7 +362,7 @@ class Export(Base):
         self.assertEqual(code, 0, sortie)
         demandes = {f for r in self.faux.requetes for f in r["fields"]}
         self.assertNotIn("summary", demandes)
-        for interdit in ("assignee", "reporter", "creator", "description", "labels", "fixVersions"):
+        for interdit in ("assignee", "reporter", "creator", "description", "labels"):
             self.assertNotIn(interdit, demandes)
         for instantane in self.magasin.instantanes:
             self.assertNotIn("Titre secret", repr(instantane))
@@ -559,8 +592,8 @@ class TableEquipes(Base):
     def test_regles_deny_de_la_table_et_de_la_commande(self):
         reglages = json.loads((TOOLS.parent / ".claude" / "settings.json").read_text(encoding="utf-8"))
         deny = reglages["permissions"]["deny"]
-        self.assertIn("Bash(uv run tools/export_jira_api.py table-equipes*)", deny)     # sous-commande retirée, règle gardée
-        self.assertIn("Bash(uv run *export_jira_api.py teams-table*)", deny)
+        # Désherbage du 2026-10-28 (D28) : les règles des sous-commandes retirées (table-equipes, teams-table) ne sont plus figées ici ; le script répond
+        # lui-même par le code 2 (SousCommandesRetirees ci-dessous).
         self.assertIn("Read(./Flux-Lab/equipes-assets.yaml)", deny)
 
 
@@ -1027,7 +1060,8 @@ class NouveauxComportements(Base):
                              "declared_labels:\n  ready: {prefix: x, labels: [x-ready]}\n")
         self.exporter()
         demandes = {f for r in self.faux.requetes for f in r["fields"]}
-        self.assertTrue({"labels", "fixVersions"}.isdisjoint(demandes))
+        self.assertNotIn("labels", demandes)
+        self.assertLessEqual({"fixVersions", "versions"}, demandes)          # change flow-version-share : validation du 2026-10-23
 
 
 class TypeDesEquipes(Base):

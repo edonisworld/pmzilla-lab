@@ -14,7 +14,8 @@ tools/story_quality_data.py (D15). Ici on ne fait que la lire et la mettre en fo
     autre message va sur la sortie d'erreur.
 
 Garde anti-comparaison : une section ne porte que les chiffres de son équipe ; les équipes sont dans l'ordre des noms ; ni note composite,
-ni total par équipe, ni classement, ni ordre par résultat, ni nombre d'équipes.
+ni total par équipe, ni classement, ni ordre par résultat, aucun nombre d'équipes sauf celui des équipes sans section (R-128) ; la
+marque « une seule équipe relue » de la chaîne du produit ne nomme aucune équipe.
 
 Parties du Markdown (tâches 3.18 et 3.21, design D8, D18) :
   - `lire_surcouche` lit la surcouche contrôlée par le même lecteur que `grid` (tools/story_quality.py, `read_overlay`), d'où viennent la
@@ -23,7 +24,7 @@ Parties du Markdown (tâches 3.18 et 3.21, design D8, D18) :
   - `SOUS_SECTIONS_EQUIPE` : « Causes probables dans la chaîne » à la fin de la section de l'équipe, sa notice, puis une ligne par défaut
     récurrent de CETTE équipe (libellé, marque « règle de l'organisation », part non satisfaite et dénominateur, maillon) ;
   - `SECTIONS_FINALES` : « Chaîne du produit » après la dernière équipe, lue de `product_chain` (vue produit) : aucun nom d'équipe, aucune
-    part par équipe, aucun nombre d'équipes.
+    part par équipe, aucun nombre d'équipes ; seule la phrase « une seule équipe relue » (`single_team`) y parle des équipes.
 Chaque fonction met en forme une partie du résultat de `report_data` dans l'ordre qu'il donne ; aucune ne calcule, ne trie ni ne masque.
 
 Codes : 0 fait ; 1 vues illisibles (base injoignable, réglages illisibles, seuil de récurrence absent) ; 2 usage (nom de série absent ou
@@ -125,8 +126,11 @@ def ligne_cause(ligne: dict, t) -> str:
 
 
 def lignes_causes(titre: str, bloc: dict, t) -> list[str]:
-    """Titre, notice, puis les lignes dans l'ordre du service, ou la phrase « aucun défaut récurrent »."""
+    """Titre, notice, la marque « une seule équipe » si le service la donne (chaîne du produit), puis les lignes dans l'ordre du service,
+    ou la phrase « aucun défaut récurrent »."""
     lignes = [titre, "", bloc["notice"]["text"], ""]
+    if bloc.get("single_team"):
+        lignes += [t("single_team_chain"), ""]
     if not bloc["lines"]:
         return lignes + [t("no_recurrent_defect"), ""]
     return lignes + [ligne_cause(ligne, t) for ligne in bloc["lines"]] + [""]
@@ -150,7 +154,8 @@ def sous_section_causes(equipe: dict, resultat: dict, t) -> list[str]:
 
 
 def section_chaine_produit(resultat: dict, t) -> list[str]:
-    """Chaîne du produit (D18, O8) : lue du seul `product_chain` (vue produit), sans nom ni part d'équipe."""
+    """Chaîne du produit (D18, O8) : lue du seul `product_chain` (vue produit), sans nom ni part d'équipe ; la phrase « une seule équipe
+    relue » vient de `single_team` du service."""
     return lignes_causes(f"## {t('product_chain_heading')}", resultat["product_chain"], t)
 
 
@@ -188,7 +193,10 @@ def markdown(resultat: dict, nom: str, t, min_cell: int = data.MASK_FLOOR) -> st
     if not resultat["teams"]:
         lignes += [t("report_no_results"), ""]
     for equipe in resultat["teams"]:
-        lignes += lignes_equipe(equipe, resultat, t)
+        if equipe["section"]:
+            lignes += lignes_equipe(equipe, resultat, t)
+    if resultat["teams_without_section"]:               # R-124, R-128 : une ligne, sans nom, avec le nombre que donne le service
+        lignes += [t("report_other_teams", n=resultat["teams_without_section"]), ""]
     for fonction in SECTIONS_FINALES:
         lignes += fonction(resultat, t)
     while lignes and lignes[-1] == "":
@@ -202,12 +210,16 @@ def lancer(args, environ, t) -> int:
         print(t("usage", what="--name"), file=sys.stderr)
         return 2
     import yaml_strict
+    import flow_views
     try:
         recurrence, min_cell = reglages_rapport(t)
     except yaml_strict.ErreurConfig as erreur:
         print(t("settings_unreadable", detail=str(erreur)), file=sys.stderr)
         return 1
-    if recurrence is None:             # pas de défaut (D16, D18) : le seuil est un réglage de l'utilisateur ; refus avant toute lecture
+    except flow_views.ReglagesIllisibles:      # H-13 : un flux.yaml illisible est refusé, jamais replié sur le plancher
+        print(t("settings_unreadable", detail="flow_views_min_cell"), file=sys.stderr)
+        return 1
+    if recurrence is None:            # pas de défaut (D16, D18) : le seuil est un réglage de l'utilisateur ; refus avant toute lecture
         print(t("settings_unreadable", detail="story_quality.recurrence_threshold"), file=sys.stderr)
         return 1
     try:

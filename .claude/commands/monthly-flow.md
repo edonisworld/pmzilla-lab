@@ -23,7 +23,7 @@ The data stay in the database, out of your reach: you read only the reports.
 uv run tools/flux_jira.py compute --name <nom> [mêmes options que la dernière fois]
 ```
 
-The calculation reads the database, with no file to give. The "same options" are those of the series: `--scope` (the series' projects), `--history` and `--dormant-from-history` (when the state history is collected), `--points` (points of the dashboard's Aging WIP), `--weeks`, `--types`. The data are brought up to date by the monthly run (`uv run tools/flow_monthly.py`: export, import, history, then the calculations; see the monthly procedure in `docs/pmzilla/installation.md`). Or, if both reports already exist, `uv run tools/flux_jira.py compare --name <nom>`. The comparison with the previous report is displayed at the end of the computation and saved in `evolution-…md`.
+The calculation reads the database, with no file to give. The "same options" are those of the series: `--scope` (the series' projects), `--history` and `--dormant-from-history` (when the state history is collected), `--weeks`, `--types`. The data are brought up to date by the monthly run (`uv run tools/flow_monthly.py`: export, import, history, then the calculations; see the monthly procedure in `docs/pmzilla/installation.md`). Or, if both reports already exist, `uv run tools/flux_jira.py compare --name <nom>`. The comparison with the previous report is displayed at the end of the computation and saved in `evolution-…md`.
 
 ## 2. Choose the reading: team or product
 

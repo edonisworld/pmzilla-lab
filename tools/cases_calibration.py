@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.2,<2", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
+# dependencies = ["mcp>=2,<3", "pyyaml", "httpx", "numpy", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab : calibration provisoire du seuil de similarité du module des cas (db-lot2, design.md 3.7).

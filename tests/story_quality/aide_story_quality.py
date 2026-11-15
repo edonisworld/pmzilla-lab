@@ -199,6 +199,7 @@ class FauxJira:
         self.par_requete: dict[str, list[dict]] = {}
         self.champs = list(CHAMPS_JIRA)
         self.appels: list[tuple[str, str]] = []
+        self.brut: list[tuple[str, str, bool]] = []   # (méthode, chemin complet, en-tête d'authentification présent), avant tout contrôle
         self.corps: list[dict] = []              # corps des recherches (jql, fields, ...)
         self.refus: int | None = None            # code HTTP rendu à tout appel authentifié
         self.prefixe = f"/ex/jira/{CLOUD_ID}"
@@ -225,6 +226,7 @@ def fabriquer_serveur(faux: FauxJira) -> ThreadingHTTPServer:
             self.wfile.write(donnees)
 
         def traiter(self, methode):
+            faux.brut.append((methode, self.path, "Authorization" in self.headers))      # journal brut (design D6), avant tout contrôle
             chemin = urlparse(self.path)
             corps = {}
             if methode == "POST":
@@ -409,7 +411,7 @@ class EspaceCollecte(unittest.TestCase):
     def setUp(self):
         self.faux = FauxJira()
         self.serveur = fabriquer_serveur(self.faux)
-        threading.Thread(target=self.serveur.serve_forever, daemon=True).start()
+        threading.Thread(target=self.serveur.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.addCleanup(self.serveur.server_close)
         self.addCleanup(self.serveur.shutdown)
         self.url = f"http://127.0.0.1:{self.serveur.server_address[1]}"
@@ -439,9 +441,12 @@ class EspaceCollecte(unittest.TestCase):
         self.environ = {"PMZILLA_LAB_SENSITIVE_NAMES": str(self.noms), "HOME": str(self.maison)}
         self.ecrire_reglages()
 
-    def ecrire_reglages(self, criteres: str = CHAMP_CRITERES, equipe: str | None = CHAMP_EQUIPE, bloc: str | None = None):
+    def ecrire_reglages(self, criteres: str = CHAMP_CRITERES, equipe: str | None = CHAMP_EQUIPE, bloc: str | None = None,
+                        garde: list[str] | None = None):
+        """garde : les lignes des réglages du périmètre (clés fictives de R-20261028-96 par défaut, [] pour n'en écrire aucune)."""
         lignes = [f"jira_site: {self.url}", f"jira_email: {EMAIL}", "jira_token_type: scoped", f"jira_cloud_id: {CLOUD_ID}",
                   "jira_token_expires: 2099-12-31"]
+        lignes += ["scope_projects: [ZZA, ZZB]", "forbidden_projects: [SUPX]"] if garde is None else garde
         if equipe:
             lignes.append(f"export_team_field: {equipe}")
         texte = "\n".join(lignes) + "\n"

@@ -35,7 +35,7 @@ CHEMINS = ("tools/{s}", "./tools/{s}", "/Users/quelquun/PMZilla-Lab/workspace/to
 CHEMINS_EXECUTION_DIRECTE = ("tools/{s}", "./tools/{s}", "~/PMZilla-Lab/workspace/tools/{s}", "$HOME/PMZilla-Lab/workspace/tools/{s}",
                              "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}")
 OPTIONS = ("", " --dry-run", " --help", " --from import", " --from compare-data --date 2026-10-09", " --force", " --verbose",
-           " --language en", " --open", " --dry-run --from dashboard --language en")
+           " --language en", " --from retention", " --dry-run --from retention --language en")
 SCRIPT = "flow_monthly.py"
 
 

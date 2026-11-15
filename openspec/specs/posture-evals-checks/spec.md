@@ -5,7 +5,7 @@
 Describes the deterministic automatic checks applied to a session trace: posture tag, tool use, Critic, text patterns, memory content, structure of the sources section, language formulas and single final message. Checks may be blocking or non-blocking indicators.
 ## Requirements
 ### Requirement: Posture tag check
-The system SHALL check that the expected posture is announced by a posture tag in the main-thread text, in the tag format of the run language, tolerating spaces inside the tag. The posture name SHALL match exactly, case-sensitively, one of the posture names of the shared vocabulary. A tag in the run language's format whose name is not exactly one of those names (accented, translated or recased) SHALL fail the check, even when a correctly written tag appears elsewhere, and the justification SHALL quote the misspelt tag and the expected format. The expected value "none" SHALL require no tag in any language. A tag in the format of the other language, or tags in both formats, SHALL fail the check, and the justification SHALL name the expected format. No expected posture SHALL produce no check.
+The system SHALL check that the expected posture is announced by a posture tag in the main-thread text, in the tag format of the run language, tolerating spaces inside the tag. The posture name SHALL match exactly, case-sensitively, one of the posture names of the shared vocabulary. No expected posture SHALL produce no check.
 
 #### Scenario: Right posture
 - WHEN the expected posture is announced in the language format of the run, with its exact name
@@ -15,21 +15,36 @@ The system SHALL check that the expected posture is announced by a posture tag i
 - WHEN another posture is announced, or no tag appears
 - THEN the check fails and the justification lists the tag found or "absent"
 
+#### Scenario: Default language
+- WHEN no language is specified
+- THEN French is used
+
+Source: tests/posture_evals/test_posture_evals.py (Verifications, Langue)
+
+### Requirement: Misspelt posture tag fails the check
+A tag in the run language's format whose name is not exactly one of the posture names of the shared vocabulary (accented, translated or recased) SHALL fail the posture tag check, even when a correctly written tag appears elsewhere, and the justification SHALL quote the misspelt tag and the expected format.
+
 #### Scenario: Misspelt tag
 - WHEN a tag carries an accented, translated or recased posture name, alone or next to a correctly written tag
 - THEN the check fails and the justification quotes the misspelt tag
 
-#### Scenario: Tag in the other language
-- WHEN a French run contains an English-format tag (or the reverse)
-- THEN the check fails with a justification naming the other-language format and the expected one
+Source: tests/posture_evals/test_posture_evals.py (Verifications, Langue)
+
+### Requirement: Expected none requires no tag
+The expected value "none" SHALL require no tag in any language.
 
 #### Scenario: Expected none
 - WHEN the expected posture is "none" and no tag appears
 - THEN the check passes; any tag in either format fails it
 
-#### Scenario: Default language
-- WHEN no language is specified
-- THEN French is used
+Source: tests/posture_evals/test_posture_evals.py (Verifications, Langue)
+
+### Requirement: Other-language posture tag fails the check
+A tag in the format of the other language, or tags in both formats, SHALL fail the posture tag check, and the justification SHALL name the expected format.
+
+#### Scenario: Tag in the other language
+- WHEN a French run contains an English-format tag (or the reverse)
+- THEN the check fails with a justification naming the other-language format and the expected one
 
 Source: tests/posture_evals/test_posture_evals.py (Verifications, Langue)
 
@@ -141,9 +156,7 @@ The system SHALL, for every case, report as a non-blocking indicator whether the
 Source: tests/posture_evals/test_posture_evals.py (DernierEchange), tests/posture_evals/test_final_messages_check.py (SortieDeLEntreePrincipale)
 
 ### Requirement: Posture tag placement indicator
-The system SHALL, for every case with an expected posture other than "none", report as a non-blocking indicator whether the first non-blank line of the final answer starts with the expected posture tag in the run language's format. On failure, the justification SHALL quote that first line, cut to 80 characters. The indicator SHALL count in neither the total nor the regressions. It SHALL become blocking only with the user's agreement, after the evaluation runs of this change.
-
-Source: to be covered by `tests/posture_evals/test_posture_evals.py` (task 3.2)
+The system SHALL, for every case with an expected posture other than "none", report as a non-blocking indicator whether the first non-blank line of the final answer starts with the expected posture tag in the run language's format, with the justification of the scenario "Tag at the end" on failure. The indicator SHALL count in neither the total nor the regressions. It SHALL become blocking only with the user's agreement, after the evaluation runs of this change.
 
 #### Scenario: Tag first
 - WHEN the final answer starts with the expected tag
@@ -151,9 +164,11 @@ Source: to be covered by `tests/posture_evals/test_posture_evals.py` (task 3.2)
 
 #### Scenario: Tag at the end
 - WHEN the final answer holds the expected tag only after other text
-- THEN the indicator fails, quotes the first line, and the blocking posture check is not affected by placement
+- THEN the indicator fails, its justification quotes the first non-blank line cut to 80 characters, and the blocking posture check is not affected by placement
 
 #### Scenario: No expected posture
 - WHEN the expected posture is "none" or absent
 - THEN no placement indicator is produced
+
+Source: to be covered by `tests/posture_evals/test_posture_evals.py` (task 3.2)
 

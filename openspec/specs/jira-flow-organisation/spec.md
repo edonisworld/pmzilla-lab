@@ -6,7 +6,16 @@ Describes the organisation referential kept in the flow folder outside Git (site
 ## Requirements
 
 ### Requirement: Organisation referential read strictly
-The system SHALL read the organisation referential of the flow folder, outside Git, with the strict loader. Its structure is: a source date; sites; departments, each with a name, a site, a headcount and either Mission Teams (each with a name, an optional Discovery Workflow pilot flag and its teams) or teams directly; teams, each with a name, a headcount, an optional site and a list of Jira team identifiers; cross-cutting teams. The system SHALL refuse, with exit code 1 naming the key path and line and never a value: an unknown key, a team referenced by a Mission Team but not described, a team in two Mission Teams, and a Jira team identifier listed under two teams. The referential SHALL hold no person name; the system SHALL NOT read a person field from it.
+The system SHALL read the organisation referential of the flow folder, outside Git, with the strict loader. Its structure is: a source date; sites; departments, each with a name, a site, a headcount and either Mission Teams (each with a name, an optional Discovery Workflow pilot flag and its teams) or teams directly; teams, each with a name, a headcount, an optional site and a list of Jira team identifiers; cross-cutting teams.
+
+Source: tests/flow_organisation/test_flow_organisation.py
+
+#### Scenario: Missing referential
+- **WHEN** the referential does not exist and no reader needs it
+- **THEN** the tools that only read team labels run as before
+
+### Requirement: Organisation referential refusals
+The system SHALL refuse, with exit code 1 naming the key path and line and never a value: an unknown key, a team referenced by a Mission Team but not described, a team in two Mission Teams, and a Jira team identifier listed under two teams.
 
 Source: tests/flow_organisation/test_flow_organisation.py
 
@@ -14,25 +23,37 @@ Source: tests/flow_organisation/test_flow_organisation.py
 - **WHEN** one Jira team identifier is listed under two teams
 - **THEN** the reading tool stops with exit code 1 and names both key paths and lines, without the identifier or the team names
 
-#### Scenario: Missing referential
-- **WHEN** the referential does not exist and no reader needs it
-- **THEN** the tools that only read team labels run as before
+### Requirement: Organisation referential holds no person
+The referential SHALL hold no person name; the system SHALL NOT read a person field from it.
+
+Source: tests/flow_organisation/test_flow_organisation.py
+
+#### Scenario: Structure read
+- **WHEN** the referential is read
+- **THEN** the loaded structure holds no person field
 
 ### Requirement: Jira teams and referential teams controlled
-The system SHALL report at export, with counts and identifiers only:
-
-- the Jira team identifiers in neither the referential nor the catalogue: their number, the number of tickets affected and their sorted list;
-- the count of identifiers and tickets of catalogue identifiers that no referential team lists;
-- the count of tickets on identifiers flagged obsolete in the catalogue, those listed by a referential team included;
-- the number of referential teams without any ticket in the export.
-
-The export SHALL continue (design D17 of the GDPR alignment change). A catalogue entry SHALL NOT enter the count of referential teams without a ticket, and an obsolete catalogue identifier SHALL NOT be counted as unknown. The system SHALL NOT print a team name or label in these controls.
+The system SHALL report at export, with counts and identifiers only, the Jira team identifiers in neither the referential nor the catalogue (their number, the number of tickets affected and their sorted list) and the number of referential teams without any ticket in the export.
 
 Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (TraductionParReferentiel; to be extended, task 4.5)
 
 #### Scenario: Inactive referential team
 - **WHEN** two referential teams have no ticket in the export
 - **THEN** the console prints "referential teams without ticket: 2" and no name
+
+### Requirement: Catalogue identifiers controlled at export
+The system SHALL report at export, with counts and identifiers only, the count of identifiers and tickets of catalogue identifiers that no referential team lists, and the count of tickets on identifiers flagged obsolete in the catalogue, those listed by a referential team included.
+
+Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (TraductionParReferentiel; to be extended, task 4.5)
+
+#### Scenario: Catalogue and obsolete identifiers
+- **WHEN** tickets carry a catalogue identifier that no referential team lists and an obsolete catalogue identifier listed by a referential team
+- **THEN** the console prints the count of the first and counts the tickets of the second among the tickets on obsolete identifiers
+
+### Requirement: Export controls of teams never stop the export
+The export SHALL continue after these controls (design D17 of the GDPR alignment change). A catalogue entry SHALL NOT enter the count of referential teams without a ticket, and an obsolete catalogue identifier SHALL NOT be counted as unknown. The system SHALL NOT print a team name or label in these controls.
+
+Source: tests/export_jira_api/test_referentiel_et_etiquettes.py (TraductionParReferentiel; to be extended, task 4.5)
 
 #### Scenario: Catalogue teams not counted as idle
 - **WHEN** the catalogue holds teams without any ticket in the export
@@ -138,9 +159,9 @@ Source: tests/flow_organisation (task 3.4)
 - **THEN** the team has no type, and no type is derived from its name
 
 ### Requirement: Referential team type deduced, the key only forcing it
-The system SHALL deduce a referential team's type as the `type` the catalogue gives to all its `jira_team_ids` found there (team-mapping Q5 step 1, D1). A catalogue entry without `type` SHALL say nothing to the deduction: the type is deduced from the other identifiers (design D7 of the names-and-team-review change, pending the author's choice). The optional referential `type` key SHALL only force it, above the catalogue type (point 2): effective = forced, else deduced, else none. It SHALL NOT require a referential `type`, deduce one when the identifiers differ or none is in the catalogue, read an Assets list for it, or write the referential.
+The system SHALL deduce a referential team's type as the `type` the catalogue gives to all its `jira_team_ids` found there (team-mapping Q5 step 1, D1). The optional referential `type` key SHALL only force it, above the catalogue type (point 2): effective = forced, else deduced, else none.
 
-Source: tests/flow_organisation (task 3.5); the test of the catalogue entry without `type` renamed (names-and-team-review task 5.1)
+Source: tests/flow_organisation (task 3.5)
 
 #### Scenario: Type deduced without key
 - **WHEN** a referential team without a `type` key holds two identifiers whose fictitious catalogue entries have the same type
@@ -150,9 +171,19 @@ Source: tests/flow_organisation (task 3.5); the test of the catalogue entry with
 - **WHEN** a referential team holds a `type` key that differs from the type the catalogue gives to its identifiers
 - **THEN** its effective type is the forced value, and the referential file is unchanged
 
+### Requirement: Limits of the team type deduction
+The system SHALL NOT require a referential `type`, deduce one when the identifiers differ or none is in the catalogue, read an Assets list for it, or write the referential.
+
+Source: tests/flow_organisation (task 3.5)
+
 #### Scenario: No deduction on different types
 - **WHEN** a referential team without a `type` key holds two identifiers of different types in the catalogue
 - **THEN** the team has no effective type
+
+### Requirement: Catalogue entry without type says nothing to the deduction
+A catalogue entry without `type` SHALL say nothing to the deduction of a referential team's type: the type is deduced from the other identifiers (design D7 of the names-and-team-review change, pending the author's choice).
+
+Source: tests/flow_organisation; the test of the catalogue entry without `type` renamed (names-and-team-review task 5.1)
 
 #### Scenario: Catalogue entry without type ignored
 - **WHEN** a referential team without a `type` key holds one identifier whose catalogue entry has `Other Team` and another whose catalogue entry has no `type`
@@ -172,6 +203,24 @@ The system SHALL provide the author-only subcommand `extract-teams`, which write
 #### Scenario: Catalogue entry outside the referential
 - **WHEN** no referential team lists any identifier of a catalogue entry
 - **THEN** the entry is marked outside the referential in the extract
+
+### Requirement: Teams without a Jira team by construction are marked
+The system SHALL read `jira_team: none` with a `jira_team_reason` (`effectifs`, `transverse` or `site`) on a referential team, and SHALL refuse a marker with `jira_team_ids`, without a reason, or a reason alone.
+
+Source: tests/flow_organisation/test_flow_organisation.py
+
+#### Scenario: Marker without reason
+- **WHEN** a referential team carries `jira_team: none` without a `jira_team_reason`
+- **THEN** the reading is refused
+
+### Requirement: Teams without a Jira team counted apart and extracted with their reason
+`check-teams` SHALL count the teams marked `jira_team: none` on their own line, not as teams without identifier. The extract SHALL carry the marker and the reason.
+
+Source: tests/export_jira_api/test_equipes_commandes.py (EquipesSansIdentifiant), tests/export_jira_api/test_extrait_noms.py
+
+#### Scenario: Marked team
+- **WHEN** a team without identifier carries `jira_team: none` and a reason
+- **THEN** `check-teams` does not count it as without identifier and prints it in the line of teams without a Jira team by construction, as a number only
 
 ### Requirement: Team-names extract runs outside sessions and prints counts only
 The system SHALL make `extract-teams` refuse to start inside a Claude Code session (exit 3) before reading any file, write nothing when a source is refused or when neither source exists (exit 1), and print counts only, in French by default and in English with `--language en` (design D10). It SHALL NOT print a name, call Jira or open a database session. Untested until implemented.

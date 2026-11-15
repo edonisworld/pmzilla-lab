@@ -72,12 +72,24 @@ class GabaritCalendrier(unittest.TestCase):
 
 
 class HeureDue(unittest.TestCase):
-    def test_constante_de_watch_sh_egale_a_l_heure_du_calendrier(self):
+    def test_constante_de_watch_sh_pas_plus_tard_que_l_heure_du_calendrier(self):
+        """R-20261102-3 et R-20261102-5 (Q274), réécrit : l'heure due (watch.sh, 05:00) n'est plus égale à l'heure du calendrier du modèle
+        (07:10) ; elle ne doit pas être plus tardive. Source de l'heure due : watch.sh ; de l'heure du calendrier : le modèle."""
         script = SCRIPT.read_text(encoding="utf-8")
         trouve = re.search(r'^HEURE_DUE="(\d{2}):(\d{2})"$', script, re.M)
         self.assertIsNotNone(trouve, 'watch.sh doit contenir une ligne exacte HEURE_DUE="HH:MM"')
         calendrier = rendre(GABARIT_CALENDRIER)["StartCalendarInterval"]
-        self.assertEqual((int(trouve.group(1)), int(trouve.group(2))), (calendrier["Hour"], calendrier["Minute"]))
+        due = (int(trouve.group(1)), int(trouve.group(2)))
+        horaire = (calendrier["Hour"], calendrier["Minute"])
+        self.assertEqual(due, (5, 0))
+        self.assertLessEqual(due, horaire, f"heure due {due} plus tardive que l'heure du calendrier {horaire} du modèle")
+
+    def test_le_modele_du_calendrier_n_a_pas_de_demarrage_a_la_charge(self):
+        """Q274 : le rattrapage, déjà lancé au chargement, démarre la veille ; le modèle du calendrier garde son heure, sans RunAtLoad."""
+        donnees = rendre(GABARIT_CALENDRIER)
+        self.assertNotIn("RunAtLoad", donnees)
+        self.assertNotIn("KeepAlive", donnees)
+        self.assertEqual(donnees["StartCalendarInterval"], {"Hour": 7, "Minute": 10})
 
 
 if __name__ == "__main__":

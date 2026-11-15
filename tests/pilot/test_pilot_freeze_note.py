@@ -79,11 +79,13 @@ class Gel(unittest.TestCase):
 
     def test_attente_verrou_retire(self):
         self.labo.poser_verrou()
-        env = self.labo.env(PILOT_POLL_SECONDS="0.05", PILOT_WAIT_UNIT_SECONDS="2")
+        # borne d'attente large (60 s : l'objet du test est la sortie dès que le verrou est retiré, pas la durée) ; le processus attend tant que le verrou existe
+        env = self.labo.env(PILOT_POLL_SECONDS="0.05", PILOT_WAIT_UNIT_SECONDS="60")
         p = self.labo.popen("freeze", "--wait", "1", env=env)
         time.sleep(0.2)
+        self.assertIsNone(p.poll(), "le processus aurait dû attendre tant que le verrou est posé")
         self.labo.retirer_verrou()
-        sortie, erreur = p.communicate(timeout=30)
+        sortie, erreur = p.communicate(timeout=120)
         self.assertEqual(p.returncode, 0, erreur)
         self.assertIn("pilot : aucune fin de branche en cours", sortie)
 

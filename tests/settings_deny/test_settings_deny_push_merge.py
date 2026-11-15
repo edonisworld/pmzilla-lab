@@ -3,12 +3,18 @@
 La session ne pousse jamais (`git push` sous toutes ses formes, `--dry-run` compris), n'utilise ni `--force` ni `--no-verify` sur une commande
 git, ne fusionne pas dans l'espace de travail principal et ne fusionne pas de pull request (`gh pr merge`). Les scripts de fin que l'auteur
 lance hors de toute session ne sont pas concernés. Une règle deny compare le texte de la commande, jamais le dossier ni la branche : la fusion
-nue (`git merge`) ne peut pas être limitée à l'espace principal dans le fichier partagé, d'où deux blocs :
- - REGLES_ATTENDUES (32) pour `.claude/settings.json` : push, force, saut des crochets, fusion qui nomme l'espace principal, `gh pr merge` ;
- - REGLES_LOCALES (4) pour `.claude/settings.local.json` de l'espace principal (ignoré par Git, jamais porté par un worktree) : `git merge` nu.
-Question ouverte 2 de D11, tranchée par l'auteur : ces 4 règles vivent UNIQUEMENT dans `.claude/settings.local.json` de l'espace principal ;
-le repli vers `.claude/settings.json` n'est plus accepté, et un test échoue (partout, worktree compris) si l'une d'elles y figure.
-REGLES_DEJA_LA (6) sont déjà dans le fichier, non dupliquées, et doivent y rester.
+nue (`git merge`) ne pouvait pas être limitée à l'espace principal dans le fichier partagé, d'où deux blocs :
+ - REGLES_ATTENDUES (27 depuis le désherbage du 2026-10-28, D43 ; 37 avant) pour `.claude/settings.json` : push, force, saut des crochets, `gh pr merge`.
+   Les dix règles de fusion qui nommaient l'espace principal (formes exactes `… merge` et `… merge *`, fragment 26) sont retirées : le fragment 38
+   refuse les mêmes commandes, merge-base, merge-tree et mergetool restent permis ;
+ - REGLES_LOCALES (4) : `git merge *`, `*/git merge *`, `env *git merge *` et `*/env *git merge *`, qui vivaient dans `.claude/settings.local.json` de
+   l'espace principal (ignoré par Git). Désherbage du 2026-10-28 (D42) : ces règles locales sont retirées, elles sont identiques à des règles du fragment 38
+   (le `git merge` seul y est refusé aussi) ; la liste reste déclarée comme bloc de référence et le fichier local, s'il existe encore, n'est plus exigé.
+Depuis le 2026-10-26 le fragment 38 (test_settings_deny_fusion_run.py) refuse `git merge` et `git pull` sous toutes leurs formes, worktree compris : ces 4 règles y
+sont contenues et le test « elles y sont, une fois le fragment 38 posé » le vérifie.
+REGLES_DEJA_LA (5 depuis le désherbage, D44 ; 6 avant) sont déjà dans le fichier, non dupliquées, et doivent y rester.
+Pose : le fichier d'étape fusion-run-reglages a remplacé les cinq anciennes règles `… merge*` (FUSION_ESPACE_ANCIENNES) ; si l'une revient, les tests du
+fichier réel échouent (désherbage du 2026-10-28, D79 : plus de saut « pose pas faite »).
 
 Conception (même motif que test_settings_deny_archives.py) : l'auteur pose les règles (tâche 9.1). La suite reste VERTE avant et après :
  - la matrice des formes s'applique aux blocs déclarés, toujours ;
@@ -19,7 +25,7 @@ Conception (même motif que test_settings_deny_archives.py) : l'auteur pose les 
 Aucune commande n'est lancée ; le test ne lit que .claude/settings.json et, dans l'espace principal, .claude/settings.local.json.
 
     uv run --with pyyaml python -W ignore -m unittest discover -s tests/settings_deny -q
-    python3 tests/settings_deny/test_settings_deny_push_merge.py --json            (les 32 règles pour .claude/settings.json)
+    python3 tests/settings_deny/test_settings_deny_push_merge.py --json            (les 27 règles pour .claude/settings.json)
     python3 tests/settings_deny/test_settings_deny_push_merge.py --json --local    (les 4 règles pour .claude/settings.local.json)
 """
 import itertools
@@ -32,6 +38,7 @@ RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import garde_regles  # noqa: E402
 from test_settings_deny_story_quality import Moteur  # noqa: E402
+from test_settings_deny_fusion_run import FUSION_ESPACE_ANCIENNES, REGLES_38, pose_declaree  # noqa: E402
 
 REGLAGES = RACINE / ".claude" / "settings.json"
 REGLAGES_LOCAUX = RACINE / ".claude" / "settings.local.json"
@@ -52,19 +59,24 @@ SANS_CROCHETS = (
     "Bash(git *--no-verify*)", "Bash(*/git *--no-verify*)", "Bash(env *git *--no-verify*)", "Bash(*/env *git *--no-verify*)",
     "Bash(cd * && git *--no-verify*)", "Bash(cd *; git *--no-verify*)",
 )
-FUSION_ESPACE = (
-    "Bash(git -C *PMZilla-Lab/workspace merge*)", "Bash(git -C *PMZilla-Lab/workspace/ merge*)",
-    "Bash(cd *PMZilla-Lab/workspace && git merge*)", "Bash(cd *PMZilla-Lab/workspace; git merge*)",
-    "Bash(git --git-dir*PMZilla-Lab/workspace/.git merge*)",
-)
+# Désherbage du 2026-10-28 (D43) : les dix règles `… merge` et `… merge *` qui nomment l'espace principal (fragment 26) sont retirées, contenues dans le
+# fragment 38 (`git -* merge`, `*& git merge`, `*; git merge`…) ; elles ne sont plus exigées dans settings.json. Les commandes qu'elles refusaient restent
+# refusées (FUSIONS_ESPACE, vérifiées contre REGLES_38 et contre les règles réelles) ; merge-base, merge-tree et mergetool restent permis.
 FUSION_PR = ("Bash(gh pr merge*)", "Bash(*/gh pr merge*)", "Bash(env *gh pr merge*)", "Bash(*/env *gh pr merge*)")
-REGLES_ATTENDUES = PUSH + FORCE + SANS_CROCHETS + FUSION_ESPACE + FUSION_PR
+REGLES_ATTENDUES = PUSH + FORCE + SANS_CROCHETS + FUSION_PR
 
-REGLES_LOCALES = ("Bash(git merge*)", "Bash(*/git merge*)", "Bash(env *git merge*)", "Bash(*/env *git merge*)")
+# `git merge *` et non `git merge*` (merge-base, merge-tree et mergetool restent permis) ; le `git merge` nu est refusé par le fragment 38.
+REGLES_LOCALES = ("Bash(git merge *)", "Bash(*/git merge *)", "Bash(env *git merge *)", "Bash(*/env *git merge *)")
 
+# Les quatre formes `merge*` que le fichier local de l'espace principal portait avant le 2026-10-26 : valables jusqu'à ce que l'auteur les remplace par les quatre
+# formes de REGLES_LOCALES, après la fusion de la branche dans main (le test du fichier local accepte l'une ou l'autre série).
+ANCIENNES_LOCALES = ("Bash(git merge*)", "Bash(*/git merge*)", "Bash(env *git merge*)", "Bash(*/env *git merge*)")
+
+# Désherbage du 2026-10-28 (D44) : `git -C *PMZilla-Lab/run* push*` est retirée (couverte par `git -C * push*`) ; `… merge*` reste (38:3-4 ne couvre
+# que `merge` et `merge *`, pas `merge-file` ni `mergetool`).
 REGLES_DEJA_LA = (
     "Bash(git -C *edition-en* push*)", "Bash(cd *edition-en* && git push*)", "Bash(cd *edition-en*; git push*)",
-    "Bash(git --git-dir*edition-en* push*)", "Bash(git -C *PMZilla-Lab/run* push*)", "Bash(git -C *PMZilla-Lab/run* merge*)",
+    "Bash(git --git-dir*edition-en* push*)", "Bash(git -C *PMZilla-Lab/run* merge*)",
 )
 
 PHRASE_PARTAGE = "règle(s) push et fusion absente(s) de .claude/settings.json (conception D11)"
@@ -72,7 +84,7 @@ PHRASE_LOCAL = "règle(s) de fusion absente(s) de .claude/settings.local.json de
 
 
 def regles_attendues() -> list:
-    """Les 32 règles à ajouter à permissions.deny de .claude/settings.json (imprimées par --json)."""
+    """Les 27 règles à ajouter à permissions.deny de .claude/settings.json (imprimées par --json)."""
     return list(REGLES_ATTENDUES)
 
 
@@ -113,7 +125,8 @@ FUSIONS_ESPACE = (
     f"git -C {ESPACE} merge feat/x", f"git -C {ESPACE_ABS} merge --no-ff feat/x", f"git -C {ESPACE}/ merge feat/x",
     f"git -C {ESPACE_ABS}/ merge feat/x", f"cd {ESPACE} && git merge feat/x", f"cd {ESPACE_ABS} && git merge --ff-only feat/x",
     f"cd {ESPACE}; git merge feat/x", f"cd {ESPACE_ABS}; git merge feat/x", f"git --git-dir={ESPACE_ABS}/.git merge feat/x",
-    f"git --git-dir={ESPACE}/.git merge feat/x",
+    f"git --git-dir={ESPACE}/.git merge feat/x", f"git -C {ESPACE} merge", f"git -C {ESPACE_ABS}/ merge", f"cd {ESPACE} && git merge", f"cd {ESPACE_ABS}; git merge",
+    f"git --git-dir={ESPACE_ABS}/.git merge",
 )
 
 FUSIONS_NUES = ("git merge main", "git merge --no-ff feat/x", "git merge --abort", "/usr/bin/git merge main", "env GIT_TRACE=1 git merge main",
@@ -123,8 +136,7 @@ FUSIONS_NUES = ("git merge main", "git merge --no-ff feat/x", "git merge --abort
 PERMISES_PARTAGE = (
     "git status", "git status --short", "git log origin/main..main", "git log --oneline -3", "git fetch", "git fetch origin",
     "git diff origin/main", "git commit -m x", "git commit -m 'correctif'", "git add tools/x.py", "git branch --show-current",
-    "git merge main", "git merge --no-ff feat/x", f"git -C {WORKTREE} merge main", f"cd {WORKTREE} && git merge main",
-    f"cd {WORKTREE}; git merge main", f"git -C {ESPACE}/.claude/worktrees/x merge main", f"cd {ESPACE}/.claude/worktrees/x && git merge main",
+    f"git -C {WORKTREE} rebase main", f"git -C {WORKTREE} merge-base main HEAD",
     f"git -C {ESPACE} status", f"git -C {ESPACE} log origin/main..main", f"git -C {ESPACE} fetch",
     'grep -n "git push" docs/pmzilla/installation.md', 'grep -rn "git push --force" openspec', 'grep -rn "git push" docs',
     'grep -n "--no-verify" docs/pmzilla/installation.md', 'rg "git push" docs', 'git grep -n "git push"', 'git grep -n "gh pr merge"',
@@ -132,14 +144,30 @@ PERMISES_PARTAGE = (
     "bash tests/run_all.sh settings_deny", "uv run tools/pilot.py freeze --wait 60",
 )
 
+# Fusions dans un worktree : permises par le bloc de D11 (il ne refuse que la fusion qui nomme l'espace principal), refusées depuis le 2026-10-26 par le
+# fragment 38 (test_settings_deny_fusion_run.py : la session ne lance jamais `git merge`, voie permise `git -C <worktree> rebase main`). Vérifiées ici contre
+# le bloc partagé seul ; elles ne le sont plus contre les règles réelles.
+FUSIONS_PERMISES_PAR_LE_BLOC = (
+    "git merge main", "git merge --no-ff feat/x", f"git -C {WORKTREE} merge main", f"cd {WORKTREE} && git merge main",
+    f"cd {WORKTREE}; git merge main", f"git -C {ESPACE}/.claude/worktrees/x merge main", f"cd {ESPACE}/.claude/worktrees/x && git merge main",
+)
+
 # Effets énoncés par D11, assertés refusés (« Effects stated, not hidden »).
 EFFETS_PARTAGE = (
     f"git -C {WORKTREE} commit -m 'prêt à push'", "git commit -m 'sans --no-verify'", "git commit -m 'sans --force'",
     'git grep -n "--force" tools', 'git grep -n "--no-verify" tools',
 )
-# Effets du bloc local : `git merge-base` et `git mergetool` sont refusés aussi dans l'espace principal.
-EFFETS_LOCAL = ("git merge-base main feat/x", "git mergetool")
-PERMISES_LOCAL = ("git status", "git log origin/main..main", "git fetch", "git commit -m x", "gh pr list", 'grep -n "git merge" docs')
+# Depuis le 2026-10-26, `git merge-base` et `git mergetool` ne sont plus refusés par le bloc local (`git merge *`), ni par les formes exactes du bloc partagé :
+# permis partout, l'espace principal compris.
+PERMISES_LOCAL = ("git status", "git log origin/main..main", "git fetch", "git commit -m x", "gh pr list", 'grep -n "git merge" docs',
+                  "git merge-base main feat/x", "git mergetool", "git merge-tree main feat/x", "git merge-file a b c", "/usr/bin/git merge-base a b",
+                  "env GIT_TRACE=1 git merge-base a b", "git merge", "git mergex main")
+# Permis par le bloc partagé : merge-base, merge-tree et mergetool nomment l'espace principal sans être refusés (formes exactes `… merge` / `… merge *`).
+PERMISES_ESPACE = (
+    f"git -C {ESPACE} merge-base main HEAD", f"git -C {ESPACE_ABS} merge-tree main feat/x", f"git -C {ESPACE}/ merge-base a b", f"git -C {ESPACE_ABS}/ mergetool",
+    f"cd {ESPACE} && git merge-base a b", f"cd {ESPACE_ABS}; git merge-tree a b", f"git --git-dir={ESPACE_ABS}/.git merge-base a b",
+    f"git --git-dir {ESPACE}/.git merge-tree a b", f"git -C {ESPACE} merge-file a b c", f"git -C {ESPACE} mergetool",
+)
 
 
 def refusees_partage():
@@ -158,7 +186,6 @@ def refusees_partage():
 def refusees_locales():
     for commande in FUSIONS_NUES:
         yield commande
-    yield from EFFETS_LOCAL
 
 
 def non_refusees(moteur: Moteur, commandes) -> list:
@@ -178,10 +205,12 @@ def est_espace_principal() -> bool:
 
 class Declaration(unittest.TestCase):
     def test_comptes(self):
-        self.assertEqual((len(PUSH), len(FORCE), len(SANS_CROCHETS), len(FUSION_ESPACE), len(FUSION_PR)), (11, 6, 6, 5, 4))
-        self.assertEqual(len(regles_attendues()), 32)
+        self.assertEqual((len(PUSH), len(FORCE), len(SANS_CROCHETS), len(FUSION_PR)), (11, 6, 6, 4))
+        self.assertEqual(len(regles_attendues()), 27)
+        self.assertEqual(len(FUSION_ESPACE_ANCIENNES), 5)
+        self.assertEqual(set(FUSION_ESPACE_ANCIENNES) & set(regles_attendues()), set())
         self.assertEqual(len(regles_locales()), 4)
-        self.assertEqual(len(REGLES_DEJA_LA), 6)
+        self.assertEqual(len(REGLES_DEJA_LA), 5)
 
     def test_les_deux_listes_passent_la_garde_partagee(self):
         self.assertEqual(garde_regles.constats(regles_attendues()), [])
@@ -208,7 +237,8 @@ class Declaration(unittest.TestCase):
         self.assertEqual(len(tout), len(set(tout)))
 
     def test_les_quatre_regles_locales_sont_les_formes_nues(self):
-        self.assertEqual(regles_locales(), ["Bash(git merge*)", "Bash(*/git merge*)", "Bash(env *git merge*)", "Bash(*/env *git merge*)"])
+        self.assertEqual(regles_locales(), ["Bash(git merge *)", "Bash(*/git merge *)", "Bash(env *git merge *)", "Bash(*/env *git merge *)"])
+        self.assertTrue(all(r in REGLES_38 for r in regles_locales()), "les quatre règles locales sont des règles du fragment 38 (redondantes)")
 
     def test_les_regles_deja_la_ne_sont_pas_reprises_dans_les_blocs(self):
         self.assertEqual(sorted(set(REGLES_DEJA_LA) & set(regles_attendues() + regles_locales())), [])
@@ -250,8 +280,10 @@ class MatriceDesBlocs(unittest.TestCase):
             self.assertTrue(self.partage.interdite(commande), commande)
 
     def test_fusion_qui_nomme_l_espace_principal(self):
+        """Désherbage du 2026-10-28 (D43) : les dix règles du fragment 26 sont retirées ; ces fusions sont refusées par le fragment 38 (REGLES_38)."""
+        fragment_38 = Moteur(list(REGLES_38))
         for commande in FUSIONS_ESPACE:
-            self.assertTrue(self.partage.interdite(commande), commande)
+            self.assertTrue(fragment_38.interdite(commande), commande)
 
     def test_la_fusion_nue_est_refusee_par_le_bloc_local(self):
         for commande in FUSIONS_NUES:
@@ -260,11 +292,20 @@ class MatriceDesBlocs(unittest.TestCase):
     def test_effets_enonces_par_d11_refuses(self):
         for commande in EFFETS_PARTAGE:
             self.assertTrue(self.partage.interdite(commande), commande)
-        for commande in EFFETS_LOCAL:
-            self.assertTrue(self.local.interdite(commande), commande)
 
     def test_commandes_permises_non_refusees_par_le_bloc_partage(self):
-        self.assertEqual(non_refusees(self.partage, PERMISES_PARTAGE), [])
+        self.assertEqual(non_refusees(self.partage, PERMISES_PARTAGE + FUSIONS_PERMISES_PAR_LE_BLOC + PERMISES_ESPACE), [])
+
+    def test_merge_base_merge_tree_et_mergetool_restent_permis_sur_l_espace_principal(self):
+        """Décision de l'auteur du 2026-10-26 : les règles du fragment 26 sont des formes exactes, plus `merge*`. Depuis le désherbage du 2026-10-28
+        (D43) ces règles sont retirées et le fragment 38 (formes `merge` et `merge *`) fait seul le travail : merge-base reste permis."""
+        self.assertEqual(non_refusees(self.partage, PERMISES_ESPACE), [])
+        self.assertEqual(non_refusees(Moteur(list(REGLES_38)), PERMISES_ESPACE), [])
+
+    def test_les_anciennes_formes_merge_etoile_refusaient_merge_base_sur_l_espace_principal(self):
+        """Garde le sens du remplacement : avec les cinq anciennes règles, merge-base nommant l'espace principal était refusé."""
+        anciennes = Moteur(list(FUSION_ESPACE_ANCIENNES))
+        self.assertEqual(len(non_refusees(anciennes, PERMISES_ESPACE)), len(PERMISES_ESPACE))
 
     def test_commandes_permises_non_refusees_par_le_bloc_local(self):
         self.assertEqual(non_refusees(self.local, PERMISES_LOCAL), [])
@@ -281,17 +322,17 @@ class MatriceDesBlocs(unittest.TestCase):
 # --- Les règles gardées ---------------------------------------------------------------------------------------------------------------
 
 class RegleGardees(unittest.TestCase):
-    """Les 6 règles déjà dans le fichier : elles doivent y rester (échoue dès qu'une manque, avant comme après la pose)."""
+    """Les 4 règles déjà dans le fichier : elles doivent y rester (échoue dès qu'une manque, avant comme après la pose)."""
 
     @classmethod
     def setUpClass(cls):
         cls.deny = deny_de(REGLAGES)
 
-    def test_les_six_regles_sont_dans_settings_json(self):
+    def test_les_quatre_regles_gardees_sont_dans_settings_json(self):
         manquantes = [r for r in REGLES_DEJA_LA if r not in self.deny]
         self.assertEqual(manquantes, [], f"{len(manquantes)} règle(s) gardée(s) absente(s) de .claude/settings.json : {manquantes}")
 
-    def test_les_six_regles_ne_sont_pas_dupliquees(self):
+    def test_les_quatre_regles_gardees_ne_sont_pas_dupliquees(self):
         doublons = [r for r in REGLES_DEJA_LA if self.deny.count(r) > 1]
         self.assertEqual(doublons, [])
 
@@ -299,18 +340,31 @@ class RegleGardees(unittest.TestCase):
         moteur = Moteur([r for r in REGLES_DEJA_LA])
         for commande in ("git -C ~/PMZilla-Lab/edition-en push", "cd ~/PMZilla-Lab/edition-en && git push",
                          "cd ~/PMZilla-Lab/edition-en; git push", "git --git-dir=~/PMZilla-Lab/edition-en/.git push",
-                         "git -C ~/PMZilla-Lab/run push", "git -C ~/PMZilla-Lab/run merge main"):
+                         "git -C ~/PMZilla-Lab/run merge main"):
             self.assertTrue(moteur.interdite(commande), commande)
 
-    def test_aucune_des_quatre_regles_de_fusion_nue_n_est_dans_settings_json(self):
-        """Le fichier partagé ne porte jamais la fusion nue : elle bloquerait les fusions dans les worktrees (D11). Tourne partout."""
+    def test_push_et_fusion_depuis_le_dossier_d_execution_restent_refuses(self):
+        """Désherbage du 2026-10-28 (D44) : la règle `git -C *PMZilla-Lab/run* push*` est retirée ; `git -C * push*` (fragment 26) et le fragment 38
+        refusent les mêmes commandes, avant comme après."""
+        moteur = Moteur([r for r in self.deny if r in PUSH or r in REGLES_38])
+        for commande in ("git -C ~/PMZilla-Lab/run push", "git -C ~/PMZilla-Lab/run merge main", "git -C ~/PMZilla-Lab/run pull",
+                         "git -C /Users/quelquun/PMZilla-Lab/run push origin main", "git -C $HOME/PMZilla-Lab/run merge --no-ff x"):
+            self.assertTrue(moteur.interdite(commande), commande)
+
+    def test_les_quatre_regles_locales_sont_dans_settings_json_une_fois_le_fragment_38_pose(self):
+        """Depuis le 2026-10-26 le fragment 38 refuse `git merge` sous toutes ses formes, worktree compris : les quatre règles locales (`git merge *` et ses
+        trois jumelles) sont aussi dans le fichier partagé, redondantes avec celles de l'espace principal. Tourne partout.
+        (Désherbage du 2026-10-28, D79 : la branche « fragment 38 pas posé » est retirée, la pose est déclarée.)"""
         presentes = [r for r in regles_locales() if r in self.deny]
-        self.assertEqual(presentes, [], f"règle(s) de fusion nue interdite(s) dans .claude/settings.json (à poser dans settings.local.json) : {presentes}")
+        self.assertEqual(presentes, regles_locales(), "fragment 38 posé : les quatre règles locales y sont (redondantes avec settings.local.json)")
 
     def test_aucune_regle_des_blocs_n_est_deja_dans_le_fichier_hors_pose(self):
-        """Une règle des blocs présente seule (sans les autres) est la pose partielle, nommée par les tests du fichier de réglages."""
+        """Une règle des blocs présente seule (sans les autres) est la pose partielle, nommée par les tests du fichier de réglages. Avec les cinq anciennes
+        règles `… merge*` encore là, la pose du fragment 38 est partielle (D79 : la branche de saut « pose pas faite » est retirée)."""
+        if any(r in self.deny for r in FUSION_ESPACE_ANCIENNES):
+            self.fail("fragment 38 déclaré (fichier ou ORDRE) mais les anciennes règles `… merge*` sont encore dans settings.json : pose partielle")
         presentes = [r for r in regles_attendues() if r in self.deny]
-        self.assertIn(len(presentes), (0, 32), f"pose partielle : {len(presentes)} règle(s) sur 32")
+        self.assertIn(len(presentes), (0, 27), f"pose partielle : {len(presentes)} règle(s) sur 27")
 
 
 class CommandesPermisesEtReglesExistantes(unittest.TestCase):
@@ -326,21 +380,33 @@ class CommandesPermisesEtReglesExistantes(unittest.TestCase):
 # --- Le fichier de réglages réel ---------------------------------------------------------------------------------------------------
 
 class DansLeFichierDeReglages(unittest.TestCase):
-    """Tâche 9.1 : l'auteur pose les 32 règles. Sauté avant, échoue si la pose est partielle, rejoue la matrice si tout y est."""
+    """Tâche 9.1 : l'auteur pose les 27 règles (37 avant le désherbage du 2026-10-28). Échoue si la pose est partielle ou si une des cinq anciennes règles
+    `… merge*` reste, rejoue la matrice si tout y est (D79 : les branches de saut « pose pas faite » sont retirées)."""
 
     @classmethod
     def setUpClass(cls):
         cls.deny = deny_de(REGLAGES)
         cls.presentes = [r for r in regles_attendues() if r in cls.deny]
         cls.manquantes = [r for r in regles_attendues() if r not in cls.deny]
+        cls.anciennes = [r for r in FUSION_ESPACE_ANCIENNES if r in cls.deny]
 
     def avant(self):
+        """Le fragment 38 doit être déclaré (fichier ou nom dans ORDRE, fichiers suivis), posé en entier et sans les anciennes règles `… merge*` (revue de
+        contrôle du 2026-10-26, M2). Désherbage du 2026-10-28 (D79) : les branches de saut « pose pas faite » sont retirées."""
+        if not pose_declaree():
+            self.fail("fragment 38 non déclaré (ni fichier ni ORDRE) : pose partielle")
+        if self.anciennes:
+            self.fail("fragment 38 déclaré mais anciennes règles `… merge*` encore dans settings.json : pose partielle (fichier d'étape fusion-run-reglages)")
+        manquantes_38 = [r for r in REGLES_38 if r not in self.deny]
+        if manquantes_38:
+            self.fail(f"fragment 38 déclaré mais {len(manquantes_38)} de ses règles absentes de settings.json : pose partielle")
         if not self.presentes:
             self.fail("règles de D11 pas encore posées (tâche 9.1, l'auteur)")
 
-    def test_les_32_regles_sont_dans_settings_json(self):
+    def test_les_27_regles_sont_dans_settings_json(self):
         self.avant()
         self.assertEqual(self.manquantes, [], f"{PHRASE_PARTAGE} : {', '.join(self.manquantes)}")
+        self.assertEqual(self.anciennes, [], "formes `… merge*` retirées par la pose")
 
     def test_aucun_doublon_ni_regle_write(self):
         self.avant()
@@ -350,11 +416,11 @@ class DansLeFichierDeReglages(unittest.TestCase):
     def test_la_matrice_contre_les_regles_reelles(self):
         self.avant()
         if self.manquantes:
-            self.skipTest("règles partielles : voir test_les_32_regles_sont_dans_settings_json")
+            self.skipTest("règles partielles : voir test_les_27_regles_sont_dans_settings_json")
         reel = Moteur(self.deny)
         refusees = [c for c in refusees_partage() if not reel.interdite(c)]
         self.assertEqual(refusees[:5], [], f"{len(refusees)} commande(s) de D11 non refusée(s) par les règles réelles")
-        self.assertEqual(non_refusees(reel, PERMISES_PARTAGE), [])
+        self.assertEqual(non_refusees(reel, PERMISES_PARTAGE + PERMISES_ESPACE), [])
 
 
 class DansLeFichierLocal(unittest.TestCase):
@@ -378,22 +444,22 @@ class DansLeFichierLocal(unittest.TestCase):
         if not self.partage_pose:
             self.fail("règles de D11 pas encore posées (tâche 9.1, l'auteur)")
 
-    def test_les_quatre_regles_de_fusion_nue_sont_posees(self):
-        self.avant()
-        presentes = self.regles_du_local()
-        manquantes = [r for r in regles_locales() if r not in presentes]
-        self.assertEqual(manquantes, [], f"{PHRASE_LOCAL} : {', '.join(manquantes)}")
+    # Le test « les quatre règles de fusion nue sont posées » est retiré (désherbage du 2026-10-28, D42) : il figeait la présence des règles de
+    # `.claude/settings.local.json`, retirées parce que le fragment 38 refuse `git merge` sous toutes ses formes. Le comportement qui reste vrai, la fusion
+    # nue refusée, est vérifié par le test suivant (règles locales éventuelles et partagées réunies).
 
-    def test_la_fusion_nue_est_refusee_par_les_regles_reelles(self):
+    def test_la_fusion_nue_est_refusee_par_les_regles_locales_et_partagees_reunies(self):
+        """La fusion nue est refusée par les règles locales et partagées réunies : vrai avec les anciennes formes locales (avant la pose du fragment 38) comme
+        avec les nouvelles (après)."""
         self.avant()
-        reel = Moteur(self.regles_du_local())
+        reel = Moteur(self.regles_du_local() + deny_de(REGLAGES))
         refusees = [c for c in refusees_locales() if not reel.interdite(c)]
         self.assertEqual(refusees, [], PHRASE_LOCAL)
 
     def test_les_regles_locales_passent_la_garde(self):
         self.avant()
         if not REGLAGES_LOCAUX.is_file():
-            self.skipTest("pas de fichier local : voir test_les_quatre_regles_de_fusion_nue_sont_posees")
+            self.skipTest("pas de fichier local : rien à contrôler (D42, les règles locales sont retirées)")
         self.assertEqual(garde_regles.constats(deny_de(REGLAGES_LOCAUX)), [])
 
 

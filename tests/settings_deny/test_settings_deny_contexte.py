@@ -178,8 +178,10 @@ class DansLeFichierDeReglages(unittest.TestCase):
 
     def test_l_ancienne_regle_allow_est_retiree(self):
         self.avant()
-        # Seule allow admise après la reprise : celle de `story_quality.py grid` (décision du 2026-10-20, lot 7).
-        self.assertEqual([r for r in self.reglages["permissions"].get("allow", []) if r != "Bash(uv run tools/story_quality.py grid*)"],
+        # Allow admises après la reprise : celle de `story_quality.py grid` (décision du 2026-10-20, lot 7) et celle du runner complet
+        # en session (feat/session-runner, décision du 2026-10-26).
+        admises = {"Bash(uv run tools/story_quality.py grid*)", "Bash(bash tests/run_all.sh)"}
+        self.assertEqual([r for r in self.reglages["permissions"].get("allow", []) if r not in admises],
                          [], "la règle allow des notes de contexte est restée")
         self.assertNotIn(ANCIENNE_REGLE_ALLOW, self.reglages["permissions"].get("allow", []))
 

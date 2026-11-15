@@ -119,7 +119,6 @@ GUIDE = textwrap.dedent("""\
     ### Update the database image
     ### Update an Ollama model
     ### Update BMAD
-    ### Update the vendored chart library
     ### Update a Homebrew tool
     ### Update git (Xcode Command Line Tools)
     ### Update Node.js (fnm)
@@ -212,8 +211,7 @@ def inventaire_complet() -> list[dict]:
                entree("modele-b", "ollama-model", "sorting configuration", "Ollama registry", "Update an Ollama model"),
                entree("bmad-method", "bmad-module", "BMAD manifest", "npm registry", "Update BMAD"),
                entree("core", "bmad-module", "BMAD manifest", "npm registry", "Update BMAD"),
-               entree("ext", "bmad-module", "BMAD manifest", "npm registry", "Update BMAD"),
-               entree("graphes", "vendored", "vendor version file", "npm registry", "Update the vendored chart library")]
+               entree("ext", "bmad-module", "BMAD manifest", "npm registry", "Update BMAD")]
             + outils)
 
 
@@ -239,11 +237,10 @@ class FauxDepot:
         self.ecrire("tools/pmzilla_lab_library.py.lock", verrou({"numpy": "2.1.0"}))
         self.ecrire("tools/watch_triage.py", TRI)
         self.ecrire("tools/watch_triage.py.lock", verrou({"pyyaml": "6.0.3"}))
-        for prive in ("build_edition", "publish_edition", "migrate_watch"):    # outils privés, présents dans le dépôt privé
+        for prive in ("build_edition", "publish_edition"):    # outils privés, présents dans le dépôt privé
             self.ecrire(f"tools/{prive}.py", entete(["pyyaml"]) + "print('p')\n")
         self.ecrire("tools/install_lab.sh", INSTALL_SH)
         self.ecrire("tools/install_lab_prereqs.py", PREREQS)
-        self.ecrire("tools/vendor/graphes.version", "5.6.0\n")
         self.ecrire(".python-version", "3.14\n")
         self.ecrire("docker-compose.yml", COMPOSE)
         self.ecrire("_bmad/_config/manifest.yaml", BMAD)

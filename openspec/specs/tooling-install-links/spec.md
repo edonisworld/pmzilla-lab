@@ -74,6 +74,15 @@ The system SHALL ensure every script in its list exists in the tools folder and 
 
 Source: tests/installation/test_install_links.sh
 
+### Requirement: Leftovers are set aside with the copies
+The system SHALL move each listed leftover of earlier installs, the old `history_common.py` link included, to the copies folder, whether it is a file, a valid link or a dangling link, and SHALL leave the lab folder without it.
+
+#### Scenario: Dangling old link
+- **WHEN** the lab folder holds a dangling `history_common.py` link
+- **THEN** the installer moves it with the copies and the link is gone
+
+Source: tests/installation/test_install_links.sh
+
 ### Requirement: Former verify option refused
 The system SHALL refuse the former name of the verify option with an error that names the current option, SHALL exit non-zero and SHALL create or change no link.
 

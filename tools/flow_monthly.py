@@ -5,12 +5,12 @@
 """
 PMZilla Lab : suivi mensuel du flux en une commande (change monthly-flow-orchestrator, job R-48).
 
-    uv run tools/flow_monthly.py [--dry-run] [--from ETAPE] [--date AAAA-MM-JJ] [--force] [--verbose] [--language fr|en] [--open]
+    uv run tools/flow_monthly.py [--dry-run] [--from ETAPE] [--date AAAA-MM-JJ] [--force] [--verbose] [--language fr|en]
 
 À lancer par l'utilisateur seul, dans le Terminal (refusé dans une session Claude Code : règles deny et variable CLAUDECODE).
 
 Enchaîne les outils existants dans un ordre fixe et s'arrête au premier écart (change database-only, D8) :
-    export, import, history, flow (par série), dependencies (par série), dashboard,
+    export, import, history, flow (par série), dependencies (par série),
     retention (essai à blanc de la purge, sans --apply : il n'efface rien et n'ouvre aucun magasin).
 Il n'ajoute aucun calcul : il passe des options, aucun chemin de fichier, les outils ouvrent la base. Il lit seulement Flux-Lab/flux.yaml
 (bloc monthly_run : séries à calculer) et Flux-Lab/rapports/ ; jamais les exports, l'historique, les tableaux, la table des équipes
@@ -18,7 +18,7 @@ ni la liste des noms sensibles, et il ne se connecte pas à la base. Sa sortie e
 ne portent que des identifiants d'étape, des rangs de série, des effectifs, des codes de sortie et des durées.
 
 Codes de sortie : 0 terminé ; 1 une étape a échoué (tout code de sortie non nul d'un outil) ; 2 usage (une étape inconnue, dont les
-anciennes compare-data et compare-reports) ; 3 prérequis refusé (réglages, bloc monthly_run, session Claude Code) ; 5 suivi du mois déjà
+anciennes compare-data, compare-reports et dashboard, et l'ancienne option --open) ; 3 prérequis refusé (réglages, bloc monthly_run, session Claude Code) ; 5 suivi du mois déjà
 fait (--force pour relancer). Les codes 4 (écart de parité) et 6 (entrée manquante) sont retirés et jamais réutilisés.
 
 Une reprise (--from une étape autre que export) sans --date reprend la date de la série en cours, lue dans les résumés du mois
@@ -47,14 +47,13 @@ from flow_monthly_messages import CATALOGS                     # noqa: E402
 from messages import Messages                                  # noqa: E402
 from yaml_strict import ErreurConfig, charger                  # noqa: E402
 
-ETAPES = ("export", "import", "history", "flow", "dependencies", "dashboard", "retention")
+ETAPES = ("export", "import", "history", "flow", "dependencies", "retention")
 SUFFIXE_BASE = "-db"             # réservé depuis la comparaison des séries (retirée) : le refus d'un nom en « -db » est gardé
 DOSSIER_FLUX = "Flux-Lab"
 RESUME = "suivi-mensuel-{jour}.md"
 MOTIF_RESUME = re.compile(r"^suivi-mensuel-(\d{4}-\d{2}-\d{2})\.md$")
 MOTIF_NOM = re.compile(r"^[A-Za-z0-9_-]+$")
 DEPENDANCES = ("team", "project", "both", "none")
-TABLEAUX = ("full", "anonymous", "both")
 VARIABLE_CLAUDE_CODE = "CLAUDECODE"
 # Ligne de total de l'essai de purge, dans la langue du run (D19) : « rien hors règle » compte pour 0.
 TOTAL_RETENTION = {
@@ -98,7 +97,6 @@ class Serie:
 class Reglages:
     requetes: list[str | None]
     series: list[Serie]
-    tableaux: str
 
 
 def _refus(t: Messages, raison: str, chemin: str, ligne: int | None) -> Prerequis:
@@ -128,8 +126,7 @@ def lire_reglages(racine: Path, t: Messages) -> Reglages:
     if not isinstance(brut, dict):
         raise Prerequis(t("p_settings_unreadable"))
     requetes = _requetes(brut, t)
-    series, tableaux = _bloc(brut, t)
-    return Reglages(requetes, series, tableaux)
+    return Reglages(requetes, _bloc(brut, t))
 
 
 def _requetes(brut: dict, t: Messages) -> list[str | None]:
@@ -143,7 +140,7 @@ def _requetes(brut: dict, t: Messages) -> list[str | None]:
     return [None]
 
 
-def _bloc(brut: dict, t: Messages) -> tuple[list[Serie], str]:
+def _bloc(brut: dict, t: Messages) -> list[Serie]:
     lignes = getattr(brut, "lignes", {})
     if "monthly_run" not in brut:
         raise Prerequis(t("p_block_missing"))
@@ -153,7 +150,7 @@ def _bloc(brut: dict, t: Messages) -> tuple[list[Serie], str]:
         raise _refus(t, "r_invalid_block", "monthly_run", ligne_bloc)
     lignes_bloc = getattr(bloc, "lignes", {})
     for cle in bloc:
-        if cle not in ("series", "dashboard"):
+        if cle != "series":
             raise _refus(t, "r_unknown_key", f"monthly_run.{cle}", lignes_bloc.get(cle))
     liste = bloc.get("series")
     if not isinstance(liste, list) or not liste:
@@ -183,10 +180,7 @@ def _bloc(brut: dict, t: Messages) -> tuple[list[Serie], str]:
         if dependances not in DEPENDANCES:
             raise _refus(t, "r_invalid_value", f"{base}.dependencies", lignes_item.get("dependencies"))
         series.append(Serie(nom, perimetre.strip() if perimetre else None, dependances))
-    tableaux = bloc.get("dashboard", "both")
-    if tableaux not in TABLEAUX:
-        raise _refus(t, "r_invalid_value", "monthly_run.dashboard", lignes_bloc.get("dashboard"))
-    return series, tableaux
+    return series
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------
@@ -228,7 +222,7 @@ class Commande:
         return Appel(self.outil, self.args, self.montres, self.retention)
 
 
-def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvrir: bool, t: Messages) -> list[Unite]:
+def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, t: Messages) -> list[Unite]:
     """Plan de la décision D8 : aucun chemin de fichier n'est passé, les outils lisent et écrivent dans la base."""
     use_date = jour != aujourdhui
 
@@ -245,7 +239,7 @@ def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvr
     ]
     for k, serie in enumerate(reglages.series, start=1):
         c = Commande("flux_jira").ajouter("compute").ajouter("--name").valeur(serie.nom, t("ph_series", k=k))
-        c = avec_perimetre(c, serie, k).ajouter("--history", "--dormant-from-history", "--points", "--language", langue)
+        c = avec_perimetre(c, serie, k).ajouter("--history", "--dormant-from-history", "--language", langue)
         unites.append(Unite("flow", k, [date_option(c).appel()]))
     for k, serie in enumerate(reglages.series, start=1):
         appels = []
@@ -257,15 +251,6 @@ def construire(reglages: Reglages, jour: str, langue: str, aujourdhui: str, ouvr
             appels.append(c.ajouter("--language", langue).appel())
         if appels:
             unites.append(Unite("dependencies", k, appels))
-    tableaux = []
-    for anonyme in {"full": (False,), "anonymous": (True,), "both": (False, True)}[reglages.tableaux]:
-        c = Commande("flow_board").ajouter("--language", langue)
-        if anonyme:
-            c.ajouter("--anonymous")
-        if ouvrir:
-            c.ajouter("--open")
-        tableaux.append(c.appel())
-    unites.append(Unite("dashboard", None, tableaux))
     unites.append(Unite("retention", None, [Commande("flow_retention", True).ajouter("purge", "--language", langue).appel()]))
     return unites
 
@@ -418,14 +403,14 @@ def langue_demandee(argv: list[str]) -> str:
 def analyseur() -> Analyseur:
     p = Analyseur(prog="flow_monthly.py", allow_abbrev=False,
                   description="Monthly flow run in one command: export, import, history, flow and dependency calculations per series, "
-                              "dashboards, retention dry run. Stops at the first gap. Run it in the Terminal.")
+                              "retention dry run. Stops at the first gap. Run it in the Terminal.")
     p.add_argument("--dry-run", action="store_true", help="print the plan with placeholders and run nothing")
     p.add_argument("--from", dest="depuis", metavar="STEP", help="resume at this step: " + ", ".join(ETAPES))
     p.add_argument("--date", metavar="YYYY-MM-DD", help="run date of the report names (default: today)")
     p.add_argument("--force", action="store_true", help="run again even if this month's run is already complete")
     p.add_argument("--verbose", action="store_true", help="stream the tools' output (it can hold series, query or team names)")
     p.add_argument("--language", default="fr", metavar="{fr,en}", help="language of the messages and of the tools' output (default: fr)")
-    p.add_argument("--open", action="store_true", help="open the dashboards in the browser")
+    p.add_argument("--open", action="store_true", help=argparse.SUPPRESS)       # retiré (R-146) : refusé dans _executer
     return p
 
 
@@ -454,6 +439,8 @@ def _executer(args: argparse.Namespace, environ, t: Messages) -> int:
     if args.language not in ("fr", "en"):
         raise Usage("u_language")
     t = Messages(CATALOGS, args.language)
+    if args.open:                                               # option retirée avec le tableau des flux (R-146) : avant tout réglage
+        raise Usage("u_open")
     aujourdhui = dt.date.today()
     jour = aujourdhui.isoformat()
     if args.depuis is not None and args.depuis not in ETAPES:
@@ -494,7 +481,7 @@ def _executer(args: argparse.Namespace, environ, t: Messages) -> int:
         print(t("series_date", date=jour), flush=True)
     reecriture = (serie_decidee or args.date is not None) and (rapports / RESUME.format(jour=jour)).exists()
 
-    unites = construire(reglages, jour, args.language, aujourdhui.isoformat(), args.open, t)
+    unites = construire(reglages, jour, args.language, aujourdhui.isoformat(), t)
     debut = next((i for i, u in enumerate(unites) if u.etape == args.depuis), 0) if args.depuis else 0
     if args.dry_run:
         for unite in unites[debut:]:

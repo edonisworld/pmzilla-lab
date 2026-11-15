@@ -1,0 +1,1103 @@
+{
+  "description": "Counter-examples X1 to X12 of change masking-sums (R-144), shared by every suite that masks cells at a raised threshold. Synthetic only: invented teams A to G, invented identifiers, no real count. A case gives the cells as the views publish them before the masking rules of this change (a null is a hidden cell), and the cells expected to be masked once every rule is applied. Only the columns listed in `cells` are judged. `related` holds the other views the rule between views reads (D5). Each case is played by every suite named in `players`; a case ignored by a listed player is a failure, never a skip. Cases X26a to X26f (change masking-sums, D17, relation T3) add teams A to E in the quarter starting 2026-04-01; the TypeScript player plays the cases of the views it ports and checks that the others are refused.",
+  "version": 1,
+  "players": ["python", "npm"],
+  "kinds": {
+    "masquer_vue": "Apply masquer_vue(view, columns, rows, threshold, liees=related) and compare the set of [row index, column] pairs of `cells` whose structured cell is masked with `masked`. A masked cell carries the reason under_threshold and the threshold. `regression` true: already correct before this change, kept as a regression case. `witness` true: format witness, every expected masked cell is already null in the input, so the case proves the format and no rule.",
+    "echantillon_h1": "Same as masquer_vue (the masked pairs are compared the same way), and in addition the sample size of H1 of row `sampleSize.row` is computed from the shown cells only by the pure function of the player (Python `taille_echantillon_h1`, TypeScript `tailleEchantillonH1`) and compared with `sampleSize.lead` and `sampleSize.cycle` (an integer, or null for no size: the verdict is insufficient sample). Added by task 22.1 of masking-sums (D16, R-20261106-18)."
+  },
+  "cases": [
+    {
+      "id": "X1",
+      "kind": "masquer_vue",
+      "title": "Teams count against status counts: a gap of one pins a masked status cell to 1",
+      "regression": false,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "A", "team_type": null, "tickets": 23 }
+      ],
+      "related": {
+        "v_team_status": {
+          "columns": ["team", "type", "status_category", "status", "tickets"],
+          "rows": [
+            { "team": "A", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 10 },
+            { "team": "A", "type": "Story", "status_category": "Done", "status": "Resolved", "tickets": 12 },
+            { "team": "A", "type": "Story", "status_category": "In progress", "status": "Blocked", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X1b",
+      "kind": "masquer_vue",
+      "title": "Identifiers: the teams count of the name is masked by the status counts (X1), so its smallest visible identifier is masked too (clean Jira data: one identifier equals the name)",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "A", "jira_team_id": "id1", "tickets": 23 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "A", "team_type": null, "tickets": 23 }
+          ]
+        },
+        "v_team_status": {
+          "columns": ["team", "type", "status_category", "status", "tickets"],
+          "rows": [
+            { "team": "A", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 10 },
+            { "team": "A", "type": "Story", "status_category": "Done", "status": "Resolved", "tickets": 12 },
+            { "team": "A", "type": "Story", "status_category": "In progress", "status": "Blocked", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X2",
+      "kind": "masquer_vue",
+      "title": "Team names and identifiers: two identifiers of 4 tickets, both masked, the name shows 8",
+      "regression": false,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "N", "team_type": null, "tickets": 8 }
+      ],
+      "related": {
+        "v_team_jira_ids": {
+          "columns": ["team", "jira_team_id", "tickets"],
+          "rows": [
+            { "team": "N", "jira_team_id": "id1", "tickets": null },
+            { "team": "N", "jira_team_id": "id2", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X2b",
+      "kind": "masquer_vue",
+      "title": "Team names and identifiers: 28 tickets for the identifier, 30 for the name, the two others are read by difference",
+      "regression": false,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "N", "team_type": null, "tickets": 30 }
+      ],
+      "related": {
+        "v_team_jira_ids": {
+          "columns": ["team", "jira_team_id", "tickets"],
+          "rows": [
+            { "team": "N", "jira_team_id": "id1", "tickets": 28 }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X2c",
+      "kind": "masquer_vue",
+      "title": "Team names and identifiers: equal counts are shown (a difference of zero is not protected)",
+      "regression": true,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "N", "team_type": null, "tickets": 30 }
+      ],
+      "related": {
+        "v_team_jira_ids": {
+          "columns": ["team", "jira_team_id", "tickets"],
+          "rows": [
+            { "team": "N", "jira_team_id": "id1", "tickets": 30 }
+          ]
+        }
+      },
+      "masked": []
+    },
+    {
+      "id": "X2d",
+      "kind": "masquer_vue",
+      "title": "Identifiers: the name count of 30 is masked by the gap with its only identifier of 28 (X2b), so that identifier is masked too",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "N", "jira_team_id": "id1", "tickets": 28 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "N", "team_type": null, "tickets": 30 }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X2e",
+      "kind": "masquer_vue",
+      "title": "Identifiers of 4, 4 and 6 for a name of 14: the upper bound of a masked identifier is the larger of 4 and the smallest visible one (6), so the sum 8 is not pinned and the name is shown",
+      "regression": true,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "N", "team_type": null, "tickets": 14 }
+      ],
+      "related": {
+        "v_team_jira_ids": {
+          "columns": ["team", "jira_team_id", "tickets"],
+          "rows": [
+            { "team": "N", "jira_team_id": "id1", "tickets": null },
+            { "team": "N", "jira_team_id": "id2", "tickets": null },
+            { "team": "N", "jira_team_id": "id3", "tickets": 6 }
+          ]
+        }
+      },
+      "masked": []
+    },
+    {
+      "id": "X2f",
+      "kind": "masquer_vue",
+      "title": "Identifiers of 3 (masked) and 5 for a name of 8: the masked one is pinned, the smallest visible identifier is masked, then the sum 8 equals twice the upper bound 4 and the name is masked",
+      "regression": false,
+      "view": "v_teams",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "team_type", "tickets"],
+      "rows": [
+        { "team": "N", "team_type": null, "tickets": 8 }
+      ],
+      "related": {
+        "v_team_jira_ids": {
+          "columns": ["team", "jira_team_id", "tickets"],
+          "rows": [
+            { "team": "N", "jira_team_id": "id1", "tickets": null },
+            { "team": "N", "jira_team_id": "id2", "tickets": 5 }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X3",
+      "kind": "masquer_vue",
+      "title": "Share, items: two team cells of 4 are masked, the product items show 48 (the masked sum is 8 = 4k)",
+      "regression": false,
+      "view": "v_team_fix_version_share",
+      "threshold": 5,
+      "cells": ["items", "with_fix_version", "share_percent"],
+      "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "B", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "C", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": 10, "share_percent": 50.0, "with_fix_version_min": null },
+        { "team": "D", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": null, "share_percent": null, "with_fix_version_min": 16 },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": 48, "with_fix_version": 32, "share_percent": 66.7, "with_fix_version_min": null }
+      ],
+      "masked": [
+        [0, "items"], [0, "with_fix_version"], [0, "share_percent"],
+        [1, "items"], [1, "with_fix_version"], [1, "share_percent"],
+        [3, "with_fix_version"], [3, "share_percent"],
+        [4, "items"], [4, "with_fix_version"], [4, "share_percent"]
+      ]
+    },
+    {
+      "id": "X4",
+      "kind": "masquer_vue",
+      "title": "Share, items: five teams of one item are masked, the product items show 45 (the masked sum is 5, the sum of the lower bounds)",
+      "regression": false,
+      "view": "v_team_fix_version_share",
+      "threshold": 5,
+      "cells": ["items", "with_fix_version", "share_percent"],
+      "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "B", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "C", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "D", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "E", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "F", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": 10, "share_percent": 50.0, "with_fix_version_min": null },
+        { "team": "G", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": null, "share_percent": null, "with_fix_version_min": 16 },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": 45, "with_fix_version": 30, "share_percent": 66.7, "with_fix_version_min": null }
+      ],
+      "masked": [
+        [0, "items"], [0, "with_fix_version"], [0, "share_percent"],
+        [1, "items"], [1, "with_fix_version"], [1, "share_percent"],
+        [2, "items"], [2, "with_fix_version"], [2, "share_percent"],
+        [3, "items"], [3, "with_fix_version"], [3, "share_percent"],
+        [4, "items"], [4, "with_fix_version"], [4, "share_percent"],
+        [6, "with_fix_version"], [6, "share_percent"],
+        [7, "items"], [7, "with_fix_version"], [7, "share_percent"]
+      ]
+    },
+    {
+      "id": "X5",
+      "kind": "masquer_vue",
+      "title": "Share, detail: A has all its items with a version, B has 4, the product shows 34 with a version (A + B = 24, A at most 20, B at most 4)",
+      "regression": false,
+      "view": "v_team_fix_version_share",
+      "threshold": 5,
+      "cells": ["items", "with_fix_version", "share_percent"],
+      "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": null, "share_percent": null, "with_fix_version_min": 16 },
+        { "team": "B", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "C", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": 10, "share_percent": 50.0, "with_fix_version_min": null },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": 60, "with_fix_version": 34, "share_percent": 56.7, "with_fix_version_min": null }
+      ],
+      "masked": [
+        [0, "with_fix_version"], [0, "share_percent"],
+        [1, "with_fix_version"], [1, "share_percent"],
+        [3, "with_fix_version"], [3, "share_percent"]
+      ]
+    },
+    {
+      "id": "X6a",
+      "kind": "masquer_vue",
+      "title": "Share and lag at the floor: 20 items, 18 with a version, the share masks the count and the lag hides the whole row (already corrected by R-140)",
+      "regression": true,
+      "view": "v_team_fix_version_lag",
+      "threshold": 5,
+      "cells": ["items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "columns": ["team", "quarter_start", "items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 18, "before_or_at_resolution": 6, "within_7_days": 6, "within_30_days": 6, "later": null, "no_history": null }
+      ],
+      "related": {
+        "v_team_fix_version_share": {
+          "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+          "rows": [
+            { "team": "A", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": null, "share_percent": null, "with_fix_version_min": 16 }
+          ]
+        }
+      },
+      "masked": [
+        [0, "items"], [0, "before_or_at_resolution"], [0, "within_7_days"], [0, "within_30_days"], [0, "later"], [0, "no_history"]
+      ]
+    },
+    {
+      "id": "X6b",
+      "kind": "masquer_vue",
+      "title": "Share and lag at a threshold of 10: 20 items, 12 with a version, the share masks 12 (8 without is under 10) while the lag shows items = 12",
+      "regression": false,
+      "view": "v_team_fix_version_lag",
+      "threshold": 10,
+      "cells": ["items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "columns": ["team", "quarter_start", "items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 12, "before_or_at_resolution": null, "within_7_days": 6, "within_30_days": null, "later": null, "no_history": null }
+      ],
+      "related": {
+        "v_team_fix_version_share": {
+          "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+          "rows": [
+            { "team": "A", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": 12, "share_percent": 60.0, "with_fix_version_min": null }
+          ]
+        }
+      },
+      "masked": [
+        [0, "items"], [0, "before_or_at_resolution"], [0, "within_7_days"], [0, "within_30_days"], [0, "later"], [0, "no_history"]
+      ]
+    },
+    {
+      "id": "X7",
+      "kind": "masquer_vue",
+      "title": "Quality: 34 audited, met 4, not met 5, not applicable 5, undetermined 20; met and not met are masked, each is 4 or 5 (narrow, allowed)",
+      "regression": true,
+      "witness": true,
+      "view": "quality_by_team",
+      "threshold": 5,
+      "cells": ["audited", "met", "not_met", "not_applicable", "undetermined"],
+      "columns": ["team", "item_kind", "criterion_code", "audited", "met", "not_met", "not_applicable", "undetermined"],
+      "rows": [
+        { "team": "A", "item_kind": "story", "criterion_code": "C1", "audited": 34, "met": null, "not_met": null, "not_applicable": 5, "undetermined": 20 }
+      ],
+      "masked": [[0, "met"], [0, "not_met"]]
+    },
+    {
+      "id": "X8",
+      "kind": "masquer_vue",
+      "title": "Photo, weeks: two versions with different retained weeks, defects created 40 then 43 give 3 by difference",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40, "defects_without_affects": 15, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 37.5 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 25 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 43, "defects_without_affects": 15, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 34.9 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": 2, "found": 28 }
+      ],
+      "masked": [[0, "defects_created"], [2, "defects_created"]]
+    },
+    {
+      "id": "X8c",
+      "kind": "masquer_vue",
+      "title": "Photo, weeks, isolating the week chain with consistent data: week one created 40, without affects 15, found 20 and 10 (distinct 25, excess 5); week two created 43, without affects 15, found 20 and 15 (distinct 28, excess 7); the excess rule hides nothing, created 40 then 43 differ by 3 so only the second is masked. Check that the masked value stays open: the chain allows 36 to 44 except 40; the relation (distinct from max found 20 to sum 35, plus 15) allows 35 to 50; the intersection holds eight values (36 to 39, 41 to 44), never a single one",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40, "defects_without_affects": 15, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 37.5 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 20 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": 10 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 43, "defects_without_affects": 15, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 34.9 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": 3, "found": 20 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": 4, "found": 15 }
+      ],
+      "masked": [[3, "defects_created"]]
+    },
+    {
+      "id": "X8b",
+      "kind": "masquer_vue",
+      "title": "Photo, weeks of the product line: the week-one product cell (43) is masked because team B's cell is, so it is not a published cell; the week-two product cell (46) is shown",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "B", "version_no": null, "defects_created": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "B", "version_no": 1, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": null, "defects_created": 43 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 1, "found": null },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "A", "version_no": 2, "found": null },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "B", "version_no": null, "defects_created": 6 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "B", "version_no": 2, "found": null },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "(produit)", "version_no": null, "defects_created": 46 },
+        { "week_start": "2026-04-06", "n_adopted": true, "team": "(produit)", "version_no": 2, "found": null }
+      ],
+      "masked": [[2, "defects_created"], [4, "defects_created"]]
+    },
+    {
+      "id": "X9",
+      "kind": "masquer_vue",
+      "title": "Lag, two dimensions: four teams, columns b1 to b5, A2 + B2 must not be recovered (already corrected by R-140)",
+      "regression": true,
+      "witness": true,
+      "view": "v_team_fix_version_lag",
+      "threshold": 5,
+      "cells": ["items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "columns": ["team", "quarter_start", "items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 72, "before_or_at_resolution": null, "within_7_days": null, "within_30_days": 20, "later": 20, "no_history": 20 },
+        { "team": "B", "quarter_start": "2026-04-01", "items": 71, "before_or_at_resolution": null, "within_7_days": null, "within_30_days": 20, "later": 20, "no_history": 20 },
+        { "team": "C", "quarter_start": "2026-04-01", "items": 72, "before_or_at_resolution": 20, "within_7_days": 20, "within_30_days": null, "later": null, "no_history": 20 },
+        { "team": "D", "quarter_start": "2026-04-01", "items": 71, "before_or_at_resolution": 20, "within_7_days": 20, "within_30_days": null, "later": null, "no_history": 20 },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": 286, "before_or_at_resolution": null, "within_7_days": null, "within_30_days": null, "later": null, "no_history": 80 }
+      ],
+      "masked": [
+        [0, "before_or_at_resolution"], [0, "within_7_days"],
+        [1, "before_or_at_resolution"], [1, "within_7_days"],
+        [2, "within_30_days"], [2, "later"],
+        [3, "within_30_days"], [3, "later"],
+        [4, "before_or_at_resolution"], [4, "within_7_days"], [4, "within_30_days"], [4, "later"]
+      ]
+    },
+    {
+      "id": "X10",
+      "kind": "masquer_vue",
+      "title": "Share: a team with 5 items, none with a version; the absent bound would give the count with a version as 0",
+      "regression": false,
+      "view": "v_team_fix_version_share",
+      "threshold": 5,
+      "cells": ["items", "with_fix_version", "share_percent"],
+      "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 5, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null },
+        { "team": "B", "quarter_start": "2026-04-01", "items": 20, "with_fix_version": 10, "share_percent": 50.0, "with_fix_version_min": null },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": null, "with_fix_version": null, "share_percent": null, "with_fix_version_min": null }
+      ],
+      "masked": [
+        [0, "items"], [0, "with_fix_version"], [0, "share_percent"],
+        [2, "items"], [2, "with_fix_version"], [2, "share_percent"]
+      ]
+    },
+    {
+      "id": "X11",
+      "kind": "masquer_vue",
+      "title": "Photo, teams by versions: two versions retained in the same week, two team cells masked in each column, recovered by row and column together",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["found"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "B", "version_no": 1, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "B", "version_no": 2, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "C", "version_no": 1, "found": 20 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "C", "version_no": 2, "found": 20 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 1, "found": 26 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 2, "found": 28 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 30, "defects_without_affects": 23 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "B", "version_no": null, "defects_created": 30, "defects_without_affects": 23 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "C", "version_no": null, "defects_created": 60, "defects_without_affects": 20 }
+      ],
+      "masked": [
+        [0, "found"], [1, "found"], [2, "found"], [3, "found"], [6, "found"], [7, "found"]
+      ]
+    },
+    {
+      "id": "X12",
+      "kind": "masquer_vue",
+      "title": "Photo, several affects versions: a whole version-free row is published, the excess of the found terms (2) must not be readable; without affects is masked, then the created too (a single hidden cell would be read by difference)",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created", "defects_without_affects", "without_affects_share_percent", "found"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 25.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 20 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": 12 }
+      ],
+      "masked": [[0, "defects_created"], [0, "defects_without_affects"], [0, "without_affects_share_percent"]]
+    },
+    {
+      "id": "X12b",
+      "kind": "masquer_vue",
+      "title": "Photo, two found terms of 4 both masked: created 30, without affects 22, the difference 8 is the sum of the upper bounds, so each term would read 4",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created", "defects_without_affects", "without_affects_share_percent", "found"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 30, "defects_without_affects": 22, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 73.3 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": null }
+      ],
+      "masked": [[0, "defects_without_affects"], [0, "without_affects_share_percent"], [1, "found"], [2, "found"]]
+    },
+    {
+      "id": "X12c",
+      "kind": "masquer_vue",
+      "title": "Photo, one retained version masked (found 4): created 30, without affects 20, a single hidden term pins it; a non-retained version of 6 is unknown to the published rows, and the SQL masks at least as much",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_without_affects", "without_affects_share_percent"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 30, "defects_without_affects": 20, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 66.7 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": null }
+      ],
+      "masked": [[0, "defects_without_affects"], [0, "without_affects_share_percent"]]
+    },
+    {
+      "id": "X12d",
+      "kind": "masquer_vue",
+      "title": "Photo, three found terms 18, 4 and 2 (the last two masked), created 30, without affects 10, excess 4: the derived sum 2 is under the threshold, so without affects is masked",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_without_affects", "without_affects_share_percent"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 30, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 33.3 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 18 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 3, "found": null }
+      ],
+      "masked": [[0, "defects_without_affects"], [0, "without_affects_share_percent"]]
+    },
+    {
+      "id": "X21",
+      "kind": "masquer_vue",
+      "title": "Photo, a retained version with a found count of 0 is a hidden term: found 6 (visible), 4, 4 and 0 (hidden), created 28, without affects 10; the three hidden terms sum to 12 = 3 x 4, so each would read 4 and without affects is masked",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created", "defects_without_affects", "without_affects_share_percent"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 28, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 35.7 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 6 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 3, "found": null },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 4, "found": null }
+      ],
+      "masked": [[0, "defects_without_affects"], [0, "without_affects_share_percent"]]
+    },
+    {
+      "id": "X20",
+      "kind": "masquer_vue",
+      "title": "Photo, three retained weeks, team A: without affects 10, 20, 13; D2 masks the week-two value (excess 0), then the weeks 10 and 13 would sit side by side (a difference of 3, forbidden by D5-d), so the chain runs again on the published cells only and masks week three; both created are masked with their without-affects value",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created", "defects_without_affects", "without_affects_share_percent"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 40, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 25.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 16 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": 20 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 45, "defects_without_affects": 20, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 44.4 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "A", "version_no": 3, "found": 25 },
+        { "week_start": "2026-03-16", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 50, "defects_without_affects": 13, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 26.0 },
+        { "week_start": "2026-03-16", "n_adopted": true, "team": "A", "version_no": 4, "found": 20 },
+        { "week_start": "2026-03-16", "n_adopted": true, "team": "A", "version_no": 5, "found": 23 }
+      ],
+      "masked": [
+        [3, "defects_created"], [3, "defects_without_affects"], [3, "without_affects_share_percent"],
+        [5, "defects_created"], [5, "defects_without_affects"], [5, "without_affects_share_percent"]
+      ]
+    },
+    {
+      "id": "X19",
+      "kind": "masquer_vue",
+      "title": "Lag, product row: teams A = (4, 4, 5, 5, 6) and B = (6, 6, 5, 5, 7), part visible; the product (10, 10, 10, 10, 13) has b1 and b2 hidden by D3, and the complementary rule runs until nothing changes: b3 then b4 are masked (a single step would mask b3 only)",
+      "regression": false,
+      "view": "v_team_fix_version_lag",
+      "threshold": 5,
+      "cells": ["items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "columns": ["team", "quarter_start", "items", "before_or_at_resolution", "within_7_days", "within_30_days", "later", "no_history"],
+      "rows": [
+        { "team": "A", "quarter_start": "2026-04-01", "items": 24, "before_or_at_resolution": 4, "within_7_days": 4, "within_30_days": 5, "later": 5, "no_history": 6 },
+        { "team": "B", "quarter_start": "2026-04-01", "items": 29, "before_or_at_resolution": 6, "within_7_days": 6, "within_30_days": 5, "later": 5, "no_history": 7 },
+        { "team": "(produit)", "quarter_start": "2026-04-01", "items": 53, "before_or_at_resolution": 10, "within_7_days": 10, "within_30_days": 10, "later": 10, "no_history": 13 }
+      ],
+      "related": {
+        "v_team_fix_version_share": {
+          "columns": ["team", "quarter_start", "items", "with_fix_version", "share_percent", "with_fix_version_min"],
+          "rows": [
+            { "team": "A", "quarter_start": "2026-04-01", "items": 29, "with_fix_version": 24, "share_percent": 82.8, "with_fix_version_min": null },
+            { "team": "B", "quarter_start": "2026-04-01", "items": 34, "with_fix_version": 29, "share_percent": 85.3, "with_fix_version_min": null },
+            { "team": "(produit)", "quarter_start": "2026-04-01", "items": 63, "with_fix_version": 53, "share_percent": 84.1, "with_fix_version_min": null }
+          ]
+        }
+      },
+      "masked": [
+        [0, "before_or_at_resolution"], [0, "within_7_days"],
+        [2, "before_or_at_resolution"], [2, "within_7_days"], [2, "within_30_days"], [2, "later"]
+      ]
+    },
+    {
+      "id": "X18",
+      "kind": "masquer_vue",
+      "title": "Photo, team row: created 20, one version found 12 (visible), without affects 8; the excess rule hides without affects, and the single hidden cell would be read by difference (20 - 12 = 8), so the complementary rule runs again and hides the created too; the product row follows (D3)",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["defects_created", "defects_without_affects", "without_affects_share_percent", "found"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 20, "defects_without_affects": 8, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 40.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 12 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": null, "defects_created": 20, "defects_without_affects": 8, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 40.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 1, "found": 12 }
+      ],
+      "masked": [
+        [0, "defects_created"], [0, "defects_without_affects"], [0, "without_affects_share_percent"],
+        [2, "defects_created"], [2, "defects_without_affects"], [2, "without_affects_share_percent"]
+      ]
+    },
+    {
+      "id": "X14",
+      "kind": "masquer_vue",
+      "title": "Identifiers 15 and 8, both visible; the name count of 23 is masked by the status counts (X1), so every visible identifier (15 and 8) is masked too (decision of 2026-10-27, task 5.11)",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "N", "jira_team_id": "id1", "tickets": 15 },
+        { "team": "N", "jira_team_id": "id2", "tickets": 8 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "N", "team_type": null, "tickets": 23 }
+          ]
+        },
+        "v_team_status": {
+          "columns": ["team", "type", "status_category", "status", "tickets"],
+          "rows": [
+            { "team": "N", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 10 },
+            { "team": "N", "type": "Story", "status_category": "Done", "status": "Resolved", "tickets": 12 },
+            { "team": "N", "type": "Story", "status_category": "In progress", "status": "Blocked", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"], [1, "tickets"]]
+    },
+    {
+      "id": "X16",
+      "kind": "masquer_vue",
+      "title": "Identifiers 6, 5 and 8 for a name of 19 masked by the status counts (18 visible, one cell masked): all three visible identifiers are masked, not only the smallest (5), which would pin the hidden cell",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "N", "jira_team_id": "id1", "tickets": 6 },
+        { "team": "N", "jira_team_id": "id2", "tickets": 5 },
+        { "team": "N", "jira_team_id": "id3", "tickets": 8 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "N", "team_type": null, "tickets": 19 }
+          ]
+        },
+        "v_team_status": {
+          "columns": ["team", "type", "status_category", "status", "tickets"],
+          "rows": [
+            { "team": "N", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 18 },
+            { "team": "N", "type": "Story", "status_category": "In progress", "status": "Blocked", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"], [1, "tickets"], [2, "tickets"]]
+    },
+    {
+      "id": "X17",
+      "kind": "masquer_vue",
+      "title": "Identifiers 1 (under the threshold, null), 8 and 5 for a name of 14 masked by the status counts (13 visible, one cell masked): both visible identifiers are masked",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "N", "jira_team_id": "id1", "tickets": null },
+        { "team": "N", "jira_team_id": "id2", "tickets": 8 },
+        { "team": "N", "jira_team_id": "id3", "tickets": 5 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "N", "team_type": null, "tickets": 14 }
+          ]
+        },
+        "v_team_status": {
+          "columns": ["team", "type", "status_category", "status", "tickets"],
+          "rows": [
+            { "team": "N", "type": "Story", "status_category": "Done", "status": "Closed", "tickets": 13 },
+            { "team": "N", "type": "Story", "status_category": "In progress", "status": "Blocked", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"], [1, "tickets"], [2, "tickets"]]
+    },
+    {
+      "id": "X15",
+      "kind": "masquer_vue",
+      "title": "Identifiers: the name count is under the threshold (published as masked) while one identifier is visible at 7; that identifier is masked too",
+      "regression": false,
+      "view": "v_team_jira_ids",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "jira_team_id", "tickets"],
+      "rows": [
+        { "team": "N", "jira_team_id": "id1", "tickets": 7 }
+      ],
+      "related": {
+        "v_teams": {
+          "columns": ["team", "team_type", "tickets"],
+          "rows": [
+            { "team": "N", "team_type": null, "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"]]
+    },
+    {
+      "id": "X26a",
+      "kind": "masquer_vue",
+      "title": "T3, rule (a): the quarter's throughput of team A is masked (4), so its four Story and Task weekly rows of 1 are withheld; the Bug row stays",
+      "regression": false,
+      "witness": true,
+      "view": "v_team_weekly_resolved",
+      "threshold": 5,
+      "cells": ["tickets"],
+      "columns": ["team", "type", "week_start", "tickets"],
+      "rows": [
+        { "team": "A", "type": "Story", "week_start": "2026-04-06", "tickets": null },
+        { "team": "A", "type": "Task", "week_start": "2026-04-06", "tickets": null },
+        { "team": "A", "type": "Story", "week_start": "2026-04-13", "tickets": null },
+        { "team": "A", "type": "Task", "week_start": "2026-04-13", "tickets": null },
+        { "team": "A", "type": "Bug", "week_start": "2026-04-06", "tickets": 12 }
+      ],
+      "related": {
+        "v_team_lead_time_throughput": {
+          "columns": ["team", "period", "quarter_start", "throughput"],
+          "rows": [
+            { "team": "A", "period": "quarter", "quarter_start": "2026-04-01", "throughput": null }
+          ]
+        }
+      },
+      "masked": [[0, "tickets"], [1, "tickets"], [2, "tickets"], [3, "tickets"]]
+    },
+    {
+      "id": "X26b",
+      "kind": "masquer_vue",
+      "title": "T3, rule (b), one masked row: throughput 23, visible Story and Task weekly cells 20, one masked row that is 3; the throughput is masked",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput"],
+      "columns": ["team", "period", "quarter_start", "throughput"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-04-01", "throughput": 23 }
+      ],
+      "related": {
+        "v_team_weekly_resolved": {
+          "columns": ["team", "type", "week_start", "tickets"],
+          "rows": [
+            { "team": "A", "type": "Story", "week_start": "2026-04-06", "tickets": 12 },
+            { "team": "A", "type": "Task", "week_start": "2026-04-06", "tickets": 8 },
+            { "team": "A", "type": "Story", "week_start": "2026-04-13", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "throughput"]]
+    },
+    {
+      "id": "X26c",
+      "kind": "masquer_vue",
+      "title": "T3, rule (b), remainder equal to the number of masked rows: throughput 25, visible cells 23, two masked rows that are both 1; the throughput is masked",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput"],
+      "columns": ["team", "period", "quarter_start", "throughput"],
+      "rows": [
+        { "team": "B", "period": "quarter", "quarter_start": "2026-04-01", "throughput": 25 }
+      ],
+      "related": {
+        "v_team_weekly_resolved": {
+          "columns": ["team", "type", "week_start", "tickets"],
+          "rows": [
+            { "team": "B", "type": "Story", "week_start": "2026-04-06", "tickets": 12 },
+            { "team": "B", "type": "Task", "week_start": "2026-04-06", "tickets": 11 },
+            { "team": "B", "type": "Story", "week_start": "2026-04-13", "tickets": null },
+            { "team": "B", "type": "Task", "week_start": "2026-04-13", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "throughput"]]
+    },
+    {
+      "id": "X26d",
+      "kind": "masquer_vue",
+      "title": "T3, rule (b), remainder equal to four times the number of masked rows at the floor: throughput 31, visible cells 23, two masked rows that are both 4; the throughput is masked",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput"],
+      "columns": ["team", "period", "quarter_start", "throughput"],
+      "rows": [
+        { "team": "C", "period": "quarter", "quarter_start": "2026-04-01", "throughput": 31 }
+      ],
+      "related": {
+        "v_team_weekly_resolved": {
+          "columns": ["team", "type", "week_start", "tickets"],
+          "rows": [
+            { "team": "C", "type": "Story", "week_start": "2026-04-06", "tickets": 12 },
+            { "team": "C", "type": "Task", "week_start": "2026-04-06", "tickets": 11 },
+            { "team": "C", "type": "Story", "week_start": "2026-04-13", "tickets": null },
+            { "team": "C", "type": "Task", "week_start": "2026-04-13", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "throughput"]]
+    },
+    {
+      "id": "X26e",
+      "kind": "masquer_vue",
+      "title": "T3, rule (b), two masked rows and a remainder under the threshold: throughput 26, visible cells 23, the sum 3 of the masked rows would be read; the throughput is masked",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput"],
+      "columns": ["team", "period", "quarter_start", "throughput"],
+      "rows": [
+        { "team": "D", "period": "quarter", "quarter_start": "2026-04-01", "throughput": 26 }
+      ],
+      "related": {
+        "v_team_weekly_resolved": {
+          "columns": ["team", "type", "week_start", "tickets"],
+          "rows": [
+            { "team": "D", "type": "Story", "week_start": "2026-04-06", "tickets": 12 },
+            { "team": "D", "type": "Task", "week_start": "2026-04-06", "tickets": 11 },
+            { "team": "D", "type": "Story", "week_start": "2026-04-13", "tickets": null },
+            { "team": "D", "type": "Task", "week_start": "2026-04-13", "tickets": null }
+          ]
+        }
+      },
+      "masked": [[0, "throughput"]]
+    },
+    {
+      "id": "X26f",
+      "kind": "masquer_vue",
+      "title": "T3, rule (b), green witness: throughput 28, visible cells 23, two masked rows with a remainder of 5; nothing is pinned and the throughput is published",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["throughput"],
+      "columns": ["team", "period", "quarter_start", "throughput"],
+      "rows": [
+        { "team": "E", "period": "quarter", "quarter_start": "2026-04-01", "throughput": 28 }
+      ],
+      "related": {
+        "v_team_weekly_resolved": {
+          "columns": ["team", "type", "week_start", "tickets"],
+          "rows": [
+            { "team": "E", "type": "Story", "week_start": "2026-04-06", "tickets": 12 },
+            { "team": "E", "type": "Task", "week_start": "2026-04-06", "tickets": 11 },
+            { "team": "E", "type": "Story", "week_start": "2026-04-13", "tickets": null },
+            { "team": "E", "type": "Task", "week_start": "2026-04-13", "tickets": null }
+          ]
+        }
+      },
+      "masked": []
+    },
+    {
+      "id": "X23",
+      "kind": "masquer_vue",
+      "title": "Photo, row and chain crossed (design D15, fourth review): team A, two retained weeks. Week one: created 20, without affects 10, found 10 and 6, everything published (excess 6). Week two: created 24, without affects 10, found 14 and 5; the chain masks the created of week two (24 - 20 = 4) and nothing else, yet the row gives created >= 10 + 14 = 24 and the chain gives created <= 24, so the value is 24. The propagation pins it: the neighbour rule masks the found cell of 5 (smallest cell tied to the created through the row), then, the created being pinned again, the without affects cell of 10; the three product cells and the two shares follow (D3, parts). Every other cell stays published",
+      "regression": false,
+      "view": "v_version_quality_photo",
+      "threshold": 5,
+      "cells": ["found", "defects_created", "defects_without_affects", "without_affects_share_percent"],
+      "columns": ["week_start", "n_adopted", "team", "version_no", "found", "defects_created", "defects_without_affects", "resolved_week", "resolved_week_defects", "correction_share_percent", "without_affects_share_percent"],
+      "rows": [
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 20, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 50.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 1, "found": 10 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "A", "version_no": 2, "found": 6 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": null, "defects_created": 20, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 50.0 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 1, "found": 10 },
+        { "week_start": "2026-03-02", "n_adopted": true, "team": "(produit)", "version_no": 2, "found": 6 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "A", "version_no": null, "defects_created": 24, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 41.7 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "A", "version_no": 3, "found": 14 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "A", "version_no": 4, "found": 5 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "(produit)", "version_no": null, "defects_created": 24, "defects_without_affects": 10, "resolved_week": 20, "resolved_week_defects": 10, "correction_share_percent": 50.0, "without_affects_share_percent": 41.7 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "(produit)", "version_no": 3, "found": 14 },
+        { "week_start": "2026-03-09", "n_adopted": true, "team": "(produit)", "version_no": 4, "found": 5 }
+      ],
+      "masked": [
+        [6, "defects_created"], [6, "defects_without_affects"], [6, "without_affects_share_percent"], [8, "found"],
+        [9, "defects_created"], [9, "defects_without_affects"], [9, "without_affects_share_percent"], [11, "found"]
+      ]
+    },
+    {
+      "id": "X42a",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), a zero is shown when items_ct is shown: team A quarter, items_ct 20, items_old 0",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": []
+    },
+    {
+      "id": "X42b",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), the grouped year is shown at 0 only if every quarterly items_old is shown: the last quarter (throughput 4) is masked, so its items_old is masked, and the year's items_ct and items_old are masked; the first two quarters show their zero (R-20261114-49: three quarters, the year of 44 = 20 + 20 + 4; before: four quarters, 64)",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2025-07-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-10-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": null, "items_lt": null, "lead_median_days": null, "lead_p85_days": null, "items_ct": null, "cycle_median_days": null, "cycle_p85_days": null, "items_old": null, "items_without_commitment": null },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 44, "items_lt": 44, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 44, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": [[2, "items_ct"], [2, "items_old"], [3, "items_ct"], [3, "items_old"]]
+    },
+    {
+      "id": "X42c",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), a masked items_old with items_ct shown stays masked (3 under the threshold), its lower bound being 1: team A quarter, items_ct 20, items_old 3",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 3, "items_without_commitment": 0 }
+      ],
+      "masked": [[0, "items_old"]]
+    },
+    {
+      "id": "X42d",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), neighbour: items_ct masked at a raised threshold (6 under 8) keeps a zero items_old masked, the zero being shown only when items_ct is shown",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 8,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 6, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 14 }
+      ],
+      "masked": [[0, "items_ct"], [0, "items_old"]]
+    },
+    {
+      "id": "X42e",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), neighbour: three quarters of 20 with items_old 0 shown, the grouped year of 60 shows its items_old 0 (R-20261114-49: 20 + 20 + 20 = 60; before: four quarters, 80)",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2025-07-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-10-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 60, "items_lt": 60, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 60, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 }
+      ],
+      "masked": []
+    },
+    {
+      "id": "X42f",
+      "kind": "masquer_vue",
+      "title": "Old items (R-20261106-39), neighbour at a raised threshold of 10: a zero items_old is shown with items_ct 20 (team A), while 9 under the threshold is masked (team B)",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 10,
+      "cells": ["items_ct", "items_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 0, "items_without_commitment": 0 },
+        { "team": "B", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 9, "items_without_commitment": 0 }
+      ],
+      "masked": [[1, "items_old"]]
+    },
+    {
+      "id": "X39",
+      "kind": "masquer_vue",
+      "title": "Grouped year without the old items (D16, T17, 22.1): items_lt 8 and items_ct 8 shown, items_old masked (3), the four new statistics given by the view as 2.0, 6.0, 3.0 and 7.0 (R-20261106-59, Q1 (a): a statistic is shown only with items_old of its row shown, so a masked items_old carries no inequality and the statistics are masked); items_old lies in [1, 7], seven values, protected",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_lt", "items_ct", "items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 8, "items_lt": 8, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 8, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 3, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [[0, "items_old"], [0, "lead_median_days_excl_old"], [0, "lead_p85_days_excl_old"], [0, "cycle_median_days_excl_old"], [0, "cycle_p85_days_excl_old"]]
+    },
+    {
+      "id": "X40",
+      "kind": "masquer_vue",
+      "title": "Three quarters of 5 with items_old 4 everywhere, the annual statistics given by the view as 2.0, 6.0, 3.0 and 7.0 and the year's items_old masked (R-20261106-59, Q2 (a), R-20261114-49: three quarters, the year of 15 = 5 + 5 + 5 with 12 old items; before: four quarters, 20 and 16): the leak of the first 0038 (masked quarters fixed at c - 1 when the annual statistic is absent) is closed, every items_old and every statistic without the old items is masked",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2025-07-01", "throughput": 5, "items_lt": 5, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 5, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 4, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2025-10-01", "throughput": 5, "items_lt": 5, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 5, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 4, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 },
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 5, "items_lt": 5, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 5, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 4, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 },
+        { "team": "A", "period": "pooled_year", "quarter_start": null, "throughput": 15, "items_lt": 15, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 15, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 12, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [
+        [0, "items_old"], [0, "lead_median_days_excl_old"], [0, "lead_p85_days_excl_old"], [0, "cycle_median_days_excl_old"], [0, "cycle_p85_days_excl_old"],
+        [1, "items_old"], [1, "lead_median_days_excl_old"], [1, "lead_p85_days_excl_old"], [1, "cycle_median_days_excl_old"], [1, "cycle_p85_days_excl_old"],
+        [2, "items_old"], [2, "lead_median_days_excl_old"], [2, "lead_p85_days_excl_old"], [2, "cycle_median_days_excl_old"], [2, "cycle_p85_days_excl_old"],
+        [3, "items_old"], [3, "lead_median_days_excl_old"], [3, "lead_p85_days_excl_old"], [3, "cycle_median_days_excl_old"], [3, "cycle_p85_days_excl_old"]
+      ]
+    },
+    {
+      "id": "X41",
+      "kind": "masquer_vue",
+      "title": "A quarter of 6 with items_old 3 masked and the view's statistics given as 2.0, 6.0, 3.0 and 7.0 (R-20261106-59, Q1 (a)): the first 0038 showed the statistic when m - o reached 5, which fixed items_old at 1 for a headcount of 6; now the statistic is masked with items_old, and items_old lies in [1, 5], five values, protected",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_lt", "items_ct", "items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 6, "items_lt": 6, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 6, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 3, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [[0, "items_old"], [0, "lead_median_days_excl_old"], [0, "lead_p85_days_excl_old"], [0, "cycle_median_days_excl_old"], [0, "cycle_p85_days_excl_old"]]
+    },
+    {
+      "id": "H1a",
+      "kind": "echantillon_h1",
+      "title": "Sample size of H1 (D16, R-20261106-18), items_old shown: items_lt 20, items_ct 20, items_old 6, the sizes are 14 for the lead time and 14 for the cycle time, the four statistics are shown",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_lt", "items_ct", "items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 6, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [],
+      "sampleSize": { "row": 0, "lead": 14, "cycle": 14 }
+    },
+    {
+      "id": "H1b",
+      "kind": "echantillon_h1",
+      "title": "Sample size of H1 (D16, R-20261106-18), items_old masked as a primary count: items_lt 20, items_ct 20, items_old 3 (under the threshold), no size for the lead time or the cycle time, the verdict is insufficient sample",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_lt", "items_ct", "items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 3, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [[0, "items_old"], [0, "lead_median_days_excl_old"], [0, "lead_p85_days_excl_old"], [0, "cycle_median_days_excl_old"], [0, "cycle_p85_days_excl_old"]],
+      "sampleSize": { "row": 0, "lead": null, "cycle": null }
+    },
+    {
+      "id": "H1c",
+      "kind": "echantillon_h1",
+      "title": "Sample size of H1 (D16, R-20261106-18), items_old masked by a complement with a value of 5 or more: items_lt 20, items_ct 20, items_old 17 (the remainder 3 is under the threshold), no size, no lower bound taken",
+      "regression": false,
+      "view": "v_team_lead_time_throughput",
+      "threshold": 5,
+      "cells": ["items_lt", "items_ct", "items_old", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "columns": ["team", "period", "quarter_start", "throughput", "items_lt", "lead_median_days", "lead_p85_days", "items_ct", "cycle_median_days", "cycle_p85_days", "items_old", "items_without_commitment", "lead_median_days_excl_old", "lead_p85_days_excl_old", "cycle_median_days_excl_old", "cycle_p85_days_excl_old"],
+      "rows": [
+        { "team": "A", "period": "quarter", "quarter_start": "2026-01-01", "throughput": 20, "items_lt": 20, "lead_median_days": 3.0, "lead_p85_days": 9.0, "items_ct": 20, "cycle_median_days": 4.0, "cycle_p85_days": 8.0, "items_old": 17, "items_without_commitment": 0, "lead_median_days_excl_old": 2.0, "lead_p85_days_excl_old": 6.0, "cycle_median_days_excl_old": 3.0, "cycle_p85_days_excl_old": 7.0 }
+      ],
+      "masked": [[0, "items_old"], [0, "lead_median_days_excl_old"], [0, "lead_p85_days_excl_old"], [0, "cycle_median_days_excl_old"], [0, "cycle_p85_days_excl_old"]],
+      "sampleSize": { "row": 0, "lead": null, "cycle": null }
+    }
+  ]
+}

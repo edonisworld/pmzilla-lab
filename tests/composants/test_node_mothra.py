@@ -18,7 +18,7 @@ class Inventaire(AvecDepot):
         code, sortie, _ = self.inventaire("--verify")
         self.assertEqual(code, 0, sortie)
         self.assertIn("node-mothra · node-runtime · 90.1.0 · mothra/.node-version", sortie)
-        self.assertIn("Inventaire à jour : 22 composant(s)", sortie)
+        self.assertIn("Inventaire à jour : 21 composant(s)", sortie)
 
     def test_le_node_de_bmad_reste_non_epingle(self):
         avec_mothra(self.depot)

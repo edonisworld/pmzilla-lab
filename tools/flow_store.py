@@ -12,6 +12,7 @@ l'importent à la lecture (import tardif : psycopg n'est chargé que pour la bas
     lire_tickets_flux(settings)  ->  (tickets, found, illisibles, doublons) : les tickets du rapport de flux
     lire_dependances(settings)   ->  le dictionnaire de la carte des dépendances (tickets, liens, colonnes, types de liens)
     lire_historique(settings)    ->  {CLÉ_MAJUSCULES: [[date ISO, départ, arrivée], ...]}, une entrée par ticket « avec historique »
+    lire_maj_tickets(settings)   ->  {CLÉ_MAJUSCULES: date de dernière mise à jour du ticket ou None} (history_jira.py check)
     lire_donnees_cycles(settings, etiquettes_revue)  ->  une liste d'éléments (type, projet, résolution, étiquettes et versions avec
                                  leurs périodes, transitions des tickets à étiquette Epic Review) pour `flux_jira.py cycles`
     lire_epics(settings, motifs_exclus)  ->  un élément par épic (types d'épic des réglages), sans clé, pour `flux_jira.py epics`
@@ -170,6 +171,16 @@ def lire_dependances(settings: dict) -> dict:
         "liens_simples": ["Linked Issues"] if simples else [],
         "fichiers": [NOM_SOURCE],
     }
+
+
+REQUETE_MAJ = "SELECT i.key, i.updated_at FROM flow.issues i WHERE i.out_of_export_at IS NULL"
+
+
+def lire_maj_tickets(settings: dict) -> dict[str, dt.datetime | None]:
+    """{CLÉ_MAJUSCULES: date de dernière mise à jour du ticket (champ Updated de Jira, instant avec décalage) ou None}. Lecteur à part,
+    pour que `history_jira.py check` compare cette date à la dernière transition sans changer les lignes de REQUETE_TICKETS, partagées
+    avec lire_dependances ; mêmes tickets que les autres lecteurs (hors export écartés)."""
+    return {cle.upper(): maj for cle, maj in _lire(settings, REQUETE_MAJ)}
 
 
 def lire_historique(settings: dict) -> dict[str, list]:

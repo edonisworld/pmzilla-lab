@@ -1,12 +1,11 @@
 """
 PMZilla Lab : glossaire des mesures de flux, en français et en anglais.
 
-Source unique des définitions : les rapports Markdown de flux_jira.py (français) et le tableau de bord
-flow_board.py (anglais par défaut, français avec --language fr) les lisent ici, pour qu'ils ne se contredisent jamais.
+Source unique des définitions : les rapports Markdown de flux de flux_jira.py et l'export du glossaire prévu pour Mothra.
 Les textes sont en Markdown léger (**gras**) ; aucun chiffre n'y est écrit en dur.
 
-ORDRE_RAPPORT : les définitions de « Comment lire ce rapport », dans l'ordre du rapport (REGLES_SEGMENT : celles qui
-n'apparaissent que si le rapport a un temps par segment). Les autres entrées servent au tableau de bord.
+ORDRE_RAPPORT : les définitions de « Comment lire ce rapport », dans l'ordre du rapport (ORDRE_SEGMENT : celles qui
+n'apparaissent que si le rapport a un temps par segment). Les entrées hors de ces ordres sont gardées pour l'export du glossaire.
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
                          "depuis le dernier changement de catégorie d'état (à défaut, depuis la création), pour les "
                          "éléments encore en cours. Le lead time ne voit que ce qui finit ; l'âge montre ce qui reste coincé.",
         "wip": "**WIP** : les éléments en cours. **WIP actif** : travaillé en ce moment. **WIP en attente** : dans un "
-               "état d'attente listé dans flux.yaml, comme « Ready for ». **WIP dormant** : non terminé et sans "
+               "état d'attente listé dans flux.yaml, comme « Awaiting ». **WIP dormant** : non terminé et sans "
                "changement d'état depuis plus de 365 jours (déduit de l'historique des états, option --dormant-from-history). Un "
                "ticket dormant n'est ni actif ni en attente.",
         "arrivees": "**Arrivées et sorties** : les tickets créés et les éléments terminés, semaine par semaine. Si les "
@@ -59,7 +58,7 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
                             "attribués. Une cellule de moins de 5 tickets s'écrit « masqué ».",
         "couverture": "**Couverture** : la part des tickets du rapport dont l'historique est connu. Sous 90 %, les "
                       "chiffres du temps par segment ne décrivent qu'une partie des tickets.",
-        # entrées du tableau de bord seulement
+        # entrées hors du guide de lecture, gardées pour l'export du glossaire
         "debit": "**Débit** : le nombre d'éléments terminés (livrés) par semaine. Les clôtures sans livraison (rejet, "
                  "doublon) n'y comptent pas. Une semaine à zéro entre deux pics signale souvent des clôtures groupées.",
         "cfd": "**Diagramme de flux cumulé** : à la fin de chaque semaine, le nombre de tickets dans chaque segment, "
@@ -69,15 +68,6 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
         "aging_wip": "**Âge du WIP** : un point par ticket en cours, placé selon son état (ou son segment) et son âge en "
                      "jours. Aucune clé de ticket. La forme et le libellé distinguent actif, en attente et dormant. Les "
                      "points au-dessus du lead time P85 sont les éléments qui restent coincés.",
-        "repartition": "**Répartition du WIP** : la part des éléments en cours qui sont actifs, en attente ou dormants. "
-                       "Un WIP majoritairement en attente dit que le travail attend plus qu'il n'avance.",
-        "graphe": "**Carte des dépendances** : chaque cercle est une équipe, chaque flèche va de l'équipe qui attend vers "
-                  "l'équipe attendue. L'épaisseur est le nombre de dépendances ouvertes. Une dépendance vers un ticket "
-                  "hors de l'export est « à état inconnu » et n'est jamais comptée comme ouverte. Les équipes sont "
-                  "disposées par le calcul, sans classement.",
-        "base": "**Évolution depuis la base** : le rapport de référence daté de la base, comparé à chaque rapport "
-                "suivant de la même série. Les rapports calculés avec d'autres options (périmètre, historique) ne "
-                "se comparent pas directement.",
     },
     "en": {
         "p50": "**P50 (median)**: half of the items are below, half are above. It is the typical case.",
@@ -89,7 +79,7 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
                          "status category change (creation date if there is none), for items still in progress. Lead "
                          "time only sees what finishes; age shows what stays stuck.",
         "wip": "**WIP**: items in progress. **Active WIP**: being worked on right now. **Waiting WIP**: in a waiting "
-               "status listed in flux.yaml, such as \"Ready for\". **Dormant WIP**: not finished and with no status "
+               "status listed in flux.yaml, such as \"Awaiting\". **Dormant WIP**: not finished and with no status "
                "change for more than 365 days (inferred from the status history, option --dormant-from-history). A dormant ticket is neither "
                "active nor waiting.",
         "arrivees": "**Arrivals and departures**: tickets created and items finished, week by week. If arrivals keep "
@@ -127,15 +117,6 @@ GLOSSAIRE: dict[str, dict[str, str]] = {
         "aging_wip": "**Aging WIP**: one point per ticket in progress, placed by its status (or segment) and its age in "
                      "days. No ticket key. Shape and label tell active, waiting and dormant apart. Points above the "
                      "P85 lead time are the items that stay stuck.",
-        "repartition": "**WIP breakdown**: the share of items in progress that are active, waiting or dormant. A WIP "
-                       "that is mostly waiting says work waits more than it moves.",
-        "graphe": "**Dependency map**: each circle is a team, each arrow goes from the team that waits to the team "
-                  "waited on. Thickness is the number of open dependencies. A dependency on a ticket outside the "
-                  "export is \"unknown state\" and is never counted as open. Teams are laid out by the computation, "
-                  "with no ranking.",
-        "base": "**Change since the baseline**: the reference report dated at the baseline, compared with each later "
-                "report of the same series. Reports computed with other options (scope, history) cannot be compared "
-                "directly.",
     },
 }
 

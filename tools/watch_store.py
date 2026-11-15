@@ -109,8 +109,6 @@ SCORE_COLUMNS = ("file", "url", "title", "source", "published", "collected", "co
                  "model", "scored_at", "location", "justifications", "is_compilation", "in_themes", "is_promo")
 SHADOW_COLUMNS = ("url", "language", "model", "prompts_hash", "criteria", "substance", "is_compilation", "in_themes", "is_promo",
                   "scored_at")
-CALIBRATION_COLUMNS = ("file", "exported_at", "verdict", "relevance", "substance", "in_themes", "is_compilation", "is_promo",
-                       "missing", "opinion", "opinion_at")
 OPINION_OF = {"keep": True, "discard": False}
 
 

@@ -110,7 +110,7 @@ class Frontiere(Decor):
 
     def test_refus_en_francais_et_aucune_option_de_contournement(self):
         env = {**self.env, "CLAUDECODE": "1"}
-        for argv in ([], ["--force"], ["--dry-run"], ["--from", "dashboard"]):
+        for argv in ([], ["--force"], ["--dry-run"], ["--from", "retention"]):
             r = self.lancer(*argv, env=env)
             self.assertEqual(r.code, 3, (argv, r.sortie))
             self.assertIn("Lancement refusé dans une session Claude Code : lancez-le dans le Terminal", r.sortie)
@@ -152,7 +152,7 @@ class Confidentialite(Decor):
         self.sans_marque(r.sortie, "dry run")
 
     def test_echec_d_une_etape(self):
-        for outil in ("export_jira_api", "flow_import", "flux_jira", "dependencies_jira", "flow_board"):
+        for outil in ("export_jira_api", "flow_import", "flux_jira", "dependencies_jira", "flow_retention"):
             self.setUp()
             self.codes_de({outil: 1})
             r = self.lancer("--language", "en")
@@ -199,7 +199,7 @@ class Langue(Decor):
 
     def test_phrases_cles_francaises_d_un_run_complet(self):
         r = self.lancer()
-        for phrase in ("Étape 1/9 : export", "Étape 4/9 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 9 étapes sur 9, 0 sautées"):
+        for phrase in ("Étape 1/8 : export", "Étape 4/8 : flow (série 1)", "Étape export réussie (", "Suivi mensuel terminé : 8 étapes sur 8, 0 sautées"):
             self.assertIn(phrase, r.sortie)
         self.assertNotIn("Step ", r.sortie)
         self.assertNotIn("Monthly run", r.sortie)
@@ -228,10 +228,7 @@ class Langue(Decor):
             self.setUp()
             self.lancer("--language", langue)
             for a in self.appels():
-                if a["outil"] == "flow_board":
-                    self.assertEqual(a["args"][a["args"].index("--language") + 1], langue)
-                else:
-                    self.assertEqual(a["args"][a["args"].index("--language") + 1], langue, a)
+                self.assertEqual(a["args"][a["args"].index("--language") + 1], langue, a)
 
     def test_langue_inconnue(self):
         r = self.lancer("--language", "de")
@@ -247,7 +244,7 @@ class AucunCheminDeFichier(Decor):
             self.assertFalse(hasattr(fm, nom), nom)
 
     def test_aucune_etape_de_comparaison(self):
-        self.assertEqual(fm.ETAPES, ("export", "import", "history", "flow", "dependencies", "dashboard", "retention"))
+        self.assertEqual(fm.ETAPES, ("export", "import", "history", "flow", "dependencies", "retention"))
 
 
 class AideEnProcessusReel(unittest.TestCase):
@@ -256,8 +253,11 @@ class AideEnProcessusReel(unittest.TestCase):
         r = subprocess.run([sys.executable, "-B", str(TOOLS / "flow_monthly.py"), "--help"], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("usage", r.stdout.lower())
-        for option in ("--dry-run", "--from", "--date", "--force", "--verbose", "--language", "--open"):
+        for option in ("--dry-run", "--from", "--date", "--force", "--verbose", "--language"):
             self.assertIn(option, r.stdout)
+        # R-146 : --open reste refusé par l'analyseur mais l'aide ne parle plus ni de lui ni des tableaux
+        self.assertNotIn("--open", r.stdout)
+        self.assertNotIn("dashboard", r.stdout.lower())
 
     def test_lancement_reel_dans_une_session_claude_code_est_refuse(self):
         env = {**os.environ, "CLAUDECODE": "1"}

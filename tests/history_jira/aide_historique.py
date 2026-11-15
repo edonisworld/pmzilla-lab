@@ -26,6 +26,9 @@ from zoneinfo import ZoneInfo
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "flow_delivery"))          # table FACTICE des champs de livraison (R-20261114-108)
+import table_factice          # noqa: E402
+import flow_delivery          # noqa: E402
 import history_jira as hj          # noqa: E402
 import history_common as commun    # noqa: E402
 
@@ -35,6 +38,7 @@ EMAIL = "utilisateur@example.org"
 CLOUD_ID = "cloud-123"
 AUTEUR = "Personne Fictive"
 PARIS = ZoneInfo("Europe/Paris")
+GARDE_DE_TEST = ["scope_projects: [PROJ, ABC, EPI, INI, BUG, ZZZ, ZZKEYSEPT]", "forbidden_projects: [SUPX]"]   # R-20261028-96 : clés fictives
 SENTINELLE = "<<tickets de la base fictive>>"         # remplace le chemin d'un export dans les appels des tests : retiré par lancer
 
 
@@ -66,7 +70,13 @@ class FauxJira:
         self.limite_429 = 0          # nombre d'appels API qui répondent 429 (Retry-After: 1) avant de répondre
         self.toujours_429 = False
         self.introuvables = set()    # clés dont l'historique ticket par ticket répond 404
+        self.absents_groupe = set()  # clés rendues par la recherche mais absentes de la réponse groupée (réponse tronquée)
+        self.erreurs_ticket = {}     # clé -> code HTTP (5xx) de l'historique ticket par ticket
+        self.jeton_repete = False    # la réponse groupée renvoie toujours le même jeton de page
+        self.jeton_repete_recherche = False   # la recherche des clés (avant la lecture groupée) renvoie toujours le même jeton de page
         self.appels = []
+        self.recherche_imposee = None   # corps JSON rendu à toute recherche de tickets (tests de la garde du périmètre)
+        self.brut = []               # (méthode, chemin complet, en-tête d'authentification présent) de chaque requête reçue, avant tout contrôle
         self.corps = []              # (chemin, corps JSON) des appels POST
         self.prefixe = f"/ex/jira/{CLOUD_ID}"     # la passerelle : le seul chemin des appels authentifiés
         self.cloud_site = CLOUD_ID   # le cloudId que le site donne sans authentification
@@ -96,7 +106,12 @@ def fabriquer_serveur(faux: FauxJira):
             self.end_headers()
             self.wfile.write(donnees)
 
+        def noter_brut(self, methode):
+            """Journal brut (design D6) : première ligne de chaque gestionnaire, avant tout contrôle."""
+            faux.brut.append((methode, self.path, "Authorization" in self.headers))
+
         def traiter(self, methode):
+            self.noter_brut(methode)
             chemin = urlparse(self.path)
             corps = {}
             if methode == "POST":
@@ -127,6 +142,11 @@ def fabriquer_serveur(faux: FauxJira):
             if faux.toujours_429 or faux.limite_429 > 0:
                 faux.limite_429 -= 1
                 return self.repondre(429, {}, {"Retry-After": "1"})
+            if api == "/rest/api/3/search/jql" and faux.recherche_imposee is not None:
+                # réponse plantée par un test (garde du périmètre) : un corps, ou une fonction du corps de la requête (None : réponse usuelle)
+                imposee = faux.recherche_imposee(corps) if callable(faux.recherche_imposee) else faux.recherche_imposee
+                if imposee is not None:
+                    return self.repondre(200, imposee)
             if api == "/rest/api/3/search/jql" and methode == "GET":
                 premiers = [{"id": ident, "key": cle} for cle, (ident, _) in list(faux.tickets.items())[:1]]
                 return self.repondre(200, {"issues": premiers, "owner": "Nom Fictif"})
@@ -137,6 +157,9 @@ def fabriquer_serveur(faux: FauxJira):
                 def champs_de(cle):
                     valeurs = faux.courantes.get(cle, {})
                     sortie = {"summary": "Titre secret"}
+                    for identifiant, valeur in valeurs.get("champs", {}).items():       # champs de livraison (jira-delivery-fields) : rendus s'ils sont demandés
+                        if identifiant in demandes:
+                            sortie[identifiant] = valeur
                     if "fixVersions" in demandes:
                         sortie["fixVersions"] = [{"name": n} for n in valeurs.get("fixVersions", [])]
                     if "labels" in demandes:
@@ -144,6 +167,8 @@ def fabriquer_serveur(faux: FauxJira):
                     return sortie
 
                 trouves = [{"id": faux.tickets[c][0], "key": c, "fields": champs_de(c)} for c in cles if c in faux.tickets]
+                if faux.jeton_repete_recherche and demandes == ["key"]:       # la recherche des clés boucle sur le même jeton
+                    return self.repondre(200, {"issues": trouves, "nextPageToken": "toujours-le-meme"})
                 if faux.taille_recherche:
                     debut = int(corps.get("nextPageToken") or 0)
                     fin = debut + faux.taille_recherche
@@ -160,10 +185,14 @@ def fabriquer_serveur(faux: FauxJira):
                         return histo
                     return [{**h, "created": int(dt.datetime.strptime(h["created"], "%Y-%m-%dT%H:%M:%S.%f%z")
                                                  .timestamp() * 1000)} for h in histo]
+                # R-20261028-105 : le corps porte des clés (ou, comme avant, des identifiants numériques)
                 fiches = [{"issueId": ident, "changeHistories": format_groupe(histo)}
-                          for _, (ident, histo) in faux.tickets.items() if ident in ids]
+                          for cle, (ident, histo) in faux.tickets.items()
+                          if (ident in ids or cle in ids) and cle not in faux.absents_groupe]
+                if faux.jeton_repete:
+                    return self.repondre(200, {"issueChangeLogs": fiches, "nextPageToken": "toujours-le-meme"})
                 if faux.entrees_par_page:
-                    plat = [(ident, h) for _, (ident, histo) in faux.tickets.items() if ident in ids for h in histo]
+                    plat = [(ident, h) for cle, (ident, histo) in faux.tickets.items() if ident in ids or cle in ids for h in histo]
                     debut = int(corps.get("nextPageToken") or 0)
                     fin = debut + faux.entrees_par_page
                     parties = {}
@@ -180,6 +209,8 @@ def fabriquer_serveur(faux: FauxJira):
                 return self.repondre(200, {"issueChangeLogs": fiches})
             if api.startswith("/rest/api/3/issue/") and api.endswith("/changelog"):
                 cle = api.split("/")[5]
+                if cle in faux.erreurs_ticket:
+                    return self.repondre(faux.erreurs_ticket[cle], {"message": "Nom Fictif"})
                 if cle in faux.introuvables or cle not in faux.tickets:
                     return self.repondre(404)
                 histo = faux.tickets[cle][1]
@@ -196,6 +227,14 @@ def fabriquer_serveur(faux: FauxJira):
         def do_POST(self):
             self.traiter("POST")
 
+        def ecriture(self):
+            """PUT, PATCH, DELETE, HEAD, OPTIONS : journal brut, puis 405 (le client ne doit jamais en émettre)."""
+            self.noter_brut(self.command)
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            return self.repondre(405)
+
+        do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = ecriture
+
     return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 
 
@@ -205,7 +244,7 @@ class MagasinMemoire:
     def __init__(self):
         self.stock: dict[str, dict] = {}                       # clé -> ticket (cle, projet, type, cree, resolu, maj, a_historique, equipes, etat)
         self.transitions: dict[str, list] = {}                 # clé -> [(instant, départ, arrivée)] sans doublon
-        self.periodes = {"etiquettes": {}, "versions": {}}     # nature -> clé -> {(valeur, début): fin}
+        self.periodes = {"etiquettes": {}, "versions": {}}     # nature -> clé -> {(valeur, début): fin} ; « sprints » et « actifs » s'ajoutent à la première écriture
         self.passages: list[dt.datetime] = []                  # instants des passages « history » SANS erreur (collectes réussies)
         self.passages_en_erreur: list[tuple[dt.datetime, int]] = []   # (instant, nombre d'erreurs) des passages enregistrés avec erreurs
         self.nombres_introuvables: list[int] = []              # nombre de 404 de chaque passage « history » enregistré
@@ -245,11 +284,11 @@ class MagasinMemoire:
                     existantes.append(transition)
                     ajoutees += 1
             self.stock[vrai]["a_historique"] = True
-            for nature in ("etiquettes", "versions"):
+            for nature in ("etiquettes", "versions", "sprints", "actifs"):
                 voulu = resultat.get(nature)
                 if voulu is None:
                     continue
-                avant = self.periodes[nature].get(vrai, {})
+                avant = self.periodes.setdefault(nature, {}).get(vrai, {})
                 apres = {(valeur, debut): fin for valeur, debut, fin in voulu}
                 periodes += sum(1 for k, fin in apres.items() if k not in avant or avant[k] != fin)
                 self.periodes[nature][vrai] = apres
@@ -289,14 +328,20 @@ def faux_flow_store(magasin: MagasinMemoire) -> types.SimpleNamespace:
                                for instant, de, vers in sorted(magasin.transitions.get(cle, []), key=lambda t: t[0])]
                 for cle, t in magasin.stock.items() if t["a_historique"]}
 
-    return types.SimpleNamespace(lire_tickets_flux=lire_tickets_flux, lire_historique=lire_historique)
+    def lire_maj_tickets(settings):
+        """Comme flow_store.lire_maj_tickets : {CLÉ_MAJUSCULES: date de dernière mise à jour du ticket (avec décalage) ou None}."""
+        return {cle.upper(): t["maj"] for cle, t in magasin.stock.items()}
+
+    return types.SimpleNamespace(lire_tickets_flux=lire_tickets_flux, lire_historique=lire_historique,
+                                 lire_maj_tickets=lire_maj_tickets)
 
 
 class Base(unittest.TestCase):
     def setUp(self):
+        self.addCleanup(flow_delivery.configurer, None)          # l'état des champs de livraison est global : jamais d'un test à l'autre
         self.faux = FauxJira()
         self.serveur = fabriquer_serveur(self.faux)
-        threading.Thread(target=self.serveur.serve_forever, daemon=True).start()
+        threading.Thread(target=self.serveur.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.addCleanup(self.serveur.server_close)
         self.addCleanup(self.serveur.shutdown)
         self.url = f"http://127.0.0.1:{self.serveur.server_address[1]}"
@@ -325,17 +370,22 @@ class Base(unittest.TestCase):
         self.ecrire_reglages("scopes")
 
     def ecrire_reglages(self, mode: str | None = "scopes", extra: str = "", cloud: str | None = CLOUD_ID,
-                        expiration: str | None = "2099-12-31"):
+                        expiration: str | None = "2099-12-31", garde: list[str] | None = None, livraison: bool = True):
         """Réglages de Jira. mode : « scopes », « classique » (refusé par l'outil) ou None (réglage absent) ; cloud et
-        expiration : None retire le réglage."""
+        expiration : None retire le réglage ; garde : les lignes des réglages du périmètre (scope_projects, forbidden_projects), les
+        clés fictives de R-20261028-96 par défaut, une liste vide pour n'en écrire aucune ; livraison : écrit en dernier le bloc
+        `delivery_fields` de la table FACTICE (R-20261114-108), faux pour tester l'absence de la table."""
         nouveau = {"scopes": "scoped", "classique": "classic"}.get(mode, mode)
         lignes = [f"jira_site: {self.url}", f"jira_email: {EMAIL}"]
+        lignes += GARDE_DE_TEST if garde is None else garde
         if nouveau is not None:
             lignes.append(f"jira_token_type: {nouveau}")
         if cloud is not None:
             lignes.append(f"jira_cloud_id: {cloud}")
         if expiration is not None:
             lignes.append(f"jira_token_expires: {expiration}")
+        if livraison:
+            extra += ("" if extra.endswith("\n") or not extra else "\n") + table_factice.yaml()
         (self.ws / "Flux-Lab" / "flux.yaml").write_text("\n".join(lignes) + "\n" + extra, encoding="utf-8")
 
     def ecrire_export(self, lignes, nom=None) -> str:

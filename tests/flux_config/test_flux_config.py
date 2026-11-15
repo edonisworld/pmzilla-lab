@@ -51,13 +51,6 @@ motifs_fermetures_groupees: [Done]
 serie_par_defaut: serie-x
 noms_projets:
   ABC: Alpha
-tableaux:
-  series:
-    - nom: serie-a
-      dependances: dep-a
-      dependances_projets: dep-p
-      base: ref-a
-    - nom: serie-b
 jira_email: moi@exemple.org
 jira_jeton: scopes
 export_champ_equipe: customfield_1
@@ -79,8 +72,11 @@ def sans_avertissement(f, *args):
 
 
 class Tables(unittest.TestCase):
-    def test_vingt_cinq_cles_de_premier_niveau(self):
-        self.assertEqual(len(flux_config.TOP), 25)
+    def test_vingt_quatre_cles_de_premier_niveau(self):
+        """Vingt-cinq avant le retrait du bloc des tableaux (R-146) : « tableaux » -> « boards » n'est plus une clé renommée."""
+        self.assertEqual(len(flux_config.TOP), 24)
+        self.assertNotIn("tableaux", flux_config.TOP)
+        self.assertFalse(hasattr(flux_config, "BOARD") or hasattr(flux_config, "BOARDS"))
 
     def test_noms_du_plan(self):
         self.assertEqual(flux_config.TOP["etats_a_faire"], "todo_states")
@@ -91,8 +87,6 @@ class Tables(unittest.TestCase):
         self.assertEqual(flux_config.COLUMNS["debut"], "category_changed")
         self.assertEqual(flux_config.SEGMENTS["revue_verification"], "review_verification")
         self.assertEqual(flux_config.UNCOUNTED, {"a_faire": "todo", "termine": "done"})
-        self.assertEqual(flux_config.BOARD, {"nom": "name", "dependances": "dependencies",
-                                        "dependances_projets": "project_dependencies", "base": "baseline"})
 
     def test_noms_inchanges_hors_table(self):
         for cle in flux_config.INCHANGEES:
@@ -115,12 +109,10 @@ class VersLesNomsInternes(unittest.TestCase):
                                    "point_engagement": "pret", "jira_jeton": "scopes"})
         self.assertEqual(erreur, "")
 
-    def test_sous_cles_et_series(self):
-        brut = {"boards": {"series": [{"name": "a", "dependencies": "d", "baseline": "b"}]},
-                "segments": {"ready": ["R"], "review_verification": ["V"], "definition": ["D"]},
+    def test_sous_cles(self):
+        brut = {"segments": {"ready": ["R"], "review_verification": ["V"], "definition": ["D"]},
                 "uncounted_segments": {"todo": ["T"], "done": ["F"]}}
         interne, erreur = sans_avertissement(flux_config.to_internal, brut)
-        self.assertEqual(interne["tableaux"], {"series": [{"nom": "a", "dependances": "d", "base": "b"}]})
         self.assertEqual(interne["segments"], {"pret": ["R"], "revue_verification": ["V"], "definition": ["D"]})
         self.assertEqual(interne["segments_hors_calcul"], {"a_faire": ["T"], "termine": ["F"]})
         self.assertEqual(erreur, "")
@@ -198,10 +190,10 @@ class RefusDesAnciennesOptions(unittest.TestCase):
 class VersLesNomsPublics(unittest.TestCase):
     def test_aller_retour(self):
         interne = {"colonnes": {"etat": ["S"]}, "point_engagement": "pret", "segments": {"pret": ["R"]},
-                   "tableaux": {"series": [{"nom": "a"}]}, "jira_jeton": "scopes", "etats_a_faire": "x"}
+                   "jira_jeton": "scopes", "etats_a_faire": "x"}
         public = flux_config.to_public(interne)
         self.assertEqual(public, {"columns": {"status": ["S"]}, "commitment_point": "ready",
-                                  "segments": {"ready": ["R"]}, "boards": {"series": [{"name": "a"}]},
+                                  "segments": {"ready": ["R"]},
                                   "jira_token_type": "scoped", "todo_states": "x"})
         retour, erreur = sans_avertissement(flux_config.to_internal, public)
         self.assertEqual(retour, interne)
@@ -220,13 +212,6 @@ class Migration(unittest.TestCase):
                 self.assertIn(f"  {nom}:", nouveau)
         for ancien in ("pret", "revue_verification", "acceptation"):
             self.assertNotIn(f"  {ancien}:", nouveau)
-        for ancien in ("dependances", "dependances_projets", "base"):
-            self.assertNotIn(f"      {ancien}:", nouveau)
-        self.assertIn("    - name: serie-a", nouveau)
-        self.assertIn("      dependencies: dep-a", nouveau)
-        self.assertIn("      project_dependencies: dep-p", nouveau)
-        self.assertIn("      baseline: ref-a", nouveau)
-        self.assertIn("    - name: serie-b", nouveau)
         self.assertIn("commitment_point: ready", nouveau)
         self.assertIn("jira_token_type: scoped", nouveau)
 
@@ -258,7 +243,7 @@ class Migration(unittest.TestCase):
     def test_les_changements_ne_contiennent_aucune_valeur(self):
         _, changements = flux_config.migrate_text(ANCIEN)
         texte = "\n".join(changements)
-        for valeur in ("exemple.atlassian", "moi@", "Europe/Paris", "customfield_1", "serie-a", "Alpha"):
+        for valeur in ("exemple.atlassian", "moi@", "Europe/Paris", "customfield_1", "serie-x", "Alpha"):
             self.assertNotIn(valeur, texte)
         self.assertIn("jira_jeton -> jira_token_type", texte)
         self.assertIn("valeur de jira_jeton : scopes -> scoped", texte)
@@ -310,7 +295,7 @@ class DeuxAnciennesClesUneSeuleNouvelle(unittest.TestCase):
         alias = {a: flux_config.TOP[c] for a, c in flux_config.ANCIENS_ALIAS.items()}
         tables = {"TOP + alias": {**flux_config.TOP, **alias},
                   "COLUMNS": flux_config.COLUMNS, "SEGMENTS": flux_config.SEGMENTS, "UNCOUNTED": flux_config.UNCOUNTED,
-                  "BOARD": flux_config.BOARD, "OPTIONS_COMMUNES": flux_config.OPTIONS_COMMUNES,
+                  "OPTIONS_COMMUNES": flux_config.OPTIONS_COMMUNES,
                   "valeur jira_jeton": flux_config.VALEURS["jira_jeton"]}
         for nom, table in tables.items():
             for nouveau, anciens in self.groupes(table).items():
@@ -351,9 +336,19 @@ class DoubleNomRefuse(unittest.TestCase):
         message = self.refus("columns:\n  status: [S]\n  cle: [K]\n")
         self.assertIn("L3 : « columns.cle » n'existe plus ; utiliser « columns.key »", message)
 
-    def test_cle_d_une_serie(self):
-        message = self.refus("boards:\n  series:\n    - nom: a\n")
-        self.assertIn("L3 : « boards.series.nom » n'existe plus ; utiliser « boards.series.name »", message)
+    def test_bloc_des_tableaux_retire_refuse_avec_la_cle_exacte_a_retirer(self):
+        """R-146 (D5), décision du 2026-10-26 : `boards` et son ancien nom `tableaux` sont refusés, la phrase nomme la clé telle
+        qu'écrite, avec la ligne, dans les deux langues, sans jamais la valeur. Remplace test_cle_d_une_serie (code supprimé)."""
+        for cle in ("boards", "tableaux"):
+            message = self.refus(f"jira_site: x\n{cle}:\n  series:\n    - nom: ValeurSecrete\n")
+            self.assertIn(f"flux.yaml : L2 : réglage retiré : {cle}, le tableau visuel des flux n'existe plus ; supprimer le bloc"
+                          f" / retired setting: {cle}, the visual flow dashboard no longer exists; delete the block", message)
+            self.assertNotIn("ValeurSecrete", message)
+
+    def test_bloc_des_tableaux_refuse_aussi_sans_numero_de_ligne(self):
+        with self.assertRaises(flux_config.ErreurConfig) as c:
+            flux_config.to_internal({"boards": {"series": []}})
+        self.assertTrue(str(c.exception).startswith("flux.yaml : réglage retiré : boards, "))
 
     def test_sans_numero_quand_le_dictionnaire_ne_vient_pas_de_charger(self):
         with self.assertRaises(flux_config.ErreurConfig) as c:
@@ -415,13 +410,12 @@ class MigrationDeConflits(unittest.TestCase):
             flux_config.migrate_text("projets_exclus: [A]\netats_a_faire: [X]\nprojets_exclus: [B]\n")
         self.assertEqual(c.exception.conflits, ["L1 et L3 : « projets_exclus » est écrite deux fois"])
 
-    def test_la_meme_cle_dans_deux_series_n_est_pas_un_conflit(self):
+    def test_le_bloc_des_tableaux_n_est_ni_renomme_ni_liste_par_la_migration(self):
+        """R-146 (D5) : remplace le test de la même clé dans deux séries (code de renommage supprimé)."""
         texte = "tableaux:\n  series:\n    - nom: a\n      dependances: d1\n    - nom: b\n      dependances: d2\n"
         nouveau, changements = flux_config.migrate_text(texte)
-        self.assertIn("    - name: b\n      dependencies: d2", nouveau)
-        self.assertEqual(changements, ["L1 : tableaux -> boards", "L3 : tableaux.series.nom -> name",
-                                       "L4 : tableaux.series.dependances -> dependencies",
-                                       "L5 : tableaux.series.nom -> name", "L6 : tableaux.series.dependances -> dependencies"])
+        self.assertEqual(nouveau, texte)
+        self.assertEqual(changements, [])
 
     def test_le_chemin_complet_est_celui_du_fichier(self):
         _, changements = flux_config.migrate_text("colonnes:\n  debut: [X]\n  motif: [Y]\n")

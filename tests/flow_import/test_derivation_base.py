@@ -171,6 +171,7 @@ class DerivationEnBase(aide.AvecBase):
         with self.assertRaises(flow_raw.RefusDerivation) as contexte:
             self.deriver(marquer_absents=True, seuil_pourcent=20)
         self.assertEqual(contexte.exception.code, "absent_share_exceeded")
+        self.assertEqual((contexte.exception.absents, contexte.exception.stockes), (2, 4))          # R-20261114-69 : le refus porte les nombres
         self.assertEqual(self.un("SELECT count(*) FROM flow.issues WHERE out_of_export_at IS NOT NULL")[0], 0)
 
     def test_ticket_resolu_au_dela_de_la_conservation_ignore_et_compte(self):

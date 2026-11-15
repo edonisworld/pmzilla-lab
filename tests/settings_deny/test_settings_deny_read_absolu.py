@@ -31,8 +31,10 @@ Complément (décision de l'auteur du 2026-10-21, constat 1 de l'audit du 2026-1
 protégés. Les règles Read de la liste des noms sensibles, du catalogue des équipes, d'organisation.yaml et d'equipes-assets.yaml visent le nom
 exact ; une copie `<nom>.sauvegarde-…`, `<nom>.avant-…` ou `<nom>.bak-…` passe. Le complément ajoute `Read(./Flux-Lab/<nom>*)`,
 `Read(//**/Flux-Lab/<nom>*)` et `Read(~/**/Flux-Lab/<nom>*)` (`*` ne franchit pas une barre : rapports/, flux.yaml et equipes-lisibles.yaml
-restent lisibles). Le refus de `git merge` nu reste dans .claude/settings.local.json de l'espace de travail (décision D11, maintenue par
-l'auteur le 2026-10-21 ; test_settings_deny_push_merge.py) : il n'entre pas dans le complément.
+restent lisibles). Le refus de `git merge` nu est dans .claude/settings.local.json de l'espace de travail (décision D11, maintenue par
+l'auteur le 2026-10-21 ; test_settings_deny_push_merge.py) : il n'entre pas dans le complément. Depuis le 2026-10-26 le fragment 38
+(test_settings_deny_fusion_run.py) refuse `git merge` et `git pull` sous toutes leurs formes, worktree compris : les quatre règles locales
+(`git merge *` et ses jumelles) y sont contenues, redondantes et sans danger.
 REGLES_COMPLEMENT n'est pas la liste --json (celle de regles_attendues(), contrôlée par la garde partagée) : BlocComplement la passe à la même
 garde. BlocComplement est vert ; DansLeFichierComplement ÉCHOUE tant que l'auteur n'a pas posé le complément.
 
@@ -244,11 +246,14 @@ class ReglesExistantes(unittest.TestCase):
         """Le bloc complète des chemins déjà refusés en `./…` ; pour Watch-Lab, ses deux sous-dossiers seulement."""
         for chemin in CHEMINS:
             if chemin != WATCH:
-                self.assertIn(f"Read(./{chemin})", self.deny, chemin)
-        for regle in ("Read(./Watch-Lab/watch/**)", "Read(./Watch-Lab/own-articles/**)"):
-            self.assertIn(regle, self.deny)
-        hors_watch = [c for c in chemins_relatifs_refuses() if "Watch-Lab/sous" not in c and "Watch-Lab/sources" not in c]
-        self.assertEqual([c for c in hors_watch if not self.moteur.lecture_interdite(c)], [])
+                # Désherbage du 2026-10-28 (D38) : la forme exacte de la liste des noms sensibles est remplacée par sa forme `*` finale.
+                self.assertTrue(f"Read(./{chemin})" in self.deny or f"Read(./{chemin}*)" in self.deny, chemin)
+        # Désherbage du 2026-10-28 (D37) : les deux règles des sous-dossiers de Watch-Lab sont couvertes par celle du dossier entier (fragment 33).
+        self.assertIn("Read(./Watch-Lab/**)", self.deny)
+        hors_watch = [c for c in chemins_relatifs_refuses() if "Watch-Lab" not in c]
+        # Les formes relatives `./…*` du complément (fragment 33) comptent comme règles d'avant : elles remplacent la forme exacte retirée (D38).
+        relatif = Moteur(self.avant + [r for r in REGLES_COMPLEMENT if r.startswith("Read(./")])
+        self.assertEqual([c for c in hors_watch if not relatif.lecture_interdite(c)], [])
 
     def test_la_forme_absolue_n_est_pas_deja_couverte(self):
         """Garde le sens du bloc : sans lui, une lecture par chemin absolu de ces chemins n'est pas refusée, ni sources.yaml de Watch-Lab."""
@@ -261,7 +266,9 @@ class ReglesExistantes(unittest.TestCase):
 
     def test_le_modele_organisation_yaml_a_ses_deux_formes_absolues_en_read_seulement(self):
         for forme in FORMES_ABSOLUES:
-            self.assertIn(f"Read({forme.format(c='Flux-Lab/organisation.yaml')})", self.deny)
+            # Désherbage du 2026-10-28 (D38) : la forme exacte est remplacée par la forme `*` finale (fragment 33) ; l'une ou l'autre suffit.
+            exacte = f"Read({forme.format(c='Flux-Lab/organisation.yaml')})"
+            self.assertTrue(exacte in self.deny or exacte.replace(".yaml)", ".yaml*)") in self.deny, exacte)
         absolues = [r for r in self.deny if "organisation.yaml" in r and r.startswith(("Edit(", "Write(")) and ("//" in r or "~/" in r)]
         self.assertEqual(absolues, [], "organisation.yaml a des règles Edit ou Write en forme absolue : les reprendre dans REGLES_A_PLUS")
 

@@ -1,0 +1,99 @@
+# Chemins du code de la base dont le changement exige un passage vert de tools/dbtest.sh enregistré pour l'arbre du sommet (contrôle 14) dans toute fin
+# (change finish-single-b3-b6, D15 : cette liste remplace l'ancien tableau CHEMINS_BASE de la fin unitaire, retirée par B9, mêmes entrées dans le même ordre).
+# Format : un chemin par ligne ; « # » commence un commentaire ; lignes vides ignorées ; espaces de début et de fin retirés. Une entrée est un motif de
+# chemin Git depuis la racine du dépôt : un dossier écrit avec « / » final, un chemin de fichier, ou un motif avec « * » (« * » traverse les dossiers).
+# Contenu (test-speed-2, D4) : la migration et ses vues, le compose, la couche base et ses scripts (tools/db*, tools/flow_*), les modules d'outils que les
+# tests avec base importent, les outils qui importent ou lancent la base (psycopg, couche db, docker compose, scripts db_*.sh), puis les fichiers de test
+# qui utilisent une base et leurs aides. Le motif « posture_eval* » (et non le nom complet du module) évite que le test de l'ancienne fin unitaire prenne la
+# liste pour le lancement du jeu d'essai.
+# Source unique, aucune copie ailleurs. Lecteurs :
+#   - tools/finish_checks.py (contrôle 14, modes branch et tree) : l'union des lectures à origin/main, à main local et au sommet (ou à l'arbre donné) ;
+#   - tests/db/test_couverture_base.py : le test statique qui garde cette liste à jour (R-85 : les outils qui touchent la base, pas seulement les tests) ;
+#   - tools/finish_train.sh ne la lit jamais : il lit le contrôle 14 de finish_checks.py.
+# Absente partout ou illisible : contrôle 14 refusé du module (« liste des chemins de la base absente ou illisible »), jamais sans objet.
+# Retrait : permanent tant qu'une fin exige le passage dbtest quand le code de la base a changé. Fichier de l'outillage protégé
+# (tools/finish_protected.txt, classe juge) : toute branche qui le modifie reçoit une revue complète Opus qui vérifie qu'aucune entrée n'est retirée sans
+# décision de l'auteur.
+db/
+docker-compose.yml
+tools/db*
+tools/flow_*
+tools/book_usage.py
+tools/cases_store.py
+tools/dashboard.py
+tools/dependencies_jira.py
+tools/export_jira_api.py
+tools/export_jira_api_equipes.py
+tools/epic_statuses.py
+tools/export_jira_api_messages.py
+tools/flux_jira.py
+tools/history_common.py
+tools/history_jira.py
+tools/history_store.py
+tools/hybrid_search.py
+tools/identifiants_personnels.py
+tools/journal_lab.py
+tools/knowledge_library.py
+tools/library_parity.py
+tools/messages.py
+tools/pmzilla_lab_library.py
+tools/posture_eval*
+tools/sensitive_names.py
+tools/watch_lab.py
+tools/watch_paths.py
+tools/watch_store.py
+tools/watch_triage.py
+tools/version_photo.py
+tools/version_photo_messages.py
+tools/cases_calibration.py
+tools/morning_summary.py
+tools/offsite_backup.sh
+tools/com.pmzilla.db-backup.plist
+tools/install_lab_check.py
+tools/install_lab_context.py
+tools/install_lab_database.py
+tests/db/
+tests/fixtures_library/
+tests/mothra_donnees/
+mothra/server/src/db/
+mothra/server/test/db/
+tests/book_usage/test_book_usage_db.py
+tests/cases_store/test_cases_store.py
+tests/cases_store/test_load_fixture.py
+tests/dashboard/test_dashboard_db.py
+tests/flow_import/test_derivation_base.py
+tests/flow_import/test_reconstruction_base.py
+tests/flow_import/test_versions_courantes_base.py
+tests/history_jira/test_magasin_base.py
+tests/story_quality/test_magasin_base.py
+tools/story_quality_store.py
+tests/story_quality/test_magasin_analyse_base.py
+tools/story_quality_audit_store.py
+tests/export_jira_api/aide_couche_brute.py
+tests/export_jira_api/test_couche_brute.py
+tests/export_jira_api/test_couche_brute_base.py
+tests/export_jira_api/test_export_jira_api.py
+tests/export_jira_api/test_equipes_vues_base.py
+tests/export_jira_api/test_referentiel_et_etiquettes.py
+tests/flow_retention/test_base.py
+tests/flow_retention/test_couche_brute_base.py
+tests/flow_store/aide_base.py
+tests/flow_store/aide_scripts.py
+tests/flow_store/test_couverture_historique.py
+tests/flow_store/test_flow_store.py
+tests/flow_store/test_lecteur_epics.py
+tests/flow_store/test_lecteurs_cycles.py
+tests/flow_store/test_sortis_de_l_export.py
+tests/flow_store/test_erreurs_scripts.py
+tests/flow_views/test_flow_views.py
+tests/hybrid_search/test_filtre_avant_limite.py
+tests/hybrid_search/test_hybrid_search.py
+tests/hybrid_search/test_hybrid_search_sans_tsvector.py
+tests/library_backend/pg_demo.py
+tests/library_backend/test_backend.py
+tests/pmzilla_lab_library/test_figures.py
+tests/pmzilla_lab_library/test_pmzilla_lab_library.py
+tests/pmzilla_lab_library/test_probe.py
+tests/posture_eval*/test_cases_fixture.py
+tests/posture_eval*/test_prerequis_base.py
+tests/watch_store/test_contract.py

@@ -67,7 +67,7 @@ class DateDeLaSerie(AvecSeries):
     def test_dernier_run_complet(self):
         d = jour_du_mois(1)
         self.serie_en_cours(d, "complete")
-        r = self.lancer_en("--force", "--from", "dashboard")
+        r = self.lancer_en("--force", "--from", "retention")
         self.assertEqual(r.code, 0, r.sortie)
         self.assertIn(f"Resuming the series of {d}", r.sortie)
         self.assertTrue((self.rapports / f"suivi-mensuel-{d}.md").exists())

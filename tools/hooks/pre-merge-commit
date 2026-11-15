@@ -1,15 +1,27 @@
-#!/usr/bin/env python3
+#!/Library/Developer/CommandLineTools/usr/bin/python3 -IS
+# R-20261108-09 et R-20261108-10. Remplace : le lancement par python3 trouvé par PATH, puis le relais /usr/bin/python3 qui suit DEVELOPER_DIR.
+# Retrait : permanent (le bac à sable limite ce qu'un programme atteint, pas quel programme tourne).
 """PMZilla Lab : hook pre-merge-commit (change finish-under-lock, design D17). Installé par tools/install_hooks.sh en lien relatif.
 
 Git le lance avant de créer un commit de fusion (git merge sans conflit ; l'option qui saute les crochets est refusée aux sessions). Il ne fait qu'une chose :
 la même lecture du verrou de fin de branche que le gel du hook pre-commit (tools/finish_lock.py, dossier pmzilla-fin-en-cours du dossier
 Git commun, jeton FINISH_LOCK_TOKEN). Un verrou vivant d'un autre jeton refuse la fusion (code 1) ; le jeton du verrou, l'absence de verrou
-ou un verrou périmé (dit sur une ligne) la laissent passer. Ni lancement vert, ni garde des noms : le contenu fusionné a été contrôlé des deux
+ou un verrou dont le processus est prouvé mort (dit sur une ligne) la laissent passer ; une erreur de git, un dossier commun illisible ou un verrou
+périmé par l'âge dont le processus vit refusent (« vérification impossible », échec fermé, classe D de #629) ; l'auteur retire alors le verrou périmé
+dans son Terminal, depuis l'espace de travail : python3 tools/finish_lock.py debloquer (refusé en session, jamais sur un verrou tenu). Ni lancement vert, ni garde des noms : le contenu fusionné a été contrôlé des deux
 côtés. Aucune variable ne lève ce refus. Le hook lit le verrou seulement : il ne le crée, ne le retire ni ne le modifie jamais.
 """
+import atexit
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+
+# R-20261108-09 point 3. Remplace : rien. Retrait : permanent. Aucun code compilé lu ni écrit dans tools/__pycache__ (préfixe vide et neuf, avant l'import).
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, sys.pycache_prefix, True)
 
 OUTILS = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, OUTILS)
@@ -17,21 +29,37 @@ import finish_lock  # noqa: E402
 
 
 def main():
+    # Échec fermé (A-42, classe D de #629) : sans le dossier Git commun lu, on ne sait pas s'il y a un verrou, refus.
+    # Remplace : « return 0 » sur une erreur de git. Retrait : permanent (une garde qui échoue ouverte est un défaut).
     try:
         commun = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, check=True,
                                 text=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        return 0
+        commun = ""
+    if not commun or not os.path.isdir(commun) or not os.access(commun, os.R_OK | os.X_OK):
+        print("pre-merge-commit : vérification impossible (dossier Git commun non lu), fusion refusée", file=sys.stderr)
+        return 1
     verrou = finish_lock.read_lock(commun)
     if verrou is None:
         return 0
     if verrou["stale"]:
-        print("pre-merge-commit : verrou de fin périmé, ignoré", file=sys.stderr)
+        # périmé ne vaut pas fini : seule la preuve positive (processus du verrou mort) ou le jeton de la fin elle-même laisse passer
+        # Remplace : « périmé, ignoré » sur toute péremption (âge dépassé, pid illisible). Retrait : permanent.
+        jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
+        if finish_lock.owner_dead(commun):
+            print("pre-merge-commit : verrou de fin périmé, ignoré", file=sys.stderr)
+            return 0
+        if jeton and jeton == verrou["token"]:
+            return 0
+        print("pre-merge-commit : vérification impossible (verrou de fin périmé, son processus n'est pas prouvé mort), fusion refusée ; "
+              f"l'auteur retire le verrou périmé dans son Terminal : {finish_lock.UNLOCK_COMMAND}", file=sys.stderr)
+        return 1
+    # Une seule lecture du verrou décide (pas de second appel à blocking(), qui relirait l'âge : course où un verrou tenu devient périmé
+    # entre les deux lectures et passe sans preuve de mort). Remplace : blocking() rappelé après read_lock. Retrait : permanent.
+    jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
+    if jeton and jeton == verrou["token"]:
         return 0
-    bloquant = finish_lock.blocking(commun, os.environ.get("FINISH_LOCK_TOKEN", ""))
-    if bloquant is None:
-        return 0
-    print(f"pre-merge-commit : fin de branche en cours ({bloquant['branch']}), fusion refusée", file=sys.stderr)
+    print(f"pre-merge-commit : fin de branche en cours ({verrou['branch']}), fusion refusée", file=sys.stderr)
     return 1
 
 

@@ -10,13 +10,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -31,12 +31,12 @@ Visits per ticket: 1 visit 45, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -44,18 +44,18 @@ Window: from 19.0 to 28.0 d (P40 to P60); 10 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
 
 ## The 3 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 ````
 
 ## --by-state (exit 0)
@@ -68,13 +68,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -89,12 +89,12 @@ Visits per ticket: 1 visit 45, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -102,36 +102,36 @@ Window: from 19.0 to 28.0 d (P40 to P60); 10 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
 
 ## The 3 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 
 ## Time per status of the segment (population of 46 tickets that left)
 
 | Status | Tickets that went through the status | Total (d) | Share of segment time | P50 (d) | P85 (d) |
 |---|---|---|---|---|---|
-| Ready for Review (Implementation) | 0 | 0 | 0.0% | - | - |
-| Review - Ongoing (Impl.) | 0 | 0 | 0.0% | - | - |
-| Review - On Hold (Impl.) | 0 | 0 | 0.0% | - | - |
-| Ready for Verification | 46 | 1526 | 99.3% | 24 | 38 |
-| Verification | 0 | 0 | 0.0% | - | - |
-| Verification - Ongoing | 1 | 10 | 0.7% | 10 | 10 |
-| Verification - On Hold | 0 | 0 | 0.0% | - | - |
+| Awaiting Review (Development) | 0 | 0 | 0.0% | - | - |
+| Review - Active (Dev.) | 0 | 0 | 0.0% | - | - |
+| Review - Blocked (Dev.) | 0 | 0 | 0.0% | - | - |
+| Awaiting Testing | 46 | 1526 | 99.3% | 24 | 38 |
+| Testing | 0 | 0 | 0.0% | - | - |
+| Testing - Active | 1 | 10 | 0.7% | 10 | 10 |
+| Testing - Blocked | 0 | 0 | 0.0% | - | - |
 
 Segment total: 1536 d (sum of the cumulative times). P50 and P85: days spent in the status per ticket, summed over the visits, among the tickets that went through the status.
 
 ## Per-status detail of the sampled tickets
 
-| Key | Group | Total (d) | Ready for Review (Implementation) | Review - Ongoing (Impl.) | Review - On Hold (Impl.) | Ready for Verification | Verification | Verification - Ongoing | Verification - On Hold |
+| Key | Group | Total (d) | Awaiting Review (Development) | Review - Active (Dev.) | Review - Blocked (Dev.) | Awaiting Testing | Testing | Testing - Active | Testing - Blocked |
 |---|---|---|---|---|---|---|---|---|---|
 | CCC-1 | longest | 200 | - | - | - | 200 | - | - | - |
 | CCC-2 | longest | 190 | - | - | - | 190 | - | - | - |
@@ -173,13 +173,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -194,12 +194,12 @@ Visits per ticket: 1 visit 45, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -207,20 +207,20 @@ Window: from 19.0 to 28.0 d (P40 to P60); 10 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
 
 ## The 3 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 1 moves in the finished visits of the population, 1 tickets concerned. Projects listed: at least 20 moves; 1 project(s) below the threshold (1 moves) not listed.
 
@@ -237,13 +237,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -258,8 +258,8 @@ Visits per ticket: 1 visit 45, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
 
 ## 10 tickets near the median (random draw, seed 42)
 
@@ -269,43 +269,43 @@ Warning: only 10 candidate(s) for 100 requested.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-27 | BBB | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| BBB-26 | BBB | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Implementation - Ongoing |
-| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Implementation - Ongoing |
-| BBB-24 | BBB | 24 | 1 | 2026-05-01 | 2026-05-25 | 24 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Implementation - Ongoing |
-| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-27 | BBB | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| BBB-26 | BBB | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Development - Active |
+| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Development - Active |
+| BBB-24 | BBB | 24 | 1 | 2026-05-01 | 2026-05-25 | 24 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Development - Active |
+| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
 
 ## The 4 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
-| DDD-4 | DDD | 127 | 2026-06-01 | 127 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
+| DDD-4 | DDD | 127 | 2026-06-01 | 127 | 1 | Awaiting Testing | Open |
 
 ## Time per status of the segment (population of 46 tickets that left)
 
 | Status | Tickets that went through the status | Total (d) | Share of segment time | P50 (d) | P85 (d) |
 |---|---|---|---|---|---|
-| Ready for Review (Implementation) | 0 | 0 | 0.0% | - | - |
-| Review - Ongoing (Impl.) | 0 | 0 | 0.0% | - | - |
-| Review - On Hold (Impl.) | 0 | 0 | 0.0% | - | - |
-| Ready for Verification | 46 | 1526 | 99.3% | 24 | 38 |
-| Verification | 0 | 0 | 0.0% | - | - |
-| Verification - Ongoing | 1 | 10 | 0.7% | 10 | 10 |
-| Verification - On Hold | 0 | 0 | 0.0% | - | - |
+| Awaiting Review (Development) | 0 | 0 | 0.0% | - | - |
+| Review - Active (Dev.) | 0 | 0 | 0.0% | - | - |
+| Review - Blocked (Dev.) | 0 | 0 | 0.0% | - | - |
+| Awaiting Testing | 46 | 1526 | 99.3% | 24 | 38 |
+| Testing | 0 | 0 | 0.0% | - | - |
+| Testing - Active | 1 | 10 | 0.7% | 10 | 10 |
+| Testing - Blocked | 0 | 0 | 0.0% | - | - |
 
 Segment total: 1536 d (sum of the cumulative times). P50 and P85: days spent in the status per ticket, summed over the visits, among the tickets that went through the status.
 
 ## Per-status detail of the sampled tickets
 
-| Key | Group | Total (d) | Ready for Review (Implementation) | Review - Ongoing (Impl.) | Review - On Hold (Impl.) | Ready for Verification | Verification | Verification - Ongoing | Verification - On Hold |
+| Key | Group | Total (d) | Awaiting Review (Development) | Review - Active (Dev.) | Review - Blocked (Dev.) | Awaiting Testing | Testing | Testing - Active | Testing - Blocked |
 |---|---|---|---|---|---|---|---|---|---|
 | CCC-1 | longest | 200 | - | - | - | 200 | - | - | - |
 | CCC-2 | longest | 190 | - | - | - | 190 | - | - | - |
@@ -346,13 +346,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -367,12 +367,12 @@ Visits per ticket: 1 visit 45, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -380,18 +380,18 @@ Window: from 19.0 to 28.0 d (P40 to P60); 10 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
 
 ## The 3 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 ````
 
 ## --segment unknown (exit 1)
@@ -418,12 +418,12 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Implementation
-- Implementation - Ongoing
-- Implementation - On Hold
-- Analysis (Impl)
-- Code Review (Impl)
-- R&D Test (Impl)
+- Development
+- Development - Active
+- Development - Blocked
+- Investigation (Dev)
+- Peer Review (Dev)
+- Lab Test (Dev)
 
 Other segments, by number of statuses: definition (8), ready (1), review_verification (7), acceptance (2).
 
@@ -439,8 +439,8 @@ Visits per ticket: 1 visit 2, 2 visits or more 1.
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
 | RRR-1 | RRR | 34 | 1 | 2026-03-05 | 2026-04-08 | 34 | Open | Done |
-| AAA-1 | AAA | 13 | 2 | 2026-05-02 | 2026-05-10 | 8 | Open | Ready for Verification |
-| GGG-1 | GGG | 1 | 1 | 2026-07-01 | 2026-07-02 | 1 | Ready for Verification | Done |
+| AAA-1 | AAA | 13 | 2 | 2026-05-02 | 2026-05-10 | 8 | Open | Awaiting Testing |
+| GGG-1 | GGG | 1 | 1 | 2026-07-01 | 2026-07-02 | 1 | Awaiting Testing | Done |
 
 ## 0 tickets near the median (random draw, seed 42)
 
@@ -455,11 +455,11 @@ Warning: only 0 candidate(s) for 4 requested.
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| EEE-1 | EEE | 219 | 2026-03-01 | 219 | 1 | Implementation - Ongoing | Ready for Verification |
-| BBB-1 | BBB | 157 | 2026-05-02 | 157 | 1 | Implementation - Ongoing | Ready for Verification |
-| BBB-2 | BBB | 156 | 2026-05-03 | 156 | 1 | Implementation - Ongoing | Ready for Verification |
+| EEE-1 | EEE | 219 | 2026-03-01 | 219 | 1 | Development - Active | Awaiting Testing |
+| BBB-1 | BBB | 157 | 2026-05-02 | 157 | 1 | Development - Active | Awaiting Testing |
+| BBB-2 | BBB | 156 | 2026-05-03 | 156 | 1 | Development - Active | Awaiting Testing |
 [stderr]
---starts: status(es) outside the segment "implementation": Ready for Verification, Verification - Ongoing.
+--starts: status(es) outside the segment "implementation": Awaiting Testing, Testing - Active.
 ````
 
 ## --longest 100, creation and resolution from the segment (exit 0)
@@ -472,13 +472,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -493,53 +493,53 @@ Visits per ticket: 1 visit 46, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
-| BBB-39 | BBB | 39 | 1 | 2026-05-01 | 2026-06-09 | 39 | Open | Implementation - Ongoing |
-| BBB-38 | BBB | 38 | 1 | 2026-05-01 | 2026-06-08 | 38 | Open | Implementation - Ongoing |
-| BBB-37 | BBB | 37 | 1 | 2026-05-01 | 2026-06-07 | 37 | Open | Implementation - Ongoing |
-| BBB-36 | BBB | 36 | 1 | 2026-05-01 | 2026-06-06 | 36 | Open | Implementation - Ongoing |
-| BBB-35 | BBB | 35 | 1 | 2026-05-01 | 2026-06-05 | 35 | Open | Implementation - Ongoing |
-| BBB-34 | BBB | 34 | 1 | 2026-05-01 | 2026-06-04 | 34 | Open | Implementation - Ongoing |
-| BBB-33 | BBB | 33 | 1 | 2026-05-01 | 2026-06-03 | 33 | Open | Implementation - Ongoing |
-| BBB-32 | BBB | 32 | 1 | 2026-05-01 | 2026-06-02 | 32 | Open | Implementation - Ongoing |
-| BBB-31 | BBB | 31 | 1 | 2026-05-01 | 2026-06-01 | 31 | Open | Implementation - Ongoing |
-| BBB-30 | BBB | 30 | 1 | 2026-05-01 | 2026-05-31 | 30 | Open | Implementation - Ongoing |
-| GGG-1 | GGG | 30 | 1 | 2026-06-01 | 2026-07-01 | 30 | (creation) | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
+| BBB-39 | BBB | 39 | 1 | 2026-05-01 | 2026-06-09 | 39 | Open | Development - Active |
+| BBB-38 | BBB | 38 | 1 | 2026-05-01 | 2026-06-08 | 38 | Open | Development - Active |
+| BBB-37 | BBB | 37 | 1 | 2026-05-01 | 2026-06-07 | 37 | Open | Development - Active |
+| BBB-36 | BBB | 36 | 1 | 2026-05-01 | 2026-06-06 | 36 | Open | Development - Active |
+| BBB-35 | BBB | 35 | 1 | 2026-05-01 | 2026-06-05 | 35 | Open | Development - Active |
+| BBB-34 | BBB | 34 | 1 | 2026-05-01 | 2026-06-04 | 34 | Open | Development - Active |
+| BBB-33 | BBB | 33 | 1 | 2026-05-01 | 2026-06-03 | 33 | Open | Development - Active |
+| BBB-32 | BBB | 32 | 1 | 2026-05-01 | 2026-06-02 | 32 | Open | Development - Active |
+| BBB-31 | BBB | 31 | 1 | 2026-05-01 | 2026-06-01 | 31 | Open | Development - Active |
+| BBB-30 | BBB | 30 | 1 | 2026-05-01 | 2026-05-31 | 30 | Open | Development - Active |
+| GGG-1 | GGG | 30 | 1 | 2026-06-01 | 2026-07-01 | 30 | (creation) | Development - Active |
 | HHH-1 | HHH | 30 | 1 | 2026-05-02 | 2026-06-01 | 30 | Open | (resolved from the segment) |
-| BBB-29 | BBB | 29 | 1 | 2026-05-01 | 2026-05-30 | 29 | Open | Implementation - Ongoing |
-| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Implementation - Ongoing |
-| BBB-27 | BBB | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| BBB-26 | BBB | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Implementation - Ongoing |
-| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Implementation - Ongoing |
-| BBB-24 | BBB | 24 | 1 | 2026-05-01 | 2026-05-25 | 24 | Open | Implementation - Ongoing |
-| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Implementation - Ongoing |
-| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Implementation - Ongoing |
-| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
-| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Implementation - Ongoing |
-| BBB-18 | BBB | 18 | 1 | 2026-05-01 | 2026-05-19 | 18 | Open | Implementation - Ongoing |
-| BBB-17 | BBB | 17 | 1 | 2026-05-01 | 2026-05-18 | 17 | Open | Implementation - Ongoing |
-| BBB-16 | BBB | 16 | 1 | 2026-05-01 | 2026-05-17 | 16 | Open | Implementation - Ongoing |
-| BBB-15 | BBB | 15 | 1 | 2026-05-01 | 2026-05-16 | 15 | Open | Implementation - Ongoing |
-| BBB-14 | BBB | 14 | 1 | 2026-05-01 | 2026-05-15 | 14 | Open | Implementation - Ongoing |
-| BBB-13 | BBB | 13 | 1 | 2026-05-01 | 2026-05-14 | 13 | Open | Implementation - Ongoing |
-| BBB-12 | BBB | 12 | 1 | 2026-05-01 | 2026-05-13 | 12 | Open | Implementation - Ongoing |
-| BBB-11 | BBB | 11 | 1 | 2026-05-01 | 2026-05-12 | 11 | Open | Implementation - Ongoing |
-| BBB-10 | BBB | 10 | 1 | 2026-05-01 | 2026-05-11 | 10 | Open | Implementation - Ongoing |
-| BBB-9 | BBB | 9 | 1 | 2026-05-01 | 2026-05-10 | 9 | Open | Implementation - Ongoing |
-| BBB-8 | BBB | 8 | 1 | 2026-05-01 | 2026-05-09 | 8 | Open | Implementation - Ongoing |
-| BBB-7 | BBB | 7 | 1 | 2026-05-01 | 2026-05-08 | 7 | Open | Implementation - Ongoing |
-| BBB-6 | BBB | 6 | 1 | 2026-05-01 | 2026-05-07 | 6 | Open | Implementation - Ongoing |
-| BBB-5 | BBB | 5 | 1 | 2026-05-01 | 2026-05-06 | 5 | Open | Implementation - Ongoing |
-| BBB-4 | BBB | 4 | 1 | 2026-05-01 | 2026-05-05 | 4 | Open | Implementation - Ongoing |
-| BBB-3 | BBB | 3 | 1 | 2026-05-01 | 2026-05-04 | 3 | Open | Implementation - Ongoing |
-| BBB-2 | BBB | 2 | 1 | 2026-05-01 | 2026-05-03 | 2 | Open | Implementation - Ongoing |
-| BBB-1 | BBB | 1 | 1 | 2026-05-01 | 2026-05-02 | 1 | Open | Implementation - Ongoing |
+| BBB-29 | BBB | 29 | 1 | 2026-05-01 | 2026-05-30 | 29 | Open | Development - Active |
+| BBB-28 | BBB | 28 | 1 | 2026-05-01 | 2026-05-29 | 28 | Open | Development - Active |
+| BBB-27 | BBB | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| BBB-26 | BBB | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Development - Active |
+| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Development - Active |
+| BBB-24 | BBB | 24 | 1 | 2026-05-01 | 2026-05-25 | 24 | Open | Development - Active |
+| BBB-23 | BBB | 23 | 1 | 2026-05-01 | 2026-05-24 | 23 | Open | Development - Active |
+| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Development - Active |
+| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
+| BBB-19 | BBB | 19 | 1 | 2026-05-01 | 2026-05-20 | 19 | Open | Development - Active |
+| BBB-18 | BBB | 18 | 1 | 2026-05-01 | 2026-05-19 | 18 | Open | Development - Active |
+| BBB-17 | BBB | 17 | 1 | 2026-05-01 | 2026-05-18 | 17 | Open | Development - Active |
+| BBB-16 | BBB | 16 | 1 | 2026-05-01 | 2026-05-17 | 16 | Open | Development - Active |
+| BBB-15 | BBB | 15 | 1 | 2026-05-01 | 2026-05-16 | 15 | Open | Development - Active |
+| BBB-14 | BBB | 14 | 1 | 2026-05-01 | 2026-05-15 | 14 | Open | Development - Active |
+| BBB-13 | BBB | 13 | 1 | 2026-05-01 | 2026-05-14 | 13 | Open | Development - Active |
+| BBB-12 | BBB | 12 | 1 | 2026-05-01 | 2026-05-13 | 12 | Open | Development - Active |
+| BBB-11 | BBB | 11 | 1 | 2026-05-01 | 2026-05-12 | 11 | Open | Development - Active |
+| BBB-10 | BBB | 10 | 1 | 2026-05-01 | 2026-05-11 | 10 | Open | Development - Active |
+| BBB-9 | BBB | 9 | 1 | 2026-05-01 | 2026-05-10 | 9 | Open | Development - Active |
+| BBB-8 | BBB | 8 | 1 | 2026-05-01 | 2026-05-09 | 8 | Open | Development - Active |
+| BBB-7 | BBB | 7 | 1 | 2026-05-01 | 2026-05-08 | 7 | Open | Development - Active |
+| BBB-6 | BBB | 6 | 1 | 2026-05-01 | 2026-05-07 | 6 | Open | Development - Active |
+| BBB-5 | BBB | 5 | 1 | 2026-05-01 | 2026-05-06 | 5 | Open | Development - Active |
+| BBB-4 | BBB | 4 | 1 | 2026-05-01 | 2026-05-05 | 4 | Open | Development - Active |
+| BBB-3 | BBB | 3 | 1 | 2026-05-01 | 2026-05-04 | 3 | Open | Development - Active |
+| BBB-2 | BBB | 2 | 1 | 2026-05-01 | 2026-05-03 | 2 | Open | Development - Active |
+| BBB-1 | BBB | 1 | 1 | 2026-05-01 | 2026-05-02 | 1 | Open | Development - Active |
 
 ## 0 tickets near the median (random draw, seed 42)
 
@@ -554,9 +554,9 @@ Warning: only 0 candidate(s) for 4 requested.
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 ````
 
 ## segments set in flux.yaml (exit 0)
@@ -569,8 +569,8 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Verification
-- Verification - Ongoing
+- Awaiting Testing
+- Testing - Active
 
 Other segments, by number of statuses: other (1).
 
@@ -585,12 +585,12 @@ Visits per ticket: 1 visit 46, 2 visits or more 1.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Implementation - Ongoing |
-| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Implementation - Ongoing |
-| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Implementation - Ongoing |
+| CCC-1 | CCC | 200 | 1 | 2026-01-10 | 2026-07-29 | 200 | Open | Development - Active |
+| CCC-2 | CCC | 190 | 1 | 2026-01-10 | 2026-07-19 | 190 | Open | Development - Active |
+| CCC-3 | CCC | 180 | 1 | 2026-01-10 | 2026-07-09 | 180 | Open | Development - Active |
 | FFF-1 | FFF | 60 | 1 | 2026-05-02 | 2026-07-01 | 60 | Open | Done |
-| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Code Review (Impl) | Implementation - Ongoing |
-| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Implementation - Ongoing |
+| AAA-1 | AAA | 56 | 2 | 2026-05-10 | 2026-06-20 | 41 | Peer Review (Dev) | Development - Active |
+| BBB-40 | BBB | 40 | 1 | 2026-05-01 | 2026-06-10 | 40 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -598,31 +598,31 @@ Window: from 19.4 to 28.6 d (P40 to P60); 9 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Implementation - Ongoing |
-| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Implementation - Ongoing |
-| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Implementation - Ongoing |
-| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Implementation - Ongoing |
+| BBB-25 | BBB | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Development - Active |
+| BBB-22 | BBB | 22 | 1 | 2026-05-01 | 2026-05-23 | 22 | Open | Development - Active |
+| BBB-21 | BBB | 21 | 1 | 2026-05-01 | 2026-05-22 | 21 | Open | Development - Active |
+| BBB-20 | BBB | 20 | 1 | 2026-05-01 | 2026-05-21 | 20 | Open | Development - Active |
 
 ## The 3 oldest still in the segment (out of 4)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
-| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Ready for Verification | Open |
-| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Ready for Verification | Open |
-| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Ready for Verification | Open |
+| DDD-1 | DDD | 219 | 2026-03-01 | 219 | 1 | Awaiting Testing | Open |
+| DDD-2 | DDD | 188 | 2026-04-01 | 188 | 1 | Awaiting Testing | Open |
+| DDD-3 | DDD | 158 | 2026-05-01 | 158 | 1 | Awaiting Testing | Open |
 
 ## Time per status of the segment (population of 47 tickets that left)
 
 | Status | Tickets that went through the status | Total (d) | Share of segment time | P50 (d) | P85 (d) |
 |---|---|---|---|---|---|
-| Ready for Verification | 47 | 1556 | 99.4% | 24 | 38 |
-| Verification - Ongoing | 1 | 10 | 0.6% | 10 | 10 |
+| Awaiting Testing | 47 | 1556 | 99.4% | 24 | 38 |
+| Testing - Active | 1 | 10 | 0.6% | 10 | 10 |
 
 Segment total: 1566 d (sum of the cumulative times). P50 and P85: days spent in the status per ticket, summed over the visits, among the tickets that went through the status.
 
 ## Per-status detail of the sampled tickets
 
-| Key | Group | Total (d) | Ready for Verification | Verification - Ongoing |
+| Key | Group | Total (d) | Awaiting Testing | Testing - Active |
 |---|---|---|---|---|
 | CCC-1 | longest | 200 | 200 | - |
 | CCC-2 | longest | 190 | 190 | - |
@@ -653,7 +653,7 @@ Segment total: 1566 d (sum of the cumulative times). P50 and P85: days spent in 
 
 Benchmark: over the 46 days when at least one ticket of the population left the segment, P50 1 and P85 1 exits per day, maximum 2 on 2026-06-01.
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 1 moves in the finished visits of the population, 1 tickets concerned. Projects listed: at least 20 moves; 1 project(s) below the threshold (1 moves) not listed.
 
@@ -670,13 +670,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -711,13 +711,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -732,12 +732,12 @@ Visits per ticket: 1 visit 95, 2 visits or more 0.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| QQQ-30 | QQQ | 50 | 1 | 2026-05-01 | 2026-06-20 | 50 | Open | Implementation - Ongoing |
-| QQQ-29 | QQQ | 49 | 1 | 2026-05-01 | 2026-06-19 | 49 | Open | Implementation - Ongoing |
-| QQQ-28 | QQQ | 48 | 1 | 2026-05-01 | 2026-06-18 | 48 | Open | Implementation - Ongoing |
-| QQQ-27 | QQQ | 47 | 1 | 2026-05-01 | 2026-06-17 | 47 | Open | Implementation - Ongoing |
-| QQQ-26 | QQQ | 46 | 1 | 2026-05-01 | 2026-06-16 | 46 | Open | Implementation - Ongoing |
-| QQQ-25 | QQQ | 45 | 1 | 2026-05-01 | 2026-06-15 | 45 | Open | Implementation - Ongoing |
+| QQQ-30 | QQQ | 50 | 1 | 2026-05-01 | 2026-06-20 | 50 | Open | Development - Active |
+| QQQ-29 | QQQ | 49 | 1 | 2026-05-01 | 2026-06-19 | 49 | Open | Development - Active |
+| QQQ-28 | QQQ | 48 | 1 | 2026-05-01 | 2026-06-18 | 48 | Open | Development - Active |
+| QQQ-27 | QQQ | 47 | 1 | 2026-05-01 | 2026-06-17 | 47 | Open | Development - Active |
+| QQQ-26 | QQQ | 46 | 1 | 2026-05-01 | 2026-06-16 | 46 | Open | Development - Active |
+| QQQ-25 | QQQ | 45 | 1 | 2026-05-01 | 2026-06-15 | 45 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -745,17 +745,17 @@ Window: from 24.0 to 27.0 d (P40 to P60); 22 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| PPP-11 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| PPP-14 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| SANSPROJET6 |  | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Implementation - Ongoing |
-| PPP-22 | PPP | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Implementation - Ongoing |
+| PPP-11 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| PPP-14 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| SANSPROJET6 |  | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Development - Active |
+| PPP-22 | PPP | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Development - Active |
 
 ## The 0 oldest still in the segment (out of 0)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 95 moves in the finished visits of the population, 95 tickets concerned. Projects listed: at least 20 moves; 1 project(s) below the threshold (19 moves) not listed.
 
@@ -765,7 +765,7 @@ Window: from 24.0 to 27.0 d (P40 to P60); 22 candidates.
 | PPP | 25 | 10 | 2 | 68.0% | 28.7% | 36.0% | yes | 22.7 | 20.0 | 0.44 | yes | 7 |
 | (no project) | 21 | 9 | 2 | 28.6% | 27.5% | 38.1% | no | 19.4 | 17.0 | 0.46 | yes | 3 |
 
-The wait is the time spent in "Ready for Verification" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
+The wait is the time spent in "Awaiting Testing" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
 Both measures draw the project's moves at random, with replacement, over the 124 working days (Monday to Friday, French public holidays removed, Alsace-Moselle excepted) from 2026-04-06 to 2026-10-04; 1000 draws, seed 42, each draw having the same number of moves as the real data. Concentration at equal active days: each draw keeps its own number of distinct days and the rule of the 20% busiest days (rounded up) is applied to it; "yes" if the observed share is strictly above the 95th percentile of these shares. Because it takes the active days as given, it does not see a project that has only few active days: a project that starts in bursts almost always comes out "yes". Active days: the observed number of distinct days is compared with that of the draws (mean, 5th percentile, observed / expected ratio) without imposing anything on it; "yes" if the observed number is strictly below the 5th percentile of the draws, that is, fewer active days than chance produces. In the population, 54 move(s) fall on a weekend, a public holiday or outside the period: the model does not know them.
 ````
 
@@ -779,13 +779,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -800,12 +800,12 @@ Visits per ticket: 1 visit 95, 2 visits or more 0.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| QQQ-30 | QQQ | 50 | 1 | 2026-05-01 | 2026-06-20 | 50 | Open | Implementation - Ongoing |
-| QQQ-29 | QQQ | 49 | 1 | 2026-05-01 | 2026-06-19 | 49 | Open | Implementation - Ongoing |
-| QQQ-28 | QQQ | 48 | 1 | 2026-05-01 | 2026-06-18 | 48 | Open | Implementation - Ongoing |
-| QQQ-27 | QQQ | 47 | 1 | 2026-05-01 | 2026-06-17 | 47 | Open | Implementation - Ongoing |
-| QQQ-26 | QQQ | 46 | 1 | 2026-05-01 | 2026-06-16 | 46 | Open | Implementation - Ongoing |
-| QQQ-25 | QQQ | 45 | 1 | 2026-05-01 | 2026-06-15 | 45 | Open | Implementation - Ongoing |
+| QQQ-30 | QQQ | 50 | 1 | 2026-05-01 | 2026-06-20 | 50 | Open | Development - Active |
+| QQQ-29 | QQQ | 49 | 1 | 2026-05-01 | 2026-06-19 | 49 | Open | Development - Active |
+| QQQ-28 | QQQ | 48 | 1 | 2026-05-01 | 2026-06-18 | 48 | Open | Development - Active |
+| QQQ-27 | QQQ | 47 | 1 | 2026-05-01 | 2026-06-17 | 47 | Open | Development - Active |
+| QQQ-26 | QQQ | 46 | 1 | 2026-05-01 | 2026-06-16 | 46 | Open | Development - Active |
+| QQQ-25 | QQQ | 45 | 1 | 2026-05-01 | 2026-06-15 | 45 | Open | Development - Active |
 
 ## 4 tickets near the median (random draw, seed 42)
 
@@ -813,17 +813,17 @@ Window: from 24.0 to 27.0 d (P40 to P60); 22 candidates.
 
 | Key | Project | Cumulative days | Visits | Entry (longest visit) | Exit | Days of this visit | Origin | Destination |
 |---|---|---|---|---|---|---|---|---|
-| PPP-11 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| PPP-14 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Implementation - Ongoing |
-| SANSPROJET6 |  | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Implementation - Ongoing |
-| PPP-22 | PPP | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Implementation - Ongoing |
+| PPP-11 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| PPP-14 | PPP | 27 | 1 | 2026-05-01 | 2026-05-28 | 27 | Open | Development - Active |
+| SANSPROJET6 |  | 26 | 1 | 2026-05-01 | 2026-05-27 | 26 | Open | Development - Active |
+| PPP-22 | PPP | 25 | 1 | 2026-05-01 | 2026-05-26 | 25 | Open | Development - Active |
 
 ## The 0 oldest still in the segment (out of 0)
 
 | Key | Project | Age of the current visit (d) | Entry | Cumulative days (previous visits included) | Visits (current one included) | Current status | Origin |
 |---|---|---|---|---|---|---|---|
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 95 moves in the finished visits of the population, 95 tickets concerned. Projects listed: at least 100 moves; 4 project(s) below the threshold (95 moves) not listed.
 
@@ -840,13 +840,13 @@ Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -888,19 +888,19 @@ Window: from 78.0 to 79.0 d (P40 to P60); 4 candidates.
 
 | Status | Tickets that went through the status | Total (d) | Share of segment time | P50 (d) | P85 (d) |
 |---|---|---|---|---|---|
-| Ready for Review (Implementation) | 0 | 0 | 0.0% | - | - |
-| Review - Ongoing (Impl.) | 0 | 0 | 0.0% | - | - |
-| Review - On Hold (Impl.) | 0 | 0 | 0.0% | - | - |
-| Ready for Verification | 16 | 16 | 1.3% | 1 | 1 |
-| Verification | 0 | 0 | 0.0% | - | - |
-| Verification - Ongoing | 16 | 1232 | 98.7% | 77 | 79 |
-| Verification - On Hold | 0 | 0 | 0.0% | - | - |
+| Awaiting Review (Development) | 0 | 0 | 0.0% | - | - |
+| Review - Active (Dev.) | 0 | 0 | 0.0% | - | - |
+| Review - Blocked (Dev.) | 0 | 0 | 0.0% | - | - |
+| Awaiting Testing | 16 | 16 | 1.3% | 1 | 1 |
+| Testing | 0 | 0 | 0.0% | - | - |
+| Testing - Active | 16 | 1232 | 98.7% | 77 | 79 |
+| Testing - Blocked | 0 | 0 | 0.0% | - | - |
 
 Segment total: 1248 d (sum of the cumulative times). P50 and P85: days spent in the status per ticket, summed over the visits, among the tickets that went through the status.
 
 ## Per-status detail of the sampled tickets
 
-| Key | Group | Total (d) | Ready for Review (Implementation) | Review - Ongoing (Impl.) | Review - On Hold (Impl.) | Ready for Verification | Verification | Verification - Ongoing | Verification - On Hold |
+| Key | Group | Total (d) | Awaiting Review (Development) | Review - Active (Dev.) | Review - Blocked (Dev.) | Awaiting Testing | Testing | Testing - Active | Testing - Blocked |
 |---|---|---|---|---|---|---|---|---|---|
 | PET-1 | longest | 81 | - | - | - | 1 | - | 80 | - |
 | ETA-1 | longest | 80 | - | - | - | 1 | - | 79 | - |
@@ -928,7 +928,7 @@ Segment total: 1248 d (sum of the cumulative times). P50 and P85: days spent in 
 
 Benchmark: over the 2 days when at least one ticket of the population left the segment, P50 8 and P85 11 exits per day, maximum 12 on 2026-07-20.
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 16 moves in the finished visits of the population, 16 tickets concerned. Projects listed: at least 1 moves; 0 project(s) below the threshold (0 moves) not listed.
 
@@ -938,7 +938,7 @@ Benchmark: over the 2 days when at least one ticket of the population left the s
 | LOT | 6 | 6 | 2 | 33.3% | 33.4% | 33.3% | no | 5.9 | 5.0 | 1.02 | no | 1 |
 | PET | 4 | 4 | 1 | 25.0% | 26.3% | 50.0% | no | 3.9 | 3.0 | 1.01 | no | 1 |
 
-The wait is the time spent in "Ready for Verification" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
+The wait is the time spent in "Awaiting Testing" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
 Both measures draw the project's moves at random, with replacement, over the 124 working days (Monday to Friday, French public holidays removed, Alsace-Moselle excepted) from 2026-04-06 to 2026-10-04; 1000 draws, seed 42, each draw having the same number of moves as the real data. Concentration at equal active days: each draw keeps its own number of distinct days and the rule of the 20% busiest days (rounded up) is applied to it; "yes" if the observed share is strictly above the 95th percentile of these shares. Because it takes the active days as given, it does not see a project that has only few active days: a project that starts in bursts almost always comes out "yes". Active days: the observed number of distinct days is compared with that of the draws (mean, 5th percentile, observed / expected ratio) without imposing anything on it; "yes" if the observed number is strictly below the 5th percentile of the draws, that is, fewer active days than chance produces. In the population, 6 move(s) fall on a weekend, a public holiday or outside the period: the model does not know them.
 ````
 
@@ -949,18 +949,18 @@ Both measures draw the project's moves at random, with replacement, over the 124
 
 Period: 2026-04-06 to 2026-10-04 (26 full weeks at most), computed on 2026-10-06.
 
-Batch closures discarded (--exclude-batch-closures): 6 tickets that left the segment, 6 moves from "Ready for Verification" to "Verification - Ongoing". Every figure below is computed without them.
+Batch closures discarded (--exclude-batch-closures): 6 tickets that left the segment, 6 moves from "Awaiting Testing" to "Testing - Active". Every figure below is computed without them.
 Keys and statuses only; nothing is written to disk.
 
 ## Statuses of the segment ("segments" setting of flux.yaml)
 
-- Ready for Review (Implementation)
-- Review - Ongoing (Impl.)
-- Review - On Hold (Impl.)
-- Ready for Verification
-- Verification
-- Verification - Ongoing
-- Verification - On Hold
+- Awaiting Review (Development)
+- Review - Active (Dev.)
+- Review - Blocked (Dev.)
+- Awaiting Testing
+- Testing
+- Testing - Active
+- Testing - Blocked
 
 Other segments, by number of statuses: definition (8), ready (1), implementation (6), acceptance (2).
 
@@ -1001,19 +1001,19 @@ Warning: only 1 candidate(s) for 4 requested.
 
 | Status | Tickets that went through the status | Total (d) | Share of segment time | P50 (d) | P85 (d) |
 |---|---|---|---|---|---|
-| Ready for Review (Implementation) | 0 | 0 | 0.0% | - | - |
-| Review - Ongoing (Impl.) | 0 | 0 | 0.0% | - | - |
-| Review - On Hold (Impl.) | 0 | 0 | 0.0% | - | - |
-| Ready for Verification | 10 | 10 | 1.3% | 1 | 1 |
-| Verification | 0 | 0 | 0.0% | - | - |
-| Verification - Ongoing | 10 | 773 | 98.7% | 78 | 79 |
-| Verification - On Hold | 0 | 0 | 0.0% | - | - |
+| Awaiting Review (Development) | 0 | 0 | 0.0% | - | - |
+| Review - Active (Dev.) | 0 | 0 | 0.0% | - | - |
+| Review - Blocked (Dev.) | 0 | 0 | 0.0% | - | - |
+| Awaiting Testing | 10 | 10 | 1.3% | 1 | 1 |
+| Testing | 0 | 0 | 0.0% | - | - |
+| Testing - Active | 10 | 773 | 98.7% | 78 | 79 |
+| Testing - Blocked | 0 | 0 | 0.0% | - | - |
 
 Segment total: 783 d (sum of the cumulative times). P50 and P85: days spent in the status per ticket, summed over the visits, among the tickets that went through the status.
 
 ## Per-status detail of the sampled tickets
 
-| Key | Group | Total (d) | Ready for Review (Implementation) | Review - Ongoing (Impl.) | Review - On Hold (Impl.) | Ready for Verification | Verification | Verification - Ongoing | Verification - On Hold |
+| Key | Group | Total (d) | Awaiting Review (Development) | Review - Active (Dev.) | Review - Blocked (Dev.) | Awaiting Testing | Testing | Testing - Active | Testing - Blocked |
 |---|---|---|---|---|---|---|---|---|---|
 | PET-1 | longest | 81 | - | - | - | 1 | - | 80 | - |
 | ETA-1 | longest | 80 | - | - | - | 1 | - | 79 | - |
@@ -1038,7 +1038,7 @@ Segment total: 783 d (sum of the cumulative times). P50 and P85: days spent in t
 
 Benchmark: over the 2 days when at least one ticket of the population left the segment, P50 5 and P85 6 exits per day, maximum 6 on 2026-07-20.
 
-## Moves from "Ready for Verification" to "Verification - Ongoing" by project
+## Moves from "Awaiting Testing" to "Testing - Active" by project
 
 10 moves in the finished visits of the population, 10 tickets concerned. Projects listed: at least 1 moves; 0 project(s) below the threshold (0 moves) not listed.
 
@@ -1047,6 +1047,6 @@ Benchmark: over the 2 days when at least one ticket of the population left the s
 | ETA | 6 | 6 | 2 | 33.3% | 33.3% | 33.3% | no | 5.9 | 5.0 | 1.02 | no | 1 |
 | PET | 4 | 4 | 1 | 25.0% | 26.3% | 50.0% | no | 3.9 | 3.0 | 1.01 | no | 1 |
 
-The wait is the time spent in "Ready for Verification" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
+The wait is the time spent in "Awaiting Testing" just before the move. The moves counted are those of finished visits, whatever their date, several per ticket when tickets go back and forth.
 Both measures draw the project's moves at random, with replacement, over the 124 working days (Monday to Friday, French public holidays removed, Alsace-Moselle excepted) from 2026-04-06 to 2026-10-04; 1000 draws, seed 42, each draw having the same number of moves as the real data. Concentration at equal active days: each draw keeps its own number of distinct days and the rule of the 20% busiest days (rounded up) is applied to it; "yes" if the observed share is strictly above the 95th percentile of these shares. Because it takes the active days as given, it does not see a project that has only few active days: a project that starts in bursts almost always comes out "yes". Active days: the observed number of distinct days is compared with that of the draws (mean, 5th percentile, observed / expected ratio) without imposing anything on it; "yes" if the observed number is strictly below the 5th percentile of the draws, that is, fewer active days than chance produces. In the population, 4 move(s) fall on a weekend, a public holiday or outside the period: the model does not know them.
 ````

@@ -33,7 +33,7 @@ OUTIL = RACINE / "tools" / "ci_local.sh"
 SCRIPT = "ci_local.sh"
 
 SOUS_COMMANDES_REFUSEES = ("build", "up")
-SOUS_COMMANDES_PERMISES = ("run",)
+SOUS_COMMANDES_PERMISES = ("run", "places", "cle")  # places : lecture seule, permise à la session (R-20261101-93) ; cle : lecture seule, lue par le contrôle ci-container du doctor (R-20261103-6 Q9)
 LANCEURS_REGLES = ("bash", "sh", "zsh")
 PREFIXES = ("tools/", "./tools/", "../*tools/", "~/*tools/", "$HOME/*tools/", "/*tools/", "", "./")
 
@@ -82,7 +82,7 @@ COMMANDES_PERMISES = (
 
 def commandes_permises_du_script():
     """`run` (avec ou sans branche, une branche nommée build ou up comprise), `--help` et `-h`, sous chaque forme de lancement."""
-    suites = ("run", "run main", "run feat/local-ci-container", "run build-fix", "run up-to-date", "--help", "-h")
+    suites = ("run", "run main", "run feat/local-ci-container", "run build-fix", "run up-to-date", "places", "places --json", "--help", "-h")  # places : R-20261101-93
     for lanceur, chemin, suite in itertools.product(LANCEURS, CHEMINS, suites):
         yield f"{lanceur} {chemin.format(s=SCRIPT)} {suite}"
     for chemin, suite in itertools.product(CHEMINS_DIRECTS, suites):
@@ -194,7 +194,7 @@ class ClassementDesSousCommandes(unittest.TestCase):
     def test_le_script_ne_declare_que_des_sous_commandes_classees(self):
         self.assertTrue(OUTIL.is_file(), "tools/ci_local.sh absent")
         texte = OUTIL.read_text(encoding="utf-8")
-        self.assertEqual(sous_commandes_declarees(texte), {"run", "build", "up"})
+        self.assertEqual(sous_commandes_declarees(texte), {"run", "build", "up", "places", "cle"})  # places : R-20261101-93 ; cle : R-20261103-6 Q9
         self.assertEqual(sous_commandes_non_classees(texte), [])
 
 

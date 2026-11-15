@@ -14,18 +14,33 @@
 # pour les liens du dossier Git commun, worktrees compris).
 set -u
 racine=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
-scanner="$racine/tools/identifiants_personnels.py"
 chemin_hook=$0
 while [ -L "$chemin_hook" ]; do
   cible=$(readlink "$chemin_hook")
   case "$cible" in /*) chemin_hook=$cible ;; *) chemin_hook=$(dirname "$chemin_hook")/$cible ;; esac
 done
 outils=$(cd "$(dirname "$chemin_hook")/.." 2>/dev/null && pwd)
+# Correction 8 (change session-guard-n1, D5) : le détecteur d'identifiants se lance depuis le dossier tools/ voisin de ce crochet (liens suivis),
+# jamais depuis le dossier du worktree qui commite : quoi que le worktree contienne, c'est la copie de l'espace de travail qui tourne. Remplace : le
+# lancement de tools/identifiants_personnels.py du worktree. Retrait : permanent. Dossier introuvable : scanner vide, commit refusé (fermé par défaut).
+scanner="$outils/identifiants_personnels.py"
 copie=$(mktemp) || exit 1
 trap 'rm -f "$copie"' EXIT
 sed '/^[^[:space:]]\{0,2\} \{0,1\}-\{24\} >8 -\{24\}[[:space:]]*$/,$d' "$1" > "$copie"   # coupe à la ligne de ciseaux (incluse)
 refuse=0
-python3 "$scanner" --racine "$racine" --fichier "$copie" > /dev/null 2>&1 </dev/null
+# R-20261108-09 et R-20261108-10. Remplace : le lancement par python3 trouvé par PATH, puis le relais /usr/bin/python3 qui suit DEVELOPER_DIR.
+# Retrait : permanent (le bac à sable limite ce qu'un programme atteint, pas quel programme tourne).
+# Le python3 absolu des CommandLineTools -IS : ni PYTHONPATH, ni dossier courant, ni site utilisateur ni système ; chaque scanner retrouve son module voisin
+# par le dossier de son propre fichier, passé en tête de sys.path.
+# R-20261108-09 point 3. Remplace : rien. Retrait : permanent. Le scanner est lancé par runpy après le réglage du code compilé : préfixe vide et neuf,
+# aucun code compilé écrit, jamais de lecture de tools/__pycache__ (que -I ne protège pas). Le texte de ce programme ne contient pas d'apostrophe.
+lanceur='import atexit, runpy, shutil, sys, tempfile
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, sys.pycache_prefix, True)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")'
+/Library/Developer/CommandLineTools/usr/bin/python3 -IS -c "$lanceur" "$scanner" --racine "$racine" --fichier "$copie" > /dev/null 2>&1 </dev/null
 code=$?
 case $code in
   0) ;;
@@ -33,7 +48,7 @@ case $code in
   *) echo "commit-msg : le message n'a pas pu être vérifié (scanner en erreur, code $code) ; commit refusé." >&2; refuse=1 ;;
 esac
 if [ -n "$outils" ] && [ -f "$outils/commit_names_scan.py" ]; then
-  sortie=$(python3 "$outils/commit_names_scan.py" --message "$1" 2>&1 </dev/null); code=$?
+  sortie=$(/Library/Developer/CommandLineTools/usr/bin/python3 -IS -c "$lanceur" "$outils/commit_names_scan.py" --message "$1" 2>&1 </dev/null); code=$?
 else
   sortie=""; code=4   # outil introuvable : refus (fermé par défaut)
 fi

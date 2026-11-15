@@ -1,0 +1,84 @@
+# Registre des codes de sortie du script de fin (R-148/u17, #583) : tools/finish_train.sh seul, depuis B9 (finish-single-b7-b9, design D8), qui retire les
+# fins unitaires tools/finish_branch.sh et tools/finish_worktree.sh avec leurs entrées. Une entrée par couple (script, code). Le test
+# tests/finish_codes/test_registre_codes.py le garde :
+#   - jamais deux entrées pour le même (script, code) : un code, un sens ;
+#   - un code ne sert à deux scripts que s'il est déclaré partagé dans le test ; avec un seul script, le cas ne se présente plus ;
+#   - FORME IMPOSÉE aux scripts de fin : tout code rendu passe par « refus <n> "…" » (ou sa forme continuée « refus <n> \ ») ou par « exit <n> »
+#     littéral. Toute sortie calculée (« exit "$…" », « exit $… », « refus "$…" », « sortir "$…" ») est refusée par le test tant qu'elle n'est pas
+#     listée dans « sorties_dynamiques » (script, motif, raison). Les codes d'un script qui ne sort que par une telle sortie déclarée portent
+#     « rendu_par: transmission ». finish_train.sh (u5) suit cette forme. Une ligne qui commence par « exec » suivi d'une commande est aussi une sortie calculée :
+#     le code de sortie est celui du processus lancé ;
+#   - tout code qu'un script rend est déclaré ; tout code « utilise » est rendu par le script (ou porte rendu_par: transmission) ;
+#   - un code « reserve » nomme le change OpenSpec ouvert et la tâche qui le réservent (le change doit exister hors de l'archive, la tâche
+#     dans son tasks.md). Tant que le change est ouvert, le script peut déjà le rendre : le test l'accepte et l'écrit en information ; à
+#     l'archivage du change, le test échoue : l'entrée passe à « utilise » (et perd change et tache), ou à « jamais_rendu » si le script ne le
+#     rend pas, ou disparaît ;
+#   - un script marqué « facultatif » peut être absent ; présent, ses codes doivent être déclarés (« utilise », « reserve » tant que son
+#     change est ouvert, ou « jamais_rendu »). tools/finish_train.sh n'est plus facultatif depuis l'archive de finish-train-v1 (2026-11-01).
+# Plage réservée : finish_train 60 à 84 (82 : finish-e2e-proof-shared, D11 ; 83 : finish-single-b3-b6, D19, livré ; 84 : autonomous-trains-merge, D19, tranche 1) ; 1 à 59 et 85 à 128 restent libres (les codes 1 à 20, 21 à 52 et 53
+# des fins unitaires sont retirés par B9) ; 129, 130 et 143 sont des signaux que le train rend (SIGNAUX de tests/finish_codes/aide_registre.py) ; 141, PIPE, n'est déclaré que par
+# finish_train : si un autre script le rend un jour, l'ajouter à PARTAGES, sinon il est refusé comme partage non permis. 78 est aussi
+# le code des dossiers du lab de lab_paths.sh et morning_state.sh (hors de ce registre).
+# Élargissement de la zone du train, de 60 à 79 à 60 à 81 (décision Q de l'auteur du 2026-10-27) : la plage 60 à 79 était pleine, et l'installation des
+# paquets de Mothra dans le worktree d'intégration (décision A du 2026-10-27, design D10) a besoin de deux refus distincts : 80 (version de Node
+# différente de mothra/.node-version) et 81 (échec de npm ci --offline).
+#
+# Champs d'une entrée de « codes » :
+#   script   nom court du script (clé de « scripts »)
+#   code     entier de 0 à 255
+#   sens     sens court, une phrase
+#   origine  utilise | reserve | jamais_rendu (réservé dans l'en-tête du script, jamais rendu ; accepté même pour un script absent)
+#   change, tache   seulement pour « reserve » : change OpenSpec ouvert et numéro de tâche de son tasks.md
+#   source   facultatif : où le sens est décrit (design, tâche) quand le script n'existe pas encore
+#   rendu_par   facultatif, « utilise » seulement : transmission (le code n'est rendu que par une sortie calculée déclarée dans sorties_dynamiques)
+#
+# Quand un code réservé est livré (le script le rend et le change est archivé) : passer l'entrée à « utilise », retirer change et tache (et la
+# tâche du tasks.md n'a plus de rôle) ; voir aussi docs/pmzilla/installation.md.
+#
+# « sorties_dynamiques » : les sorties calculées autorisées (script, motif : un morceau de la ligne, raison). Une entrée dont la ligne a disparu
+# du script est refusée.
+#
+# Les sections « traductions », « transmis », « controle_rendus » et « continue_au_controle » (le passage des codes de la fin unitaire par
+# l'enveloppe) sont retirées par B78 (finish-single-b7-b9, D7). Rien ne les remplace.
+
+scripts:
+  finish_train: {fichier: tools/finish_train.sh}
+
+codes:
+  # tools/finish_train.sh : zone 60 à 83 (change finish-train-v1, archivé le 2026-11-01, design D17, élargie le 2026-10-27). Les codes qu'il rend sont « utilise ».
+  - {script: finish_train, code: 0, sens: "train fusionné, poussé, nettoyé (sens fusionné) ; ou essai rapide, ou réponse autre que o (sens essai)", origine: utilise, source: "design D17, D24"}
+  - {script: finish_train, code: 60, sens: "usage", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 61, sens: "lancement refusé (D1)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 62, sens: "branche(s) refusée(s) pour le train (D6), toutes listées, dont celle dont le calcul des contrôles échoue (contrôles impossibles, git), dont deux branches juges sur un même fichier juge ou une 4e branche juge (R-20261102-43), dont une branche qui modifie le runner ou la preuve dans un train de plusieurs branches (« modifie le runner ou la preuve : train d'une seule branche (R-20261102-43) ») ; l'exclusion du front de Mothra (R-153) est retirée par finish-e2e-proof-shared, D6", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 63, sens: "base non établie : fetch en échec, main local différent de origin/main, pilote de fusion posé (D4)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 64, sens: "conflit ou erreur Git à la construction du train (D7), ou fichier non suivi de l'espace de travail au chemin d'un fichier du train (R-20261102-37)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 65, sens: "le contrôle a trouvé des secrets, des noms ou des identifiants (D8)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 66, sens: "veille ou sauvegarde du jour en cours, aux deux contrôles de la garde du matin (D3, tooling-morning-guard-light)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 67, sens: "verrou de fin tenu par un autre, ou impossible à créer (D3)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 68, sens: "contrôle de contenu impossible : contrôle 2 ou 3, sortie incohérente de range_scan (deux lectures discordantes, ou code 1 sans trouvaille), ou contrôle 14 incalculable (D8, D9)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 69, sens: "phase base du conteneur rouge sur l'arbre du train (ci-local-runner, D9)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 70, sens: "phase portable du conteneur ou passe Mac rouge sur l'arbre du train, suites en échec nommées (ci-local-runner, D9)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 71, sens: "runner non concluant : conteneur indisponible ou non concluant, suites non reproduites, arbre instable après la passe Mac (ci-local-runner, D9)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 72, sens: "réservé, jamais rendu (la réponse autre que o sort en 0, sens essai, D12)", origine: jamais_rendu, source: "design D17"}
+  - {script: finish_train, code: 73, sens: "une référence a bougé avant main, ou l'arbre de main diffère de l'arbre testé après l'avance rapide (D13)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 74, sens: "push refusé (D13), fusionné dans main local seulement", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 75, sens: "fusionné et poussé, fin incomplète : restes, main non enregistré, contrôle final ou dossier d'exécution (D14, D15)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 76, sens: "calcul impossible : échec Git, outil absent (dont python3 3.10 ou plus introuvable, npm et node avant l'installation des paquets de Mothra), worktree d'intégration non créé, verrou npm de Mothra illisible, pas un fichier ordinaire ou package.json de Mothra absent, mothra/.node-version vide ou illisible, version de node illisible, erreur inattendue", origine: utilise, source: "design D17"}
+  # Code 77 (désherbage D67 du 2026-10-28) : aucune cause d'origine écrite (en-tête de finish_train.sh, ligne 41) ; il garde la zone 60 à 81 sans trou,
+  # que test_la_zone_60_a_81_du_train_est_declaree exige. Condition de retrait : passer à utilise si le script le rend, ou libérer avec le cadrage fin unique.
+  - {script: finish_train, code: 77, sens: "réservé, jamais rendu", origine: jamais_rendu, source: "design D17"}
+  - {script: finish_train, code: 78, sens: "dossiers du lab introuvables (lab_paths.sh, partagé avec lab_paths.sh et morning_state.sh)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 79, sens: "reprise refusée : références dans aucun état connu (D5)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 80, sens: "version de Node trouvée différente de mothra/.node-version de l'arbre du train, avant npm ci (D10)", origine: utilise, source: "design D10, décision A du 2026-10-27"}
+  - {script: finish_train, code: 81, sens: "npm ci --offline en échec dans le worktree d'intégration : paquets de Mothra absents du cache npm (sortie ENOTCACHED) ou autre échec (D10)", origine: utilise, source: "design D10, décision A du 2026-10-27"}
+  - {script: finish_train, code: 82, sens: "phase de bout en bout (e2e) du conteneur rouge sur l'arbre du train (ci-local-runner, D9)", origine: utilise, source: "finish-e2e-proof-shared, design D5 et D11"}
+  - {script: finish_train, code: 83, sens: "jeu d'essai validant absent pour l'arbre du train (contrôle 6 par empreinte)", origine: utilise, source: "design D19, D23"}
+  - {script: finish_train, code: 84, sens: "politique automatique refuse : --auto en état de reprise S1 ou S2, ou la politique de fin (finish_checks.py policy) refuse ou ne peut pas calculer ; rien n'est fusionné", origine: utilise, source: "autonomous-trains-merge, design D7, D8, D19"}
+  - {script: finish_train, code: 129, sens: "interrompu (HUP)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 130, sens: "interrompu (INT)", origine: utilise, source: "design D17"}
+  - {script: finish_train, code: 141, sens: "interrompu (PIPE)", origine: utilise, source: "design D17, D23 ; tâches 2.18 et 3.5"}
+  - {script: finish_train, code: 143, sens: "interrompu (TERM)", origine: utilise, source: "design D17"}
+
+# Sorties calculées autorisées (voir l'en-tête : forme imposée).
+sorties_dynamiques:
+  - {script: finish_train, motif: 'exit "$code"', raison: "la fonction refus() : le code est son premier argument, un littéral à chaque appel (extrait par le test)"}

@@ -65,7 +65,7 @@ import db                                               # noqa: E402
 import flow_raw                                         # noqa: E402
 import flux_config as cfg                               # noqa: E402
 import lab_paths                                        # noqa: E402
-from flow_import_messages import CATALOGS               # noqa: E402
+from flow_import_messages import CATALOGS, Part         # noqa: E402
 from messages import Messages, add_language_option      # noqa: E402
 from yaml_strict import ErreurConfig, charger           # noqa: E402
 
@@ -91,12 +91,16 @@ def afficher(r: dict, dry_run: bool, t: Messages) -> None:
     if r["rien"]:
         print(t("no_new_run"))
         print(t("gone_sighted", n=r["disparus_revus"]))
+        if r.get("versions_sans_ticket"):
+            print(t("versions_without_ticket", n=r["versions_sans_ticket"]))
         return
     print(t("tickets_summary", read=r["compares"], inserted=r["inseres"], updated=r["modifies"], unchanged=r["inchanges"]))
     print(t("teams_links_summary", teams=r["equipes"], links_added=r["liens_ajoutes"], links_removed=r["liens_retires"]))
     print(t("past_retention", skipped=r["hors_conservation"]))
     print(t("out_of_export", marked=r["marques"], back=r["revenus"]))
     print(t("gone_sighted", n=r["disparus_revus"]))
+    if r.get("versions_sans_ticket"):          # jira-delivery-fields D12 : un nombre, jamais un identifiant ni un nom
+        print(t("versions_without_ticket", n=r["versions_sans_ticket"]))
 
 
 def noms_de_champ(t: Messages) -> dict[str, str]:
@@ -106,7 +110,8 @@ def noms_de_champ(t: Messages) -> dict[str, str]:
             "status category": t("rebuild_field_status_category"), "type": t("rebuild_field_type"),
             "resolution": t("rebuild_field_resolution"), "dates": t("rebuild_field_dates"),
             "story points": t("rebuild_field_story_points"), "parent": t("rebuild_field_parent"),
-            "team": t("rebuild_field_team"), "teams": t("rebuild_field_teams"), "links": t("rebuild_field_links")}
+            "team": t("rebuild_field_team"), "teams": t("rebuild_field_teams"), "links": t("rebuild_field_links"),
+            "versions": t("rebuild_field_versions"), "delivery": t("rebuild_field_delivery")}
 
 
 def reconstruire(args: argparse.Namespace, t: Messages) -> int:
@@ -151,7 +156,11 @@ def deriver(args: argparse.Namespace, t: Messages) -> int:
         if refus.suite:
             print(t(refus.code), file=sys.stderr)
             return _echec(t(refus.suite))
-        return _echec(t(refus.code, percent=f"{args.max_absent_percent:g}"))
+        chiffres = {}
+        if refus.absents is not None and refus.stockes:          # « trop d'absents » : nombres, part à une décimale (virgule en français)
+            chiffres = {"absent": refus.absents, "stored": refus.stockes,
+                        "share": Part(refus.absents * 100 / refus.stockes, virgule=args.language == "fr")}
+        return _echec(t(refus.code, percent=f"{args.max_absent_percent:g}", **chiffres))
     except db.ErreurBase as erreur:
         return _echec(str(erreur))
     except Exception as erreur:       # aucun détail : un message de la base pourrait citer une clé ou une valeur

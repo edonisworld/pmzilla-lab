@@ -1,10 +1,10 @@
 """Règles `deny` de .claude/settings.json : ce que Claude Code ne peut pas lancer ni lire.
 
 Les sous-commandes qui contactent le vrai Jira (history_jira.py test, collect, check --key ; export_jira_api.py
-diagnose, fields, export ; teams-table et compare, retirées, restent interdites) et les fichiers sensibles de Flux-Lab/ sont interdits à Claude Code. Pendant la
-transition vers les noms anglais (plan de la version anglaise, 7.1), l'ANCIEN ET le NOUVEAU nom doivent être interdits,
-avec chaque lanceur et chaque façon d'écrire le chemin du script. Le test applique les règles à des commandes complètes
-(le joker * vaut n'importe quelle suite) : il échoue dès qu'un ancien ou un nouveau nom n'est plus interdit.
+diagnose, fields, export) et les fichiers sensibles de Flux-Lab/ sont interdits à Claude Code, avec chaque lanceur et chaque façon
+d'écrire le chemin du script. Le test applique les règles à des commandes complètes (le joker * vaut n'importe quelle suite) : il
+échoue dès qu'une de ces sous-commandes n'est plus interdite. Désherbage du 2026-10-28 : les règles des anciens noms (historique_jira.py),
+des sous-commandes retirées (collecte, controle, diagnostic, champs, table-equipes, teams-table, compare) et de knowledge_import.py ne sont plus figées ici.
 
 Aucune commande n'est lancée ; le test ne lit que .claude/settings.json et les noms des sous-commandes dans les scripts.
 """
@@ -20,28 +20,19 @@ TOOLS = RACINE / "tools"
 sys.path.insert(0, str(TOOLS))
 from watch_paths import OWN_COLLECTION  # noqa: E402
 
-# Sous-commandes qui contactent Jira, ancien et nouveau nom. Un tuple (nom, options) : la commande n'appelle Jira
+# Sous-commandes qui contactent Jira. Un tuple (nom, options) : la commande n'appelle Jira
 # qu'avec l'une de ces options (history_jira.py check sans --key compare des fichiers locaux).
-SCRIPTS_HISTORIQUE = ("historique_jira.py", "history_jira.py")
-SOUS_COMMANDES_HISTORIQUE = [("test", ()), ("collecte", ()), ("collect", ()),
-                             ("controle", ("--cle", "--key")), ("check", ("--cle", "--key"))]
+# Désherbage du 2026-10-28 (D25 à D29) : ni l'ancien nom historique_jira.py ni les sous-commandes retirées (collecte, controle, diagnostic,
+# champs, table-equipes, teams-table, compare) ne sont figés ici ; `check` reste couvert par les règles `history_jira.py check*` du fragment 25.
+SCRIPTS_HISTORIQUE = ("history_jira.py",)
+SOUS_COMMANDES_HISTORIQUE = [("test", ()), ("collect", ()), ("check", ("--cle", "--key"))]
 SCRIPTS_EXPORT = ("export_jira_api.py",)
-# table-equipes, teams-table et compare : sous-commandes supprimées du script, règles deny gardées (compare ajoutée, elle couvre aussi comparer).
-SOUS_COMMANDES_EXPORT = [("diagnostic", ()), ("diagnose", ()), ("champs", ()), ("fields", ()),
-                         ("table-equipes", ()), ("teams-table", ()), ("compare", ()), ("comparer", ()), ("export", ())]
+SOUS_COMMANDES_EXPORT = [("diagnose", ()), ("fields", ()), ("export", ())]
 LANCEURS = ("uv run", "uv run python", "uv run python3", "uv run --with pyyaml --with requests", "uv run -q",
             "python", "python3", "python3 -I")
 CHEMINS = ("tools/{s}", "./tools/{s}", "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}",
            "~/PMZilla-Lab/workspace/tools/{s}", "~/PMZilla-Lab/{s}", "$HOME/PMZilla-Lab/{s}",
            "/Users/quelquun/PMZilla-Lab/{s}", "{s}")
-
-# Règles d'avant le lot 3 (anciens noms des scripts Jira), gardées : elles protègent d'éventuelles copies restées sur le disque.
-REGLES_ANCIENNES = [
-    f"Bash({lanceur} tools/{commande})"
-    for lanceur in ("uv run", "python", "python3")
-    for commande in ("historique_jira.py test*", "historique_jira.py collecte*", "historique_jira.py controle*--cle*",
-                     "export_jira_api.py diagnostic*", "export_jira_api.py champs*",
-                     "export_jira_api.py table-equipes*", "export_jira_api.py export*")]
 
 DOSSIERS_SENSIBLES = ("Flux-Lab/exports/a.csv", "Flux-Lab/historique/b.json", "Flux-Lab/equipes-assets.yaml",
                       "Flux-Lab/noms-sensibles.txt", "Flux-Lab/tableaux/c.html")
@@ -82,8 +73,8 @@ class CommandesJira(Base):
         manquantes = [c for c in self.commandes_jira() if not self.interdite(c)]
         self.assertEqual(manquantes[:5], [], f"{len(manquantes)} commandes vers Jira ne sont pas interdites")
 
-    def test_regles_d_avant_le_lot_3_toujours_presentes(self):
-        self.assertEqual([r for r in REGLES_ANCIENNES if r not in self.deny], [])
+    # Le test « règles d'avant le lot 3 toujours présentes » est retiré (désherbage du 2026-10-28, D25, D28, D29) : il figeait la présence des règles
+    # des anciens noms et des sous-commandes retirées. Le comportement qui reste vrai (les sous-commandes actuelles sont interdites) est couvert ci-dessus.
 
     # Le cas « sous-commande locale non interdite » (history_jira.py check sans clé, sur des fichiers) est retiré avec la voie CSV (change
     # database-only, D12) : `check` lit la base, donc il est interdit avec ou sans clé (tests/settings_deny/test_settings_deny_database_only.py).
@@ -106,8 +97,11 @@ class CommandesJira(Base):
 
 class FichiersSensibles(Base):
     def test_lecture_par_l_outil_read(self):
-        for chemin in ("exports/**", "historique/**", "tableaux/**", "equipes-assets.yaml", "noms-sensibles.txt"):
+        for chemin in ("exports/**", "historique/**", "tableaux/**", "equipes-assets.yaml"):
             self.assertIn(f"Read(./Flux-Lab/{chemin})", self.deny)
+        # Désherbage du 2026-10-28 (D38) : la forme exacte de la liste des noms sensibles est remplacée par sa forme `*` finale (fragment 33),
+        # qui couvre le nom exact et ses copies ; l'une ou l'autre suffit.
+        self.assertTrue("Read(./Flux-Lab/noms-sensibles.txt)" in self.deny or "Read(./Flux-Lab/noms-sensibles.txt*)" in self.deny)
         for autorise in ("rapports", "flux.yaml"):
             self.assertFalse([d for d in self.deny if autorise in d], autorise)
 
@@ -130,10 +124,13 @@ class FichiersSensibles(Base):
 
 
 class DossiersDeLaVeille(Base):
-    """Dossiers de contenu de la veille (plan 7.7) : l'ancien dossier entier et les nouveaux sont interdits à l'outil Read."""
+    """Dossiers de contenu de la veille (plan 7.7) : l'ancien dossier entier et les nouveaux sont interdits à l'outil Read.
+
+    Désherbage du 2026-10-28 (D37) : les deux sous-dossiers (watch et la collection de l'auteur) sont couverts par la règle du dossier
+    entier (fragment 33), seule exigée ici."""
 
     ANCIENS = ("Read(./Veille-Lab/**)", "Read(./Veille-Ecartes/**)")
-    NOUVEAUX = ("Read(./Watch-Lab/watch/**)", f"Read(./Watch-Lab/{OWN_COLLECTION}/**)", "Read(./Watch-Excluded/**)")
+    NOUVEAUX = ("Read(./Watch-Lab/**)", "Read(./Watch-Excluded/**)")
 
     def test_anciens_et_nouveaux_motifs_presents(self):
         self.assertEqual([r for r in self.ANCIENS + self.NOUVEAUX if r not in self.deny], [])
@@ -270,18 +267,8 @@ class JiraEnBase(Base):
                          "bash tests/run_all.sh finish_worktree"):
             self.assertFalse(self.interdite(commande), commande)
 
-    def test_import_de_la_bibliotheque_interdit_a_la_session(self):
-        """knowledge_import.py import, verify, status (avec ou sans --dry-run) écrivent ou lisent la vraie base : jamais depuis Claude Code."""
-        for sous, option, lanceur, chemin in itertools.product(
-                ("import", "verify", "status"), ("", " --dry-run", " --deep", " --sqlite x.sqlite"),
-                ("uv run", "uv run --with psycopg", "python", "python3", "python3 -I", ""),
-                ("tools/{s}", "./tools/{s}", "~/PMZilla-Lab/workspace/tools/{s}", "$HOME/PMZilla-Lab/workspace/tools/{s}",
-                 "/Users/quelquun/PMZilla-Lab/workspace/tools/{s}")):
-            commande = f"{lanceur} {chemin.format(s='knowledge_import.py')} {sous}{option}".strip()
-            self.assertTrue(self.interdite(commande), commande)
-        for commande in ("uv run tools/knowledge_import.py --help", "cat tools/knowledge_import.py",
-                         "bash tests/run_all.sh knowledge_import"):
-            self.assertFalse(self.interdite(commande), commande)
+    # Le test « import de la bibliothèque interdit à la session » (knowledge_import.py) est retiré avec ses règles (désherbage du 2026-10-28, D32) :
+    # l'outil n'existe plus dans tools/. Les tests de tests/workflow_commands/ qui vérifient qu'aucune commande ne le cite restent.
 
     def test_indexeur_interdit_a_la_session(self):
         """pmzilla_lab_library.py index, rename-collection, probe, status écrivent ou lisent la vraie base (R-37) : jamais depuis Claude Code."""

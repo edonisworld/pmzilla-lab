@@ -3,7 +3,7 @@ Tests de `convert_books.py --figure-statistics` (étape 0 de la piste « Illustr
 et des PDF minuscules fabriqués par le test : figures avec et sans figcaption, légende « Figure 1.2 » dans le
 paragraphe suivant, texte alternatif vide et rempli, image intégrée, dessin vectoriel, ornement, page scannée.
 
-    uv run --with pymupdf4llm --with ebooklib --with markdownify --with beautifulsoup4 \
+    uv run --with "pymupdf4llm<2" --with ebooklib --with markdownify --with beautifulsoup4 \
         python -m unittest discover -s tests/convert_books -v
 
 L'analyse ne lit que des livres inventés, dans un dossier temporaire ; on vérifie qu'elle ne modifie aucun livre,

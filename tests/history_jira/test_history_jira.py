@@ -352,10 +352,12 @@ class Collecte(Base):
     def test_attente_croissante_sans_retry_after(self):
         faux_attentes = []
         r_sans = mock.Mock(status_code=503, headers={})
-        client = hj.Client(self.url, (EMAIL, JETON), sleep=faux_attentes.append)
+        # R-20261028-110 : un chemin de la liste permise (recherche de tickets) avec une requête de la forme acceptée, sur un client
+        # qui déclare le projet fictif ABC ; attentes et valeurs attendues inchangées
+        client = hj.Client(self.url, (EMAIL, JETON), sleep=faux_attentes.append, projets=["ABC"], interdits=["SUPX"])
         with mock.patch.object(client.session, "request", return_value=r_sans):
             with self.assertRaises(hj.ErreurHTTP) as contexte:
-                client.requete("GET", "/x")
+                client.requete("GET", "/rest/api/3/search/jql", params={"jql": "project = ABC"})
         self.assertEqual(contexte.exception.code, 503)
         self.assertEqual(faux_attentes, [2.0, 4.0, 8.0, 16.0, 32.0])
 
@@ -461,11 +463,11 @@ class Collecte(Base):
 
 
 PARCOURS_REEL = [          # (de, vers, jour d'août ou septembre) : un ticket qui passe par tous les segments
-    ("Open", "Definition", "2026-08-03"), ("Definition", "Ready for Implementation", "2026-08-10"),
-    ("Ready for Implementation", "Implementation - Ongoing", "2026-08-17"),
-    ("Implementation - Ongoing", "Ready for Review (Implementation)", "2026-08-31"),
-    ("Ready for Review (Implementation)", "Ready for Acceptance", "2026-09-07"),
-    ("Ready for Acceptance", "Closed", "2026-09-14")]
+    ("Open", "Specification", "2026-08-03"), ("Specification", "Awaiting Development", "2026-08-10"),
+    ("Awaiting Development", "Development - Active", "2026-08-17"),
+    ("Development - Active", "Awaiting Review (Development)", "2026-08-31"),
+    ("Awaiting Review (Development)", "Awaiting Acceptance", "2026-09-07"),
+    ("Awaiting Acceptance", "Closed", "2026-09-14")]
 
 
 class DatesDeLaCollecte(Base):
@@ -581,17 +583,65 @@ class Controle(Base):
 
     def test_livres_etat_de_depart_transitions_et_segments(self):
         self.ecrire_export([(f"ABC-{i}", "Story", "Equipe Test", True) for i in range(1, 5)])
-        self.poser("ABC-1", self.parcours("Open", "Definition", "Ready for Implementation", "Implementation", "Done"))
-        self.poser("ABC-2", self.parcours("Open", "Implementation", "Done"))
-        self.poser("ABC-3", self.parcours("Implementation", "Verification", "Done"))      # début tronqué
+        self.poser("ABC-1", self.parcours("Open", "Specification", "Awaiting Development", "Development", "Done"))
+        self.poser("ABC-2", self.parcours("Open", "Development", "Done"))
+        self.poser("ABC-3", self.parcours("Development", "Testing", "Done"))      # début tronqué
         self.poser("ABC-4", self.parcours("Open", "Closed"))
         code, sortie = self.lancer("check")
         self.assertEqual(code, 0, sortie)
         self.assertIn("Tickets livrés (4) : lecture de l'historique.", sortie)
-        self.assertIn("État de départ de la première transition connue : Open 3 ; Implementation 1.", sortie)
+        self.assertIn("État de départ de la première transition connue : Open 3 ; Development 1.", sortie)
         self.assertIn("Transitions par ticket livré : 0 : 0 ; 1 : 1 ; 2-4 : 3 ; 5-9 : 0 ; 10 et plus : 0.", sortie)
         self.assertIn("definition 1 ; pret 1 ; implementation 3 ; revue_verification 1 ; (aucun segment) 1", sortie)
         self.assertNotIn("ABC-", sortie)
+
+    # ---- idée 436 : transitions d'un statut vers un statut de même nom, comptées à part
+    def test_transitions_meme_statut_comptees_a_part_sans_nom_ni_cle(self):
+        self.ecrire_export([(f"ABC-{i}", "Story", "Equipe Test", True) for i in range(1, 4)])
+        self.poser("ABC-3", [("2026-03-01", "Open", "Open")])                    # que des transitions de même nom : tranche 0 (idée 492)
+        self.poser("ABC-1", [("2026-03-01", "Open", "Open"), ("2026-03-02", "Open", "Development"),
+                             ("2026-03-03", "Development", " development "), ("2026-03-04", "Development", "Done")])
+        self.poser("ABC-2", [("2026-03-01", "Awaiting Review (Specification)", "Awaiting Review (Specification)"),
+                             ("2026-03-02", "Awaiting Review (Specification)", "Done"), ("2026-03-03", None, None)])
+        code, sortie = self.lancer("check")
+        self.assertEqual(code, 0, sortie)
+        self.assertIn("Transitions d'un statut vers un statut de même nom (écartées des transitions par ticket ci-dessus, "
+                      "sans effet sur les segments) : 4.", sortie)
+        self.assertIn("Transitions par ticket : 0 : 1 ; 1 : 0 ; 2-4 : 2 ; 5-9 : 0 ; 10 et plus : 0.", sortie)       # elles ne comptent plus
+        self.assertIn("Transitions par ticket livré : 0 : 1 ; 1 : 0 ; 2-4 : 2 ; 5-9 : 0 ; 10 et plus : 0.", sortie)
+        self.assertNotIn("ABC-", sortie)
+        code, sortie = self.lancer("check", "--language", "en")
+        self.assertIn("Transitions from a status to a status of the same name (left out of the transitions per ticket above, "
+                      "no effect on segments): 4.", sortie)
+
+    def test_sans_transition_meme_statut_la_ligne_dit_zero(self):
+        self.ecrire_export([("ABC-1", "Story", "Equipe Test", True)])
+        self.poser("ABC-1", self.parcours("Open", "In Progress", "Done"))
+        _, sortie = self.lancer("check")
+        self.assertIn("sans effet sur les segments) : 0.", sortie)
+
+    def test_transitions_meme_statut_ne_changent_ni_segments_ni_temps_par_segment(self):
+        import datetime as dt
+        import flux_jira
+        avec = [["2026-03-01T10:00:00.000+0200", "Open", "Open"], ["2026-03-04T10:00:00.000+0200", "Open", "Specification"],
+                ["2026-03-06T10:00:00.000+0200", "Specification", "Specification"], ["2026-03-09T10:00:00.000+0200", "Specification", "Development"],
+                ["2026-03-11T10:00:00.000+0200", "Development", "Development"],
+                ["2026-03-15T10:00:00.000+0200", "Development", "Done"]]
+        sans = [t for t in avec if t[1] != t[2]]
+        self.assertEqual(hj.transitions_meme_statut(avec), 3)
+        self.assertEqual(hj.transitions_meme_statut(sans), 0)
+        segment_de, calcules = hj.commun.table_segments({})
+        self.assertEqual(hj.commun.segments_traverses(avec, segment_de, calcules), hj.commun.segments_traverses(sans, segment_de, calcules))
+        tk = {"cree": dt.date(2026, 3, 1), "resolu": dt.date(2026, 3, 15), "etat": "Done"}
+        resultats = []
+        for historique in (avec, sans):
+            periodes = {id(tk): flux_jira.chronologie(tk, historique, dt.date(2026, 3, 20))}
+            visites = flux_jira.visites(periodes[id(tk)], segment_de, ouvert=False)
+            resultats.append((visites and [(v["segment"], v["jours"]) for v in visites],
+                              flux_jira.temps_par_segment([tk], [tk], [], periodes, segment_de, calcules, "definition", None,
+                                                          dt.date(2026, 3, 1), dt.date(2026, 3, 31), dt.date(2026, 3, 20))))
+        self.assertEqual(resultats[0], resultats[1])
+        self.assertTrue(resultats[0][0])
 
     def test_segments_reglables_dans_flux_yaml(self):
         self.ecrire_export([("ABC-1", "Story", "Equipe Test", True)])
@@ -611,10 +661,10 @@ class Controle(Base):
 
     def test_etats_par_defaut_ranges(self):
         segment_de, calcules = hj.commun.table_segments({})
-        self.assertEqual(segment_de["ready for enhancement check"], "definition")
+        self.assertEqual(segment_de["awaiting sizing check"], "definition")
         self.assertEqual(segment_de["draft"], "a_faire")
         self.assertEqual(segment_de["open"], "a_faire")
-        for etat in ("Closed", "Resolved", "Accepted & Released", "Rejected"):
+        for etat in ("Closed", "Resolved", "Shipped", "Rejected"):
             self.assertEqual(segment_de[etat.casefold()], "termine")
         self.assertNotIn("a_faire", calcules)                       # hors calcul : aucun temps calculé
         self.assertNotIn("termine", calcules)

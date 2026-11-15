@@ -1,7 +1,7 @@
 # jira-flow-raw-layer Specification
 
 ## Purpose
-TBD - created by archiving change jira-data-architecture. Update Purpose after archive.
+Describes the dated raw layer of the `flow` schema, written by the Jira export: one run per successful export, one sighting per ticket read, and one snapshot of a ticket's allowed attributes, team identifiers included, each time they change. It is the database's own dated record of what each ticket looked like, from which the import derives the live tables and from which `flow_import.py --rebuild` compares them, or rebuilds them with `--apply`. The raw layer is append-only outside the retention purge, holds no title, description, person, declared label or fix version, and is never read by the report readers, the aggregated views or the views role. The rebuild does not rebuild transitions, label or version periods, or out-of-export instants.
 
 ## Requirements
 
@@ -21,7 +21,9 @@ The system SHALL record, in the export's raw-layer transaction, one run per succ
 - **THEN** no run, sighting or snapshot of that export remains
 
 ### Requirement: Snapshot only when a ticket changes
-The system SHALL write a snapshot of a ticket's allowed attributes (design D3) for a new ticket, or when its content differs from its latest snapshot, its teams included. It SHALL NOT write a snapshot for an unchanged ticket, for a ticket whose updated instant precedes that of its latest snapshot, or for a ticket past retention, and a snapshot SHALL NOT hold a title, a description, a person, a declared label or a fix version. Untested until implemented.
+The system SHALL write a snapshot of a ticket's allowed attributes for a new ticket, or when its content, teams, current versions and their release dates and flags included, differs from its latest snapshot. It SHALL NOT write one for an unchanged ticket, an older update, or a ticket past retention, and a snapshot SHALL NOT hold a title, description, person or declared label.
+
+Source: untested until implemented
 
 #### Scenario: Second export
 - **WHEN** the same tickets are exported twice with no change in Jira
@@ -30,6 +32,14 @@ The system SHALL write a snapshot of a ticket's allowed attributes (design D3) f
 #### Scenario: One field changes
 - **WHEN** a later export finds the status of one ticket changed
 - **THEN** exactly one snapshot is added, for that ticket
+
+#### Scenario: Version added
+- **WHEN** a later export finds a fix version added to one ticket
+- **THEN** exactly one snapshot is added, for that ticket, and a ticket without any version keeps the content hash it had before versions were recorded
+
+#### Scenario: Release date set
+- **WHEN** a later export finds a release date set on a version carried by three tickets
+- **THEN** exactly three snapshots are added, one for each of them
 
 ### Requirement: Snapshot teams keep their Jira identifiers
 The system SHALL store each team of a snapshot, in column order, with its translated name and, when the team field returned an asset identifier, that Jira team identifier, an identifier found in neither translation source included (team-mapping Q2 (a)). A change of the name translated for an identifier SHALL count as a change of the ticket. It SHALL NOT print a team identifier on the raw-layer line. Untested until implemented.
@@ -57,13 +67,13 @@ The system SHALL print on every successful export the raw-layer line of design D
 - **THEN** the raw-layer line appears and none of those strings is printed
 
 ### Requirement: Rebuild is a comparison by default
-The system SHALL, with `flow_import.py --rebuild`, rebuild ticket rows, teams per ticket and links from the latest snapshot of each ticket, using the team names stored in the snapshot, compare them with the live tables and print the counts of design D11. Without `--apply` it SHALL write nothing. It SHALL NOT rebuild out-of-export instants, transitions, history flags or periods, and SHALL NOT read the organisation referential or the team catalogue. The out-of-export instants are replayed by the import from the sightings of the last export run (jira-flow-import, "Import derives from the raw layer without files"), never by the rebuild.
+The system SHALL, with `flow_import.py --rebuild`, rebuild ticket rows, teams per ticket and links from the latest snapshot of each ticket, using the team names stored in the snapshot, compare them with the live tables and print the counts of design D11. Without `--apply` it SHALL write nothing.
 
-Source: tests/flow_import/test_reconstruction.py (Champs, Reconstruction); database scenarios: the ten database tests of the former `tests/flow_import/test_reconstruction_base.py`, which built their data through the CSV import and were removed with it, are rewritten on the raw layer by amendment task 14.5 (decided by the author on 2026-10-18, design D16): their data are written as export runs of the raw layer (or seeded with `--seed`), then derived by the import, never read from a file; they run on the disposable database.
+Source: tests/flow_import/test_reconstruction.py (Champs, Reconstruction); database scenarios: `tests/flow_import/test_reconstruction_base.py`, amendment task 14.5 (design D16).
 
 #### Scenario: Database scenarios rebuilt on the raw layer
-- **WHEN** the database suite of the rebuild runs on the disposable database
-- **THEN** each of its ten tests builds its tickets through raw-layer runs and the import, no test of the suite reads or writes an export file, and the scenarios of this requirement and of "Rebuild refusals and usage errors" are covered
+- **WHEN** the database suite of the rebuild runs on the disposable database (the ten tests of the former `tests/flow_import/test_reconstruction_base.py` built their data through the CSV import and were removed with it; the author decided on 2026-10-18 to rewrite them on the raw layer)
+- **THEN** each of its ten tests writes its tickets as export runs of the raw layer (or seeds them with `--seed`), then derives them by the import, never reads them from a file, no test of the suite reads or writes an export file, and the scenarios of this requirement and of "Rebuild refusals and usage errors" are covered
 
 #### Scenario: Right after an import
 - **WHEN** a rebuild runs without `--apply` just after an export and the import that derived it
@@ -72,6 +82,11 @@ Source: tests/flow_import/test_reconstruction.py (Champs, Reconstruction); datab
 #### Scenario: Altered live row
 - **WHEN** a live ticket status was altered under the import role and the rebuild runs without `--apply`
 - **THEN** the output counts one difference on the status field, without its value, and the row is still altered
+
+### Requirement: Rebuild scope
+The system SHALL NOT, in a rebuild, rebuild out-of-export instants, transitions, history flags or periods, and SHALL NOT read the organisation referential or the team catalogue. The out-of-export instants are replayed by the import from the sightings of the last export run (jira-flow-import, "Import derives from the raw layer without files"), never by the rebuild.
+
+Source: tests/flow_import/test_reconstruction.py (Reconstruction)
 
 #### Scenario: Out-of-export mark left alone
 - **WHEN** a ticket carries an out-of-export instant and the rebuild runs with `--apply`
@@ -89,13 +104,18 @@ The system SHALL, with `--rebuild --apply`, write the rebuilt state in one trans
 - **THEN** no live row is changed, the error type alone is printed, and the exit code is 1
 
 ### Requirement: Rebuild refusals and usage errors
-The system SHALL refuse a rebuild with exit code 1, before any write, when the raw layer is empty or when stored tickets have no snapshot (count printed). It SHALL exit with code 2, before any connection: for an export file, with or without `--rebuild`, with the import's export-file phrase of design D6 of the database-only change; for `--history`, with or without `--rebuild`, with the import's `--history` phrase of design D6; for `--apply` or `--seed` without `--rebuild`, and `--mark-absent` or `--dry-run` with it, with the phrases of design D11.
+The system SHALL refuse a rebuild with exit code 1, before any write, when the raw layer is empty or when stored tickets have no snapshot (count printed).
 
-Source: tests/flow_import/test_reconstruction.py (Reconstruction, UsageEtRefus); the database refusals in the rewritten `tests/flow_import/test_reconstruction_base.py` (amendment task 14.5)
+Source: tests/flow_import/test_reconstruction.py (Reconstruction); the database refusals in the rewritten `tests/flow_import/test_reconstruction_base.py` (amendment task 14.5)
 
 #### Scenario: Empty raw layer
 - **WHEN** the rebuild runs on a database whose raw layer is empty
 - **THEN** the output holds "raw layer empty: rebuild refused", nothing is written, and the exit code is 1
+
+### Requirement: Rebuild usage errors before any connection
+The system SHALL exit with code 2, before any connection: for an export file, with or without `--rebuild`, with the import's export-file phrase of design D6 of the database-only change; for `--history`, with or without `--rebuild`, with the import's `--history` phrase of design D6; for `--apply` or `--seed` without `--rebuild`, and `--mark-absent` or `--dry-run` with it, with the phrases of design D11.
+
+Source: tests/flow_import/test_reconstruction.py (UsageEtRefus)
 
 #### Scenario: Files given
 - **WHEN** `--rebuild` is given with an export file
@@ -117,4 +137,43 @@ The system SHALL NOT let the flow and dependency report readers, the cycles read
 
 #### Scenario: Views role
 - **WHEN** the views role selects from a raw table
+- **THEN** the database refuses for insufficient privilege
+
+### Requirement: Snapshot versions column
+The system SHALL give the snapshot table a nullable column of current versions, null for a snapshot written before versions were recorded, without release attributes for one written before they were recorded, never read by the views role. It SHALL keep the table append-only and SHALL NOT update a former snapshot.
+
+Source: untested until implemented
+
+#### Scenario: Old snapshot
+- **WHEN** the migration runs on a database holding snapshots
+- **THEN** their versions column is null and no row is lost
+
+#### Scenario: Snapshot before release attributes
+- **WHEN** the first export after release attributes are recorded runs on a ticket with a version
+- **THEN** a new snapshot holding the attributes is appended, and the former snapshot is unchanged
+
+### Requirement: Delivery fields in the ticket snapshot
+The system SHALL hold the stored forms of the delivery fields in a `delivery` part of the ticket snapshot, left out when the ticket has none, and SHALL count a change of that part as a change of the ticket. It SHALL NOT hold a sprint name or goal, an asset label, an option value (option fields are held as option identifiers only, R-20261102-51) or a customer name in a snapshot.
+
+#### Scenario: Sprint added
+- **WHEN** a later export finds a sprint added to one ticket and nothing else changed
+- **THEN** exactly one snapshot is added, for that ticket
+
+#### Scenario: Ticket without delivery field
+- **WHEN** the first export after the migration reads a ticket with no delivery field filled
+- **THEN** its content hash is the one it had before, and no snapshot is added for it
+
+### Requirement: Version ticket snapshots in the raw layer
+The system SHALL write, in the export's raw-layer transaction, one version snapshot per asset object read from the version tickets when its content (short name, status, status category, Started, Released) differs from its latest snapshot. The table SHALL be append-only outside the retention purge, never read by the views role, and SHALL NOT hold a version ticket key or summary.
+
+#### Scenario: Release date set
+- **WHEN** a later export finds the Released date set on one version ticket
+- **THEN** exactly one version snapshot is added, for that object
+
+#### Scenario: Unchanged version
+- **WHEN** the same version tickets are read twice with no change
+- **THEN** the second run adds no version snapshot
+
+#### Scenario: Views role
+- **WHEN** the views role selects from the version snapshot table
 - **THEN** the database refuses for insufficient privilege

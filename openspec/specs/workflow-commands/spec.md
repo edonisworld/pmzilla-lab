@@ -36,15 +36,37 @@ The system SHALL make `/implement` answer in the user's language, scan written f
 Source: .claude/commands/implement.md; the forbidden actions named in the body: tests/workflow_commands/test_workflow_commands.py; the session behaviour is untested
 
 ### Requirement: /implement stops at manual steps
-The system SHALL make `/implement` stop and hand over to the user, with the command and its purpose, at every step reserved to the user: commands that contact the real Jira, the flow import and comparison, the knowledge import's import, verify and status, the database scripts, any calculation with the database as source, book conversion, sorting and indexing, edits of the settings file that the change assigns to the user, and the posture evaluation set (whose cost it SHALL announce first). It SHALL NOT run any of these, SHALL NOT read the forbidden content folders, the sensitive flow-folder files, the backups or the journal, and SHALL NOT edit the session instructions file unless the change's tasks require it and the evaluation cost was announced and accepted.
+The system SHALL make `/implement` stop and hand over to the user, with the command and its purpose, at every step reserved to the user, and SHALL NOT run any of them. The steps reserved to the user are the commands that contact the real Jira, the flow import and comparison, the knowledge import's import, verify and status, the database scripts and any calculation with the database as source, together with the steps of the next requirement.
 
 #### Scenario: Task needing a database import
 - **WHEN** a task requires an import into the database
 - **THEN** `/implement` prints the command and its purpose, does not run it, and waits for the user
 
+Source: .claude/commands/implement.md; untested beyond the header and body checks of tests/workflow_commands/test_workflow_commands.py
+
+### Requirement: /implement hands over book, settings and evaluation steps
+Book conversion, sorting and indexing, edits of the settings file that the change assigns to the user, and the posture evaluation set SHALL also be steps reserved to the user, at which `/implement` stops, hands over with the command and its purpose, and runs nothing. `/implement` SHALL announce the cost of the posture evaluation set first.
+
+#### Scenario: Task needing a book conversion
+- **WHEN** a task requires a book conversion, sort or indexing
+- **THEN** `/implement` prints the command and its purpose, does not run it, and waits for the user
+
 #### Scenario: Task needing the evaluation set
 - **WHEN** a task requires the evaluation set
 - **THEN** `/implement` announces its cost and runs nothing until the user agrees
+
+Source: .claude/commands/implement.md; untested beyond the header and body checks of tests/workflow_commands/test_workflow_commands.py
+
+### Requirement: /implement reads no forbidden content
+`/implement` SHALL NOT read the forbidden content folders, the sensitive flow-folder files, the backups or the journal, and SHALL NOT edit the session instructions file unless the change's tasks require it and the evaluation cost was announced and accepted.
+
+#### Scenario: Forbidden folder
+- **WHEN** a task would need a file of a forbidden content folder, a sensitive flow-folder file, a backup or the journal
+- **THEN** `/implement` does not read it
+
+#### Scenario: Session instructions file
+- **WHEN** the change's tasks do not require an edit of the session instructions file, or the evaluation cost was not announced and accepted
+- **THEN** `/implement` does not edit that file
 
 Source: .claude/commands/implement.md; untested beyond the header and body checks of tests/workflow_commands/test_workflow_commands.py
 
@@ -107,23 +129,32 @@ The system SHALL make `/add-books` state that the daily watch run imports into t
 Source: .claude/commands/add-books.md; the body naming the conversion, sort and indexing scripts: tests/workflow_commands/test_workflow_commands.py
 
 ### Requirement: Workflow command files state and respect their limits
-The system SHALL keep the workflow command files under the commands folder, written in English and serving the user in the user's language, and SHALL include a test that checks, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the file exists, that its header has a description, that its header pre-approves none of the forbidden launches (real Jira subcommands, flow import and compare, knowledge import's import, verify and status, database scripts and clients, database-sourced calculations, book conversion, sorting and indexing, the branch-finishing script, the owner bypass variable, push, merge, hook bypass, the evaluation set, the roadmap import tool), that its header pre-approves no launcher without a restriction (a bare shell, Python or uv launcher, or the shell tool without a pattern), that its body names the forbidden actions, and that its body says it serves the user in the user's language. The test SHALL also check that `/next` pre-approves only the queue reader's next command, and that no command header pre-approves the GitHub write tool or any `gh` command. The command files SHALL NOT contain a person's, team's or project's name.
+The system SHALL keep the workflow command files under the commands folder, written in English and serving the user in the user's language, and SHALL include a test that checks, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the file exists, that its header has a description, that its body names the forbidden actions, and that its body says it serves the user in the user's language. The command files SHALL NOT contain a person's, team's or project's name.
+
+#### Scenario: Compliant files
+- **WHEN** the five command files respect the rules
+- **THEN** the test passes
+
+### Requirement: The command-file test refuses forbidden pre-approvals
+The test of the workflow command files SHALL check, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the header pre-approves none of the forbidden launches (real Jira subcommands, flow import and compare, knowledge import's import, verify and status, database scripts and clients, database-sourced calculations, book conversion, sorting and indexing, the branch-finishing script, the owner bypass variable, push, merge, hook bypass, the evaluation set, the roadmap import tool).
 
 #### Scenario: Forbidden pre-approval
 - **WHEN** a workflow command header pre-approves the knowledge import
 - **THEN** the test fails and names the command and the pattern
 
-#### Scenario: Write tool pre-approved
-- **WHEN** the header of `/start` or `/close` pre-approves the GitHub write tool or a `gh` command
-- **THEN** the test fails and names the command
+### Requirement: The command-file test refuses unrestricted launchers
+The test of the workflow command files SHALL check, for `/implement`, `/close`, `/add-books`, `/next` and `/start`, that the header pre-approves no launcher without a restriction (a bare shell, Python or uv launcher, or the shell tool without a pattern).
 
 #### Scenario: Too broad a launcher
 - **WHEN** a workflow command header pre-approves a bare launcher or the shell tool without a pattern
 - **THEN** the test fails and names the command
 
-#### Scenario: Compliant files
-- **WHEN** the five command files respect the rules
-- **THEN** the test passes
+### Requirement: The command-file test bounds /next and the GitHub write tool
+The test of the workflow command files SHALL also check that `/next` pre-approves only the queue reader's next command, and that no command header pre-approves the GitHub write tool or any `gh` command.
+
+#### Scenario: Write tool pre-approved
+- **WHEN** the header of `/start` or `/close` pre-approves the GitHub write tool or a `gh` command
+- **THEN** the test fails and names the command
 
 ### Requirement: /start launches one job of the work queue
 The system SHALL provide a `/start <id>` command that runs the queue reader's check and show commands first, and SHALL refuse, saying why and writing nothing, a feature that is unknown, has an open blocker, is before its not-before date, or whose Status is not `Ready` outside the resume case. It SHALL ask the user to confirm non-empty conditions, and to switch model when the feature's differs, before any write.
@@ -291,22 +322,26 @@ The system SHALL make `/start` do a direct-prompt job from its description, foll
 - **THEN** the spec-writer agent writes the change, it is validated, and the command stops for the user's review before any implementation
 
 ### Requirement: /start closes the feature and hands over
-The system SHALL make `/start`, when the work is committed and green, close the feature through the write tool, name the features this unblocks and print `bash tools/finish_branch.sh` for the user. It SHALL NOT push, merge, run a finishing script, change a rank, an estimate, a model or a dependency, write to GitHub other than through the write tool, pre-approve the write tool, or fix a model in its header.
+The system SHALL make `/start`, when the work is committed and green, close the feature with the write tool, name the features this unblocks and print, as the user's command, the one-branch train command (change tooling-specs-apres-b9, design D2). It SHALL NOT push, merge, run a finishing script or print a removed one, change a rank, estimate, model or dependency, write to GitHub other than with the write tool, pre-approve the write tool or the train, or fix a model in its header.
 
 #### Scenario: Work committed and green
 - **WHEN** the job's work is committed and the targeted run is green
-- **THEN** the feature is closed through the write tool, the unblocked features are named, and the finishing command is printed, not run
+- **THEN** the feature is closed through the write tool, the unblocked features are named, and the one-branch train command is printed, not run
+
+Source: tests/workflow_commands/test_workflow_commands.py (test_start_verifie_le_travail_avant_de_le_lancer, test_aucun_en_tete_ne_pre_approuve_le_script_de_fin_de_worktree, as rewritten by B9); the absence of the removed scripts from the body and the closing behaviour of the session are untested
 
 ### Requirement: /start resumes a feature started by a batch
-The system SHALL make `/start` accept an `In progress` feature when the session is on the branch a batch names for it (design D4, D5). It SHALL then check blockers, the not-before date, conditions and model as for a `Ready` feature, and SHALL NOT create a branch nor set the Status again. On resume it SHALL print the worktree-finishing command of design D12 instead of the branch-finishing one, and SHALL NOT run either.
+The system SHALL make `/start` accept an `In progress` feature when the session is on the branch a batch names for it (design D4, D5). It SHALL then check blockers, the not-before date, conditions and model as for a `Ready` feature, and SHALL NOT create a branch nor set the Status again. On resume it SHALL print the same finishing command as for any job, the one-branch train command of change tooling-specs-apres-b9, design D2, and SHALL NOT run it.
 
 #### Scenario: Session opened from a batch
 - **WHEN** the user runs `/start` on an `In progress` direct-prompt feature in the worktree a batch created, on the branch it named
-- **THEN** the command does the job on that branch, sends no Status write, closes the feature as usual, and prints `bash tools/finish_worktree.sh` with that branch, to run from the workspace
+- **THEN** the command does the job on that branch, sends no Status write, closes the feature as usual, and prints the one-branch train command with that branch, to run from the run tree
 
 #### Scenario: Command file
 - **WHEN** the `/start` command file is read
-- **THEN** it names the resume rule, the three batch branch forms of design D5, `tools/finish_worktree.sh`, and says not to set the Status again
+- **THEN** it names the resume rule, the three batch branch forms of design D5, `tools/finish_train.sh`, and says not to set the Status again
+
+Source: tests/workflow_commands/test_workflow_commands.py (test_start_nomme_la_regle_de_reprise_d_une_feature_du_batch, as rewritten by B9)
 
 ### Requirement: /batch proposes a batch and waits for the user's yes
 The system SHALL provide a `/batch <milestone>` command that runs the queue reader's check and batch commands, then presents the retained features, those set aside with their reason, the unknown-file flags, the shared files and the conditions to confirm (design D6). It SHALL ask for one yes, in which the user may remove features, and SHALL NOT create a worktree or write to GitHub before it. Untested until implemented.
@@ -342,11 +377,13 @@ The system SHALL make `/batch`, after the yes, take the kept features in rank or
 - **THEN** after its worktree is created, the Status write moves it and its sub-issues into the current release and `/batch` reports the `moved` line
 
 ### Requirement: /batch hands over one launch per feature
-The system SHALL make `/batch` end with one block per started feature: its folder, branch, launch model, the launch command and prompt of design D5, and the worktree-finishing command of design D12, for the user to run from the workspace once that session has ended. It SHALL NOT launch a session, `claude` or a finishing script, nor open a Terminal.
+The system SHALL make `/batch` end with one block per started feature: its folder, branch, launch model, the launch command and prompt of design D5, and the one-branch train command of change tooling-specs-apres-b9, design D2, labelled as the user's command, to run from the run tree once that session has ended. It SHALL NOT launch a session, `claude` or a finishing script, open a Terminal, or print a removed finishing script.
 
 #### Scenario: Framing and execution in one batch
 - **WHEN** a batch starts an OpenSpec feature without change and an OpenSpec feature with a change
-- **THEN** the first block gives the framing model and prompt, the second the execution model and the `/start` prompt, each block gives `bash tools/finish_worktree.sh` with its branch as the user's command, and no session nor script is started
+- **THEN** the first block gives the framing model and prompt, the second the execution model and the `/start` prompt, each block gives the one-branch train command with its branch as the user's command, and no session nor script is started
+
+Source: tests/workflow_commands/test_workflow_commands.py (test_batch_bloc_de_lancement_donne_la_commande_de_fin, as rewritten by B9); the session behaviour is untested
 
 ### Requirement: /batch handles a refused worktree or write
 The system SHALL make `/batch` set a feature aside with no GitHub write when the worktree script refuses because its folder exists or its branch is open elsewhere, and go on. Any other refusal of the worktree script, and any other non-zero exit of the write tool, SHALL stop the batch with the list of worktrees created and features started (design D7). Untested until implemented.
@@ -367,11 +404,13 @@ The system SHALL make `/batch`, when the write tool exits with code 8, stop the 
 - **THEN** `/batch` shows the check command, prepares no other feature and runs no other write-tool command
 
 ### Requirement: /batch never merges, pushes or reshapes the queue
-The system SHALL NOT let `/batch` merge, push, run the branch- or worktree-finishing script, remove a worktree or branch, write to GitHub other than through the write tool or with a `gh` command, set a Status other than `In progress`, change a rank, estimate, model, dependency, condition or milestone otherwise, or edit the current-release setting (design D9).
+The system SHALL NOT let `/batch` merge, push, run the finishing script (`tools/finish_train.sh`), remove a worktree or branch, write to GitHub other than through the write tool or with a `gh` command, set a Status other than `In progress`, change a rank, estimate, model, dependency, condition or milestone otherwise, or edit the current-release setting (design D9).
 
 #### Scenario: Command file
 - **WHEN** the `/batch` command file is read
-- **THEN** its body names each forbidden action of design D9, both finishing scripts among them, exit code 8 with the stop before any further write, and the launches reserved to the user
+- **THEN** its body names each forbidden action of design D9, the finishing script `tools/finish_train.sh` among them, exit code 8 with the stop before any further write, and the launches reserved to the user
+
+Source: tests/workflow_commands/test_workflow_commands.py (test_batch_nomme_chaque_action_de_d9, test_batch_corps_nomme_les_actions_interdites, as rewritten by B9)
 
 ### Requirement: /batch is a checked command file
 The system SHALL include `/batch` in the command files checked by the workflow command test, with the same header and body rules, and SHALL check that its header pre-approves only the reader's check and batch commands, the worktree script and Git's status and rev-parse (design D11), never the write tool nor a `gh` command.
@@ -471,12 +510,14 @@ The system SHALL make `/start`, started from the workspace on `main` once the ch
 - **WHEN** the body is read for the case of a refusal of the worktree script
 - **THEN** it says to report the refusal line and stop without changing the Status
 
-### Requirement: /start always hands over the worktree finish
-The system SHALL make every final hand-over of `/start` print the worktree-finishing command for the branch, to run from the workspace once the session has ended. It SHALL NOT run a finishing script nor print the direct finishing command as the one to use.
+### Requirement: /start always hands over the one-branch train
+The system SHALL make every final hand-over of `/start` print, for every job, the one-branch train command for the branch (change tooling-specs-apres-b9, design D2), labelled as the user's command, to run from the run tree once the session has ended. It SHALL NOT run it or any finishing script, and SHALL NOT print a removed finishing script (`tools/finish_branch.sh`, `tools/finish_worktree.sh`).
 
 #### Scenario: Hand-over
 - **WHEN** the body's hand-over section is read
-- **THEN** it prints `bash tools/finish_worktree.sh <branch>` for every job
+- **THEN** it prints the one-branch train command `tools/finish_train.sh <branch>` from the run tree for every job, and says never to run it
+
+Source: tests/workflow_commands/test_workflow_commands.py (test_start_verifie_le_travail_avant_de_le_lancer, test_start_nomme_la_regle_de_reprise_d_une_feature_du_batch, as rewritten by B9); the absence of the removed scripts from the body is untested
 
 ### Requirement: /implement refuses to start in the workspace on main
 The system SHALL make `/implement`, started from the workspace on `main`, refuse with the same hand-over as `/start` (create the worktree with `bash tools/worktree.sh <branch>` and resume in a session opened there), write nothing and change no Status (finish-under-lock design D18).

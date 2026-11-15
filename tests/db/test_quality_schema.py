@@ -26,14 +26,17 @@ import test_db as base          # noqa: E402
 from test_db import db          # noqa: E402
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "story_quality"))     # aides du faux serveur d'analyse (après tests/db)
-from aide_analyse import EspaceAnalyse                                          # noqa: E402
+from aide_analyse import EspaceAnalyse, contenu_requete                         # noqa: E402
 from aide_story_quality import EQUIPE_A, IDENTIFIANT_SURCOUCHE                  # noqa: E402
+import patient_data as pd                                                       # noqa: E402
 import story_quality_audit_store as audit_store                                 # noqa: E402
 import story_quality_scrub as scrub                                             # noqa: E402
 import story_quality_store as store                                             # noqa: E402
 
 MIGRATION = "0010_quality_schema.sql"
 TABLES = {"items", "item_teams", "team_attributes", "team_reviews", "contents", "assessments", "overlay_versions", "coaching_feedback"}
+# change patient-data-detection (migration 0028) : passages du détecteur et levées de la suspension ; hors de TABLES, qui est celle de la 0010
+TABLES_DETECTION = {"patient_scan_runs", "patient_scan_lifts"}
 VUES = {"quality_by_team", "quality_coverage_by_team", "quality_by_product"}
 MOTS_INTERDITS = {"assignee", "reporter", "creator", "author", "comment", "comments", "owner", "person", "user", "account", "email",
                   "e", "mail", "summary", "labels"}
@@ -45,7 +48,7 @@ TABLES_DE_TEXTE = {"contents", "coaching_feedback"}
 COLONNES_TEXTE_IDENTIFIANTS = {                                                   # texte court : identifiants, codes, empreintes, jamais un texte de story
     "key", "kind", "parent_key", "status_category", "item_key", "team", "content_hash", "core_grid_id", "core_grid_version",
     "overlay_id", "overlay_version", "criterion_code", "origin", "link", "verdict",
-    "version"}                                                                     # overlay_versions.version : numéro de version, comme overlay_version
+    "version", "id_markers_fingerprint"}                                                               # overlay_versions.version : numéro de version, comme overlay_version
 
 
 class BaseJetable(unittest.TestCase):
@@ -138,7 +141,7 @@ class StructureEtColonnes(BaseJetable):
 
     def test_huit_tables_proprietaire_et_vides(self):
         c = self.conn()
-        self.assertEqual(self.noms(c, "r"), TABLES)
+        self.assertEqual(self.noms(c, "r"), TABLES | TABLES_DETECTION)
         proprietaires = {r[0] for r in c.execute("SELECT DISTINCT pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n "
                                                   "ON n.oid = c.relnamespace WHERE n.nspname = 'quality'")}
         self.assertEqual(proprietaires, {"pmzilla_owner"})
@@ -153,14 +156,29 @@ class StructureEtColonnes(BaseJetable):
         tables = {r[0] for r in c.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                                           "WHERE n.nspname = 'flow' AND c.relkind = 'r'")}
         # La migration 0010 ne touche pas au schéma flow : ses tables sont celles de 0002 à 0009 (dont la couche brute de R-70).
+        # issue_current_versions : migration 0017 (change flow-version-share), sans texte libre.
         self.assertEqual(tables, {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods",
-                                  "raw_runs", "raw_run_sightings", "raw_issue_snapshots"})
+                                  "issue_current_versions", "raw_runs", "raw_run_sightings", "raw_issue_snapshots",
+                                  # migration 0019 (change version-quality-photo) : agrégats, sans texte libre
+                                  "version_photo_versions", "version_photo_runs", "version_photo_weeks", "version_photo_rows",
+                                  "version_photo_n",
+                                  # migration 0023 (change cycle-referential-schema), configuration sans texte libre
+                                  "ref_cycles", "ref_labels", "ref_dw_columns", "ref_dw_statuses", "ref_state",
+                                  # migration 0025 (change flow-definitions-referential, R-20261029-09, R-20261028-106) : trois tables de définitions
+                                  "ref_flow_statuses", "ref_unplanned_types", "ref_blocking_link_types",
+                                  # migration 0032 (change jira-delivery-fields, R-20261102-16 à -36) : liste fermée étendue par le mécanisme décidé,
+                                  # mêmes règles (aucun texte libre, aucune personne, noms filtrés)
+                                  "issue_delivery_fields", "sprints", "issue_current_sprints", "issue_current_asset_versions",
+                                  "issue_delivery_options", "issue_defect_fields", "issue_sprint_periods", "issue_asset_version_periods",
+                                  "release_versions", "raw_version_snapshots"})
         lignes = c.execute("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'flow'").fetchall()
         colonnes = {col for _, col in lignes}
         self.assertFalse(colonnes & TEXTE_LIBRE)
         self.assertNotIn("feedback", colonnes)
         # content_hash n'existe dans flow que pour les instantanés de la couche brute (R-70, empreinte d'un ticket, jamais un texte).
-        self.assertEqual({t for t, col in lignes if col == "content_hash"}, {"raw_issue_snapshots"})
+        # raw_version_snapshots : instantanés des tickets de version, même règle de la couche brute (migration 0032, change jira-delivery-fields D3,
+        # R-20261102-16 à -36) : liste fermée étendue par le mécanisme décidé, une empreinte, jamais un texte.
+        self.assertEqual({t for t, col in lignes if col == "content_hash"}, {"raw_issue_snapshots", "raw_version_snapshots"})
 
     def test_aucun_nom_de_colonne_interdit(self):
         c = self.conn()
@@ -595,6 +613,11 @@ class VerdictsSansTexteDeStory(EspaceAnalyse):
         self.analyse.enregistrer_collecte(elements, {}, complet=True)
         self.analyse.enregistrer_relecture(EQUIPE_A, 3)                    # porte de relecture ouverte pour l'équipe
         self.surcouche()                                                   # colonnes de surcouche remplies
+        # passage levé enregistré : l'analyse est suspendue sans lui (patient-data-detection D9, R-20261030-14)
+        # passage sans constat posé comme donnée d'entrée (le détecteur ne tourne pas ici), puis la levée qui s'y appuie, par le vrai magasin ; aucune liste d'étiquettes
+        # dans les réglages du montage, donc empreinte None
+        self.analyse.enregistrer_detection(pd.DETECTOR_VERSION, None, {"story": 6, "epic": 1}, {code: False for code in pd.CATEGORIES})
+        self.analyse.enregistrer_levee(pd.DETECTOR_VERSION, None, self.analyse.derniere_detection()["id"], [])
         self.moteur.fabriquer = self.reponse_hostile
 
     def _connexion(self, autocommit=False):
@@ -622,7 +645,7 @@ class VerdictsSansTexteDeStory(EspaceAnalyse):
         return super().lancer(*argv, **options)
 
     def reponse_hostile(self, requete: dict) -> str:
-        document = json.loads(requete["messages"][0]["content"])
+        document = contenu_requete(requete)
         texte = " ".join((document["title"], document["description"], document["acceptance_criteria"]))
         i = int(re.match(r"zzqtitre(\d+)", document["title"]).group(1))
         codes = [c["code"] for c in document["criteria"]]

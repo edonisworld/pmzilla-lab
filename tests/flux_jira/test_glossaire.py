@@ -1,4 +1,4 @@
-"""Contenu de tools/flow_glossary.py, testé directement (jusqu'ici seulement à travers les rapports et le tableau de bord).
+"""Contenu de tools/flow_glossary.py, testé directement (jusqu'ici seulement à travers les rapports).
 
     uv run --with pyyaml --with numpy python -m unittest discover -s tests/flux_jira -v
 
@@ -45,6 +45,24 @@ class Glossaire(unittest.TestCase):
             self.assertEqual(complet, [f"- {g.GLOSSAIRE[langue][i]}" for i in
                                        g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES + g.ORDRE_PARTAGES])
         self.assertNotEqual(g.lignes_rapport("fr"), g.lignes_rapport("en"))
+
+    def test_entrees_gardees_pour_l_export_du_glossaire_de_mothra(self):
+        """R-146 (D6) : debit, cfd et aging_wip restent dans les deux langues, hors de tous les ordres de lecture."""
+        lues = set(g.ORDRE_RAPPORT + g.ORDRE_SEGMENT + g.ORDRE_FERMETURES + g.ORDRE_PARTAGES)
+        for langue in ("fr", "en"):
+            for cle in ("debit", "cfd", "aging_wip"):
+                self.assertIn(cle, g.GLOSSAIRE[langue], (langue, cle))
+                self.assertNotIn(cle, lues, cle)
+        for langue in ("fr", "en"):
+            lignes = g.lignes_rapport(langue, segments=True, fermetures=True, partages=True)
+            self.assertFalse([cle for cle in g.GLOSSAIRE[langue] if cle not in lues and f"- {g.GLOSSAIRE[langue][cle]}" in lignes],
+                             langue)
+
+    def test_entrees_du_tableau_retire_absentes(self):
+        """repartition, graphe et base étaient propres au tableau visuel des flux (retiré, R-146)."""
+        for langue in ("fr", "en"):
+            for cle in ("repartition", "graphe", "base"):
+                self.assertNotIn(cle, g.GLOSSAIRE[langue], (langue, cle))
 
 
 if __name__ == "__main__":

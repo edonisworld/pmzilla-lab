@@ -47,7 +47,11 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        for patch in (mock.patch.object(journal, "JOURNAL_DIR", self.tmp / "Journal-Lab"),
+        # liste des noms sensibles inventée, que `add` lit (un seul nom inventé, jamais un vrai)
+        self.noms = self.tmp / "noms-sensibles-inventes.txt"
+        self.noms.write_text("Zorglub\n", encoding="utf-8")
+        for patch in (mock.patch.dict("os.environ", {"PMZILLA_LAB_SENSITIVE_NAMES": str(self.noms)}),
+                      mock.patch.object(journal, "JOURNAL_DIR", self.tmp / "Journal-Lab"),
                       mock.patch.object(journal, "JOURNAL_FILE", self.tmp / "Journal-Lab" / "journal.yaml"),
                       # aucun auteur du module des cas : ni variable, ni .pmzilla/cases.yaml (jamais la base réelle)
                       mock.patch.object(journal, "WORKSPACE", self.tmp),
@@ -122,6 +126,37 @@ class Ajout(Base):
         self.ajouter(nom="deux.yaml")
         self.assertEqual([e["id"] for e in self.entrees()], ["J-20261001-1", "J-20261001-2"])
         self.assertEqual(self.entrees()[1]["suites"][1]["id"], "J-20261001-2.s2")
+
+    def test_nom_sensible_refuse_sans_ecrire_et_sans_le_citer(self):
+        """Écart R-105 : `add` contrôle les noms sensibles dans tous les champs de texte, jamais le nom dans le message."""
+        gabarit = ("type: rétro\nperimetre: équipe Alpha\ntente: A.\nconstat: B.\n"
+                   "suites:\n  - quoi: Faire\n    pour: Scrum Master\n    echeance: 2026-10-20\n"
+                   "experience:\n  hypothese: H.\n  signal: S.\n  bilan_le: 2026-10-20\n")
+        for champ, remplace in (("perimetre", "équipe Alpha"), ("tente", "A."), ("constat", "B."), ("quoi", "Faire"),
+                                ("pour", "Scrum Master"), ("hypothese", "H."), ("signal", "S.")):
+            with self.subTest(champ):
+                chemin = self.fichier(gabarit.replace(remplace, "avec Zorglub", 1), f"{champ}.yaml")
+                with self.assertRaises(SystemExit) as erreur:
+                    self.cli("add", str(chemin))
+                message = str(erreur.exception.code)
+                self.assertIn("liste des noms sensibles", message)
+                self.assertNotIn("Zorglub", message)
+                self.assertTrue(chemin.exists())
+                self.assertFalse(journal.JOURNAL_FILE.exists())
+
+    def test_liste_des_noms_absente_ou_vide_refuse_l_ecriture(self):
+        for contenu in (None, "# rien\n"):
+            with self.subTest(contenu):
+                if contenu is None:
+                    self.noms.unlink(missing_ok=True)
+                else:
+                    self.noms.write_text(contenu, encoding="utf-8")
+                chemin = self.fichier(ENTREE)
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as erreur:
+                    self.cli("add", str(chemin))
+                self.assertEqual(erreur.exception.code, 2)
+                self.assertTrue(chemin.exists())
+                self.assertFalse(journal.JOURNAL_FILE.exists())
 
     def test_champs_facultatifs_et_defauts(self):
         self.ajouter("type: atelier\nperimetre: domaine pilote\ntente: Atelier.\nconstat: Utile.\n")

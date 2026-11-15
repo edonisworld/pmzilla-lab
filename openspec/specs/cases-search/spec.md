@@ -8,9 +8,9 @@ Source of truth: `tests/cases_store/test_cases_store.py`, `tests/cases_store/tes
 ## Requirements
 
 ### Requirement: Cases and running experiments are searched with the library's hybrid search
-The system SHALL search cases and running experiments with the same hybrid search as the library (semantic list and BM25 keyword list fused by reciprocal rank, approximate vector scan with the library's default breadth, same candidate count and tie-breaking), through table specifications only, without a second implementation of the fusion. Every hit SHALL receive the neutral freshness bonus, and no collection, date or passage-type filter SHALL be generated. An empty question SHALL be refused, an unavailable embedding service SHALL be reported as such, and a search SHALL never write and SHALL leave no transaction open.
+The system SHALL search cases and running experiments with the same hybrid search as the library (semantic list and BM25 keyword list fused by reciprocal rank, approximate vector scan with the library's default breadth, same candidate count and tie-breaking), through table specifications only, without a second implementation of the fusion.
 
-Source: `tests/cases_store/test_cases_store.py` (RechercheSansBase, Recherche.test_le_plus_proche_d_abord_seuil_applique, test_la_transaction_de_lecture_est_annulee)
+Source: `tests/cases_store/test_cases_store.py` (RechercheSansBase, Recherche.test_le_plus_proche_d_abord_seuil_applique)
 
 #### Scenario: Same search code
 - **WHEN** the cases search query is built
@@ -20,27 +20,68 @@ Source: `tests/cases_store/test_cases_store.py` (RechercheSansBase, Recherche.te
 - **WHEN** invented cases are searched with a question close to one of them
 - **THEN** that case is the first hit
 
-### Requirement: Hits below the similarity threshold are dropped
-The system SHALL compute, for each hybrid hit, the semantic similarity (dot product) between the question and the hit, SHALL drop hits below a configurable threshold, SHALL keep the hybrid order for the others, and SHALL return at most the requested number of hits (a configurable default when none is requested), bounded by a configurable maximum and by one at the low end; a limit that is not a whole number SHALL be refused. The threshold SHALL ship with a provisional value proposed by the calibration command. While the threshold has no value, the case and experiment searches SHALL refuse with an error saying the threshold is not calibrated, before computing any embedding or reading the database.
+### Requirement: Cases hits get the neutral freshness bonus and no filter
+Every cases hit SHALL receive the neutral freshness bonus, and no collection, date or passage-type filter SHALL be generated.
 
-Source: `tests/cases_store/test_cases_store.py` (Import.test_constantes, RechercheSansBase.test_bornes_de_limite, test_seuil_non_calibre_refuse_les_deux_recherches, Recherche.test_ligne_a_04_ecartee_ligne_a_06_gardee, test_limite_par_defaut_et_bornee, test_question_sans_rapport_resultat_vide)
+Source: `tests/cases_store/test_cases_store.py` (RechercheSansBase)
+
+#### Scenario: No library filter
+- **WHEN** the cases search query is built
+- **THEN** it carries the neutral freshness bonus and no collection, date or passage-type filter
+
+### Requirement: Cases searches refuse an empty question and never write
+An empty question SHALL be refused, an unavailable embedding service SHALL be reported as such, and a search SHALL never write and SHALL leave no transaction open.
+
+Source: `tests/cases_store/test_cases_store.py` (RechercheSansBase, Recherche.test_la_transaction_de_lecture_est_annulee)
+
+#### Scenario: Read transaction
+- **WHEN** a cases search has run
+- **THEN** its read transaction is rolled back and nothing was written
+
+#### Scenario: Empty question refused
+- **WHEN** a cases search is called with an empty question
+- **THEN** it is refused
+
+### Requirement: Hits below the similarity threshold are dropped
+The system SHALL compute, for each hybrid hit, the semantic similarity (dot product) between the question and the hit, SHALL drop hits below a configurable threshold, and SHALL keep the hybrid order for the others.
+
+Source: `tests/cases_store/test_cases_store.py` (Recherche.test_ligne_a_04_ecartee_ligne_a_06_gardee, test_question_sans_rapport_resultat_vide)
+
+#### Scenario: Unrelated question
+- **WHEN** a question unrelated to every invented case is searched
+- **THEN** the result is empty
+
+### Requirement: Cases searches bound the number of hits
+The system SHALL return at most the requested number of hits (a configurable default when none is requested), bounded by a configurable maximum and by one at the low end; a limit that is not a whole number SHALL be refused.
+
+Source: `tests/cases_store/test_cases_store.py` (Import.test_constantes, RechercheSansBase.test_bornes_de_limite, Recherche.test_limite_par_defaut_et_bornee)
 
 #### Scenario: Limit bound
 - **WHEN** a limit above the maximum is requested
 - **THEN** at most the maximum number of hits is returned
 
-#### Scenario: Unrelated question
-- **WHEN** a question unrelated to every invented case is searched
-- **THEN** the result is empty
+### Requirement: Cases searches refuse while the threshold is not calibrated
+The threshold SHALL ship with a provisional value proposed by the calibration command. While the threshold has no value, the case and experiment searches SHALL refuse with an error saying the threshold is not calibrated, before computing any embedding or reading the database.
+
+Source: `tests/cases_store/test_cases_store.py` (Import.test_constantes, RechercheSansBase.test_seuil_non_calibre_refuse_les_deux_recherches)
 
 #### Scenario: Threshold not calibrated
 - **WHEN** the threshold has no value and a case search is called
 - **THEN** an error says the similarity threshold is not calibrated and no hit is returned
 
 ### Requirement: The provisional threshold is proposed from the invented evaluation set by a fixed rule
-The system SHALL provide a calibration command that, for the evaluation cases that name a cases fixture and for each language, computes the similarity between each question and each fixture entry, labels as related the pair made of a question and the first entry of its own fixture and as unrelated every other pair of the same language, and proposes as threshold the midpoint between the highest unrelated and the lowest related similarity, rounded down to two decimals, only when that value stays strictly above the highest unrelated similarity; otherwise it SHALL report that there is no separation and propose no value. It SHALL print identifiers, labels and numbers only, never a question or a fixture text, and SHALL read no database. It SHALL accept one language or both (the default), print one line per pair with its similarity, then the highest unrelated and the lowest related similarities, then the proposed value or the absence of separation. When the embedding service is unavailable it SHALL print an error and exit with code 1 (read in the code).
+The system SHALL provide a calibration command that, for the evaluation cases that name a cases fixture and for each language, computes the similarity between each question and each fixture entry, labels as related the pair made of a question and the first entry of its own fixture and as unrelated every other pair of the same language.
 
-Source: `tests/cases_store/test_cases_calibration.py` (EmbeddingIndisponible); `tools/cases_calibration.py` (main)
+Source: `tools/cases_calibration.py` (main)
+
+#### Scenario: Pairs of the shipped set
+- **WHEN** the pairs are built for the three shipped cases with fixtures in one language
+- **THEN** there are three related pairs and nine unrelated pairs, and the output holds no question or fixture text
+
+### Requirement: The calibration command proposes the midpoint or no value
+The calibration command SHALL propose as threshold the midpoint between the highest unrelated and the lowest related similarity, rounded down to two decimals, only when that value stays strictly above the highest unrelated similarity; otherwise it SHALL report that there is no separation and propose no value.
+
+Source: `tools/cases_calibration.py` (main)
 
 #### Scenario: Separation
 - **WHEN** the lowest related similarity is 0.71 and the highest unrelated is 0.52
@@ -50,9 +91,23 @@ Source: `tests/cases_store/test_cases_calibration.py` (EmbeddingIndisponible); `
 - **WHEN** the lowest related similarity is not above the highest unrelated one
 - **THEN** no threshold is proposed and the output says there is no separation
 
-#### Scenario: Pairs of the shipped set
-- **WHEN** the pairs are built for the three shipped cases with fixtures in one language
-- **THEN** there are three related pairs and nine unrelated pairs, and the output holds no question or fixture text
+### Requirement: The calibration command prints numbers only and reads no database
+The calibration command SHALL print identifiers, labels and numbers only, never a question or a fixture text, and SHALL read no database. It SHALL accept one language or both (the default), print one line per pair with its similarity, then the highest unrelated and the lowest related similarities, then the proposed value or the absence of separation.
+
+Source: `tools/cases_calibration.py` (main)
+
+#### Scenario: Output order
+- **WHEN** the calibration command runs for both languages
+- **THEN** it prints one line per pair with its similarity, then the two extreme similarities, then the proposed value or the absence of separation, and no question or fixture text
+
+### Requirement: The calibration command fails when the embedding service is unavailable
+When the embedding service is unavailable the calibration command SHALL print an error and exit with code 1 (read in the code).
+
+Source: `tests/cases_store/test_cases_calibration.py` (EmbeddingIndisponible); `tools/cases_calibration.py` (main)
+
+#### Scenario: Embedding service down
+- **WHEN** the calibration command runs and the embedding service does not answer
+- **THEN** it prints an error and exits with code 1
 
 ### Requirement: Case hits carry what a citation needs
 The system SHALL return for each case hit its number, author, launch and review dates, posture, description fields, note history, outcome, drop reason, what got stuck, confidence, similarity and score.
@@ -77,24 +132,38 @@ Source: `tests/cases_store/test_cases_store.py` (Recherche.test_experiences_en_c
 - **THEN** its hit is flagged as the user's own, and another author's experiment is not
 
 ### Requirement: The library server exposes three read-only cases tools
-The system SHALL add to the library MCP server a case search tool, a running-experiment search tool and a due-review listing tool, all connected to the cases schema under the cases read-only role, opening that connection at the first cases call and retrying a lost connection once. The database used for cases SHALL be replaceable by an environment setting. The due-review tool SHALL list the configured author's running experiments whose review date is today or past, oldest first, each with its postponement count and a flag when a decision between close and drop is required. The server SHALL then declare seven tools, none of which writes; the cases reader SHALL be created at the first cases call, not at server start, and only once per server.
+The system SHALL add to the library MCP server a case search tool, a running-experiment search tool and a due-review listing tool, all connected to the cases schema under the cases read-only role. The server SHALL then declare seven tools, none of which writes.
 
-Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Inventaire, Reponses.test_avec_un_faux_lecteur_les_trois_outils_renvoient_des_listes, test_le_lecteur_n_est_pas_cree_au_demarrage, Fabrique); `tests/cases_store/test_cases_store.py` (ConnectCases, LecteurParesseux, Echeances.test_bilans_dus_du_plus_ancien_au_plus_recent)
+Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Inventaire, Reponses.test_avec_un_faux_lecteur_les_trois_outils_renvoient_des_listes); `tests/cases_store/test_cases_store.py` (ConnectCases)
 
 #### Scenario: Read-only
 - **WHEN** a write is attempted over the cases connection of the server
 - **THEN** the database refuses it
 
+### Requirement: The cases connection is opened at the first cases call
+The system SHALL open the cases connection at the first cases call and retry a lost connection once; the cases reader SHALL be created at the first cases call, not at server start, and only once per server. The database used for cases SHALL be replaceable by an environment setting.
+
+Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses.test_le_lecteur_n_est_pas_cree_au_demarrage, Fabrique); `tests/cases_store/test_cases_store.py` (ConnectCases, LecteurParesseux)
+
+#### Scenario: Reader created lazily
+- **WHEN** the server starts and two cases calls follow
+- **THEN** no cases reader exists at start and a single one is created at the first call
+
 #### Scenario: Database setting
 - **WHEN** the cases database setting names another database
 - **THEN** the cases tools connect to that database and the library tools are unaffected
+
+### Requirement: The due-review tool lists the author's due experiments
+The due-review tool SHALL list the configured author's running experiments whose review date is today or past, oldest first, each with its postponement count and a flag when a decision between close and drop is required.
+
+Source: `tests/cases_store/test_cases_store.py` (Echeances.test_bilans_dus_du_plus_ancien_au_plus_recent)
 
 #### Scenario: Due reviews
 - **WHEN** the author has one experiment due yesterday with two postponements and one due next week
 - **THEN** only the first is listed, flagged as requiring a decision
 
 ### Requirement: Cases tools answer errors without stopping the server
-The system SHALL answer a cases tool call with an error object, and keep the server running, when the cases database does not answer (no secret in the message), when the question is empty, when the similarity threshold is not calibrated, or, for the due-review tool, when no author is configured. The four library tools SHALL answer as before whatever the state of the cases connection. An empty question SHALL be answered without creating the cases reader; an empty result SHALL stay an empty list. The cases tools SHALL NOT test which library backend is in use, since the library is served from PostgreSQL only.
+The system SHALL answer a cases tool call with an error object, and keep the server running, when the cases database does not answer (no secret in the message), when the question is empty, when the similarity threshold is not calibrated, or, for the due-review tool, when no author is configured. The four library tools SHALL answer as before whatever the state of the cases connection.
 
 Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
 
@@ -102,9 +171,19 @@ Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
 - **WHEN** the cases database does not answer and a case search is called
 - **THEN** an error object pointing to the database start script is returned, and a following library search still answers
 
+### Requirement: Cases tools answer an empty question without a reader and keep empty results as lists
+An empty question SHALL be answered without creating the cases reader; an empty result SHALL stay an empty list.
+
+Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
+
 #### Scenario: Empty question
 - **WHEN** a case search is called with an empty question
 - **THEN** an error object says the question is empty and no cases reader is created
+
+### Requirement: Cases tools do not test the library backend
+The cases tools SHALL NOT test which library backend is in use, since the library is served from PostgreSQL only.
+
+Source: `tests/pmzilla_lab_library/test_cases_tools.py` (Reponses)
 
 #### Scenario: SQLite backend
 - **WHEN** a cases tool is called on a running server, which can no longer be started with a SQLite backend (the backend option is refused at start, capability library-search-mcp-server)

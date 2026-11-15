@@ -208,6 +208,46 @@ class Refus(unittest.TestCase):
     def test_identifiant_repete_dans_la_meme_equipe_n_est_pas_refuse(self):
         org.charger(BASE.replace('["id-g1", "id-g2"]', '["id-g1", "id-g1"]'))
 
+    # ---- marqueur « sans équipe Jira par construction » (jira_team: none + jira_team_reason), idée 405
+    def test_marqueur_lu_avec_sa_raison(self):
+        ref = org.charger(BASE.replace("  - name: Eq-Vexor\n    headcount: 7\n",
+                                       "  - name: Eq-Vexor\n    headcount: 7\n    jira_team: none\n    jira_team_reason: transverse\n"))
+        self.assertTrue(ref.teams["Eq-Vexor"].sans_equipe_jira)
+        self.assertEqual(ref.teams["Eq-Vexor"].raison_sans_equipe_jira, "transverse")
+        self.assertEqual(ref.teams["Eq-Vexor"].jira_ids, ())
+
+    def test_sans_marqueur_rien_ne_change(self):
+        ref = org.charger(BASE)
+        for equipe in ref.teams.values():
+            self.assertFalse(equipe.sans_equipe_jira)
+            self.assertIsNone(equipe.raison_sans_equipe_jira)
+
+    def test_marqueur_avec_liste_d_identifiants_vide_accepte(self):
+        ref = org.charger(BASE.replace("  - name: Eq-Direct\n    headcount: 2\n    jira_team_ids: []\n",
+                                       "  - name: Eq-Direct\n    headcount: 2\n    jira_team_ids: []\n    jira_team: none\n"
+                                       "    jira_team_reason: site\n"))
+        self.assertTrue(ref.teams["Eq-Direct"].sans_equipe_jira)
+
+    def test_marqueur_et_identifiants_ensemble_refuses(self):
+        m = refus(BASE.replace("    jira_team_ids: [id-s1]\n", "    jira_team_ids: [id-s1]\n    jira_team: none\n    jira_team_reason: site\n"))
+        self.verifier(m, ["teams[1].jira_team", "teams[1].jira_team_ids", "incohérents"], ["id-s1", "Snarf"])
+
+    def test_marqueur_sans_raison_refuse(self):
+        m = refus(BASE.replace("  - name: Eq-Vexor\n    headcount: 7\n", "  - name: Eq-Vexor\n    headcount: 7\n    jira_team: none\n"))
+        self.verifier(m, ["teams[2].jira_team", "teams[2].jira_team_reason"], ["Vexor"])
+
+    def test_raison_sans_marqueur_refusee(self):
+        m = refus(BASE.replace("  - name: Eq-Vexor\n    headcount: 7\n", "  - name: Eq-Vexor\n    headcount: 7\n    jira_team_reason: site\n"))
+        self.verifier(m, ["teams[2].jira_team_reason", "jira_team"], ["Vexor"])
+
+    def test_valeur_du_marqueur_et_raison_hors_liste_refusees(self):
+        m = refus(BASE.replace("  - name: Eq-Vexor\n    headcount: 7\n",
+                               "  - name: Eq-Vexor\n    headcount: 7\n    jira_team: Zzvaleur\n    jira_team_reason: site\n"))
+        self.verifier(m, ["teams[2].jira_team", "none"], ["Zzvaleur", "Vexor"])
+        m = refus(BASE.replace("  - name: Eq-Vexor\n    headcount: 7\n",
+                               "  - name: Eq-Vexor\n    headcount: 7\n    jira_team: none\n    jira_team_reason: Zzraison\n"))
+        self.verifier(m, ["teams[2].jira_team_reason", "effectifs, transverse, site"], ["Zzraison", "Vexor"])
+
     def test_site_non_declare(self):
         m = refus(BASE.replace("site: Zorblax-Site", "site: Ailleurs-Unique"))
         self.verifier(m, ["departments[0].site", "non déclaré"], ["Ailleurs"])

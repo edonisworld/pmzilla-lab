@@ -1,11 +1,14 @@
-#!/usr/bin/env python3
+#!/Library/Developer/CommandLineTools/usr/bin/python3 -IS
+# R-20261108-09 et R-20261108-10. Remplace : le lancement par python3 trouvé par PATH, puis le relais /usr/bin/python3 qui suit DEVELOPER_DIR.
+# Retrait : permanent (le bac à sable limite ce qu'un programme atteint, pas quel programme tourne).
+# Le python3 absolu des CommandLineTools -IS ignore PYTHONPATH, PYTHONPYCACHEPREFIX et les autres variables PYTHON*, le dossier courant, le site
+# utilisateur et le site système ; le crochet retrouve ses modules voisins par le sys.path.insert ci-dessous.
 """Garde-fou : refuse un commit dont un fichier indexé contient un nom listé dans
 la liste des noms sensibles (par défaut Flux-Lab/noms-sensibles.txt sous la racine de contenu, résolue par lab_paths.local_file ; un nom
 par ligne, hors Git ; lignes vides et lignes commençant par # ignorées). Les noms distinctifs de l'extrait des équipes voisin de la liste
-(equipes-lisibles.yaml, lu par sensitive_names.extract_names) s'y ajoutent ; absent ou illisible, il ne change rien. Affiche le fichier et la
+(equipes-lisibles.yaml, assemblé par sensitive_names.names_with_extract) s'y ajoutent ; absent ou illisible, il ne change rien. Affiche le fichier et la
 ligne, jamais le nom. Tous les fichiers indexés sont examinés, quelle que soit leur
-extension, sauf les binaires (octet nul) et les fichiers de plus de 1 Mo, signalés sans
-bloquer. Sans ce fichier, le hook refuse le commit en le disant (jamais de passage silencieux,
+extension, sauf les binaires (octet nul), et en entier quelle que soit leur taille (A-44 de #629, R-20261107-30 point 6 : plus de passage des fichiers de plus de 1 Mo). Sans ce fichier, le hook refuse le commit en le disant (jamais de passage silencieux,
 cas d'un worktree) ; si la liste est vide, il avertit que le garde-fou est inactif sans bloquer. Il avertit aussi, sans jamais bloquer ni imprimer
 l'entrée, de chaque ligne de la liste qui est un mot courant (règle de tools/sensitive_names.py) : « la ligne N de la liste des noms sensibles est un mot courant ».
 
@@ -25,11 +28,16 @@ Premier garde-fou, avant tous les autres (change run-worktree, D6) : le commit e
 d'exécution (PMZILLA_LAB_RUN, sinon le dossier run du dossier du lab, par tools/lab_paths.py), quelle que soit la branche, l'empreinte ou PMZILLA_SKIP_GREEN_CHECK. Phrase clé :
 « pre-commit : commit refusé dans le dossier d'exécution ». Le dépôt de développement et les worktrees de branche de travail ne sont pas visés.
 
-Gel pendant une fin de branche (change multi-session-piloting, D7), tout premier contrôle : le commit est refusé quand le verrou de fin de
-branche (dossier pmzilla-fin-en-cours du dossier Git commun, lu par tools/finish_lock.py) est tenu par un processus vivant et que le jeton de
-l'appelant (FINISH_LOCK_TOKEN) est absent ou différent du sien. Phrase clé : « pre-commit : fin de branche en cours (<branche>), commit refusé ».
-Ni PMZILLA_SKIP_GREEN_CHECK ni aucune autre variable ne lève ce refus. Un jeton égal (la fin elle-même) ou un verrou périmé laisse passer les
-autres contrôles ; le hook ne crée, ne retire ni ne modifie jamais le verrou.
+Gel pendant une fin de branche (change multi-session-piloting, D7, rendu ciblé par autonomous-trains-merge, D18), tout premier contrôle : le commit
+est refusé quand le verrou de fin de branche (dossier pmzilla-fin-en-cours du dossier Git commun) est tenu par un processus vivant, que le jeton
+de l'appelant (FINISH_LOCK_TOKEN) est absent ou différent du sien, et que finish_lock.freezes() (tools/finish_lock.py, la règle unique des
+quatre lecteurs du gel) le couvre : le worktree du commit est dans la liste du verrou (branches du train et worktree d'intégration), le commit
+écrit main (tête sur main ou détachée), ou le verrou n'a pas de liste lisible (échec fermé). Dossier Git commun non lu ou sommet du dépôt non lu : refus
+« pre-commit : vérification impossible » (échec fermé, jamais de passage). Phrase clé : « pre-commit : fin de branche en cours
+(<branche>), commit refusé ». Ni PMZILLA_SKIP_GREEN_CHECK ni aucune autre variable ne lève ce refus. Un jeton égal (la fin elle-même), un verrou
+périmé ou un worktree que la liste ne nomme pas laissent passer les autres contrôles ; le hook ne crée, ne retire ni ne modifie jamais le verrou
+et ne garde aucune règle de gel propre à côté de freezes().
+Remplace : le gel général (tout commit de tout worktree refusé pendant un train). Retrait : permanent ; un refus plus large est un défaut.
 
 Garde-fou des secrets (change pre-commit-secret-scan, D2 à D8), après les trois premiers contrôles et avant la liste des noms, jamais sauté :
 tools/secret_scan.py est importé (échec : « recherche de secrets impossible (<type d'erreur>) », commit refusé, aucune variable ne lève ce
@@ -37,13 +45,22 @@ refus, PMZILLA_SKIP_GREEN_CHECK non plus) ; sous CLAUDECODE, un changement index
 (tools/secret_scan_exemples.txt) est refusé ; la liste est lue dans l'index (mal formée : refus, le garde-fou échoue fermé). Puis une seule
 passe sur les fichiers indexés (ajoutés, copiés, modifiés) : chaque blob est lu une fois ; binaire (octet nul) : ignoré ; sinon les secrets
 sont cherchés quelle que soit la taille (« secret possible dans <fichier>, ligne <n> (<famille>) », jamais la valeur ni la ligne ; un exemple
-déclaré, chemin et empreinte, est accepté et dit), puis les noms quand la liste est chargée et le fichier sous 1 Mo. La liste des noms absente
+déclaré, chemin et empreinte, est accepté et dit), puis les noms quand la liste est chargée, quelle que soit la taille du fichier. La liste des noms absente
 refuse toujours, après l'impression des secrets ; la liste vide avertit sans sauter la recherche de secrets."""
+import atexit
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
-TAILLE_MAX = 1_000_000
+# R-20261108-09 point 3. Remplace : rien. Retrait : permanent.
+# -I ignore PYTHONPYCACHEPREFIX mais relit le code compilé de tools/__pycache__ (non protégé en écriture) : le crochet pointe le préfixe vers un
+# dossier vide et neuf, n'écrit aucun code compilé, et ne lit ni n'écrit jamais tools/__pycache__. Avant tout import des modules voisins.
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, sys.pycache_prefix, True)
+
 MESSAGE_SECRETS = "Commit refusé : retire ce secret du fichier (et révoque-le s'il est réel) ; aucune valeur n'est affichée."
 
 # Les règles de la liste (lecture, lignes « # » ignorées, correspondance) vivent dans tools/sensitive_names.py, partagées avec le
@@ -60,6 +77,10 @@ def dossiers_du_lab():
     return lab_paths.resolve_or_exit(file=os.path.join(OUTILS, "lab_paths.py"))
 
 
+class VerificationImpossible(Exception):
+    """Le dossier Git commun n'a pas pu être lu : le gel ne peut pas être contrôlé (A-43, échec fermé)."""
+
+
 def git(*args):
     return subprocess.run(["git", *args], capture_output=True, check=True).stdout
 
@@ -73,7 +94,8 @@ def charger(chemin):
               file=sys.stderr)
     # Change team-names-readable (D8) : les noms distinctifs de l'extrait voisin de la liste s'ajoutent, avant le test de la liste vide
     # (une liste vide avec un extrait non vide garde les noms de l'extrait) ; absent ou illisible : rien ne change.
-    noms = sensitive_names.parse_names(texte) + sensitive_names.extract_names(os.path.join(os.path.dirname(chemin), sensitive_names.NOM_EXTRAIT))
+    # A-75 (R-20261112-05) : l'assemblage est celui de tools/sensitive_names.py (source unique). Remplace : l'assemblage fait ici. Retrait : permanent.
+    noms = sensitive_names.names_with_extract(sensitive_names.parse_names(texte), chemin)
     if not noms:
         return None
     return sensitive_names.patterns(noms)
@@ -114,31 +136,53 @@ def est_le_dossier_d_execution(racine):
 
 
 def fin_de_branche_en_cours():
-    """Le verrou vivant d'une autre fin de branche (dictionnaire), ou None ; un verrou périmé est dit sur la sortie d'erreur."""
+    """Le verrou vivant d'une autre fin de branche qui gèle CE commit (dictionnaire), ou None ; un verrou périmé est dit sur la sortie d'erreur.
+    Une seule règle, celle de finish_lock.freezes() (gel ciblé, design D18) : aucune règle de gel propre à ce hook."""
+    # Échec fermé (A-43, classe D de #629) : sans le dossier Git commun lu, on ne sait pas s'il y a un verrou, refus.
+    # Remplace : « return None » sur une erreur de git. Retrait : permanent (une garde qui échoue ouverte est un défaut).
     try:
         commun = git("rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
+    except (subprocess.CalledProcessError, OSError):
+        commun = ""
+    if not commun or not os.path.isdir(commun) or not os.access(commun, os.R_OK | os.X_OK):
+        raise VerificationImpossible
+    try:
+        sommet = git("rev-parse", "--show-toplevel").decode().strip()
     except subprocess.CalledProcessError:
-        return None
-    verrou = finish_lock.read_lock(commun)
-    if verrou is None:
-        return None
-    if verrou["stale"]:
+        sommet = None
+    scope = finish_lock.freeze_scope(commun)
+    if scope["stale"]:
         print("pre-commit : verrou de fin périmé, ignoré", file=sys.stderr)
         return None
-    return finish_lock.blocking(commun, os.environ.get("FINISH_LOCK_TOKEN", ""))
+    if sommet is None:
+        # le dossier commun est lu mais pas le sommet : verrou tenu d'un autre jeton = gelé (échec fermé)
+        jeton = os.environ.get("FINISH_LOCK_TOKEN", "")
+        return scope if scope["held"] and not (jeton and jeton == scope["token"]) else None
+    return finish_lock.freezes(commun, sommet, os.environ.get("FINISH_LOCK_TOKEN", ""), protected=True)
 
 
 def main():
-    verrou = fin_de_branche_en_cours()
+    try:
+        verrou = fin_de_branche_en_cours()
+    except VerificationImpossible:
+        print("pre-commit : vérification impossible (dossier Git commun non lu, le verrou de fin ne peut pas être contrôlé), commit refusé",
+              file=sys.stderr)
+        return 1
     if verrou is not None:
         print(f"pre-commit : fin de branche en cours ({verrou['branch']}), commit refusé : une fin de branche tient le verrou, "
-              "les tests et les commits sont gelés jusqu'à sa fin (uv run tools/pilot.py freeze --wait 60 attend sa fin).", file=sys.stderr)
+              "ce worktree, main ou la liste prête sont gelés jusqu'à sa fin (uv run tools/pilot.py freeze --wait 60 attend sa fin).", file=sys.stderr)
         return 1
     try:
         sommet = git("rev-parse", "--show-toplevel").decode().strip()
     except subprocess.CalledProcessError:
         sommet = None
-    if sommet and est_le_dossier_d_execution(sommet):
+    # Échec fermé : sans le sommet du dépôt lu, on ne sait pas si c'est le dossier d'exécution, refus (jamais de contrôle sauté).
+    # Remplace : le contrôle sauté quand `rev-parse --show-toplevel` échoue. Retrait : permanent (une garde qui échoue ouverte est un défaut).
+    if not sommet:
+        print("pre-commit : vérification impossible (sommet du dépôt non lu, le dossier d'exécution ne peut pas être contrôlé), commit refusé",
+              file=sys.stderr)
+        return 1
+    if est_le_dossier_d_execution(sommet):
         print("pre-commit : commit refusé dans le dossier d'exécution (copie de main lue par les tâches planifiées, jamais modifiée "
               "à la main) : commite dans le dépôt de développement ou dans un worktree de branche de travail. Aucun contournement.",
               file=sys.stderr)
@@ -189,9 +233,8 @@ def main():
             secret_trouve = True
         if motifs is None:
             continue
-        if len(octets) > TAILLE_MAX:
-            print(f"pre-commit : {f} dépasse 1 Mo, non examiné", file=sys.stderr)
-            continue
+        # A-44 (classe D de #629, R-20261107-30 point 6) : tout fichier est examiné en entier pour les noms, quelle que soit sa taille.
+        # Remplace : le passage « dépasse 1 Mo, non examiné » (signalé sans blocage). Retrait : permanent.
         for numero, ligne in enumerate(contenu.splitlines(), 1):
             if sensitive_names.line_matches(motifs, ligne):
                 print(f"pre-commit : nom sensible dans {f}, ligne {numero}", file=sys.stderr)

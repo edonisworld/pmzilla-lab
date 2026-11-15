@@ -12,6 +12,9 @@ roadmap_model          # lit le tasks.md d'un change depuis la racine du dépôt
 build_edition          # classe chaque chemin suivi, openspec/ compris, face au manifeste de l'édition
 correspondance_suites  # vérifie chaque chemin suivi face à la correspondance des suites
 composants             # déclarée à la main : DepotReel lance « composants.py inventory --verify » sur la racine réelle, qui lit openspec/config.yaml
+finish_codes           # déclarée à la main : lit les tasks.md des changes qui réservent des codes
+spec_sources           # lit chaque ligne Source des specs principales de openspec/specs et vérifie les tests cités
 secret_scan            # la garde du dépôt réel cherche des secrets dans chaque fichier suivi, openspec/ compris (pre-commit-secret-scan, D6)
 
-# Aucune exemption aujourd'hui : la suite db liste les fichiers suivis mais n'en garde que tools/, et le balayage ne la signale pas.
+# La suite db liste les fichiers suivis mais n'en garde que tools/, et le balayage ne la signale pas.
+!run_all : test_session_conteneur.py liste les fichiers suivis (git ls-files) pour vérifier qu'aucun ne lit plus les variables de la garde retirée, et écarte openspec/ sans le lire (T2 de R-182)

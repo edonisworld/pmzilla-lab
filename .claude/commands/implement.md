@@ -24,6 +24,7 @@ Language: this command is written in English, but serve the user in THEIR langua
 - Before each commit: run `uv run tools/identifiants_personnels.py` on the files you wrote; stage files by name; run `bash tests/run_all.sh --staged` (no variable, no pipe, in the foreground); commit only when it is green, with `git commit` alone (no `NAME=value` before it). Never set `PMZILLA_AFTER_COMMIT`; the variables a commit needs come from the session's environment (worktree script `tools/worktree.sh`). One commit per coherent unit, with its documentation in the same commit; CHANGELOG.md is frozen: add no entry.
 - If a commit stumbles on a test that needs the network, do not work around it: stop and give the user the exact command to run in their Terminal, without a pipe.
 - Tick a task only when the suite it names passes in the current state. A task that names no suite stays unticked, with the short reason given by the user (a user step, a manual check). Never tick on your own judgement.
+- When a change is implemented in parallel branches, no group branch modifies openspec/changes/<change>/; the last branch, or a specification branch, ticks the boxes, carries the design amendments and archives the change, as for mothra-slices.
 - Roles, never names: write no person's, team's or project's name in any file.
 
 ## Stop and hand over to the user (print the command and its purpose, run nothing)
@@ -35,7 +36,7 @@ Language: this command is written in English, but serve the user in THEIR langua
 
 ## Never
 
-- Push, merge, or run the branch-finishing script (`tools/finish_branch.sh`): the user types it in the Terminal.
+- Push, merge, or run the branch-finishing script (`tools/finish_train.sh`): the user types it in the Terminal.
 - Use `--no-verify` or the owner bypass variable (`PMZILLA_SKIP_GREEN_CHECK`).
 - Edit `CLAUDE.md`, unless the change's tasks say so and the evaluation cost was announced and accepted.
 - Read the content folders (`Bibliotheque-*`, `Watch-Lab`, `Watch-Excluded`), the sensitive files of `Flux-Lab/` (`exports/`, `historique/`, `tableaux/`, `equipes-assets.yaml`, `noms-sensibles.txt`), the database backups or the journal.

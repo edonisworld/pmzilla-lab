@@ -69,11 +69,20 @@ class Familles(unittest.TestCase):
 
     def test_tres_longue_ligne_en_temps_lineaire(self):
         # D3 : fichiers de toute taille ; un motif quadratique bloquerait le crochet sur un fichier de plus de 1 Mo d'une seule ligne
-        import time
-        debut = time.monotonic()
-        for remplissage in ("x" * 2_000_000, "a1" * 1_000_000, "a:" * 1_000_000):
-            self.assertEqual(ss.findings(remplissage + " " + v.jeton_slack()), [ss.Finding(1, ss.JETON_SLACK)])
-        self.assertLess(time.monotonic() - debut, 10)
+        # R-20261104-11 : le balayage tourne dans un processus fils qui écrit un fichier témoin seulement s'il a fini les trois balayages avec les
+        # bons résultats ; le test affirme le témoin. Un motif quadratique n'écrirait jamais le témoin. La borne de durée (10 s avant) devient le
+        # délai du fils, élargi à 60 s : à vide le balayage prend moins de 2 s, 60 s ne laisse passer que ce qui est loin d'être linéaire, même sous charge.
+        with tempfile.TemporaryDirectory() as dossier:
+            temoin = Path(dossier) / "temoin.txt"
+            code = ("import sys\n"
+                    f"sys.path[:0] = [{str(RACINE / 'tools')!r}, {str(Path(__file__).resolve().parent)!r}]\n"
+                    "import secret_scan as ss, valeurs as v\n"
+                    "for r in ('x' * 2_000_000, 'a1' * 1_000_000, 'a:' * 1_000_000):\n"
+                    "    assert ss.findings(r + ' ' + v.jeton_slack()) == [ss.Finding(1, ss.JETON_SLACK)]\n"
+                    f"open({str(temoin)!r}, 'w').write('fin')\n")
+            resultat = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+            self.assertEqual(resultat.returncode, 0, resultat.stderr[-500:])
+            self.assertTrue(temoin.exists(), "les trois balayages sont allés au bout")
 
     def test_plusieurs_trouvailles_dans_l_ordre_des_lignes(self):
         texte = "propre\n" + v.jeton_slack() + "\npropre\n" + v.cle_cloud() + "\n"

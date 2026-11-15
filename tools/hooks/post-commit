@@ -1,4 +1,6 @@
-#!/bin/zsh
+#!/bin/zsh -f
+# R-20261108-07. Remplace : rien. Retrait : permanent (le bac à sable limite ce qu'un programme atteint, pas quel programme tourne).
+# Option -f (NO_RCS) : zsh ne lit aucun fichier de démarrage, ni celui de ZDOTDIR ni ceux de l'utilisateur. Rien dans ce crochet n'en dépend.
 # PMZilla Lab : après un commit qui touche CLAUDE.md, une posture, un agent, une commande, les cas
 # d'essai, leur vocabulaire (balise de posture), la mémoire figée des postures ou le serveur de bibliothèque, lance en arrière-plan le jeu d'essai
 # (tools/evals_auto.sh), mais SEULEMENT si on le demande au commit :
@@ -26,6 +28,11 @@ case "$MODE" in
 esac
 
 [[ -n "${PMZILLA_NO_EVALS:-}" ]] && exit 0
+# Le jeu d'essai est payant et reste à l'auteur : demandé dans une session Claude Code (marqueur posé, même vide), il n'est pas lancé,
+# y compris quand PMZILLA_AFTER_COMMIT est exporté par l'environnement. Le commit est déjà fait : le hook sort avec le code 0.
+case "$MODE" in
+  evals|all) [[ -n "${CLAUDECODE+x}" ]] && refuser "jeu d'essai demandé dans une session Claude Code : payant, réservé à l'auteur (Terminal). Rien n'a été lancé." ;;
+esac
 case "$MODE" in
   evals) OPTIONS=() ;;
   all)   OPTIONS=(--readme) ;;

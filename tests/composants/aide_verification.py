@@ -40,7 +40,6 @@ def routes_a_jour() -> dict:
         "/pypi/pyyaml/json": pypi({"6.0.2": False, "6.0.3": False}),
         "/npm/bmad-method": npm("6.1.0", ["6.0.0", "6.1.0"]),
         "/npm/ext-paquet": npm("2.0.0", ["2.0.0"]),
-        "/npm/graphes": npm("5.6.0", ["5.6.0"]),
         "/npm/@anthropic-ai%2Fclaude-code": npm("2.0.0", ["2.0.0"]),
         "/npm/@fission-ai%2Fopenspec": npm("1.0.0", ["1.0.0"]),
         "/github/repos/Homebrew/brew/releases": [{"tag_name": "4.6.0", "draft": False, "prerelease": False}],
@@ -74,6 +73,7 @@ class FauxServeur:
         self.routes = dict(routes)
         self.statuts: dict[str, int] = {}
         self.delais: dict[str, float] = {}
+        self.delais_finis: list[str] = []
         self.requetes: list[tuple[str, dict]] = []
         serveur = self
 
@@ -82,6 +82,8 @@ class FauxServeur:
                 chemin = self.path.split("?")[0]
                 serveur.requetes.append((chemin, dict(self.headers)))
                 time.sleep(serveur.delais.get(chemin, 0))
+                if serveur.delais.get(chemin, 0):
+                    serveur.delais_finis.append(chemin)   # témoin : le délai est allé au bout (le client ne l'a pas interrompu)
                 if chemin not in serveur.routes:
                     self.send_response(404)
                     self.end_headers()
@@ -101,7 +103,7 @@ class FauxServeur:
 
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), Gestion)
         self.http.daemon_threads = True
-        self.fil = threading.Thread(target=self.http.serve_forever, daemon=True)
+        self.fil = threading.Thread(target=self.http.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.fil.start()
 
     @property

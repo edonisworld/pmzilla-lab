@@ -1,0 +1,14 @@
+# Chemins du runner et de la preuve : une branche qui en change un reste seule dans son train, et n'est jamais fusionnée par la tâche (change autonomous-trains-merge,
+# design D2 et D3, tâche 3.3 ; ils sont les quatre chemins de R-20261102-43, avant écrits en motif littéral dans l'admission de tools/finish_train.sh).
+# Format : un chemin par ligne ; « # » commence un commentaire ; lignes vides ignorées ; espaces de début et de fin retirés. Une entrée est un motif de chemin Git
+# depuis la racine du dépôt : un dossier écrit avec « / » final, un chemin de fichier, ou un motif avec « * » (« * » traverse les dossiers).
+# Source unique, aucune copie ailleurs. Lecteurs :
+#   - tools/finish_checks.py (runner_proof_paths, champ runner_proof_touched du mode branch) : l'union des lectures à origin/main, à main local et au sommet ;
+#   - tools/finish_train.sh ne la lit jamais : il lit le champ du JSON de finish_checks.py.
+# Gardes de dérive : un test de tests/finish_checks/ échoue quand une entrée n'est pas couverte par un motif `juge` de tools/finish_protected.txt (un changement du
+# runner ou de la preuve est toujours un train de l'auteur), et un test de tests/finish_train/ échoue quand tools/finish_train.sh écrit l'un de ces chemins hors d'un commentaire.
+# Remplace : le motif littéral de l'admission de tools/finish_train.sh. Retrait : permanent tant que le train juge son arbre avec le runner et la preuve de ses branches.
+tests/run_all.sh
+ci/passage.sh
+tools/preuve_arbre.py
+tools/finish_train.sh

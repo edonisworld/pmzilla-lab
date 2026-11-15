@@ -1,7 +1,7 @@
 # jira-flow-epic-flow Specification
 
 ## Purpose
-TBD - created by archiving change epic-flow-report. Update Purpose after archive.
+Describes the user-run epic flow report of the Discovery pilot, which reads the pilot's epics, their status transitions and their declared-label periods from the database under the read-only role. It gives the duration from idea to Ready, the passages in Epic Review, the planned cycle and carry-over, the epics per board column and the age of the epics in progress, as one row for the pilot domain and one row per team in name order, with cells under five masked and a JSON report with structured cells as data contract. It does not read export files, the organisation referential or a Jira board configuration, does not rank or score a team, and writes no key, title, person, label or version name. It leaves the flow report unchanged: epics stay out of its counts.
 
 ## Requirements
 

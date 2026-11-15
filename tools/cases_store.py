@@ -257,7 +257,7 @@ def _check_names(fields, names):
 
 def _names(names):
     """La liste donnée, sinon celle du fichier (SensitiveNamesUnavailable si absente, illisible ou vide)."""
-    return list(names) if names is not None else sensitive_names.load_names()
+    return list(names) if names is not None else sensitive_names.load_judged_names()
 
 
 def validate_start_draft(draft, today, names):
@@ -691,7 +691,7 @@ def load_fixture(conn, embed, path) -> dict:
     embedded_experiments = [_embed(embed, embedding_text(e["problem"], e["chosen_path"], e["tested"])) for e in experiments]
     embedded_cases = [_embed(embed, embedding_text(c["problem"], c["chosen_path"], c["tested"])) for c in cases]
     with _transaction(conn) as cursor:
-        cursor.execute("SET LOCAL ROLE pmzilla_cases")
+        cursor.execute(f"SET LOCAL ROLE {ROLE_WRITE}")
         for e, vector in zip(experiments, embedded_experiments):
             number = _insert_experiment(cursor, e, vector, status=e["status"])
             for noted, note in e["notes"]:

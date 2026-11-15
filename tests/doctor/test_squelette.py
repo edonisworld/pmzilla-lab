@@ -79,7 +79,7 @@ class Ligne(Labo):
             p = self.lancer("--quiet")
         main.assert_called_once_with(["--quiet"])
         self.assertEqual(p.returncode, 0)
-        self.assertTrue(p.stdout.strip().endswith("doctor : tout va bien"))
+        self.assertTrue(p.stdout.strip().endswith(aide_doctor.resume_attendu()))
         self.assertFalse([c for c in run.call_args_list if str(DOCTOR) in map(str, c.args[0])])
 
     def test_le_depot_du_laboratoire_est_copie_d_un_modele(self):
@@ -106,7 +106,7 @@ class Ligne(Labo):
             p = self.lancer("--quiet", reel=True)
         main.assert_not_called()
         self.assertEqual(p.returncode, 0)
-        self.assertTrue(p.stdout.strip().endswith("doctor : tout va bien"))
+        self.assertTrue(p.stdout.strip().endswith(aide_doctor.resume_attendu()))
 
     def test_un_probleme_dans_le_vrai_processus_donne_le_code_1(self):
         self.fermer_base()
@@ -137,8 +137,8 @@ class Ligne(Labo):
         self.assertTrue((TOOLS / "doctor.py.lock").exists())
 
     def test_francais_par_defaut_et_anglais_sur_demande(self):
-        self.assertTrue(self.lancer("--quiet").stdout.strip().endswith("doctor : tout va bien"))
-        self.assertTrue(self.lancer("--quiet", "--language", "en").stdout.strip().endswith("doctor: all good"))
+        self.assertTrue(self.lancer("--quiet").stdout.strip().endswith(aide_doctor.resume_attendu()))
+        self.assertTrue(self.lancer("--quiet", "--language", "en").stdout.strip().endswith(aide_doctor.resume_attendu(langue="en")))
 
     def test_json_au_format_de_l_etat(self):
         p, donnees = self.resultat_json()

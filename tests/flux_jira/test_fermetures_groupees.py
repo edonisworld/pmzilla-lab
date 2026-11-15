@@ -35,7 +35,7 @@ def lignes_de_test(heure: bool = True) -> list[list[str]]:
     ajouter("AAA", 7, "02", "14:05", "Done")                 # un groupe de 7
     ajouter("AAA", 1, "02", "14:06", "Done")
     ajouter("AAA", 1, "02", "15:00", "Done")
-    ajouter("AAA", 6, "03", "09:30", "Accepted & Released")   # un groupe de 6, autre motif
+    ajouter("AAA", 6, "03", "09:30", "Shipped")   # un groupe de 6, autre motif
     ajouter("BBB", 4, "04", "10:00", "Done")                 # sous le seuil de 5
     ajouter("CCC", 5, "10", "08:00", "Done")                 # deux groupes, 5 et 6
     ajouter("CCC", 6, "11", "08:00", "Done")
@@ -84,7 +84,7 @@ class Fermetures(Base):
         self.assertEqual(list(f["par_projet"]), ["CCC", "AAA", "DDD"])          # triés par tickets décroissants
         self.assertEqual(f["par_projet"]["CCC"], {"groupes": 2, "tickets": 11, "plus_grand": 6, "livres": 12,
                                                   "part": 11 / 12})
-        self.assertEqual(f["par_projet"]["AAA"]["tickets"], 7)                  # le groupe « Accepted & Released » est hors motif
+        self.assertEqual(f["par_projet"]["AAA"]["tickets"], 7)                  # le groupe « Shipped » est hors motif
         self.assertEqual(f["par_projet"]["AAA"]["livres"], 15)                  # mais ces tickets restent livrés
         self.assertEqual(f["par_projet"]["DDD"]["groupes"], 1)                  # la même minute dans un autre projet ne fusionne pas
         self.assertNotIn("BBB", f["par_projet"])                                # 4 < 5
@@ -109,9 +109,9 @@ class Fermetures(Base):
     def test_motifs_reglables_et_liste_vide_pour_tous_les_motifs_livres(self):
         self.ecrire_reglages("batch_closure_resolutions: []\n")
         md, js = self.calcul(self.exporter(lignes_de_test()))
-        self.assertEqual(js["fermetures_groupees"]["par_projet"]["AAA"]["tickets"], 13)     # 7 Done + 6 Accepted & Released
+        self.assertEqual(js["fermetures_groupees"]["par_projet"]["AAA"]["tickets"], 13)     # 7 Done + 6 Shipped
         self.assertIn("tous les motifs comptés comme livrés", md)
-        self.ecrire_reglages("batch_closure_resolutions: [Accepted & Released]\n")
+        self.ecrire_reglages("batch_closure_resolutions: [Shipped]\n")
         _, js = self.calcul(self.exporter(lignes_de_test()), nom="g")
         self.assertEqual(list(js["fermetures_groupees"]["par_projet"]), ["AAA"])
 
@@ -151,16 +151,16 @@ class MotifsEtFenetre(Base):
     def test_option_remplace_le_reglage_sans_toucher_a_flux_yaml(self):
         reglages = "batch_closure_resolutions: [Done]\nbatch_closure_threshold: 5\n"
         self.ecrire_reglages(reglages)
-        md, js = self.calcul(self.exporter(lignes_de_test()), extra=["--batch-closure-resolutions", "Done,Accepted & Released"])
+        md, js = self.calcul(self.exporter(lignes_de_test()), extra=["--batch-closure-resolutions", "Done,Shipped"])
         f = js["fermetures_groupees"]
-        self.assertEqual(f["motifs"], ["accepted & released", "done"])
-        self.assertEqual(f["par_projet"]["AAA"]["tickets"], 13)                 # 7 Done + 6 Accepted & Released
+        self.assertEqual(f["motifs"], ["done", "shipped"])
+        self.assertEqual(f["par_projet"]["AAA"]["tickets"], 13)                 # 7 Done + 6 Shipped
         self.assertEqual(f["par_projet"]["AAA"]["groupes"], 2)
-        self.assertIn("motif de résolution : accepted & released, done", md)
+        self.assertIn("motif de résolution : done, shipped", md)
         self.assertEqual((self.ws / "Flux-Lab" / "flux.yaml").read_text(encoding="utf-8"), reglages)   # inchangé
 
     def test_option_seule_motif_et_tous(self):
-        _, js = self.calcul(self.exporter(lignes_de_test()), extra=["--batch-closure-resolutions", "Accepted & Released"])
+        _, js = self.calcul(self.exporter(lignes_de_test()), extra=["--batch-closure-resolutions", "Shipped"])
         self.assertEqual(list(js["fermetures_groupees"]["par_projet"]), ["AAA"])
         self.assertEqual(js["fermetures_groupees"]["par_projet"]["AAA"]["tickets"], 6)
         md, js = self.calcul(self.exporter(lignes_de_test()), nom="t", extra=["--batch-closure-resolutions", "tous"])

@@ -8,6 +8,7 @@ identifiers », « Diagnose subcommand »). Faux serveur et données inventées 
 """
 import unittest
 
+from test_export_jira_api import ex
 from test_referentiel_et_etiquettes import BaseAssets, REFERENTIEL, INCONNUE
 
 # Référentiel : Equipe A (1), Equipe B (2), Equipe C (3). Tickets : ABC-1 [1], ABC-2 [2, 3], ABC-3 [4], ABC-4 [6, 5].
@@ -61,6 +62,17 @@ class DeuxSourcesEnsemble(Base):
         code, sortie, chemin = self.exporter_csv()
         self.assertEqual(code, 0, sortie)
         self.assertEqual(self.cellules(chemin)["ABC-1"], ["Equipe A"])
+
+    def test_une_seule_traduction_des_identifiants_celle_de_nom_traduit(self):
+        self.ecrire_sources(catalogue(entree("Libelle-Quimbo", "'4', '9'"), entree("Libelle-Plinth", "'1'")))
+        traduction = ex.resoudre_traduction()
+        attendu = {"1", "2", "3", "4", "9"}                      # référentiel (1, 2, 3) et catalogue (1, 4, 9), sans doublon
+        self.assertEqual(set(traduction.correspondance), attendu)
+        for identifiant in attendu:
+            self.assertEqual(traduction.correspondance[identifiant],
+                             ex.flow_organisation.nom_traduit(identifiant, traduction.referentiel, traduction.catalogue))
+        self.assertEqual(traduction.correspondance["1"], "Equipe A")            # le référentiel l'emporte
+        self.assertEqual(traduction.correspondance["9"], "Libelle-Quimbo")
 
     def test_la_table_n_est_jamais_lue_ni_combinee(self):
         self.ecrire_sources(catalogue(entree("Libelle-Quimbo", "'4'")))

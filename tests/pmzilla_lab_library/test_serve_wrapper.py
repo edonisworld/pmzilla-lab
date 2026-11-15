@@ -72,8 +72,8 @@ class Serveur(unittest.TestCase):
     def serveur(self, **options):
         bibliotheque = FausseBibliotheque(**options)
         modules = {"mcp": types.ModuleType("mcp"), "mcp.server": types.ModuleType("mcp.server"),
-                   "mcp.server.fastmcp": types.ModuleType("mcp.server.fastmcp")}
-        modules["mcp.server.fastmcp"].FastMCP = FauxFastMCP
+                   "mcp.server.mcpserver": types.ModuleType("mcp.server.mcpserver")}
+        modules["mcp.server.mcpserver"].MCPServer = FauxFastMCP
         with mock.patch.dict(sys.modules, modules), mock.patch.object(library, "open_library", return_value=bibliotheque):
             library.serve()
         return FauxFastMCP.instance.tools, bibliotheque

@@ -51,10 +51,15 @@ def compte_indicateurs(cas):
 
 
 class CasLivres(unittest.TestCase):
-    def test_treize_cas_et_trente_huit_verifications_bloquantes(self):
+    def test_treize_cas_et_trente_neuf_verifications_bloquantes(self):
         cas = yaml.safe_load(CAS_YAML.read_text(encoding="utf-8"))
         self.assertEqual(len(cas), 13)
-        self.assertEqual(sum(compte_bloquant(c) for c in cas), 38)
+        self.assertEqual(sum(compte_bloquant(c) for c in cas), 39)
+
+    def test_une_reponse_de_cadrage_n_appelle_pas_critic(self):
+        """Écart R-105 : un cas vérifie l'absence de Critic sur une réponse de cadrage (CLAUDE.md, étape 4)."""
+        cas = {c["id"]: c for c in yaml.safe_load(CAS_YAML.read_text(encoding="utf-8"))}
+        self.assertIn({"critic": False}, cas["discovery-cadrage"]["verifications"])
 
     def test_six_indicateurs_de_plus_qu_avant(self):
         tous = cas_livres()

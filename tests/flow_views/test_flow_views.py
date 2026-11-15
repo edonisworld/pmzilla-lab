@@ -66,8 +66,21 @@ class SansBase(unittest.TestCase):
             f.write_text("flow_views_min_cell: 2\n", encoding="utf-8")
             self.assertEqual(fv.seuil_configure(T, f), 5)                  # jamais en dessous de 5
             f.write_text("flow_views_min_cell: beaucoup\n", encoding="utf-8")
-            with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(fv.seuil_configure(T, f), 5)
+            # H-13 (R-20261107-30) : un flux.yaml illisible est refusé, plus de repli sur 5
+            with self.assertRaises(fv.ReglagesIllisibles):
+                fv.seuil_configure(T, f)
+
+    def test_main_refuse_un_flux_yaml_illisible_avec_un_code_et_un_message(self):
+        # H-13 (R-20261107-30) : le refus sort de main avec le code 78 et le message, sans lire aucune vue et sans nommer de valeur
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "flux.yaml"
+            f.write_text("flow_views_min_cell: valeur-sentinelle\n", encoding="utf-8")
+            erreur = io.StringIO()
+            with mock.patch.object(fv, "fichier_config", return_value=f), mock.patch.object(fv, "lire", side_effect=AssertionError("aucune lecture")), \
+                    contextlib.redirect_stderr(erreur):
+                self.assertEqual(fv.main(["list"]), fv.CODE_REGLAGES_ILLISIBLES)
+            self.assertRegex(erreur.getvalue(), r"flux\.yaml (illisible|unreadable)")
+            self.assertNotIn("valeur-sentinelle", erreur.getvalue())
 
     def test_reglage_lu_sous_la_racine_de_contenu(self):
         # Décision du 2026-10-21, point 6 : depuis un worktree, flux.yaml est celui de la racine de contenu (tools/lab_paths.py), jamais
@@ -145,13 +158,16 @@ EQUIPES = ("v_teams", "v_team_jira_ids")
 class VuesDeQualite(unittest.TestCase):
     """R-78 (spec jira-flow-views) : les trois vues du schéma quality rejoignent la liste fermée, lues sous le rôle des vues de qualité."""
 
-    def test_neuf_vues_connues_dont_les_trois_de_qualite_et_les_deux_des_noms_d_equipe(self):
-        """Étendu par le change team-names-readable (tâche 2.4) : la liste fermée passe de sept à neuf vues."""
+    def test_dix_vues_connues_dont_les_trois_de_qualite_les_deux_des_noms_d_equipe_et_la_part_de_fix_version(self):
+        """Étendu par team-names-readable (sept à neuf vues) puis flow-version-share (dix vues)."""
         self.assertEqual(fv.VUES_QUALITE, QUALITE)
         self.assertEqual(fv.VUES_EQUIPES, EQUIPES)
-        self.assertEqual(set(fv.VUES), set(fv.VUES_FLOW) | set(EQUIPES) | set(QUALITE))
-        self.assertEqual(len(fv.VUES), 9)
-        self.assertEqual(len(set(fv.VUES)), 9)
+        self.assertEqual(set(fv.VUES), set(fv.VUES_FLOW) | set(EQUIPES) | {"v_team_fix_version_share"} | set(QUALITE)
+                         | {"v_version_quality_photo", "v_team_fix_version_lag"} | set(fv.VUES_TRANCHE_1)
+                         | {"v_team_flow_inout", "v_team_delivery_fields_coverage"})        # douze vues depuis version-quality-photo, plus cinq (mothra-slices 15.2), plus la vue de 36.1, plus la couverture (jira-delivery-fields, R-20261102-16 à -36)
+        self.assertEqual(len(fv.VUES_TRANCHE_1), 5)
+        self.assertEqual(len(fv.VUES), 19)          # jira-delivery-fields, R-20261102-16 à -36 : 18 -> 19
+        self.assertEqual(len(set(fv.VUES)), 19)
 
     def test_les_trois_vues_sont_celles_de_la_migration(self):
         texte = (RACINE / "db" / "migrations" / "0010_quality_schema.sql").read_text(encoding="utf-8")
@@ -259,7 +275,15 @@ class VuesDeQualite(unittest.TestCase):
 
     def test_les_colonnes_de_comptage_de_qualite_sont_celles_de_la_migration(self):
         self.assertEqual(set(fv.COLONNES_COMPTE), {"tickets", "links", "collected", "audited", "empty_acceptance_criteria", "met", "not_met",
-                                                    "not_applicable", "undetermined"})
+                                                    "not_applicable", "undetermined", "items", "with_fix_version"}   # + flow-version-share
+                         | set(fv.COMPTES_PHOTO) | set(fv.SEAUX_RETARD)                                        # + version-quality-photo
+                         | {"throughput", "items_lt", "items_ct", "items_old", "items_without_commitment", "tasks_done", "ready",
+                            "blocked_n", "unplanned_n", "tasks_without_team", "blocked", "unplanned"}  # + mothra-slices 15.2 (R-20261030-05, -08, -27)
+                         | {"created", "done"}                                                                 # + mothra-slices 36.1 (v_team_flow_inout)
+                         | {"with_sprint", "with_target_version", "with_resolution_version", "with_epic_version_a", "with_epic_version_b",
+                            "with_category_nature", "with_workflow_option", "with_release_target", "with_verification_required",
+                            "with_product_safety", "with_isp", "with_code_review_status", "with_portfolio_rank",
+                            "with_customer_commitment", "with_source_commitment", "with_strategic_objective"})   # + jira-delivery-fields, R-20261102-16 à -36 (0033)
         sql = (RACINE / "db" / "migrations" / "0010_quality_schema.sql").read_text(encoding="utf-8")
         for colonne in ("collected", "audited", "empty_acceptance_criteria", "met", "not_met", "not_applicable", "undetermined"):
             self.assertRegex(sql, rf"mask_count\([^;]*?\) AS {colonne}\b")
@@ -520,6 +544,17 @@ class SurvivantsDeMutation(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                 self.assertEqual(fv.main(["show", "v_team_status"]), 0)
         self.assertEqual(err.getvalue(), "")
+
+    def test_seuil_effectif_une_option_absente_ou_nulle_compte_pour_zero(self):
+        # mutants tués : la constante 0 de `option or 0` devenue 1 ou -1 (seuil_effectif). Avec le vrai PLANCHER (5) ils sont équivalents
+        # (max les absorbe) : on abaisse PLANCHER sous zéro pour que la valeur de repli de l'option se voie.
+        with mock.patch.object(fv, "PLANCHER", -3):
+            self.assertEqual(fv.seuil_effectif(-3, None), 0)
+            self.assertEqual(fv.seuil_effectif(-3, 0), 0)
+            self.assertEqual(fv.seuil_effectif(-3, 2), 2)
+        self.assertEqual(fv.seuil_effectif(5, None), 5)
+        self.assertEqual(fv.seuil_effectif(8, 20), 20)
+        self.assertEqual(fv.seuil_effectif(8, 6), 8)
 
     def test_sans_commande_l_analyse_des_arguments_refuse(self):
         # mutant tué : `required=True` devenu `required=False` (main) : sans commande, refus d'argparse (code 2), jamais une autre erreur

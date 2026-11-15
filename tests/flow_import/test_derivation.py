@@ -209,6 +209,17 @@ class Derivation(unittest.TestCase):
             [instantane("PROJ-1")], [vivant("PROJ-1")], passage=(1, True), visites=["PROJ-1"], candidats=2, total=4, marques=2))
         self.assertEqual(code, 0)
 
+    def test_trop_d_absents_message_chiffre_en_francais_et_en_anglais(self):
+        """R-20261114-69 et -70 : le refus dit le nombre d'absents, le stock (dénominateur du calcul) et leur part, sans clé."""
+        for langue, attendu in (("fr", "2 tickets sur 4 stockés deviendraient absents (50,0 %)"),
+                                ("en", "2 of 4 stored tickets would become absent (50.0%)")):
+            connexion = FausseConnexionDerivation([instantane("PROJ-1")], [vivant("PROJ-1")], passage=(1, True), visites=["PROJ-1"],
+                                                  candidats=2, total=4)
+            code, sortie, erreur = lancer("--mark-absent", "--max-absent-percent", "20", "--language", langue, connexion=connexion)
+            self.assertEqual(code, 1)
+            self.assertIn(attendu, sortie + erreur)
+            self.assertNotIn("PROJ-", sortie + erreur)
+
     def test_pourcentage_invalide_refuse_avant_toute_connexion(self):
         code, _, erreur = lancer("--max-absent-percent", "120")                 # lancer() refuse toute connexion
         self.assertEqual(code, 2)

@@ -113,7 +113,7 @@ case "${1:-}" in
     done <<< "$sel"
     exit 0 ;;
   exec)
-    case "$args" in *" -i "*) cat > /dev/null ;; esac
+    case "$args" in *" -i "*) cat >> "$FX/sql-copie" ;; esac
     case "$args" in
       *pg_isready*) exit "${FAUX_PRET:-0}" ;;
       *psql*)
@@ -140,6 +140,10 @@ verifie "garde : le script n'appelle aucun docker par chemin absolu" "$(grep -Eq
 verifie "contenu : le script ne contient ni set -x ni xtrace" "$(grep -Eq '^[^#]*(set -[a-z]*x|xtrace)' "$SCRIPT"; [ $? -ne 0 ]; echo $?)"
 verifie "contenu : le script ne lit pas le Trousseau (aucun appel à security)" "$(grep -Eq '^[^#]*(security |find-generic-password)' "$SCRIPT"; [ $? -ne 0 ]; echo $?)"
 
+# Rôles à mot de passe : lus dans tools/db.py par le test aussi (jamais recopiés).
+variable_du_role() { printf 'PMZILLA_LAB_DB_PASSWORD_%s' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"; }
+ROLES_DB="$(sed -n '/^ROLES_AVEC_MOT_DE_PASSE = (/,/)/p' "$racine/tools/db.py" | sed 's/#.*//' | grep -oE '"[a-z_]+"' | tr -d '"')"
+
 # Données de référence : copie vide, mêmes migrations que les fichiers et que la vraie base.
 etat_nominal() {
   cat > "$FX/comptes-copie" <<'EOF'
@@ -162,7 +166,8 @@ EOF
     nom="$(basename "$f")"; echo "$((10#${nom%%_*}))|$nom|$(shasum -a 256 "$f" | cut -d' ' -f1)" >> "$FX/mig-copie"
   done
   cp "$FX/mig-copie" "$FX/mig-reelle"
-  printf '%s\n%s\n' "$REEL_NOM" "$RESTORE_NOM" > "$FX/conteneurs"; : > "$FAUX_LOG"; : > "$INTERDIT"
+  printf '%s\n%s\n' "$REEL_NOM" "$RESTORE_NOM" > "$FX/conteneurs"; : > "$FAUX_LOG"; : > "$INTERDIT"; : > "$FX/sql-copie"
+  for r in $ROLES_DB; do unset "PMZILLA_LAB_DB_PASSWORD_$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')"; done
   export PMZILLA_LAB_DB_PASSWORD="$MDP_SU" PMZILLA_LAB_DB_PASSWORD_PMZILLA_FLOW="$MDP_FLOW" PMZILLA_LAB_DB_PASSWORD_PMZILLA_FLOW_VIEWS="$MDP_VUES"
   unset CLAUDECODE FAUX_DOCKER_INFO FAUX_CONTENEUR FAUX_RUN_ECHEC FAUX_PORT FAUX_PRET FAUX_UV_ECHEC FAUX_RM_NOOP PMZILLA_LAB_DB_PORT
 }
@@ -233,6 +238,34 @@ for var in PMZILLA_LAB_DB_PASSWORD PMZILLA_LAB_DB_PASSWORD_PMZILLA_FLOW PMZILLA_
   lance up
   verifie "variable absente ($var) : code 2, la phrase nomme la variable sans valeur, aucun conteneur démarré" "$([ $code -eq 2 ] && grep -qx "variable absente : $var (valeur jamais affichée)" "$tmp/s" && ! grep -q '^docker run' "$FAUX_LOG" && [ "$(rehearsal_restants)" = 0 ] && ! grep -Eq "$MDP_SU|$MDP_FLOW|$MDP_VUES" "$tmp/s"; echo $?)"
 done
+
+# --- Rôles à mot de passe (#401) : tous ouverts si leur variable est posée, les autres laissés fermés et dits
+verifie "rôles : la liste lue dans tools/db.py a au moins 6 rôles dont les deux d'aujourd'hui" "$([ "$(printf '%s\n' "$ROLES_DB" | grep -c .)" -ge 6 ] && printf '%s\n' "$ROLES_DB" | grep -qx pmzilla_flow && printf '%s\n' "$ROLES_DB" | grep -qx pmzilla_flow_views; echo $?)"
+verifie "rôles : le script ne recopie aucun rôle hors des deux obligatoires (liste lue dans tools/db.py)" "$(grep -E '^[^#]*(pmzilla_cases|pmzilla_knowledge|pmzilla_quality)' "$SCRIPT" | grep -q .; [ $? -ne 0 ]; echo $?)"
+etat_nominal
+for r in $ROLES_DB; do
+  v="PMZILLA_LAB_DB_PASSWORD_$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')"
+  export "$v=sentinelle-role-$r-91f3"
+done
+lance up
+tous_ouverts=0
+for r in $ROLES_DB; do
+  grep -qx "ALTER ROLE $r LOGIN PASSWORD 'sentinelle-role-$r-91f3';" "$FX/sql-copie" || tous_ouverts=1
+  grep -qx "  $r ouvert" "$tmp/s" || tous_ouverts=1
+done
+verifie "rôles : toutes les variables posées, chaque rôle de la liste reçoit son ALTER ROLE sur l'entrée standard et est dit ouvert" "$([ $code -eq 0 ] && [ $tous_ouverts -eq 0 ]; echo $?)"
+verifie "rôles : aucun mot de passe de rôle dans les arguments, la sortie ni les fichiers" "$(! arguments | grep -q 'sentinelle-role-' && ! grep -q 'sentinelle-role-' "$tmp/s" && ! grep -rq 'sentinelle-role-' "$tmp/tmpdir" "$tmp/home" 2>/dev/null; echo $?)"
+verifie "rôles : un seul psql en écriture (une seule entrée standard) et aucun ALTER ROLE dans un argument" "$(! arguments | grep -qi 'alter role'; echo $?)"
+verifie "rôles : la copie seulement (tout docker exec vise un conteneur de répétition, vraie base sans ALTER)" "$(arguments | grep '^docker exec' | grep -Ev "$PREFIXE_RE" | grep -q .; [ $? -ne 0 ] && ! arguments | grep '^docker compose' | grep -qi alter; echo $?)"
+etat_nominal
+pose_role() { export "$(variable_du_role "$1")=$2"; }          # variable d'un rôle : même nom que tools/db.py (variable_du_role)
+pose_role pmzilla_cases_ro "sentinelle-role-cases-ro-77aa"
+lance up
+verifie "rôles : variable absente pour les autres, ils sont laissés fermés et dits, sans ALTER ROLE" "$([ $code -eq 0 ] && grep -qx '  pmzilla_cases_ro ouvert' "$tmp/s" && grep -qx '  pmzilla_cases laissé fermé (variable absente)' "$tmp/s" && grep -qx '  pmzilla_quality_views laissé fermé (variable absente)' "$tmp/s" && grep -qx "ALTER ROLE pmzilla_cases_ro LOGIN PASSWORD 'sentinelle-role-cases-ro-77aa';" "$FX/sql-copie" && ! grep -q 'ALTER ROLE pmzilla_cases LOGIN' "$FX/sql-copie"; echo $?)"
+verifie "rôles : une ligne par rôle de la liste, deux obligatoires comme avant (flow et flow_views ouverts)" "$([ "$(grep -cE '^  pmzilla_[a-z_]+ (ouvert|laissé fermé \(variable absente\))$' "$tmp/s")" = "$(printf '%s\n' "$ROLES_DB" | grep -c .)" ] && grep -qx '  pmzilla_flow ouvert' "$tmp/s" && grep -qx '  pmzilla_flow_views ouvert' "$tmp/s"; echo $?)"
+verifie "rôles : l'apostrophe d'un mot de passe est doublée dans le SQL" "$(etat_nominal; pose_role pmzilla_cases "a'b"; lance up; grep -qx "ALTER ROLE pmzilla_cases LOGIN PASSWORD 'a''b';" "$FX/sql-copie"; echo $?)"
+unset PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO
+etat_nominal
 
 # --- Ports : jamais celui de la vraie base
 etat_nominal

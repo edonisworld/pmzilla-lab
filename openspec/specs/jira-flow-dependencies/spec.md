@@ -20,7 +20,7 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (AnciensNoms)
 - **THEN** the exit code is 1 and the message names the current key; with the new names the run prints no such message
 
 ### Requirement: Direction of links
-The system SHALL read typed link columns (outward and inward per type) and treat a blocking link seen from both ends as a single dependency, with the row team waiting for the column team in the matrix. Link types configured as "waiting" SHALL be read in the opposite direction, and any other link type SHALL be ignored. When links come untyped, the mode SHALL be "undirected", no blockage list SHALL be produced, and the diagnosis SHALL say so.
+The system SHALL read typed link columns (outward and inward per type) and treat a blocking link seen from both ends as a single dependency, with the row team waiting for the column team in the matrix. Link types configured as "waiting" SHALL be read in the opposite direction, and any other link type SHALL be ignored.
 
 Source: tests/dependencies_jira/test_dependencies_jira.py (Sens)
 
@@ -36,6 +36,15 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Sens)
 - **WHEN** only a non-blocking link type is present
 - **THEN** zero dependencies are counted
 
+### Requirement: Untyped links
+When links come untyped, the mode SHALL be "undirected", no blockage list SHALL be produced, and the diagnosis SHALL say so.
+
+Source: tests/dependencies_jira/test_dependencies_jira.py (Sens)
+
+#### Scenario: Links without type
+- **WHEN** the links of the export carry no type
+- **THEN** the mode is "undirected", no blockage list is produced, and the diagnosis says so
+
 ### Requirement: Open blockages by blocker state
 The system SHALL list current blockages per pair of teams with the state of the blocker ("in progress" or "not started") and counts, with ageing figures, and SHALL put blockages older than a configurable age separately.
 
@@ -50,13 +59,18 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Sens, Anciennete.test
 - **THEN** it appears in the "old blockages" list and not in the ordinary list
 
 ### Requirement: Graph data
-The system SHALL provide, per team pair, an edge with counts of open, unknown and total dependencies, the number of blocked tickets in progress, the age percentiles of those blocked tickets, and a directed flag (false in undirected mode), plus the number of tickets per team. A dependency towards a ticket absent from the export SHALL appear as an edge to an "outside the export" node counted as unknown. The graph data SHALL contain no ticket key.
+The system SHALL provide, per team pair, an edge with counts of open, unknown and total dependencies, the number of blocked tickets in progress, the age percentiles of those blocked tickets, and a directed flag (false in undirected mode), plus the number of tickets per team. The graph data SHALL contain no ticket key.
 
 Source: tests/dependencies_jira/test_dependencies_jira.py (AretesDuGraphe)
 
 #### Scenario: Finished blocker
 - **WHEN** the blocker is finished
 - **THEN** its edge has zero open, one total, no blocked in progress and no age
+
+### Requirement: Outside-export node in the graph
+A dependency towards a ticket absent from the export SHALL appear as an edge to an "outside the export" node counted as unknown.
+
+Source: tests/dependencies_jira/test_dependencies_jira.py (AretesDuGraphe)
 
 #### Scenario: Ticket outside export
 - **WHEN** a link points to a ticket not in the export
@@ -85,13 +99,27 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (ManuelEtApi, AretesDu
 - **THEN** the console shows lines of the form "ticket (team) waits for ticket (team, state)" and the files stay key-free
 
 ### Requirement: Database source
-The system SHALL read the tickets and links only from the database, with the settings passed to the database reader, and the source list of the report SHALL name the database ("base" in French, "database" in English). The retired option `--source`, whatever its value, SHALL stop with exit code 2 and the key phrase of design D6, and an export file given as argument SHALL stop with exit code 2 and the key phrase of design D6, before any connection. A database error SHALL stop with the database-read message followed by the error detail. The report SHALL keep the same confidentiality rules (no ticket key, no title).
+The system SHALL read the tickets and links only from the database, with the settings passed to the database reader, and the source list of the report SHALL name the database ("base" in French, "database" in English). The report SHALL keep the same confidentiality rules (no ticket key, no title).
 
 Source: tests/dependencies_jira/test_lecteur_base.py (Lecture, Refus); tests/flow_store/test_erreurs_scripts.py (Erreurs)
 
 #### Scenario: Database source
 - **WHEN** `compute` runs with no option
 - **THEN** the dependencies are read from the database, no file is read, and the source is named "database" in English
+
+### Requirement: Database error in the dependency tool
+A database error SHALL stop the dependency tool with the database-read message followed by the error detail.
+
+Source: tests/dependencies_jira/test_lecteur_base.py (Lecture); tests/flow_store/test_erreurs_scripts.py (Erreurs)
+
+#### Scenario: Database unreachable
+- **WHEN** the database read fails
+- **THEN** the run stops with the database-read message followed by the error detail
+
+### Requirement: Retired source option and export files refused
+The retired option `--source`, whatever its value, SHALL stop with exit code 2 and the key phrase of design D6, and an export file given as argument SHALL stop with exit code 2 and the key phrase of design D6, before any connection.
+
+Source: tests/dependencies_jira/test_lecteur_base.py (Refus); tests/flow_store/test_erreurs_scripts.py (Erreurs)
 
 #### Scenario: Files with database
 - **WHEN** an export file is given, with or without `--source db`
@@ -115,13 +143,18 @@ Source: tests/dependencies_jira/test_dependencies_jira.py (Perimetre)
 - **THEN** all links are counted
 
 ### Requirement: Exclusions
-The system SHALL count dependencies of the projects excluded from the map separately (waits for the export and awaited by the export) and remove them from the matrices. The list in force SHALL be, in this order, the exclusion option, else the map's own exclusion setting when present (an empty list excluding nothing), else the shared excluded-projects setting. The system SHALL NOT merge the two settings into one list.
+The system SHALL count dependencies of the projects excluded from the map separately (waits for the export and awaited by the export) and remove them from the matrices.
 
-Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions); precedence: tests/dependencies_jira/test_exclusion_carte.py (to be written, task 3.1)
+Source: tests/dependencies_jira/test_dependencies_jira.py (Exclusions)
 
 #### Scenario: Excluded project
 - **WHEN** a project is excluded
 - **THEN** its links appear in the excluded list and not in the dependency count or the matrix
+
+### Requirement: Exclusion list precedence
+The exclusion list in force SHALL be, in this order, the exclusion option, else the map's own exclusion setting when present (an empty list excluding nothing), else the shared excluded-projects setting. The system SHALL NOT merge the two settings into one list.
+
+Source: tests/dependencies_jira/test_exclusion_carte.py (to be written, task 3.1)
 
 #### Scenario: Map setting over the shared setting
 - **WHEN** the shared setting excludes one project and the map's setting excludes another
@@ -194,13 +227,27 @@ Source: tests/dependencies_jira/test_language.py
 - **THEN** the output equals the English reference
 
 ### Requirement: Aggregation by Mission Team or site
-The system SHALL accept on `compute` the `--by` values `mission-team` and `site` in addition to `team` and `project`. With these values it SHALL read the organisation referential and build the matrices, blockages and graph data between groups, with teams outside the referential grouped under "outside the referential", into a separately named report, on both data sources. A dependency between two teams of the same group SHALL be counted as internal to the group and stated, not hidden. A missing or invalid referential SHALL stop with exit code 1 naming the referential, never a value. The report SHALL NOT divide a dependency count by a headcount and SHALL NOT rank groups.
+The system SHALL accept on `compute` the `--by` values `mission-team` and `site` in addition to `team` and `project`. With these values it SHALL read the organisation referential and build the matrices, blockages and graph data between groups, with teams outside the referential grouped under "outside the referential", into a separately named report, on both data sources.
 
 Source: tests/dependencies_jira/test_par_groupe.py
 
 #### Scenario: Mission Team matrix
 - **WHEN** `compute --by mission-team` runs on links between three teams of two Mission Teams
 - **THEN** the matrix has two rows and columns, the internal dependencies of each Mission Team are stated, and the totals equal those of the team report
+
+### Requirement: Internal group dependencies stated, groups never ranked
+A dependency between two teams of the same group SHALL be counted as internal to the group and stated, not hidden. The report SHALL NOT divide a dependency count by a headcount and SHALL NOT rank groups.
+
+Source: tests/dependencies_jira/test_par_groupe.py
+
+#### Scenario: Internal dependency
+- **WHEN** two teams of the same Mission Team depend on each other
+- **THEN** the dependency is counted and stated as internal to that Mission Team, and the report holds no count divided by a headcount and no ranking of groups
+
+### Requirement: Organisation referential required for group aggregation
+A missing or invalid referential SHALL stop the group aggregation with exit code 1 naming the referential, never a value.
+
+Source: tests/dependencies_jira/test_par_groupe.py
 
 #### Scenario: Referential missing
 - **WHEN** `compute --by mission-team` runs without a referential

@@ -77,6 +77,8 @@ FAMILLE_TABLEAUX = (
     "Bash(more *Flux-Lab/tableaux*)", "Bash(grep *Flux-Lab/tableaux*)", "Bash(awk *Flux-Lab/tableaux*)", "Bash(sed *Flux-Lab/tableaux*)",
     "Bash(cp *Flux-Lab/tableaux*)",
 )
+# Désherbage du 2026-10-28 (D38) : les formes Read exactes retirées sont remplacées, dans les familles, par les formes `*` finales du
+# fragment 33 (présentes avant comme après) ; les décomptes de D5 restent donc ceux d'avant pour ces familles.
 FAMILLE_ANCIENNE_TABLE = (
     "Read(./Flux-Lab/equipes-assets.yaml)", "Read(//**/Flux-Lab/equipes-assets.yaml)", "Read(~/**/Flux-Lab/equipes-assets.yaml)",
     "Bash(cat *equipes-assets.yaml*)", "Bash(head *equipes-assets.yaml*)", "Bash(tail *equipes-assets.yaml*)",
@@ -85,19 +87,19 @@ FAMILLE_ANCIENNE_TABLE = (
     "Bash(rg *equipes-assets.yaml*)",
 )
 FAMILLE_NOMS_SENSIBLES = (
-    "Read(./Flux-Lab/noms-sensibles.txt)",
+    "Read(./Flux-Lab/noms-sensibles.txt*)",
     "Bash(cat *noms-sensibles.txt*)", "Bash(head *noms-sensibles.txt*)", "Bash(tail *noms-sensibles.txt*)",
     "Bash(less *noms-sensibles.txt*)", "Bash(more *noms-sensibles.txt*)", "Bash(grep *noms-sensibles.txt*)",
     "Bash(awk *noms-sensibles.txt*)", "Bash(sed *noms-sensibles.txt*)", "Bash(cp *noms-sensibles.txt*)",
 )
 FAMILLE_REFERENTIEL = (
-    "Read(./Flux-Lab/organisation.yaml)", "Read(//**/Flux-Lab/organisation.yaml)", "Read(~/**/Flux-Lab/organisation.yaml)",
+    "Read(./Flux-Lab/organisation.yaml*)", "Read(//**/Flux-Lab/organisation.yaml*)", "Read(~/**/Flux-Lab/organisation.yaml*)",
     "Bash(cat *organisation.yaml*)", "Bash(head *organisation.yaml*)", "Bash(tail *organisation.yaml*)",
     "Bash(less *organisation.yaml*)", "Bash(more *organisation.yaml*)", "Bash(grep *organisation.yaml*)",
     "Bash(awk *organisation.yaml*)", "Bash(sed *organisation.yaml*)", "Bash(cp *organisation.yaml*)",
 )
 FAMILLE_CATALOGUE = (
-    "Read(./Flux-Lab/equipes-jira.yaml)", "Read(//**/Flux-Lab/equipes-jira.yaml)", "Read(~/**/Flux-Lab/equipes-jira.yaml)",
+    "Read(./Flux-Lab/equipes-jira.yaml*)", "Read(//**/Flux-Lab/equipes-jira.yaml*)", "Read(~/**/Flux-Lab/equipes-jira.yaml*)",
     "Bash(cat *equipes-jira.yaml*)", "Bash(head *equipes-jira.yaml*)", "Bash(tail *equipes-jira.yaml*)",
     "Bash(less *equipes-jira.yaml*)", "Bash(more *equipes-jira.yaml*)", "Bash(grep *equipes-jira.yaml*)",
     "Bash(awk *equipes-jira.yaml*)", "Bash(sed *equipes-jira.yaml*)", "Bash(cp *equipes-jira.yaml*)",
@@ -141,8 +143,8 @@ FAMILLE_LISTE_ASSETS = (
     "Bash(mv *equipes-assets-complet*)",
 )
 FAMILLE_ARCHIVE = (
-    # 6 Read : la famille antérieure (3) et celle du dossier d'archive (3)
-    "Read(~/PMZilla-Lab/archives-equipes/**)", "Read(//**/PMZilla-Lab/archives-equipes/**)", "Read(**/archives-equipes/**)",
+    # 4 Read : la famille antérieure (1, après le désherbage D39) et celle du dossier d'archive (3)
+    "Read(**/archives-equipes/**)",
     "Read(~/PMZilla-Lab/archives/archives-equipes/**)", "Read(~/**/archives-equipes/**)", "Read(//**/archives-equipes/**)",
     # 34 lecteurs
     "Bash(cat *archives-equipes*)", "Bash(head *archives-equipes*)", "Bash(tail *archives-equipes*)", "Bash(less *archives-equipes*)",
@@ -209,7 +211,7 @@ FAMILLE_SECRETS = (
     "Bash(gh auth token*)", "Bash(*/gh auth token*)", "Bash(env *gh auth token*)", "Bash(*/env *gh auth token*)",
 )
 
-# Famille -> (décompte annoncé par la table de D5, règles). Le décompte de l'archive est 45 : le fichier compte 6 Read, 34 lecteurs
+# Famille -> (décompte annoncé par la table de D5, règles). Le décompte de l'archive est 43 (D39) : le fichier compte 4 Read, 34 lecteurs
 # et 5 listages (le générateur d'avant en comptait 43 et manquait Read(//**/PMZilla-Lab/archives-equipes/**) et Read(**/archives-equipes/**)).
 FAMILLES_D5 = {
     "exports": (10, FAMILLE_EXPORTS),
@@ -221,7 +223,7 @@ FAMILLES_D5 = {
     "catalogue": (37, FAMILLE_CATALOGUE),
     "fichier temporaire du catalogue": (37, FAMILLE_CATALOGUE_TMP),
     "liste Assets": (37, FAMILLE_LISTE_ASSETS),
-    "archive de l'ancienne table": (45, FAMILLE_ARCHIVE),
+    "archive de l'ancienne table": (43, FAMILLE_ARCHIVE),
     "liste de revue": (43, FAMILLE_REVUES),
     "lancements check/migrate/review-teams": (24, FAMILLE_LANCEMENTS_ANCRES),
     "lancements récents de check-teams": (14, FAMILLE_LANCEMENTS_CHECK_RECENTS),
@@ -337,8 +339,8 @@ class DansLeFichierDeReglages(unittest.TestCase):
     def test_chaque_famille_a_le_decompte_de_la_table_de_d5(self):
         ecarts = {nom: (attendu, len(regles)) for nom, (attendu, regles) in FAMILLES_D5.items() if len(regles) != attendu}
         self.assertEqual(ecarts, {}, "famille : (décompte de D5, règles listées)")
-        self.assertEqual([len(r) for _, r in FAMILLES_D5.values()], [10, 10, 10, 13, 10, 12, 37, 37, 37, 45, 43, 24, 14, 13, 7])
-        self.assertEqual(len(REGLES_A_GARDER), 322)
+        self.assertEqual([len(r) for _, r in FAMILLES_D5.values()], [10, 10, 10, 13, 10, 12, 37, 37, 37, 43, 43, 24, 14, 13, 7])
+        self.assertEqual(len(REGLES_A_GARDER), 320)
 
     def test_les_regles_gardees_sont_dans_les_reglages(self):
         manquantes = [r for r in REGLES_A_GARDER if r not in self.deny]
@@ -352,13 +354,13 @@ class DansLeFichierDeReglages(unittest.TestCase):
 
     def test_le_catalogue_garde_ses_37_regles(self):
         """Décision b : le catalogue des équipes n'est pas ouvert en brut ; aucune de ses 3 règles Read ni de ses 34 lecteurs ne manque."""
-        catalogue = _read3("equipes-jira.yaml") + _lecteurs(LECTEURS, "equipes-jira.yaml")
+        catalogue = _read3("equipes-jira.yaml*") + _lecteurs(LECTEURS, "equipes-jira.yaml")      # D38 : formes Read `*` finales
         self.assertEqual(len(catalogue), 37)
         self.assertEqual([r for r in catalogue if r not in self.deny], [])
 
     def test_les_regles_read_du_referentiel_et_des_noms_sensibles_sont_gardees(self):
-        for regle in ("Read(./Flux-Lab/noms-sensibles.txt)", "Read(./Flux-Lab/organisation.yaml)",
-                      "Read(//**/Flux-Lab/organisation.yaml)", "Read(~/**/Flux-Lab/organisation.yaml)"):
+        for regle in ("Read(./Flux-Lab/noms-sensibles.txt*)", "Read(./Flux-Lab/organisation.yaml*)",
+                      "Read(//**/Flux-Lab/organisation.yaml*)", "Read(~/**/Flux-Lab/organisation.yaml*)"):      # D38 : formes `*` finales
             self.assertIn(regle, self.deny)
 
     def test_les_equipes_ne_sont_pas_lisibles_en_brut(self):

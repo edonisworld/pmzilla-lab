@@ -6,19 +6,29 @@ The system SHALL provide a scripted, step-by-step installation of the lab on a n
 ## Requirements
 
 ### Requirement: Fresh mode and an ordered list of steps
-The system SHALL provide an install script with one mode, the fresh mode, for the published edition with no personal data. The mode option SHALL be required. It SHALL run the steps of the mode in a fixed order, and SHALL list them on request. The fresh mode SHALL NOT create or copy any personal data. Any mode value other than fresh SHALL be refused with exit code 2 and the key phrase of design D17 that points to the "Install script" section of the installation guide, and no step SHALL run. The system SHALL NOT accept a bundle option, a dumps option or a pack subcommand; each SHALL give exit code 2 as an unknown option or argument. A missing mode, an unknown option or an unknown step SHALL also give exit code 2. Exit codes and messages are those of design.md (D13, D17).
+The system SHALL provide an install script with one mode, the fresh mode, for the published edition with no personal data. The mode option SHALL be required. It SHALL run the steps of the mode in a fixed order, and SHALL list them on request. The fresh mode SHALL NOT create or copy any personal data.
 
 #### Scenario: Step list
 - **WHEN** the steps are listed for the fresh mode
 - **THEN** they appear in order, and the exit code is 0
 
+### Requirement: Modes other than fresh are refused
+The system SHALL refuse any mode value other than fresh with exit code 2 and the key phrase of design D17 that points to the "Install script" section of the installation guide, and no step SHALL run. Exit codes and messages are those of design.md (D13, D17).
+
 #### Scenario: Other mode refused
 - **WHEN** the script is started with the migrate mode
 - **THEN** it prints "is not available in this version" with the pointer to the "Install script" section of the guide, runs no step, and exits with code 2
 
+### Requirement: Migrate options and malformed invocations are refused
+The system SHALL NOT accept a bundle option, a dumps option or a pack subcommand; each SHALL give exit code 2 as an unknown option or argument. A missing mode, an unknown option or an unknown step SHALL also give exit code 2. Exit codes and messages are those of design.md (D13, D17).
+
 #### Scenario: Migrate options refused
 - **WHEN** a bundle option, a dumps option or the pack subcommand is given
 - **THEN** the script exits with code 2 and runs no step
+
+#### Scenario: Missing mode
+- **WHEN** the script is started without the mode option
+- **THEN** it exits with code 2
 
 ### Requirement: Every state change is confirmed, default no
 The system SHALL ask an explicit yes-or-no confirmation before each action that changes the machine, showing the command it will run. Only an explicit yes SHALL accept; an empty answer or any other answer SHALL decline. The system SHALL NOT offer an option that answers yes for all steps, and SHALL refuse a real run whose standard input is not a terminal with exit code 2. A declined action SHALL be reported as declined, and the steps that depend on it SHALL be deferred, not run.
@@ -73,33 +83,42 @@ The system SHALL run a single named step, or every step from a named step to the
 - **THEN** the script exits with code 2 and runs no step
 
 ### Requirement: No secret is handled
-The system SHALL NOT read, write, print or prompt for a password or a token, and SHALL NOT invoke the Keychain command-line tool with any verb. It SHALL NOT run the role-password command of the database script. When the database start script reports that its Keychain entry is missing, the system SHALL stop that step, print "manual action needed:" with the exact creation command (with no password value in it), and defer the steps that need the database. It SHALL list the role-password commands in the manual checklist instead of running them.
-
-#### Scenario: Database entry missing
-- **WHEN** the start script reports its missing-password key phrase
-- **THEN** the step prints "manual action needed:" and the creation command, the database-dependent steps are deferred, the Keychain tool is never invoked by the install script, and the exit code is 4
+The system SHALL NOT read, write, print or prompt for a password or a token, and SHALL NOT invoke the Keychain command-line tool with any verb. It SHALL NOT run the role-password command of the database script. It SHALL list the role-password commands in the manual checklist instead of running them.
 
 #### Scenario: No Keychain call in any run
 - **WHEN** the whole suite has run, through every scenario
 - **THEN** the calls log never shows the Keychain tool invoked by the install script
 
+### Requirement: A missing database Keychain entry stops the database step
+When the database start script reports that its Keychain entry is missing, the system SHALL stop that step, print "manual action needed:" with the exact creation command (with no password value in it), and defer the steps that need the database.
+
+#### Scenario: Database entry missing
+- **WHEN** the start script reports its missing-password key phrase
+- **THEN** the step prints "manual action needed:" and the creation command, the database-dependent steps are deferred, the Keychain tool is never invoked by the install script, and the exit code is 4
+
 ### Requirement: Existing scripts are called, not rewritten
-The system SHALL run the existing installers of hook links and lab-folder links, the database start script and the migration command, each by its path in the clone. It SHALL run each installer's verify mode after the installer. It SHALL NOT duplicate their logic. It SHALL NOT run the backup script, the restore-test script, the sanctum backup script, the Jira tools, the evaluation set, or the conversion and indexing tools. It SHALL resolve the Python launcher from the search path, never from a fixed path.
+The system SHALL run the existing installers of hook links and lab-folder links, the database start script and the migration command, each by its path in the clone. It SHALL run each installer's verify mode after the installer. It SHALL NOT duplicate their logic. It SHALL resolve the Python launcher from the search path, never from a fixed path.
 
 #### Scenario: Links step
 - **WHEN** the links step runs after confirmation
 - **THEN** the lab-folder links installer is called, then its verify mode, and the step is done when the verify exits 0
+
+### Requirement: Backup, Jira, evaluation and indexing tools are not run
+The system SHALL NOT run the backup script, the restore-test script, the sanctum backup script, the Jira tools, the evaluation set, or the conversion and indexing tools.
 
 #### Scenario: Forbidden tools
 - **WHEN** the script text is scanned outside comments
 - **THEN** it contains no call to the backup script, the role-password command, the Jira tools or the evaluation set, and no fixed path to the Python launcher
 
 ### Requirement: Bootstrap before the Python launcher exists
-The system SHALL provide a shell bootstrap that refuses any platform other than macOS on Apple Silicon (exit 3). When Homebrew is absent, it SHALL stop with "Homebrew not found" and the address of the Homebrew installation page, without installing Homebrew (exit 3). It SHALL offer, with confirmation, to install Git and the Python launcher through Homebrew. When run outside a clone, it SHALL clone the repository given by the repository option to the expected clone path. Then it SHALL hand over to the orchestrator with every argument. It SHALL refuse a clone at another path, or an existing folder at the clone path that is not a clone, with exit code 3, and SHALL NOT move or delete either.
+The system SHALL provide a shell bootstrap that refuses any platform other than macOS on Apple Silicon (exit 3). When Homebrew is absent, it SHALL stop with "Homebrew not found" and the address of the Homebrew installation page, without installing Homebrew (exit 3). It SHALL offer, with confirmation, to install Git and the Python launcher through Homebrew.
 
 #### Scenario: Homebrew absent
 - **WHEN** the bootstrap runs on a machine without Homebrew
 - **THEN** it prints "Homebrew not found" with the installation page, installs nothing, and exits with code 3
+
+### Requirement: The bootstrap clones at the expected path and hands over
+When run outside a clone, the bootstrap SHALL clone the repository given by the repository option to the expected clone path. Then it SHALL hand over to the orchestrator with every argument. It SHALL refuse a clone at another path, or an existing folder at the clone path that is not a clone, with exit code 3, and SHALL NOT move or delete either.
 
 #### Scenario: Clone elsewhere
 - **WHEN** the bootstrap runs from a clone that is not at the expected path
@@ -115,15 +134,25 @@ The system SHALL use the container runtime that answers. When none answers, it S
 - the library server step SHALL be deferred, waiting for the database step;
 - the backup job SHALL NOT be installed.
 
-The system SHALL NOT register the library server with any file backend. When Ollama is absent, the system SHALL offer to install it with the Homebrew cask `ollama-app` (when Ollama.app is already installed without its command line, it SHALL NOT install it again but SHALL ask the user to open the application once, and Ollama counts as declined for that run), and SHALL offer each required model with its own confirmation showing its approximate size. When Ollama or a model is declined, the watch job SHALL NOT be installed and indexing SHALL be listed as deferred.
+The system SHALL NOT register the library server with any file backend.
 
 #### Scenario: Runtime declined
 - **WHEN** no container runtime answers and the user declines its installation
 - **THEN** the database step is deferred, the library server step is deferred waiting for the database step, the backup job is not installed, the report lists each, and no registration command is run
 
+### Requirement: Missing Ollama or model is offered, never forced
+When Ollama is absent, the system SHALL offer to install it with the Homebrew cask `ollama-app`, and SHALL offer each required model with its own confirmation showing its approximate size. When Ollama or a model is declined, the watch job SHALL NOT be installed and indexing SHALL be listed as deferred.
+
 #### Scenario: Model declined
 - **WHEN** the user declines a model pull
 - **THEN** the watch job is not installed and the report lists indexing as deferred
+
+### Requirement: An installed Ollama application is not installed again
+When Ollama.app is already installed without its command line, the system SHALL NOT install it again but SHALL ask the user to open the application once, and Ollama counts as declined for that run.
+
+#### Scenario: Application without its command line
+- **WHEN** Ollama.app is installed but its command line is absent
+- **THEN** the cask is not installed again, the user is asked to open the application once, and Ollama counts as declined for that run
 
 ### Requirement: Launchd jobs are rendered, installed and loaded once
 The system SHALL render each launchd template by replacing the home placeholder with the user's home folder, write it under the user's launch agents folder, clear its extended attributes, and load it in the user's session. A job that is installed identical and loaded SHALL be skipped as already done. A job whose installed file differs SHALL be replaced only after confirmation, unloading it first. A load error that is followed by a successful status query of the job SHALL count as done.
@@ -137,15 +166,11 @@ The system SHALL render each launchd template by replacing the home placeholder 
 - **THEN** the job is reported as done
 
 ### Requirement: The library server is registered for the user
-The system SHALL register the library server for the user in Claude Code, launched through the lab-folder link with the Python launcher found on the search path, in serve mode with no backend argument. The step SHALL depend on the lab-folder links step and on the database step: when the database step is declined, deferred, failed or waiting for a manual action, the step SHALL be deferred with the reason "waiting for step database" of design D8 and SHALL run no registration command. It SHALL skip the step when the server is already registered with that link and without a backend argument. It SHALL replace a different registration, including one that carries a backend argument, only after confirmation, and SHALL NOT replace it without one.
+The system SHALL register the library server for the user in Claude Code, launched through the lab-folder link with the Python launcher found on the search path, in serve mode with no backend argument. It SHALL skip the step when the server is already registered with that link and without a backend argument. It SHALL replace a different registration, including one that carries a backend argument, only after confirmation, and SHALL NOT replace it without one.
 
 #### Scenario: Already registered
 - **WHEN** the server query succeeds, names the lab-folder link and shows no backend argument
 - **THEN** the step is skipped
-
-#### Scenario: Database not ready
-- **WHEN** the database step was deferred in the same run
-- **THEN** the library server step is deferred waiting for step database, no registration command is called, and the exit code is 4
 
 #### Scenario: Former file-backend registration
 - **WHEN** the server is registered with the lab-folder link and a backend argument, and the user confirms the replacement
@@ -155,13 +180,27 @@ The system SHALL register the library server for the user in Claude Code, launch
 - **WHEN** the server is registered differently and the user declines the replacement
 - **THEN** the registration is unchanged and the step is reported as declined
 
+### Requirement: The library server step depends on the links and the database
+The library server step SHALL depend on the lab-folder links step and on the database step: when the database step is declined, deferred, failed or waiting for a manual action, the step SHALL be deferred with the reason "waiting for step database" of design D8 and SHALL run no registration command.
+
+#### Scenario: Database not ready
+- **WHEN** the database step was deferred in the same run
+- **THEN** the library server step is deferred waiting for step database, no registration command is called, and the exit code is 4
+
 ### Requirement: Final check, report and manual checklist
 The system SHALL end every run with:
 - a read-only check step, which runs the read-only subset of the installation guide's checks;
 - a report with one line per step (done, already done, declined, deferred with its reason, manual action, failed, not run);
 - the list "remaining manual steps:".
 
-It SHALL exit with code 0 when every step is done or already done, 4 when any step is declined, deferred or waiting for a manual action, and 1 at the first failed step, naming it and the command that failed. It SHALL NOT run the full test runner or the evaluation set; it prints them as next commands.
+It SHALL NOT run the full test runner or the evaluation set; it prints them as next commands.
+
+#### Scenario: End of a run
+- **WHEN** a run ends
+- **THEN** the read-only check step has run, the report gives one line per step, "remaining manual steps:" follows, and the full test runner and the evaluation set are printed as next commands, not run
+
+### Requirement: The exit code follows the step outcomes
+The system SHALL exit with code 0 when every step is done or already done, 4 when any step is declined, deferred or waiting for a manual action, and 1 at the first failed step, naming it and the command that failed.
 
 #### Scenario: Incomplete run
 - **WHEN** one step was declined
@@ -177,17 +216,18 @@ The system SHALL be covered by a test suite that runs the bootstrap and the orch
 - stubs first on the search path, for the package manager, the model runtime, the container tools, the launchd tool, Claude Code, the Keychain tool, Git, the download tool, the platform query and the Python launcher;
 - stub versions of the called repository scripts.
 
-The suite SHALL assert that:
-- the Keychain tool is never invoked;
-- every command is called by name, so only the stubs run;
-- every written path is under the temporary folder;
-- a dry run leaves the fake folders unchanged.
-
 The suite SHALL NOT need the network, Docker, the Keychain or a real launchd session.
 
 #### Scenario: Isolation
 - **WHEN** the suite runs on a machine with real services
 - **THEN** no real service is called and no file outside the temporary folder is written
+
+### Requirement: The install test suite asserts its isolation
+The test suite of the install script SHALL assert that:
+- the Keychain tool is never invoked;
+- every command is called by name, so only the stubs run;
+- every written path is under the temporary folder;
+- a dry run leaves the fake folders unchanged.
 
 #### Scenario: Absolute command path
 - **WHEN** the script text holds an absolute path to a command or a user folder

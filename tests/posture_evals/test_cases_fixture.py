@@ -392,9 +392,9 @@ class PassageAvecBaseJetable(AvecFixtures):
         donnees = json.loads(max(essai.DATA.glob("*/resultats.json")).read_text(encoding="utf-8"))
         self.assertIs(donnees["validant"], True)
 
-    def test_blocking_count_des_cas_livres_vaut_38(self):
+    def test_blocking_count_des_cas_livres_vaut_39(self):
         cas = yaml.safe_load((Path(essai.__file__).resolve().parents[1] / "tests" / "postures" / "cas.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(sum(essai.blocking_count(c) for c in cas), 38)
+        self.assertEqual(sum(essai.blocking_count(c) for c in cas), 39)
 
     def test_rejuger_ne_cree_aucune_base(self):
         passage = essai.DATA / "2026-10-01-090000"

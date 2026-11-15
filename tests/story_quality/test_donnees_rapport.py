@@ -88,7 +88,7 @@ def critere(resultat, equipe, genre, code):
 class Structure(unittest.TestCase):
     def test_le_contrat_et_son_en_tete(self):
         r = donnees()
-        self.assertEqual((r["contract"], r["contract_version"]), ("story_quality_report", 1))
+        self.assertEqual((r["contract"], r["contract_version"]), ("story_quality_report", 2))
         self.assertEqual(r["notice"], {"code": "team_results_notice", "text": "Team results: never a person's evaluation, never a ranking"})
         self.assertEqual(r["grid"], {"core_version": 3, "overlay_version": None, "disabled_codes": []})
 
@@ -307,6 +307,79 @@ class ChaineDuProduit(unittest.TestCase):
         self.assertEqual(donnees()["product_chain"]["lines"][0]["share_not_met"], part(26, 50))
 
 
+def avec_equipe_masquee():
+    """Alpha et Beta visibles, Gamma toute masquée, plus la ligne de couverture des éléments sans équipe (R-128, D1)."""
+    equipes = VUE_EQUIPE + [ligne_equipe(GAMMA, "story", "story-un", "ticket_template", None, None, None, None, None)]
+    couv = VUE_COUVERTURE + [couverture(GAMMA, "story", None, None, None), couverture(data.NO_TEAM, "story", 9, 0, 0)]
+    return equipes, couv
+
+
+class SectionEtNombreDEquipesSansSection(unittest.TestCase):
+    """R-128 (D1, D4) : `section` par équipe, `teams_without_section` pour tout le rapport, un entier simple."""
+
+    def test_section_vraie_avec_un_compte_audite_visible_fausse_si_tout_est_masque(self):
+        equipes, couv = avec_equipe_masquee()
+        r = donnees(equipes=equipes, couv=couv)
+        self.assertEqual([(e["team"], e["section"]) for e in r["teams"] if e["team"] != data.NO_TEAM],
+                         [(ALPHA, True), (BETA, True), (GAMMA, False)])
+
+    def test_le_nombre_compte_les_entrees_sans_section_hors_la_ligne_sans_equipe(self):
+        equipes, couv = avec_equipe_masquee()
+        r = donnees(equipes=equipes, couv=couv)
+        self.assertEqual(r["teams_without_section"], 1)
+        self.assertIs(type(r["teams_without_section"]), int)
+        self.assertEqual(r["teams_without_section"], sum(1 for e in r["teams"] if e["team"] != data.NO_TEAM and not e["section"]))
+
+    def test_aucune_equipe_sans_section_donne_zero(self):
+        self.assertEqual(donnees()["teams_without_section"], 0)
+
+    def test_un_seuil_releve_qui_masque_une_equipe_augmente_le_nombre(self):
+        equipes, couv = avec_equipe_masquee()
+        avant = donnees(equipes=equipes, couv=couv)
+        apres = donnees(equipes=equipes, couv=couv, min_cell=25)       # Alpha : 20 audités, sous 25
+        self.assertEqual((avant["teams_without_section"], apres["teams_without_section"]), (1, 2))
+        self.assertFalse(next(e for e in apres["teams"] if e["team"] == ALPHA)["section"])
+
+    def test_lignes_inversees_ou_resultats_echanges_ne_changent_ni_section_ni_nombre(self):
+        equipes, couv = avec_equipe_masquee()
+        a = donnees(equipes=equipes, couv=couv)
+        b = donnees(equipes=equipes[::-1], couv=couv[::-1])
+        self.assertEqual((a["teams_without_section"], [e["section"] for e in a["teams"]]),
+                         (b["teams_without_section"], [e["section"] for e in b["teams"]]))
+        echange = lambda lignes: [dict(l, team=BETA if l["team"] == ALPHA else ALPHA if l["team"] == BETA else l["team"]) for l in lignes]
+        c = donnees(equipes=echange(equipes), couv=echange(couv))
+        self.assertEqual((a["teams_without_section"], [e["section"] for e in a["teams"]]),
+                         (c["teams_without_section"], [e["section"] for e in c["teams"]]))
+
+
+class UneSeuleEquipe(unittest.TestCase):
+    """R-128 (D3) : `single_team` lu de la présence de lignes dans la vue par équipe, jamais d'une cellule."""
+
+    def une_equipe(self, **options):
+        return donnees(equipes=[l for l in VUE_EQUIPE if l["team"] == ALPHA], **options)
+
+    def test_vrai_avec_une_seule_equipe_faux_avec_deux_faux_avec_aucune(self):
+        self.assertIs(self.une_equipe()["product_chain"]["single_team"], True)
+        self.assertIs(donnees()["product_chain"]["single_team"], False)
+        self.assertIs(donnees(equipes=[])["product_chain"]["single_team"], False)
+
+    def test_inchange_quand_toutes_les_cellules_de_l_equipe_sont_masquees(self):
+        masquees = [ligne_equipe(BETA, "story", "story-un", "ticket_template", None, None, None, None, None)]
+        self.assertIs(donnees(equipes=masquees)["product_chain"]["single_team"], True)
+
+    def test_inchange_quand_le_seuil_est_releve(self):
+        self.assertIs(self.une_equipe(min_cell=25)["product_chain"]["single_team"], True)
+
+    def test_la_ligne_sans_equipe_ne_compte_pas(self):
+        sans_equipe = [ligne_equipe(data.NO_TEAM, "story", "story-un", "ticket_template", 20, 6, 9, 5, None)]
+        alpha = [l for l in VUE_EQUIPE if l["team"] == ALPHA]
+        self.assertIs(donnees(equipes=alpha + sans_equipe)["product_chain"]["single_team"], True)
+        self.assertIs(donnees(equipes=sans_equipe)["product_chain"]["single_team"], False)
+
+    def test_la_marque_ne_change_aucun_chiffre_du_produit(self):
+        self.assertEqual(self.une_equipe()["product_chain"]["lines"], donnees()["product_chain"]["lines"])
+
+
 class IndependanceDeLOrdreEtGardeAntiComparaison(unittest.TestCase):
     def test_le_resultat_est_le_meme_quel_que_soit_l_ordre_des_lignes(self):
         a = donnees()
@@ -331,16 +404,16 @@ class IndependanceDeLOrdreEtGardeAntiComparaison(unittest.TestCase):
 
 
 CLES = {
-    "root": {"contract", "contract_version", "grid", "notice", "teams", "product_chain"},
+    "root": {"contract", "contract_version", "grid", "notice", "teams", "teams_without_section", "product_chain"},
     "grid": {"core_version", "overlay_version", "disabled_codes"},
     "notice": {"code", "text"},
-    "team": {"team", "single_po", "single_po_notice", "coverage", "criteria", "probable_causes"},
+    "team": {"team", "section", "single_po", "single_po_notice", "coverage", "criteria", "probable_causes"},
     "coverage": {"collected", "audited", "empty_acceptance_criteria"},
     "criterion": {"code", "label", "origin", "link", "counts", "share_met", "share_not_met"},
     "counts": {"met", "not_met", "not_applicable", "undetermined"},         # les quatre comptes de D15 : `audited` ne sert qu'au dénominateur
     "causes": {"notice", "lines"},
     "line": {"kind", "code", "label", "origin", "link", "share_not_met"},
-    "chain": {"notice", "lines"},
+    "chain": {"notice", "lines", "single_team"},
 }
 
 

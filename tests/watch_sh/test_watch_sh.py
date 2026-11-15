@@ -29,6 +29,11 @@ FAUX_UV = """#!/bin/sh
 [ "$1" = "--version" ] && { echo "uv ${FAUX_UV_VERSION:-0.13.0}"; exit 0; }
 # uv python find lit .python-version du dossier courant s'il existe (le dossier de code), sinon FAUX_PYTHON_VERSION
 [ "$1" = "python" ] && { [ -n "${FAUX_PYTHON_ABSENT:-}" ] && exit 2; [ -f .python-version ] && { cat .python-version; exit 0; }; echo "${FAUX_PYTHON_VERSION:-3.14.8}"; exit 0; }
+# le contrôle du gel (morning-guard-light D8, R-20261102-5) : « uv run tools/pilot.py freeze --check », noté à part (APPELS_GEL) ; rend GEL_CODE (0 par défaut)
+if [ "$1" = "run" ] && [ "$(basename "$2")" = "pilot.py" ]; then
+  echo "$* | cwd=$(pwd)" >> "$APPELS_GEL"
+  exit "${GEL_CODE:-0}"
+fi
 echo "$* (args complets)" >> "$APPELS_COMPLETS"
 echo "$* WS=${PMZILLA_LAB_WORKSPACE:-}" >> "$HOME/espaces.txt"
 [ "$2" = "--python" ] && set -- "$1" "$4"   # uv run --python <version> <script> : le script redevient le 2e argument
@@ -102,11 +107,15 @@ class Base(unittest.TestCase):
         return fichier
 
     def lancer(self, echec: str = "", curl: int = 0, osascript: int = 0, args=(), script=None, **environnement):
+        # UV_OFFLINE (clé env du fichier géré du bac à sable, R-20261112-48) n'est jamais hérité : un test qui en a besoin le pose
+        # lui-même par `environnement` (ex. UV_OFFLINE="1"), les autres le voient absent. Remplace : l'héritage de UV_OFFLINE depuis
+        # la session. Retrait : permanent (R-20261112-48, point 1).
         env = {k: v for k, v in os.environ.items()
-               if k not in ("PMZILLA_LAB_DATA", "PMZILLA_INDEXATION_MAX_JOURS", "PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN", "PMZILLA_LAB_OLLAMA")
+               if k not in ("PMZILLA_LAB_DATA", "PMZILLA_INDEXATION_MAX_JOURS", "PMZILLA_LAB_WORKSPACE", "PMZILLA_LAB_RUN", "PMZILLA_LAB_OLLAMA", "UV_OFFLINE")
                and not k.startswith("PMZILLA_WATCH_")}
         env = {**env, "PMZILLA_LAB_WORKSPACE": str(self.home / "PMZilla-Lab" / "workspace"), **environnement, "HOME": str(self.home), "APPELS": str(self.appels),
-               "APPELS_COMPLETS": str(self.complets), "APPELS_RESUME": str(self.appels_resume), "ECHEC": echec, "CURL_CODE": str(curl),
+               "APPELS_COMPLETS": str(self.complets), "APPELS_RESUME": str(self.appels_resume), "APPELS_GEL": str(self.home / "appels-gel.txt"),
+               "ECHEC": echec, "CURL_CODE": str(curl),
                "OSASCRIPT_CODE": str(osascript)}
         resultat = subprocess.run(["zsh", str(script or self.script), *args], env=env, capture_output=True, text=True, timeout=60)
         appels = self.appels.read_text().splitlines() if self.appels.exists() else []
@@ -288,17 +297,58 @@ class Rattrapage(Base):
 
     def test_constantes_sur_une_ligne_exacte(self):
         texte = SCRIPT.read_text(encoding="utf-8")
-        self.assertRegex(texte, r'(?m)^HEURE_DUE="07:10"$')
+        self.assertRegex(texte, r'(?m)^HEURE_DUE="05:00"$')   # R-20261102-5 (Q274), réécrit : 05:00 au lieu de 07:10
         self.assertRegex(texte, r'(?m)^HEURE_LIMITE="22:00"$')
 
     def test_avant_l_heure_due_rien_n_est_fait_ni_ecrit(self):
         for option in ("--if-due", "--catch-up"):
-            self.verifier_rien(*self.planifie(heure="07:09", option=option))
+            self.verifier_rien(*self.planifie(heure="04:59", option=option))   # R-20261102-5 (Q274), réécrit : l'heure due est 05:00
 
     def test_a_l_heure_due_exactement_le_passage_a_lieu(self):
-        resultat, appels = self.planifie(heure="07:10")
+        resultat, appels = self.planifie(heure="05:00")   # R-20261102-5 (Q274), réécrit : 05:00 au lieu de 07:10
         self.assertEqual(resultat.returncode, 0)
         self.verifier_jour_complet(appels)
+
+    # Contrôle du gel (morning-guard-light D8, R-20261102-5, Q278) : le faux uv rend GEL_CODE pour « uv run tools/pilot.py freeze --check »
+    def lignes_gel(self):
+        fichier = self.home / "appels-gel.txt"
+        return fichier.read_text().splitlines() if fichier.exists() else []
+
+    def test_gel_4_le_lancement_du_jour_est_saute_sans_rien_ecrire(self):
+        for option in ("--catch-up", "--if-due"):
+            with self.subTest(option=option):
+                (self.home / "appels-gel.txt").unlink(missing_ok=True)
+                self.verifier_rien(*self.planifie(option=option, GEL_CODE="4"))
+                gel = self.lignes_gel()
+                self.assertEqual(len(gel), 1)
+                self.assertIn("run tools/pilot.py freeze --check", gel[0])
+                self.assertIn(f"cwd={self.home / 'PMZilla-Lab' / 'workspace'}", gel[0], "le contrôle part du dossier de code")
+
+    def test_gel_0_au_passage_horaire_suivant_le_jour_a_lieu_une_fois(self):
+        self.verifier_rien(*self.planifie(option="--catch-up", GEL_CODE="4"))
+        resultat, appels = self.planifie(heure="09:00", option="--catch-up", GEL_CODE="0")
+        self.assertEqual(resultat.returncode, 0)
+        self.verifier_jour_complet(appels)
+        self.assertEqual(self.lire()["declencheur"], "rattrapage")
+        self.assertNotIn("verrou de fin illisible", resultat.stdout)
+
+    def test_gel_autre_code_le_passage_a_lieu_avec_la_ligne_du_verrou_illisible(self):
+        resultat, appels = self.planifie(option="--catch-up", GEL_CODE="3")
+        self.assertIn("verrou de fin illisible (code 3) : passage lancé", resultat.stdout)
+        self.verifier_jour_complet(appels)
+
+    def test_gel_jamais_controle_en_lancement_manuel(self):
+        resultat, appels = self.manuel(GEL_CODE="4")
+        self.assertEqual(resultat.returncode, 0)
+        self.verifier_jour_complet(appels)
+        self.assertEqual(self.lignes_gel(), [])
+        self.assertEqual(self.lire()["declencheur"], "manuel")
+
+    def test_gel_jamais_controle_avant_l_heure_due_ni_apres_un_passage_termine(self):
+        self.verifier_rien(*self.planifie(heure="04:59", GEL_CODE="4"))
+        avant = self.ecrire_repere("termine")
+        self.verifier_rien(*self.planifie(GEL_CODE="4"), avant=avant)
+        self.assertEqual(self.lignes_gel(), [])
 
     def test_sans_repere_apres_l_heure_due_le_passage_a_lieu_et_le_repere_est_ecrit(self):
         resultat, appels = self.planifie()
@@ -374,8 +424,8 @@ class Rattrapage(Base):
             with self.subTest(valeur=valeur):
                 self.appels.unlink(missing_ok=True)
                 self.fichier_repere.unlink(missing_ok=True)
-                self.verifier_rien(*self.planifie(heure="07:00", PMZILLA_WATCH_DUE_TIME=valeur))
-                _, appels = self.planifie(heure="07:10", PMZILLA_WATCH_DUE_TIME=valeur)
+                self.verifier_rien(*self.planifie(heure="04:59", PMZILLA_WATCH_DUE_TIME=valeur))   # R-20261102-5 (Q274), réécrit : 05:00 au lieu de 07:10
+                _, appels = self.planifie(heure="05:00", PMZILLA_WATCH_DUE_TIME=valeur)
                 self.verifier_jour_complet(appels)
 
     def test_instant_non_entier_est_ignore_et_l_horloge_du_systeme_sert(self):
@@ -432,7 +482,7 @@ class Rattrapage(Base):
 
     def test_avant_l_heure_due_a_paris_quel_que_soit_le_fuseau_du_processus(self):
         for zone in ("Pacific/Auckland", "America/Los_Angeles", "Asia/Tokyo", "Europe/Paris"):
-            self.verifier_rien(*self.planifie(heure="06:30", TZ=zone))
+            self.verifier_rien(*self.planifie(heure="04:30", TZ=zone))   # R-20261102-5 (Q274), réécrit : avant 05:00
 
     def test_juste_apres_minuit_a_paris_la_veille_est_un_autre_jour_et_rien_n_est_du(self):
         avant = self.ecrire_repere("termine", date="2026-10-14")
@@ -619,7 +669,7 @@ exec /bin/mkdir "$@"
 
     def test_rien_a_faire_et_dossier_en_lecture_seule_reste_silencieux(self):
         self.donnees_en_lecture_seule()
-        resultat, appels = self.planifie(heure="06:00")
+        resultat, appels = self.planifie(heure="04:00")   # R-20261102-5 (Q274), réécrit : avant 05:00
         self.assertEqual((resultat.returncode, resultat.stdout, appels, self.notifications), (0, "", [], []))
         self.assertFalse(self.alerte.exists())
 
@@ -889,7 +939,7 @@ class WatchSh(Base):
         self.assertEqual(appels, [])                                  # aucune étape n'a tourné
         self.assertIn("Veille-Lab", resultat.stderr)
         self.assertIn("Watch-Lab", resultat.stderr)
-        self.assertIn("migrate_watch.py", resultat.stderr)
+        self.assertIn("renommer à la main", resultat.stderr)
         (ws / "Watch-Lab").mkdir()                                   # les deux : le nouveau est pris, sans message
         resultat, _ = self.lancer()
         index = next(l for l in self.complets.read_text().splitlines() if "pmzilla_lab_library.py index" in l)
@@ -1332,7 +1382,7 @@ class DossiersDeCodeEtDeContenu(Base):
         self.assertIn(self.CLE_REFUS, resultat.stdout)
 
     def test_le_refus_vient_apres_le_garde_de_rattrapage_lancement_sans_objet_silencieux(self):
-        resultat, appels = self.planifie(heure="06:00", PMZILLA_LAB_WORKSPACE=str(self.run))   # pas encore l'heure due
+        resultat, appels = self.planifie(heure="04:00", PMZILLA_LAB_WORKSPACE=str(self.run))   # pas encore l'heure due (R-20261102-5, Q274, réécrit : 05:00)
         self.assertEqual((resultat.returncode, resultat.stdout, resultat.stderr, appels), (0, "", "", []))
         self.assertEqual(self.notifications, [])
         self.assertFalse((self.donnees / "veille-du-jour.json").exists())

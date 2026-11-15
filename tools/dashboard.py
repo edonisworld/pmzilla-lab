@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["pyyaml", "psycopg[binary]", "httpx", "numpy", "mcp>=1.2,<2"]
+# dependencies = ["pyyaml", "psycopg[binary]", "httpx", "numpy", "mcp>=2,<3"]
 # ///
 """
 PMZilla Lab : tableau de bord.
@@ -16,7 +16,7 @@ le contenu d'un article ou d'un livre, jamais un titre d'article.
 lus dans d'autres fichiers (logs de la veille, rapports d'essai et du flux, journal) ne changent pas avec la langue.
 
 Sources lues (chacune peut manquer : la section affiche « pas encore de données ») :
-    ~/Library/Logs/pmzilla-watch.log et pmzilla-essai.log
+    ~/Library/Logs/pmzilla-watch.log (dates, comptes, durées et clés des sources en erreur seulement, jamais le texte d'une ligne)
     _bmad-output/essais/essai-*.md, _bmad-output/pmzilla/{veille,miroir}/
     base de la veille (schéma knowledge, rôle pmzilla_knowledge_ro, délai de connexion de 2 s) : articles et passages de la collection
     watch (tables de la bibliothèque, nom exact de la collection), partages et sélections du jour (tables triage_*) ; base qui ne répond

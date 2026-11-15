@@ -81,7 +81,7 @@ def motifs_des_listes():
         texte = chemin.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         raise ListeIndisponible("illisible") from None
-    noms = sensitive_names.parse_names(texte) + sensitive_names.extract_names(chemin.parent / sensitive_names.NOM_EXTRAIT)
+    noms = sensitive_names.names_with_extract(sensitive_names.parse_names(texte), chemin)   # source unique (A-75, R-20261112-05)
     return sensitive_names.patterns(noms)
 
 

@@ -14,7 +14,8 @@ import messages  # noqa: E402
 SOURCE = Path(__file__).resolve().parents[2] / "tools" / "flow_import.py"
 VALEURS = {"read": 1, "inserted": 2, "updated": 3, "unchanged": 4, "unreadable": 5, "teams": 6, "links_added": 7,
            "links_removed": 8, "label_periods": 12, "version_periods": 13, "refused": 14, "skipped": 15, "back": 16, "percent": "20", "added": 9, "orphans": 10, "marked": 11, "file": "a.csv", "column": "Col", "path": "p/c.json",
-           "name": "ValueError", "n": 17, "d": 18, "k": 19, "field": "status"}
+           "name": "ValueError", "n": 17, "d": 18, "k": 19, "field": "status",
+           "absent": 2, "stored": 4, "share": 50.0}          # R-20261114-71 : trois nombres, jamais des chaînes
 
 
 class CataloguesImport(unittest.TestCase):
@@ -68,12 +69,27 @@ class CataloguesImport(unittest.TestCase):
         en, fr = messages.Messages(fim.CATALOGS, "en"), messages.Messages(fim.CATALOGS, "fr")
         self.assertEqual(en("empty_export"), "empty export: --mark-absent refused")
         self.assertEqual(fr("empty_export"), "export vide : --mark-absent refusé")
-        self.assertIn("more than 20% of stored tickets", en("absent_share_exceeded", percent="20"))
-        self.assertIn("plus de 20 % des tickets stockés", fr("absent_share_exceeded", percent="20"))
+        self.assertIn("more than 20% of stored tickets", en("absent_share_exceeded", percent="20", absent=2, stored=4, share=50.0))
+        self.assertIn("plus de 20 % des tickets stockés", fr("absent_share_exceeded", percent="20", absent=2, stored=4, share=50.0))
         for langue in ("fr", "en"):
             self.assertIn("--max-absent-percent", fim.CATALOGS[langue]["absent_share_exceeded"])     # comment relancer volontairement
             self.assertEqual(messages.fields(fim.CATALOGS[langue]["empty_export"]), set())
-            self.assertEqual(messages.fields(fim.CATALOGS[langue]["absent_share_exceeded"]), {"percent"})
+            self.assertEqual(messages.fields(fim.CATALOGS[langue]["absent_share_exceeded"]),
+                             {"percent", "absent", "stored", "share"})          # R-20261114-69 : les chiffres s'ajoutent au seuil
+        chiffres = dict(percent="20", absent=2, stored=4)
+        self.assertIn("2 of 4 stored tickets would become absent (50.0%)", en("absent_share_exceeded", share=fim.Part(50.0), **chiffres))
+        self.assertIn("2 tickets sur 4 stockés deviendraient absents (50,0 %)",
+                      fr("absent_share_exceeded", share=fim.Part(50.0, virgule=True), **chiffres))
+
+    def test_absent_stock_et_part_refusent_une_chaine(self):
+        """R-20261114-71 : ces trois valeurs sont des nombres ; une chaîne à leur place fait échouer la construction du message."""
+        valides = dict(percent="20", absent=2, stored=4, share=fim.Part(50.0))
+        for langue in ("fr", "en"):
+            t = messages.Messages(fim.CATALOGS, langue)
+            t("absent_share_exceeded", **valides)
+            for nom in ("absent", "stored", "share"):
+                with self.assertRaises(ValueError, msg=f"{langue}/{nom}"):
+                    t("absent_share_exceeded", **{**valides, nom: "2"})
 
     def test_phrases_de_la_conception_d6_pour_les_fichiers_et_l_historique_retires(self):
         """Design D6 (database-only) : l'import refuse un fichier d'export et --history (code 2), sans nommer de fichier."""

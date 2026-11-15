@@ -127,6 +127,35 @@ class Branches(Labo):
         self.assertEqual((niveau, entree["reason"]["counts"]["prunable"]), ("warning", 1))
         self.assertEqual(appels_git_modifiants(self.appels()), [])
 
+    def planter_copie_d_essai(self, nom="copie-cas"):
+        """Une copie de séance du jeu d'essai (worktree détaché) sous le dossier des essais du faux laboratoire."""
+        dossier = self.donnees / "essais" / "2026-10-07-224033" / nom
+        dossier.parent.mkdir(parents=True, exist_ok=True)
+        git(self.principal, "worktree", "add", "-q", "--detach", str(dossier), "main")
+        return dossier
+
+    def test_copie_d_essai_orpheline_signalee_sans_rien_retirer(self):
+        dossier = self.planter_copie_d_essai()
+        niveau, entree, p = self.niveau("branches")
+        self.assertEqual((niveau, entree["reason"]["counts"]["trial_orphans"], p.returncode), ("warning", 1, 0))
+        self.assertIn("copie-cas", self.lancer("--language", "en").stdout)
+        self.assertNotIn("copie-cas", self.lancer("--json").stdout)
+        self.assertTrue(dossier.is_dir())
+        self.assertEqual(appels_git_modifiants(self.appels()), [])
+
+    def test_copie_d_essai_d_un_passage_en_cours_non_signalee(self):
+        import fcntl
+        self.planter_copie_d_essai()
+        (self.donnees / "essais").mkdir(exist_ok=True)
+        with open(self.donnees / "essais" / ".passage.lock", "w") as verrou:
+            fcntl.flock(verrou, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(self.niveau("branches")[0], "ok")
+
+    def test_worktree_hors_du_dossier_des_essais_n_est_pas_une_copie_d_essai(self):
+        self.ajouter_branche("feat/en-cours", jour="2026-10-13", worktree=True)
+        niveau, entree, _ = self.niveau("branches")
+        self.assertEqual((niveau, entree["reason"]["counts"].get("trial_orphans", 0)), ("ok", 0))
+
     def test_jamais_un_probleme(self):
         for i in range(4):
             self.ajouter_branche(f"feat/vieille-{i}", fusionnee=True, worktree=True)

@@ -79,6 +79,6 @@ class RechercheDesNotes(LectureEnBase):
     def test_read_passage_porte_les_champs_de_la_note(self):
         biblio = self.lire(dt.date(2027, 1, 5))
         premier = biblio.search(QUESTION, [CONTEXTE], 8)[0]
-        lu = biblio.read(premier["passage_id"], 0, 1)
+        lu = biblio.read(premier["passage_id"], 0, 1, [CONTEXTE])
         self.assertEqual((lu["note_date"], lu["review_date"], lu["stale"]), ("2026-09-01", "2026-12-01", True))
         self.assertNotIn("author", lu)

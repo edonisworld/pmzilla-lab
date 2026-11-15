@@ -121,6 +121,17 @@ class Labo:
         """Contenu imprimé par la fausse liste de processus (lignes p… et n… de lsof -F pn)."""
         self.lsof.write_text(contenu, encoding="utf-8")
 
+    @property
+    def gestes(self):
+        """Fausse file des gestes (R-160) : toujours dans le dossier temporaire, jamais le vrai fichier."""
+        return self.tmp / "gestes.md"
+
+    def ecrire_gestes(self, contenu):
+        self.gestes.write_text(contenu, encoding="utf-8")
+
+    def retirer_gestes(self):
+        self.gestes.unlink(missing_ok=True)
+
     def lsof_commande(self):
         return f"cat {self.lsof}"
 
@@ -148,6 +159,7 @@ class Labo:
             "PMZILLA_LAB_SENSITIVE_NAMES": str(self.noms),
             "PMZILLA_LAB_WORKSPACE": str(self.contenu_factice),
             "PILOT_LSOF": self.lsof_commande(),
+            "PILOT_GESTES": str(self.gestes),
             "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0",
             "HOME": str(self.tmp / "maison"),
         })

@@ -92,10 +92,11 @@ class SchemaBrut(unittest.TestCase):
         for table, colonne in colonnes:
             self.assertNotIn(colonne.lower(), NOMS_INTERDITS, (table, colonne))
             self.assertNotIn("label", colonne.lower(), (table, colonne))
-            self.assertNotIn("version", colonne.lower(), (table, colonne))
+            if colonne != "current_versions":          # seule colonne de versions : change flow-version-share (2026-10-23), migration 0017
+                self.assertNotIn("version", colonne.lower(), (table, colonne))
         etiquettes = c.execute("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'flow' "
                                "AND column_name ILIKE '%label%'").fetchall()
-        self.assertEqual({t for t, _ in etiquettes}, {fs.TABLE_ETIQUETTES})            # seule table des périodes déclarées
+        self.assertEqual({t for t, _ in etiquettes}, {fs.TABLE_ETIQUETTES, fs.TABLE_ETIQUETTES_REFERENTIEL})   # périodes déclarées et référentiel (décision R-20261028-91)
 
     def test_genre_du_passage_contraint(self):
         c = self.conn()

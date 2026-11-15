@@ -74,6 +74,12 @@ class RequetesSansBase(unittest.TestCase):
                 if any(table in requete for table in ("flow.issues", "flow.links", "flow.transitions")):
                     self.assertIn(MARQUE, requete, requete)
 
+    def test_la_requete_des_mises_a_jour_ecarte_les_marques(self):
+        requetes = self.requetes_emises(flow_store.lire_maj_tickets)
+        self.assertEqual(len(requetes), 1)
+        self.assertIn("updated_at", requetes[0])
+        self.assertIn(MARQUE, requetes[0])
+
     def test_aucune_requete_ne_lit_les_periodes_ni_la_colonne_dans_la_sortie(self):
         for lecteur in (flow_store.lire_tickets_flux, flow_store.lire_dependances, flow_store.lire_historique):
             for requete in self.requetes_emises(lecteur):

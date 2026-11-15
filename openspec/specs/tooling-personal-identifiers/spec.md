@@ -17,7 +17,7 @@ The system SHALL search every Git-tracked text file case-insensitively for the i
 Source: tests/identifiants_personnels/test_identifiants_personnels.py (test_trouve_l_identifiant_et_le_chemin_personnel)
 
 ### Requirement: Identifier sources
-The system SHALL take identifiers from the session account, the home folder name, the repository root path, an optional local, Git-ignored identifiers file and the cases author identifier read from the local, Git-ignored cases configuration file of the personal layer, and SHALL store none in tracked files. The cases author identifier SHALL be read from that file only, never from the environment setting of the cases module. When that file is absent, has no author key or gives an empty value, the system SHALL use the other identifiers only, print nothing about it and keep its exit code; when the file exists but cannot be read as text, the system SHALL exit with code 2 and a message naming the file, never its content.
+The system SHALL take identifiers from the session account, the home folder name, the repository root path, an optional local, Git-ignored identifiers file and the cases author identifier read from the local, Git-ignored cases configuration file of the personal layer, and SHALL store none in tracked files.
 
 Source: tests/identifiants_personnels/test_identifiants_personnels.py (test_identifiants_viennent_du_compte_et_du_fichier_local, test_le_chemin_de_la_racine_est_un_identifiant, AuteurDesCas)
 
@@ -37,21 +37,31 @@ Source: tests/identifiants_personnels/test_identifiants_personnels.py (test_iden
 - **WHEN** the author key is indented, or the value is under another key
 - **THEN** no cases author identifier is read
 
-#### Scenario: Author absent or empty
-- **WHEN** the cases configuration file is absent, has no author key, or gives an empty value
-- **THEN** the identifiers are the same as without that file, nothing is printed about it, and the exit code is unchanged
+#### Scenario: Given file
+- **WHEN** a given text file contains the cases author identifier
+- **THEN** it is reported and the exit code is 1
+
+### Requirement: The cases author identifier comes from the configuration file only
+The system SHALL read the cases author identifier from the local cases configuration file only, never from the environment setting of the cases module.
+
+Source: tests/identifiants_personnels/test_identifiants_personnels.py (AuteurDesCas)
 
 #### Scenario: Environment setting not read
 - **WHEN** the cases author environment setting holds an invented handle and no cases configuration file exists
 - **THEN** that handle is not among the identifiers
 
+### Requirement: Absent or unreadable cases configuration
+When the local cases configuration file is absent, has no author key or gives an empty value, the system SHALL use the other identifiers only, print nothing about it and keep its exit code; when the file exists but cannot be read as text, the system SHALL exit with code 2 and a message naming the file, never its content.
+
+Source: tests/identifiants_personnels/test_identifiants_personnels.py (AuteurDesCas)
+
+#### Scenario: Author absent or empty
+- **WHEN** the cases configuration file is absent, has no author key, or gives an empty value
+- **THEN** the identifiers are the same as without that file, nothing is printed about it, and the exit code is unchanged
+
 #### Scenario: Unreadable configuration file
 - **WHEN** the cases configuration file exists but is not valid text
 - **THEN** the scanner exits with code 2, names the file, and prints none of its content
-
-#### Scenario: Given file
-- **WHEN** a given text file contains the cases author identifier
-- **THEN** it is reported and the exit code is 1
 
 ### Requirement: Ignored files
 The system SHALL ignore untracked files, binary or image files, files that cannot be decoded as text, a default set of personal non-published documents, and the round-table output folder, while still scanning the rest of the output folder; extra exclusions may be given.
@@ -126,13 +136,22 @@ The system SHALL accept a path to a text file and search it, case-insensitively,
 Source: tests/identifiants_personnels/test_identifiants_personnels.py (FichierDonne)
 
 ### Requirement: Repository guard against personal identifiers
-The system SHALL include, in the scanner's test suite, a test that runs the scanner on the real repository: the tracked files, the default exclusions and the identifiers of the current session. The test SHALL fail on any occurrence of an identifier in a tracked file. No file SHALL be tolerated, including the files that carried a former name before batch 8 and the social handle line of the tracked watch triage settings, since the handle lives in the untracked local settings layer. The failure message SHALL name only files and line numbers, never an identifier nor a line text. Where no identifier of the session appears in the repository, the test SHALL pass.
+The system SHALL include, in the scanner's test suite, a test that runs the scanner on the real repository: the tracked files, the default exclusions and the identifiers of the current session. The test SHALL fail on any occurrence of an identifier in a tracked file. Where no identifier of the session appears in the repository, the test SHALL pass.
 
 Source: tests/identifiants_personnels/test_identifiants_personnels.py (DepotReel)
 
 #### Scenario: Clean repository
 - **WHEN** no tracked file outside the default exclusions contains an identifier
 - **THEN** the test passes
+
+#### Scenario: Another machine
+- **WHEN** the suite runs under an account whose identifiers appear in no tracked file
+- **THEN** the test passes
+
+### Requirement: The repository guard tolerates no file
+The repository guard SHALL tolerate no file, including the files that carried a former name before batch 8 and the social handle line of the tracked watch triage settings, since the handle lives in the untracked local settings layer. The failure message of the repository guard SHALL name only files and line numbers, never an identifier nor a line text.
+
+Source: tests/identifiants_personnels/test_identifiants_personnels.py (DepotReel)
 
 #### Scenario: Former-name file
 - **WHEN** a tracked file that carried a former name before batch 8 contains an identifier
@@ -142,14 +161,10 @@ Source: tests/identifiants_personnels/test_identifiants_personnels.py (DepotReel
 - **WHEN** the tracked triage settings hold an identifier on the social handle line
 - **THEN** the test fails, its message names the file and the line number, and contains neither the identifier nor the line text
 
-#### Scenario: Another machine
-- **WHEN** the suite runs under an account whose identifiers appear in no tracked file
-- **THEN** the test passes
-
 ### Requirement: Other guards read the scanner's identifiers
 The system SHALL make every test that keeps a personal identifier out of a file or an output read the identifiers from the scanner's identifier function, compare them without regard to case, report a failure without printing the identifier, and SHALL NOT hard-code a personal identifier in any test.
 
-Source: tests/parity/test_parity.py (test_formulations_courtes_sans_extrait_ni_nom), tests/watch_triage/test_watch_triage.py (test_aucun_identifiant_personnel_dans_les_options_ni_dans_l_aide), tests/pmzilla_lab_library/test_coherence_noms.py (test_aucun_identifiant_personnel_dans_les_fichiers_lus_par_le_modele)
+Source: tests/parity/test_parity.py, tests/watch_triage/test_watch_triage.py, tests/pmzilla_lab_library/test_coherence_noms.py (the personal-identifier test of each)
 
 #### Scenario: Identifier in the frozen parity queries
 - **WHEN** the frozen query file contains one of the session's identifiers, in any case

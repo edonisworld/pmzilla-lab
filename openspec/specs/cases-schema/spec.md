@@ -6,7 +6,7 @@ The cases schema of the PostgreSQL database: its three tables, integrity constra
 Source of truth: `tests/db/test_cases_schema.py`, the cases migration under the database migrations folder.
 ## Requirements
 ### Requirement: The cases schema stores experiments, their notes and closed cases
-The system SHALL provide in the cases schema exactly three tables (experiments, experiment notes, cases), owned by the owner role, created by a migration that inserts no data, contains no password and creates or alters no role. An experiment SHALL record its author, start date, posture, status, problem, context, hypotheses, chosen path, references used, what is tested, expected signal, success criterion, review date, postponement count and an embedding (optional for an experiment, required for a case). A case SHALL record the same description copied from its experiment, its launch and review dates, the history of the experiment's notes, an outcome, a drop reason, what got stuck, a confidence level and an embedding.
+The system SHALL provide in the cases schema exactly three tables (experiments, experiment notes, cases), owned by the owner role, created by a migration that inserts no data, contains no password and creates or alters no role.
 
 Source: `tests/db/test_cases_schema.py` (SansBase, SchemaCases.test_trois_tables_colonnes_index_et_proprietaire, test_tables_vides_apres_migration, test_migration_rejouee_sans_effet)
 
@@ -18,10 +18,50 @@ Source: `tests/db/test_cases_schema.py` (SansBase, SchemaCases.test_trois_tables
 - **WHEN** the migrations are run a second time
 - **THEN** nothing is applied and the cases tables are unchanged
 
-### Requirement: Cases data integrity constraints
-The system SHALL reject an experiment whose status, posture or context shape is outside the allowed set, whose hypotheses or references used are not a list, whose postponement count is negative, whose review date is before its start date, or whose author, problem, test, expected signal or success criterion is blank; a note for an unknown experiment or with a blank text; a case whose outcome or confidence is outside the allowed set, whose history is not a list, whose review date is before its launch date, whose outcome is "dropped" without a non-blank drop reason, or whose experiment already has a case. An experiment without posture SHALL be accepted.
+### Requirement: An experiment records its description and follow-up
+An experiment SHALL record its author, start date, posture, status, problem, context, hypotheses, chosen path, references used, what is tested, expected signal, success criterion, review date, postponement count and an embedding (optional for an experiment, required for a case).
 
-Source: `tests/db/test_cases_schema.py` (test_valeurs_refusees_sur_experiments, test_valeurs_refusees_sur_cas, test_un_seul_cas_par_experience_et_note_d_une_experience_inconnue)
+Source: `tests/db/test_cases_schema.py` (SchemaCases.test_trois_tables_colonnes_index_et_proprietaire)
+
+#### Scenario: Experiment columns
+- **WHEN** the experiments table is inspected after all migrations
+- **THEN** it has a column for each recorded element, and its embedding column accepts an empty value
+
+### Requirement: A case records its experiment's description and its outcome
+A case SHALL record the same description copied from its experiment, its launch and review dates, the history of the experiment's notes, an outcome, a drop reason, what got stuck, a confidence level and an embedding.
+
+Source: `tests/db/test_cases_schema.py` (SchemaCases.test_trois_tables_colonnes_index_et_proprietaire)
+
+#### Scenario: Case columns
+- **WHEN** the cases table is inspected after all migrations
+- **THEN** it has a column for each recorded element, and its embedding column is required
+
+### Requirement: Cases data integrity constraints
+The system SHALL reject an experiment whose status, posture or context shape is outside the allowed set, whose hypotheses or references used are not a list, whose postponement count is negative, whose review date is before its start date, or whose author, problem, test, expected signal or success criterion is blank. An experiment without posture SHALL be accepted.
+
+Source: `tests/db/test_cases_schema.py` (test_valeurs_refusees_sur_experiments)
+
+#### Scenario: Invalid experiment enumeration
+- **WHEN** an experiment with an unknown status is inserted
+- **THEN** a check violation is raised
+
+#### Scenario: Experiment without posture
+- **WHEN** an experiment is inserted with no posture
+- **THEN** the insert succeeds
+
+### Requirement: Experiment note integrity constraints
+The system SHALL reject a note for an unknown experiment or with a blank text.
+
+Source: `tests/db/test_cases_schema.py` (test_un_seul_cas_par_experience_et_note_d_une_experience_inconnue)
+
+#### Scenario: Note for an unknown experiment
+- **WHEN** a note is inserted for an experiment that does not exist
+- **THEN** the insert is refused
+
+### Requirement: Case integrity constraints
+The system SHALL reject a case whose outcome or confidence is outside the allowed set, whose history is not a list, whose review date is before its launch date, whose outcome is "dropped" without a non-blank drop reason, or whose experiment already has a case.
+
+Source: `tests/db/test_cases_schema.py` (test_valeurs_refusees_sur_cas, test_un_seul_cas_par_experience_et_note_d_une_experience_inconnue)
 
 #### Scenario: Dropped without reason
 - **WHEN** a case is inserted with the outcome "dropped" and no drop reason
@@ -31,8 +71,8 @@ Source: `tests/db/test_cases_schema.py` (test_valeurs_refusees_sur_experiments, 
 - **WHEN** a second case is inserted for the same experiment
 - **THEN** a uniqueness violation is raised
 
-#### Scenario: Invalid enumerations
-- **WHEN** an experiment with an unknown status, or a case with an unknown outcome or confidence, is inserted
+#### Scenario: Invalid case enumerations
+- **WHEN** a case with an unknown outcome or confidence is inserted
 - **THEN** a check violation is raised
 
 ### Requirement: The success criterion is never rewritten

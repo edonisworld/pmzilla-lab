@@ -3,7 +3,7 @@
     bash tests/run_all.sh export_jira_api </dev/null
 
 Faux serveur et données inventées de test_export_jira_api.py, réutilisés tels quels. Ces tests épinglent ce que l'export
-demande à Jira et ce qu'il enregistre : aucun champ de personne, jamais d'étiquette ni de version (database-only, D5), jamais de
+demande à Jira et ce qu'il enregistre : aucun champ de personne, jamais d'étiquette (database-only, D5), les versions courantes seulement (flow-version-share), jamais de
 valeur PO, aucun fichier écrit.
 """
 import re
@@ -68,7 +68,7 @@ class GardeChamps(Base):
         self.exporter()
         self.verifier_aucun_champ_interdit()
 
-    def test_labels_et_versions_jamais_demandes_avec_ou_sans_bloc_d_etiquettes_declarees(self):
+    def test_etiquettes_jamais_demandees_versions_courantes_toujours_demandees(self):
         declarees = "declared_labels:\n  cycle:\n    prefix: label-\n    labels: [label-a, label-b]\n"
         for reglages in (None, TOUS_LES_REGLAGES, TOUS_LES_REGLAGES + declarees):
             with self.subTest(reglages=("defaut" if reglages is None else "tous")):
@@ -76,7 +76,7 @@ class GardeChamps(Base):
                 self.ecrire_reglages(reglages)
                 self.exporter()
                 self.assertNotIn("labels", self.champs_demandes())
-                self.assertNotIn("fixVersions", self.champs_demandes())
+                self.assertLessEqual({"fixVersions", "versions"}, self.champs_demandes())      # change flow-version-share (2026-10-23)
                 self.verifier_aucun_champ_interdit()
 
     def test_aucune_valeur_po_ni_etiquette_dans_les_instantanes(self):

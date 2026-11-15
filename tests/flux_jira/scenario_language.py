@@ -22,7 +22,7 @@ import test_flux_jira as fx  # noqa: E402
 EQUIPES = [f"Team {c}" for c in "ABCDEFGHIJKL"]          # douze équipes : la note sur les équipes s'affiche
 YAML = """portfolio_types: [Epic, RN Task]
 excluded_projects: [BUG]
-waiting_states: [Ready for, Waiting]
+waiting_states: [Awaiting, Waiting]
 jql_export: "project in (ABC, DEF) AND resolved >= -20w"
 """
 
@@ -65,14 +65,14 @@ class Jeu:
 
 
 def historique(lignes: list[dict], rng: random.Random) -> dict:
-    """Cache d'historique inventé : parcours Definition, Ready, Implementation, puis fermeture ; quelques trous."""
+    """Cache d'historique inventé : parcours Specification, Awaiting Development, Development, puis fermeture ; quelques trous."""
     cache = {}
     for i, t in enumerate(lignes):
         if t["cle"].startswith("BUG-") or i % 9 == 4:           # absents du cache : couverture imparfaite
             continue
         d = t["cree"]
-        etapes = [(d, "Open", "Definition - Ongoing"), (d, "Definition - Ongoing", "Ready for Implementation"),
-                  (d, "Ready for Implementation", "Implementation - Ongoing")]
+        etapes = [(d, "Open", "Specification - Active"), (d, "Specification - Active", "Awaiting Development"),
+                  (d, "Awaiting Development", "Development - Active")]
         transitions = []
         for k, (jour, de, vers) in enumerate(etapes):
             date = jour + __import__("datetime").timedelta(days=2 + 3 * k + rng.randint(0, 2))
@@ -218,10 +218,10 @@ def jouer(language: str | None) -> dict[str, str]:
         csv_brut(ws / "no-resolved.csv", ["Issue Type", "Status", "Created"], [["Story", "Open", "05/Aug/2026 09:00"]])
         jeu.lancer("statuses-no-resolved", "statuses", str(ws / "no-resolved.csv"))
         jeu.lancer("compute-older", "compute", a, b, "--name", "s", "--today", "2026-09-20", "--no-comparison",
-                   "--scope", "ABC,DEF,ZZZ", "--history", "--dormant-from-history", "--points", "--target-date", "2026-11-15",
+                   "--scope", "ABC,DEF,ZZZ", "--history", "--dormant-from-history", "--target-date", "2026-11-15",
                    "--batch-closure-resolutions", "Done,Closed")
         jeu.lancer("compute-newer-with-comparison", "compute", a, b, "--name", "s", "--today", "2026-10-04",
-                   "--scope", "ABC,DEF,ZZZ", "--history", "--dormant-from-history", "--points", "--target", "40",
+                   "--scope", "ABC,DEF,ZZZ", "--history", "--dormant-from-history", "--target", "40",
                    "--target-date", "2026-11-15", "--batch-closure-resolutions", "Done,Closed")
         jeu.lancer("compute-dormants-history", "compute", a, b, "--name", "d", "--today", "2026-10-04", "--no-comparison",
                    "--dormant-from-history", "--teams-only", "--types", "Story,Bug,Task",
@@ -265,7 +265,7 @@ def jouer(language: str | None) -> dict[str, str]:
         fx.ecrire_yaml(ws, YAML)
         # config migrate : rien d'abord, puis un ancien flux.yaml
         jeu.lancer("config-nothing-to-migrate", "config", "migrate")
-        fx.ecrire_yaml(ws, 'etats_attente: [Ready for]\nprojets_exclus: [DEF]\nseuil_fermetures_groupees: 5\n')
+        fx.ecrire_yaml(ws, 'etats_attente: [Awaiting]\nprojets_exclus: [DEF]\nseuil_fermetures_groupees: 5\n')
         jeu.lancer("config-dry-run", "config", "migrate", "--dry-run")
         jeu.lancer("config-migrate", "config", "migrate")
         (ws / "Flux-Lab" / "flux.yaml").unlink()

@@ -67,6 +67,9 @@ SCRIPT
 chmod +x "$bin/security" "$bin/colima" "$bin/docker" "$bin/osascript"
 export OSA_LOG="$tmp/osa"; : > "$OSA_LOG"
 unset DB_BACKUP_NOTIFIER DB_BACKUP_GARDER
+# R-20261102-5 (Q278) : le contrôle du gel d'un passage planifié (DB_BACKUP_NOTIFIER=1) lirait sinon le vrai verrou de fin du Mac ; remplacé ici par « true »
+# (code 0 : le passage a lieu), sauf dans les cas dédiés du contrôle du gel plus bas
+export DB_BACKUP_FREEZE_CHECK=true
 export FAUX_LOG="$tmp/log"; : > "$FAUX_LOG"
 export FAUX_COMPOSE="$racine/docker-compose.yml"
 export FAUX_ABSENTS=""
@@ -216,6 +219,30 @@ verifie "db_backup : sauvegarde réussie sous launchd, code 0, aucune notificati
 FAUX_ABSENTS="flow" DB_BACKUP_NOTIFIER=1 DB_BACKUP_SAUVEGARDES="$notif" DB_BACKUP_DATE="2026-10-12" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
 verifie "db_backup : schéma absent sous launchd, code 1 et notification" "$([ $code -eq 1 ] && grep -q 'code 1' "$OSA_LOG"; echo $?)"
 verifie "db_backup : aucune notification ne contient de mot de passe, de chemin de dump ni de contenu" "$(grep -Eq "$MDP|DUMP |\.dump" "$OSA_LOG"; [ $? -ne 0 ]; echo $?)"
+
+# --- contrôle du gel d'un passage planifié (morning-guard-light D8, R-20261102-5, Q278) : DB_BACKUP_FREEZE_CHECK remplace « uv run tools/pilot.py freeze --check »
+gel="$tmp/gel"; : > "$OSA_LOG"; : > "$FAUX_LOG"
+gel_donnees="$tmp/gel-donnees"; mkdir -p "$gel_donnees"
+DB_BACKUP_FREEZE_CHECK='exit 4' DB_BACKUP_NOTIFIER=1 PMZILLA_LAB_DATA="$gel_donnees" DB_BACKUP_SAUVEGARDES="$gel" DB_BACKUP_DATE="2026-10-13" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : passage planifié pendant une fin de branche (gel 4) : sauté, code 0, ligne de saut" "$([ $code -eq 0 ] && grep -qF 'sauvegarde planifiée sautée : une fin de branche est en cours ; nouvel essai au passage horaire' "$tmp/s"; echo $?)"
+verifie "db_backup : gel 4 : aucun dossier, aucun repère, aucun appel à Docker, aucune notification" "$([ ! -e "$gel/db-2026-10-13" ] && [ ! -e "$gel_donnees/sauvegarde.encours" ] && ! grep -q '^docker' "$FAUX_LOG" && ! grep -q '^MARQ' "$FAUX_LOG" && [ ! -s "$OSA_LOG" ]; echo $?)"
+# l'absence finale du repère ne prouve rien (il est retiré à la sortie) : l'ordre est vérifié sur le texte (contrôle du dossier du jour, puis gel, puis poser_repere)
+ordre=$(grep -n -E '^if \[ -e "\$CIBLE" \]; then$|^if \[ "\$\{DB_BACKUP_NOTIFIER:-\}" = "1" \]; then$|^poser_repere sauvegarde\.encours$' "$racine/tools/db_backup.sh" | cut -d: -f1 | tr '\n' ' ')
+read -r l_jour l_gel l_repere reste <<< "$ordre"
+verifie "statique : db_backup.sh contrôle le dossier du jour, puis le gel, puis pose le repère (trois lignes, dans cet ordre)" "$([ -n "$l_repere" ] && [ -z "$reste" ] && [ "$l_jour" -lt "$l_gel" ] && [ "$l_gel" -lt "$l_repere" ]; echo $?)"
+: > "$FAUX_LOG"
+DB_BACKUP_FREEZE_CHECK='exit 0' DB_BACKUP_NOTIFIER=1 DB_BACKUP_SAUVEGARDES="$gel" DB_BACKUP_DATE="2026-10-13" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : passage planifié suivant, gel 0 : la sauvegarde a lieu et écrit le dossier du jour" "$([ $code -eq 0 ] && [ -d "$gel/db-2026-10-13" ] && grep -q '^docker' "$FAUX_LOG" && ! grep -q 'sautée' "$tmp/s"; echo $?)"
+rm -rf "$gel/db-2026-10-14"
+DB_BACKUP_FREEZE_CHECK='exit 2' DB_BACKUP_NOTIFIER=1 DB_BACKUP_SAUVEGARDES="$gel" DB_BACKUP_DATE="2026-10-14" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : contrôle du gel impossible (code 2) : ligne du verrou illisible, la sauvegarde a lieu" "$([ $code -eq 0 ] && grep -qF 'verrou de fin illisible (code 2) : passage lancé' "$tmp/s" && [ -d "$gel/db-2026-10-14" ]; echo $?)"
+rm -f "$tmp/gel-appele"
+DB_BACKUP_FREEZE_CHECK="touch $tmp/gel-appele; exit 4" DB_BACKUP_SAUVEGARDES="$gel" DB_BACKUP_DATE="2026-10-15" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : passage manuel (sans DB_BACKUP_NOTIFIER) : le contrôle du gel n'est jamais appelé, la sauvegarde a lieu" "$([ $code -eq 0 ] && [ ! -e "$tmp/gel-appele" ] && [ -d "$gel/db-2026-10-15" ]; echo $?)"
+: > "$FAUX_LOG"
+DB_BACKUP_FREEZE_CHECK="touch $tmp/gel-appele; exit 4" DB_BACKUP_NOTIFIER=1 DB_BACKUP_SAUVEGARDES="$gel" DB_BACKUP_DATE="2026-10-15" bash "$racine/tools/db_backup.sh" > "$tmp/s" 2>&1; code=$?
+verifie "db_backup : dossier du jour déjà là, gel 4 possible : le contrôle n'est pas appelé, 'existe déjà', code 0, aucun appel à Docker" "$([ $code -eq 0 ] && [ ! -e "$tmp/gel-appele" ] && grep -q 'existe déjà' "$tmp/s" && ! grep -q '^docker' "$FAUX_LOG"; echo $?)"
+: > "$OSA_LOG"
 
 # --- change run-worktree (D14) : repère de passage sauvegarde.encours, dossier de contenu, âge maximal
 donnees="$tmp/donnees-labo"; mkdir -p "$donnees"; export PMZILLA_LAB_DATA="$donnees"

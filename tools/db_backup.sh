@@ -6,7 +6,9 @@
 #
 # Lance pg_dump dans le conteneur (service db, socket locale : aucun mot de passe, ni dans l'environnement ni dans le compose) et écrit un fichier par schéma dans
 # ~/.pmzilla-lab/sauvegardes/db-AAAA-MM-JJ/ (hors du dépôt), au format personnalisé (-Fc, restaurable avec pg_restore).
-# Lancé chaque jour à 7 h 45 par launchd (com.pmzilla.db-backup.plist). Journal : ~/Library/Logs/pmzilla-db-backup.log
+# Lancé par launchd (com.pmzilla.db-backup.plist) au chargement, toutes les heures et chaque jour à 7 h 45 (R-20261102-5, Q275) ; le dossier
+# daté du jour rend les passages suivants sans effet. Pendant une fin de branche, un passage planifié est sauté (voir plus bas, D8).
+# Journal : ~/Library/Logs/pmzilla-db-backup.log
 # Jamais d'écrasement : si le dossier du jour existe, le script le dit et se termine en succès (code 0, cas normal d'un
 # second passage), avant même de toucher à Docker. Garde ensuite les 14 dossiers db-* les plus récents et supprime les plus
 # anciens en affichant ce qu'il supprime. Un schéma absent est signalé et le script se termine en échec (code 1) après
@@ -30,7 +32,7 @@
 # processus qui l'a créé ; il n'empêche jamais la sauvegarde et ne change jamais son code de sortie.
 set -uo pipefail
 umask 077
-export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"   # launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"   # (uv, pour le contrôle du gel) launchd donne un PATH minimal ; ajouté à la fin, un PATH déjà complet reste prioritaire
 # Le script se lance par son lien du dossier du labo (<dossier du lab>/<script>) : on résout le lien pour trouver le dossier de code
 # (le dossier d'exécution, ou le dépôt de développement après un retour en arrière), jamais le dossier du labo.
 SOI="$0"
@@ -62,7 +64,7 @@ repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou 
   local dossier=$1 pid debut age mtime
   pid="$(cat "$dossier/pid" 2>/dev/null)"
   if ! printf '%s' "$pid" | grep -Eq '^[0-9]+$'; then   # création en cours, ou dossier abandonné
-    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    mtime="$(stat -c %Y "$dossier" 2>/dev/null || stat -f %m "$dossier" 2>/dev/null)"
     printf '%s' "$mtime" | grep -Eq '^[0-9]+$' && [ $(( $(date +%s) - mtime )) -gt 10 ] && return 0
     return 1
   fi
@@ -71,7 +73,7 @@ repere_perime() {   # 0 si le dossier $1 est périmé (pid mort, trop vieux, ou 
   if printf '%s' "$debut" | grep -Eq '^[0-9]+$'; then
     age=$(( $(repere_maintenant) - debut ))
   else
-    mtime="$(stat -f %m "$dossier" 2>/dev/null || stat -c %Y "$dossier" 2>/dev/null)"
+    mtime="$(stat -c %Y "$dossier" 2>/dev/null || stat -f %m "$dossier" 2>/dev/null)"
     printf '%s' "$mtime" | grep -Eq '^[0-9]+$' || return 1
     age=$(( $(date +%s) - mtime ))
   fi
@@ -124,15 +126,34 @@ fi
 if ! printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9]+)?$'; then
   echec 2 "Date invalide : $DATE (attendu AAAA-MM-JJ, ou AAAA-MM-JJ-étiquette pour une deuxième sauvegarde le même jour)"
 fi
-poser_repere sauvegarde.encours
 CIBLE="$DEST/db-$DATE"
 if [ -e "$CIBLE" ]; then
   echo "La sauvegarde du jour existe déjà : $CIBLE (rien n'a été écrit ni supprimé)"; exit 0
 fi
+# Passage planifié (DB_BACKUP_NOTIFIER=1, posé par le modèle seul) pendant une fin de branche (morning-guard-light D8, Q278) : sauté sans
+# repère, sans appel à Docker ni notification, nouvel essai au passage horaire. Seul contrôle du verrou de fin : « uv run tools/pilot.py
+# freeze --check » (code 4 = tenu). Autre code ou lancement impossible : la sauvegarde a lieu, après la ligne « verrou de fin illisible ».
+# DB_BACKUP_FREEZE_CHECK remplace la commande (tests seulement). Jamais en passage manuel.
+# Remplace : les règles de session « aucune fin entre 06:15 et un état du matin vérifié » et « aucune fin qui traverse 06:45 » (D8). Retrait :
+# permanent tant que la veille et la sauvegarde tournent sur le Mac des fins. DB_BACKUP_FREEZE_CHECK remplace rien : point d'injection pour
+# les tests, retiré avec ce contrôle du gel. L'ordre (dossier du jour, gel, puis poser_repere) est gardé par un test statique de tests/db_scripts.
+if [ "${DB_BACKUP_NOTIFIER:-}" = "1" ]; then
+  if [ -n "${DB_BACKUP_FREEZE_CHECK:-}" ]; then
+    sh -c "$DB_BACKUP_FREEZE_CHECK" </dev/null >/dev/null 2>&1; code_gel=$?
+  else
+    ( cd "$RACINE" && uv run tools/pilot.py freeze --check ) </dev/null >/dev/null 2>&1; code_gel=$?
+  fi
+  case "$code_gel" in
+    4) echo "sauvegarde planifiée sautée : une fin de branche est en cours ; nouvel essai au passage horaire"; exit 0 ;;
+    0) ;;
+    *) echo "verrou de fin illisible (code $code_gel) : passage lancé" ;;
+  esac
+fi
+poser_repere sauvegarde.encours
 command -v docker >/dev/null 2>&1 || echec 2 "Docker est introuvable (brew install colima docker docker-compose)"
 # Trois états distincts : Docker injoignable, conteneur arrêté, conteneur démarré mais PostgreSQL muet.
 if ! docker info >/dev/null 2>&1; then
-  echec 2 "Docker ne répond pas : Colima est probablement arrêté. Vérifier : colima status (puis colima start --cpu 4 --memory 6)"
+  echec 2 "Docker ne répond pas : Colima est probablement arrêté. Vérifier : colima status (puis colima start --cpu 8 --memory 16)"
 fi
 if [ -z "$(docker compose ps -q --status running db 2>/dev/null)" ]; then
   echec 2 "Le conteneur de la base est arrêté. Le démarrer : bash tools/db_up.sh"

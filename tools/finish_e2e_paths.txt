@@ -1,0 +1,23 @@
+# Chemins d'interface de Mothra dont le changement exige la preuve de bout en bout (tools/dbtest.sh --e2e) dans toute fin (change finish-e2e-proof-shared, D1).
+# Format : un chemin par ligne ; « # » commence un commentaire ; lignes vides ignorées ; espaces de début et de fin retirés. Une entrée est une
+# spécification de chemin Git depuis la racine du dépôt, lue comme « git diff » la lit : un dossier écrit avec « / » final, un chemin de fichier, ou
+# un motif avec « * ». Aucune autre forme (le test tests/finish_checks/test_chemins_interface.py la refuse).
+# Source unique, aucune copie ailleurs. Lecteurs :
+#   - tools/finish_checks.py (contrôle 16, modes branch et tree) : l'union des lectures à origin/main, à main local et au sommet (ou à l'arbre donné) ;
+#   - tools/train_auto.py (FRONT_LIST : raison « front » d'une branche, lue comme la fin la lit) ;
+#   - tools/finish_train.sh ne le lit jamais : il lit le contrôle 16 de finish_checks.py. Le lecteur de la fin unitaire est retiré (finish-single-b3-b6, B5 :
+#     une branche ne peut plus desserrer sa propre fin) avec la fin unitaire elle-même (B9).
+# Absent, vide ou illisible : contrôle 16 refusé du module (« liste des chemins d'interface absente ou illisible ») ; jamais une admission par défaut.
+# Retrait : permanent tant qu'une fin exige la preuve de bout en bout (c'est la source unique des chemins d'interface). Fichier de l'outillage protégé
+# (tools/finish_protected.txt) : toute branche qui le modifie reçoit une revue complète Opus qui vérifie qu'aucune entrée n'est retirée sans décision de l'auteur.
+mothra/front/
+mothra/contract/
+mothra/server/src/
+contrats/
+mothra/package-lock.json
+mothra/package.json
+mothra/server/package.json
+mothra/server/tsconfig.json
+tests/e2e/
+tests/run_e2e.sh
+tests/mothra_donnees/

@@ -1,0 +1,32 @@
+{
+  "name": "@mothra/front",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mothra front package: React screens and the language catalogues. Of the Mothra packages, imports only the contract package.",
+  "scripts": {
+    "build": "vite build",
+    "catalogue": "node scripts/catalogue.ts",
+    "dev": "vite",
+    "generate-tokens": "node scripts/generer-jetons.ts",
+    "pastilles": "node scripts/page-pastilles.ts",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/ibm-plex-serif": "5.3.0",
+    "@mothra/contract": "0.0.0",
+    "@tanstack/react-query": "5.105.3",
+    "echarts": "6.1.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-intl": "12.1.6",
+    "typebox": "1.4.4"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "vite": "8.3.5"
+  }
+}

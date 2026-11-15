@@ -205,7 +205,8 @@ class Catalogue(unittest.TestCase):
         un nom de sous-commande, un type d'erreur ou un message déjà sûr : jamais une équipe, une clé de ticket ou un texte."""
         from messages import fields
         permis = {"n", "r", "m", "u", "t", "c", "x", "a", "d", "i", "key", "cv", "ov", "field", "line", "codes", "code", "what",
-                  "command", "kind", "detail", "label", "link", "source", "text", "items"}
+                  "command", "kind", "detail", "label", "link", "source", "text", "items",
+                  "v", "cells", "date"}          # patient-data-detection D9 : version du détecteur, cellules d'effectifs, date de la levée
         # Seule exception, D14 (« coach prints the keys the user typed next to their feedback, in the Terminal only ») : la clé de
         # l'élément, le verdict et le retour borné du moteur, dans les deux phrases de l'affichage du coaching et nulle part ailleurs.
         exceptions = {"coach_item": {"item"}, "coach_line": {"verdict", "feedback"}}

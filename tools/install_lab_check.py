@@ -3,7 +3,7 @@ PMZilla Lab : Étape check : contrôles en lecture seule (design D14).
 Module du script d'installation (orchestrateur du même nom sans suffixe) ; ne se lance pas seul.
 
 Sous-ensemble en lecture seule des contrôles du guide d'installation (section 13). Les contrôles longs (lanceur de tests complet,
-contrôle de réveil par posture, somme de contrôle de la bibliothèque de graphiques) sont affichés, jamais lancés.
+contrôle de réveil par posture) sont affichés, jamais lancés.
 En passage à blanc, aucun contrôle n'est lancé : la machine n'est pas encore installée.
 """
 from __future__ import annotations
@@ -20,7 +20,6 @@ NOM_SERVEUR = "pmzilla-library"
 A_LANCER_SOI_MEME = (
     "bash tests/run_all.sh",
     "for a in discovery delivery scaling facilitation; do uv run .claude/skills/pmzilla-$a-bmad/scripts/wake.py . | head -1; done",
-    "(cd tools/vendor && shasum -a 256 -c echarts.sha256)",
 )
 
 

@@ -9,25 +9,35 @@ Source of truth: `tests/watch_sh/test_watch_sh.py`, `tools/watch.sh`, `tools/com
 ## Requirements
 
 ### Requirement: Run the steps in a fixed order
-The system SHALL run, when the local model service responds: collection, scoring, apply, shares, ranked reading list, library indexing of both content folders directly into the database, together with the context notes through the indexer's context option when the context folder has a notes folder (requirement "Index the context notes in the daily run"), the BM25 probe, then the dashboard. On full success it SHALL print a timestamp header, end with "Veille terminée sans erreur", exit 0 and raise no notification but the morning summary of a scheduled run. Scripts SHALL be called through their linked path. It SHALL NOT run the former import or verification of the PostgreSQL copy, the former indexer of a frozen copy, or any parity comparison with a former path, whether or not a former parity marker file is present in the data folder.
+The system SHALL run, when the local model service responds: collection, scoring, apply, shares, ranked reading list, library indexing of both content folders directly into the database, together with the context notes through the indexer's context option when the context folder has a notes folder (requirement "Index the context notes in the daily run"), the BM25 probe, then the dashboard. Scripts SHALL be called through their linked path.
 
 #### Scenario: Nominal path
 - **WHEN** every step succeeds and the run is manual
 - **THEN** the steps are called in the order above, the import script is never called, exit code is 0, and no notification is raised
 
-#### Scenario: Former parity marker left
-- **WHEN** every step succeeds and a former parity marker file is still present in the data folder
-- **THEN** the steps are the same as without it: no former indexer and no parity comparison is run, and the run script names neither
+#### Scenario: Context notes indexed
+- **WHEN** every step succeeds and the fixture context folder has a notes folder
+- **THEN** the indexing call holds both content folders and the context option naming the context folder, and no other argument names the originals folder
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre, test_journal_horodate_et_les_deux_dossiers_indexes); the context option is untested until implemented.
+
+### Requirement: End a fully successful run without a failure notification
+On full success the system SHALL print a timestamp header, end with "Veille terminée sans erreur", exit 0 and raise no notification but the morning summary of a scheduled run.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre, test_journal_horodate_et_les_deux_dossiers_indexes); the scheduled path is untested until implemented.
 
 #### Scenario: Nominal scheduled path
 - **WHEN** every step of a scheduled run succeeds
 - **THEN** the only notification is the morning summary, sent after the dashboard, and exit code is 0
 
-#### Scenario: Context notes indexed
-- **WHEN** every step succeeds and the fixture context folder has a notes folder
-- **THEN** the indexing call holds both content folders and the context option naming the context folder, and no other argument names the originals folder
+### Requirement: Run no former import, indexer or parity comparison
+The system SHALL NOT run the former import or verification of the PostgreSQL copy, the former indexer of a frozen copy, or any parity comparison with a former path, whether or not a former parity marker file is present in the data folder.
 
-Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre, test_journal_horodate_et_les_deux_dossiers_indexes); the scheduled path is untested until implemented; the context option is untested until implemented.
+Source: `tests/watch_sh/test_watch_sh.py` (test_chemin_nominal_enchaine_toutes_les_etapes_dans_l_ordre)
+
+#### Scenario: Former parity marker left
+- **WHEN** every step succeeds and a former parity marker file is still present in the data folder
+- **THEN** the steps are the same as without it: no former indexer and no parity comparison is run, and the run script names neither
 
 ### Requirement: Degrade gracefully without the model service
 The system SHALL, when the model service does not respond, collect, write the plain reading list, skip scoring and indexing, say they are postponed, generate the dashboard, and exit 0 without recording an index timestamp.
@@ -39,9 +49,9 @@ Source: `tests/watch_sh/test_watch_sh.py` (test_ollama_absent_liste_simple_sans_
 - **THEN** only collect, plain digest and dashboard run, the output says pre-sorting and indexing are postponed, and exit code is 0
 
 ### Requirement: Warn when the index becomes stale
-The system SHALL, when the model service is absent and the last successful indexation is older than a configurable number of days (default applied for missing or invalid values), print a staleness message and raise one desktop notification, without changing the exit code. The age SHALL come from the timestamp file only. A missing or unreadable timestamp SHALL be treated as unknown and notified. A recent index SHALL give no notification, including at the exact threshold boundary. A successful indexation SHALL refresh the timestamp; a failed or skipped one, including one stopped because the database does not answer, SHALL leave it. The system SHALL NOT read the date of any index file.
+The system SHALL, when the model service is absent and the last successful indexation is older than a configurable number of days (default applied for missing or invalid values), print a staleness message and raise one desktop notification, without changing the exit code.
 
-Source: `tests/watch_sh/test_watch_sh.py` (test_ollama_absent_*, test_seuil_*, test_repere_illisible_traite_comme_inconnu, test_indexation_reussie_ecrit_le_repere_et_echouee_le_laisse)
+Source: `tests/watch_sh/test_watch_sh.py` (test_ollama_absent_*, test_seuil_*)
 
 #### Scenario: Too old
 - **WHEN** the service is absent and the last indexation is older than the limit
@@ -51,26 +61,64 @@ Source: `tests/watch_sh/test_watch_sh.py` (test_ollama_absent_*, test_seuil_*, t
 - **WHEN** the limit setting is not a number
 - **THEN** the default limit is used
 
+### Requirement: Take the index age from the timestamp file only
+The age of the index SHALL come from the timestamp file only. A missing or unreadable timestamp SHALL be treated as unknown and notified. A recent index SHALL give no notification, including at the exact threshold boundary. The system SHALL NOT read the date of any index file.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_seuil_*, test_repere_illisible_traite_comme_inconnu)
+
 #### Scenario: No timestamp, old SQLite file present
 - **WHEN** the service is absent, the timestamp file is missing and a stray file named like a former SQLite index is left in the data folder
 - **THEN** the indexation is treated as unknown and one notification is raised, and the stray file is neither read nor dated
 
+### Requirement: Refresh the index timestamp only after a successful indexation
+A successful indexation SHALL refresh the timestamp; a failed or skipped one, including one stopped because the database does not answer, SHALL leave it.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_indexation_reussie_ecrit_le_repere_et_echouee_le_laisse)
+
+#### Scenario: Indexation succeeds, then fails
+- **WHEN** an indexation succeeds and a later one fails
+- **THEN** the first writes the timestamp and the second leaves it unchanged
+
 ### Requirement: Continue after a failing step and report every failure once
-The system SHALL log a failing collection, scoring chain, reading list or indexation, continue with later steps, exit 1, end with "Veille terminée avec N étape(s) en échec" naming failed steps in order, and raise one single notification naming them. An indexation stopped because the database does not answer (indexer exit code 2) SHALL be logged with the "base PostgreSQL injoignable" phrase and named with the step label "indexation (base injoignable)" of design D9 of the archived change db-lot5-watch-triage; any other indexing failure keeps the label "indexation". A failure of the pre-sort chain (scoring, apply, shares, digest) SHALL stop that chain at the first failing command, fall back to the plain reading list, and still index. A failing notification SHALL be logged and SHALL NOT change the exit code. A failing indexation SHALL NOT prevent the reading list or the dashboard. A postponed attempt (requirement "Postpone a day the database or the network did not let run") SHALL end with the same summary line and exit code, and SHALL raise its notification only when it is the first postponement of the day; it SHALL NOT notify again for a later postponed attempt of the same day.
+The system SHALL log a failing collection, scoring chain, reading list or indexation, continue with later steps, exit 1, end with "Veille terminée avec N étape(s) en échec" naming failed steps in order, and raise one single notification naming them.
 
-Source: `tests/watch_sh/test_watch_sh.py` (test_collecte_en_erreur_est_journalisee_et_la_suite_continue, test_echec_du_pre_tri_bascule_sur_la_liste_non_triee_et_arrete_la_chaine, test_echec_de_l_indexation_est_dit_et_notifie, test_plusieurs_echecs_nommes_dans_l_ordre, test_liste_a_lire_en_erreur, test_notification_impossible_ne_change_pas_le_code_de_sortie); the postponed attempt is untested until implemented.
-
-#### Scenario: Scoring fails
-- **WHEN** the apply command fails
-- **THEN** shares and digest are not run, the plain list is written, indexing runs, exit is 1 and the summary names the pre-sort step
+Source: `tests/watch_sh/test_watch_sh.py` (test_collecte_en_erreur_est_journalisee_et_la_suite_continue, test_plusieurs_echecs_nommes_dans_l_ordre, test_liste_a_lire_en_erreur)
 
 #### Scenario: Several failures
 - **WHEN** collection, scoring and indexing fail
 - **THEN** one notification and one summary line list them in that order
 
+### Requirement: Report a failing indexation without blocking later steps
+An indexation stopped because the database does not answer (indexer exit code 2) SHALL be logged with the "base PostgreSQL injoignable" phrase and named with the step label "indexation (base injoignable)" of design D9 of the archived change db-lot5-watch-triage; any other indexing failure keeps the label "indexation". A failing indexation SHALL NOT prevent the reading list or the dashboard.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_echec_de_l_indexation_est_dit_et_notifie)
+
 #### Scenario: Database does not answer
 - **WHEN** the indexer exits with code 2
 - **THEN** the log says the database is unreachable, the summary and the single notification name "indexation (base injoignable)", the dashboard runs, the timestamp is unchanged and exit is 1
+
+### Requirement: Fall back to the plain reading list when the pre-sort chain fails
+A failure of the pre-sort chain (scoring, apply, shares, digest) SHALL stop that chain at the first failing command, fall back to the plain reading list, and still index.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_echec_du_pre_tri_bascule_sur_la_liste_non_triee_et_arrete_la_chaine)
+
+#### Scenario: Scoring fails
+- **WHEN** the apply command fails
+- **THEN** shares and digest are not run, the plain list is written, indexing runs, exit is 1 and the summary names the pre-sort step
+
+### Requirement: Keep the exit code when a notification fails
+A failing notification SHALL be logged and SHALL NOT change the exit code.
+
+Source: `tests/watch_sh/test_watch_sh.py` (test_notification_impossible_ne_change_pas_le_code_de_sortie)
+
+#### Scenario: Notification command fails
+- **WHEN** the notification command fails during a run
+- **THEN** the failure is logged and the exit code is the one the run would have without it
+
+### Requirement: Notify a postponed attempt once a day
+A postponed attempt (requirement "Postpone a day the database or the network did not let run") SHALL end with the same summary line and exit code as a failed run, and SHALL raise its notification only when it is the first postponement of the day; it SHALL NOT notify again for a later postponed attempt of the same day.
+
+Source: the postponed attempt is untested until implemented.
 
 #### Scenario: Second postponed attempt of the day
 - **WHEN** a second scheduled launch of the same day is postponed again
@@ -97,13 +145,18 @@ The system SHALL index the current-named watch folder, and SHALL stop the step w
 - **THEN** it is not indexed and the error names the migration tool
 
 ### Requirement: Stay inside the user's home in tests and templates
-The scheduler file SHALL be a template carrying a label, a script path and one log path used for both outputs, all relative to a home placeholder, with no real absolute path, no former watch name and no code-tree folder (neither the development checkout nor the run tree), and SHALL render into a valid property list when the placeholder is replaced. The script path the template launches SHALL be the run script's lab-folder link, in the folder from which the run script derives its tools, its code root and its content root, so that the launched script finds its tools in the code tree the link points to. It SHALL NOT name a code-tree folder, so that switching the code tree changes the links only.
+The scheduler file SHALL be a template carrying a label, a script path and one log path used for both outputs, all relative to a home placeholder, with no real absolute path, no former watch name and no code-tree folder (neither the development checkout nor the run tree), and SHALL render into a valid property list when the placeholder is replaced.
 
-Source: `tests/watch_sh/test_watch_sh.py` (Plist, including test_le_chemin_du_plist_est_le_dossier_des_outils_de_watch_sh; test_aucune_commande_reelle_et_rien_hors_du_faux_home); the code-tree folder rule untested until implemented
+Source: `tests/watch_sh/test_watch_sh.py` (Plist, test_aucune_commande_reelle_et_rien_hors_du_faux_home); code-tree rule untested
 
 #### Scenario: Rendering
 - **WHEN** the placeholder is substituted
 - **THEN** the result parses as a property list whose program argument is the substituted script path
+
+### Requirement: Launch the run script's lab-folder link from the template
+The script path the scheduler template launches SHALL be the run script's lab-folder link, in the folder from which the run script derives its tools, its code root and its content root, so that the launched script finds its tools in the code tree the link points to. It SHALL NOT name a code-tree folder, so that switching the code tree changes the links only.
+
+Source: `tests/watch_sh/test_watch_sh.py` (Plist); the code-tree folder rule untested until implemented
 
 #### Scenario: Script path and tools folder agree
 - **WHEN** the rendered program argument is compared with the tools folder declared by the run script
@@ -114,17 +167,36 @@ Source: `tests/watch_sh/test_watch_sh.py` (Plist, including test_le_chemin_du_pl
 - **THEN** it names neither the development checkout nor the run tree
 
 ### Requirement: Check the uv dependency cache once a day without blocking the run
-The system SHALL, at the start of each run and before collection, read the uv version and the Python version uv selects in the code root, and compare them with the versions recorded in the data folder. When both are recorded and unchanged it SHALL do nothing and print nothing about the cache. When either changed or is not recorded, it SHALL build a throwaway script made only of the dependency header of the Discovery posture's wake script, read in the code root, followed by a single `import yaml` line (no wake code is run), copy it into two distinct temporary folders, run it from the first with network access and then, only if that succeeded, from the second in offline mode, both times by relative path and with the Python version read in the code root, and remove both folders. On success it SHALL record both versions and print that the cache was filled and verified offline. On failure (network run, offline run, missing wake script, or a wake script without a dependency header, in which case nothing is run) it SHALL record nothing, so the check is retried at the next run, print a message pointing to the manual procedure of the installation guide ("After an update of uv"), and raise one desktop notification. When the uv or Python version cannot be read, it SHALL print that the cache check is impossible, raise no notification and run nothing. The cache check SHALL NOT change the steps run nor the exit code, including when the notification itself fails, and SHALL NOT read the Python version or the wake script in the content root. The repository root SHALL pin a Python version.
+The system SHALL, at the start of each run and before collection, read the uv version and the Python version uv selects in the code root, and compare them with the versions recorded in the data folder. When both are recorded and unchanged it SHALL do nothing and print nothing about the cache.
 
-Source: `tests/watch_sh/test_watch_sh.py` (CacheUv, including test_le_controle_du_cache_precede_la_collecte); the code root: a new CacheUv test, untested until implemented
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv, including test_le_controle_du_cache_precede_la_collecte)
 
 #### Scenario: Versions unchanged
 - **WHEN** the recorded uv and Python versions equal the current ones
 - **THEN** no throwaway script is run and the output does not mention the cache
 
+### Requirement: Build the throwaway cache script from the wake script header
+When the uv or Python version changed or is not recorded, the system SHALL build a throwaway script made only of the dependency header of the Discovery posture's wake script, read in the code root, followed by a single `import yaml` line (no wake code is run).
+
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv)
+
+#### Scenario: Throwaway script content
+- **WHEN** the check runs against the real wake script
+- **THEN** each throwaway copy holds exactly the wake script's dependency header and, apart from blank lines, only `import yaml`
+
+### Requirement: Fill the uv cache online, then verify it offline
+When a version changed or is not recorded, the system SHALL copy the throwaway script into two distinct temporary folders, run it from the first with network access and then, only if that succeeded, from the second in offline mode, both times by relative path and with the Python version read in the code root, and remove both folders. On success it SHALL record both versions and print that the cache was filled and verified offline.
+
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv)
+
 #### Scenario: uv updated
 - **WHEN** the uv version differs from the recorded one
 - **THEN** the throwaway script runs with network then offline, the output says "Cache de uv rempli et vérifié hors ligne", the new version is recorded, no notification is raised and exit code is 0; a second run does not check again
+
+### Requirement: Retry the uv cache check at the next run after a failure
+On failure of the cache check (network run, offline run, missing wake script, or a wake script without a dependency header, in which case nothing is run) the system SHALL record nothing, so the check is retried at the next run, print a message pointing to the manual procedure of the installation guide ("After an update of uv"), and raise one desktop notification.
+
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv)
 
 #### Scenario: Offline run fails
 - **WHEN** the offline run of the throwaway script fails
@@ -134,20 +206,26 @@ Source: `tests/watch_sh/test_watch_sh.py` (CacheUv, including test_le_controle_d
 - **WHEN** the run with network access fails
 - **THEN** the offline run is not attempted, one notification is raised and exit code is 0
 
+### Requirement: Say the uv cache check is impossible when a version cannot be read
+When the uv or Python version cannot be read, the system SHALL print that the cache check is impossible, raise no notification and run nothing.
+
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv)
+
 #### Scenario: Version unreadable
 - **WHEN** uv cannot report the Python version
 - **THEN** the output says "Contrôle du cache de uv impossible", no notification is raised, no throwaway script is run and exit code is 0
 
-#### Scenario: Throwaway script content
-- **WHEN** the check runs against the real wake script
-- **THEN** each throwaway copy holds exactly the wake script's dependency header and, apart from blank lines, only `import yaml`
+### Requirement: Never let the uv cache check change the run or read the content root
+The cache check SHALL NOT change the steps run nor the exit code, including when the notification itself fails, and SHALL NOT read the Python version or the wake script in the content root. The repository root SHALL pin a Python version.
+
+Source: `tests/watch_sh/test_watch_sh.py` (CacheUv); the code root: a new CacheUv test, untested until implemented
 
 #### Scenario: Code root differs from the content root
 - **WHEN** the code root and the content root pin different Python versions and hold different wake-script headers
 - **THEN** the check reads the version and the header of the code root
 
 ### Requirement: Probe the BM25 index after a good indexation, without blocking
-The system SHALL run the indexer's BM25 probe after a successful indexation. A probe exiting with code 3 SHALL be logged as an unreadable BM25 index naming the "Damaged BM25 index" section of the installation guide and SHALL raise one notification pointing to it; any other non-zero code SHALL be logged with its code and raise one notification. A failing probe SHALL NOT count as a failed step, SHALL leave the exit code unchanged and SHALL let later steps continue. The system SHALL NOT repair anything (rebuilding the index is done by the user alone) and SHALL NOT run the probe when indexing fails or is skipped.
+The system SHALL run the indexer's BM25 probe after a successful indexation. A probe exiting with code 3 SHALL be logged as an unreadable BM25 index naming the "Damaged BM25 index" section of the installation guide and SHALL raise one notification pointing to it; any other non-zero code SHALL be logged with its code and raise one notification. The system SHALL NOT run the probe when indexing fails or is skipped.
 
 #### Scenario: Unreadable BM25 index
 - **WHEN** the probe exits with code 3
@@ -165,8 +243,15 @@ The system SHALL run the indexer's BM25 probe after a successful indexation. A p
 - **WHEN** the indexation fails
 - **THEN** the probe is not run
 
+### Requirement: Never count a failing BM25 probe as a failed step
+A failing probe SHALL NOT count as a failed step, SHALL leave the exit code unchanged and SHALL let later steps continue. The system SHALL NOT repair anything (rebuilding the index is done by the user alone).
+
+#### Scenario: Probe fails
+- **WHEN** the probe exits with a non-zero code
+- **THEN** the summary names no failed step for it, the dashboard still runs, the exit code is unchanged, and no repair command is run
+
 ### Requirement: Check the database before collecting and skip the day when it does not answer
-The system SHALL, after the uv cache check and before collection, run the database check of the collection tool with a configurable bounded wait (default applied for a missing or invalid value); in scheduled mode, the network check of the requirement "Check the network on a host of the collection" SHALL come between the uv cache check and the database check. When the check succeeds the run SHALL continue as before. When it fails, the system SHALL write the log line of design D5 of the archived change db-lot5-watch-triage for an unreachable database or for absent tables, SHALL skip collection, the pre-sort chain, both reading lists and the library indexing in that attempt, SHALL still generate the dashboard, SHALL name the step "base de données" among the failed steps with the summary line of the failed-steps rule, and SHALL exit 1. When the check reports an unreachable database, in any mode, the system SHALL then log the "postponed" key phrase of design D3, record the day as postponed and raise the notification only if it is the first postponement of the day, so that a later scheduled launch of the same day retries it (requirement "Postpone a day the database or the network did not let run"); it SHALL NOT treat the day as done. When the check reports absent tables, the system SHALL record the day as failed and raise the single notification. It SHALL NOT start the database, SHALL NOT write any article file, reading list or state outside the database other than the run record and the lock of design D2 and D4, and SHALL NOT run any step on a former state file.
+The system SHALL, after the uv cache check and before collection, run the database check of the collection tool with a configurable bounded wait (default applied for a missing or invalid value); in scheduled mode, the network check of the requirement "Check the network on a host of the collection" SHALL come between the uv cache check and the database check. When the check succeeds the run SHALL continue as before.
 
 Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
 
@@ -174,21 +259,45 @@ Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
 - **WHEN** the check exits 0
 - **THEN** the steps run in their usual order after it and the exit code follows the existing rules
 
+#### Scenario: Invalid wait setting
+- **WHEN** the wait setting is not an integer
+- **THEN** the check is called with the default wait
+
+### Requirement: Skip the attempt's steps when the database check fails
+When the database check fails, the system SHALL write the log line of design D5 of the archived change db-lot5-watch-triage for an unreachable database or for absent tables, SHALL skip collection, the pre-sort chain, both reading lists and the library indexing in that attempt, SHALL still generate the dashboard, SHALL name the step "base de données" among the failed steps with the summary line of the failed-steps rule, and SHALL exit 1.
+
+Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
+
 #### Scenario: Database down at the scheduled time
 - **WHEN** the check exits with the unreachable-database code after the wait, on the first attempt of the day
 - **THEN** the log contains the skipped-day line of the archived design D5 followed by the postponed key phrase of design D3, collection, scoring, digests and indexing are not called, the dashboard is generated, exactly one notification names "base de données", the summary is "Veille terminée avec 1 étape(s) en échec : base de données", the record says postponed and the exit code is 1
+
+### Requirement: Postpone the day when the database check finds the database unreachable
+When the database check reports an unreachable database, in any mode, the system SHALL then log the "postponed" key phrase of design D3, record the day as postponed and raise the notification only if it is the first postponement of the day, so that a later scheduled launch of the same day retries it (requirement "Postpone a day the database or the network did not let run"); it SHALL NOT treat the day as done.
+
+Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
 
 #### Scenario: Database down on a manual run
 - **WHEN** the script is launched without option and the check exits with the unreachable-database code
 - **THEN** the record says postponed with the manual trigger, and a later scheduled launch of the same day between the due time and the latest start runs the day's steps
 
+### Requirement: Record the day as failed when the watch tables are absent
+When the database check reports absent tables, the system SHALL record the day as failed and raise the single notification.
+
+Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
+
 #### Scenario: Tables absent
 - **WHEN** the check exits with the absent-tables code
 - **THEN** the log names the missing migration, the same steps are skipped, the record says failed, and the exit code is 1
 
-#### Scenario: Invalid wait setting
-- **WHEN** the wait setting is not an integer
-- **THEN** the check is called with the default wait
+### Requirement: Start no database and write no state outside it on a failed database check
+The system SHALL NOT start the database, whatever the result of the database check. When the database check fails, the system SHALL NOT write any article file, reading list or state outside the database other than the run record and the lock of design D2 and D4, and SHALL NOT run any step on a former state file.
+
+Source: tests/watch_sh/test_watch_sh.py, tools/watch.sh
+
+#### Scenario: Nothing started or written
+- **WHEN** the database check fails
+- **THEN** no database start command is run, and no article file, reading list or state file other than the run record and the lock is written
 
 ### Requirement: Never fall back to the former watch and triage files
 The system SHALL NOT refer to the former watch and triage state files in the run script, SHALL NOT pass them to any step, and SHALL treat a step that exits because the database stopped answering during the run as a failed step under the existing failure rules, including the plain-list fallback of the pre-sort chain.
@@ -219,7 +328,7 @@ The system SHALL run the daily watch without naming, opening, creating or testin
 - **THEN** the age is unknown and notified, and no SQLite file is consulted to estimate it
 
 ### Requirement: Run the weekly component check just before the dashboard, without blocking
-The system SHALL, at every run, immediately before the dashboard and after the steps that depend on the database check, call the component check with its due option (design.md D4), whatever the outcome of the database check and whether the model service answers; the database check SHALL remain the first step after the uv cache check. On exit code 1 it SHALL raise one notification with the fixed text of design.md D4; on any code other than 0 and 1 it SHALL log "Veille des composants impossible" with the code and raise one notification. The component step SHALL NOT be added to the failed steps, SHALL NOT change the exit code, including when the network is unreachable, the check fails or the notification itself fails, and SHALL NOT prevent the dashboard.
+The system SHALL, at every run, immediately before the dashboard and after the steps that depend on the database check, call the component check with its due option (design.md D4), whatever the outcome of the database check and whether the model service answers; the database check SHALL remain the first step after the uv cache check.
 
 Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
 
@@ -227,17 +336,27 @@ Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
 - **WHEN** every step succeeds and the fake check exits 0
 - **THEN** the check is called with the due option just before the dashboard, no notification is raised, and the run ends with "Veille terminée sans erreur" and exit code 0
 
+#### Scenario: Database down
+- **WHEN** the database check fails
+- **THEN** the component check is still called before the dashboard, and the summary names only "base de données"
+
+### Requirement: Notify the component check result without blocking the run
+On exit code 1 of the component check the system SHALL raise one notification with the fixed text of design.md D4; on any code other than 0 and 1 it SHALL log "Veille des composants impossible" with the code and raise one notification.
+
+Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
+
 #### Scenario: Something new
 - **WHEN** the fake check exits 1
 - **THEN** exactly one notification with the fixed text is raised, the dashboard runs, and the exit code is 0
 
+### Requirement: Never count the component step as a failed step
+The component step SHALL NOT be added to the failed steps, SHALL NOT change the exit code, including when the network is unreachable, the check fails or the notification itself fails, and SHALL NOT prevent the dashboard.
+
+Source: to be covered by tests/watch_sh/test_watch_sh.py (task 4.1)
+
 #### Scenario: Check impossible
 - **WHEN** the fake check exits 2
 - **THEN** the log says "Veille des composants impossible", one notification is raised, the summary names no component step, and the exit code is unchanged
-
-#### Scenario: Database down
-- **WHEN** the database check fails
-- **THEN** the component check is still called before the dashboard, and the summary names only "base de données"
 
 ### Requirement: The daily run never cleans the uv cache nor installs a component
 The system SHALL NOT run `uv cache clean` or `uv cache prune` in the run script, and SHALL NOT install, upgrade or download any component from it (no `brew install`, `brew upgrade`, `brew update`, `ollama pull`, `npm install`, `docker pull` or `uv sync`); the existing uv cache check stays the only uv cache step and keeps its never-blocking rule.
@@ -403,15 +522,23 @@ The system SHALL, on a run started by the catch-up job, keep the usual timestamp
 - **THEN** the log holds no catch-up line
 
 ### Requirement: Scheduler templates of the calendar and catch-up jobs
-The system SHALL provide a catch-up template that launches the watch job's lab-folder link with the catch-up option, at load and at a periodic interval fixed in the template, logging both outputs to the watch log, with no calendar schedule, no keep-alive, no real path and no former watch name. The watch template SHALL pass the scheduled-mode option. The due time SHALL equal the watch template's calendar time.
+The system SHALL provide a catch-up template that launches the watch job's lab-folder link with the catch-up option, at load and at a periodic interval, logging both outputs to the watch log, with no calendar schedule, keep-alive, real path or former watch name. The watch template SHALL pass the scheduled-mode option, with its calendar time and no run at load. The default due time SHALL be 05:00, not later than that calendar time (morning-guard-light D6).
 
 #### Scenario: Catch-up template
 - **WHEN** the catch-up template is rendered
 - **THEN** it parses as a property list whose program is the same link as the watch template's, with the catch-up option, run at load, a periodic interval, and neither calendar schedule nor keep-alive
 
 #### Scenario: Due time and calendar time agree
-- **WHEN** the run script's due time is compared with the watch template's calendar schedule
-- **THEN** their hour and minute are equal
+- **WHEN** the run script's default due time is compared with the watch template's calendar schedule
+- **THEN** the due time is 05:00 and is not later than the calendar time, and a calendar time earlier than the due time makes the static test fail
+
+#### Scenario: Watch template unchanged
+- **WHEN** the watch template is rendered
+- **THEN** it has its calendar schedule, no run at load and no keep-alive
+
+#### Scenario: Boot at six
+- **WHEN** the catch-up job launches the script at 06:00 Paris time and no run of today took place
+- **THEN** the day's steps run once and the record names the catch-up trigger
 
 ### Requirement: End a scheduled run with the morning summary
 The system SHALL, at the end of a scheduled run whose outcome is done or failed, after the dashboard and the final write of the run record, call the summary script through its linked path with the notify option, the scheduler variable and the labels of the failed steps (design D1). It SHALL NOT call it after a postponed day, an interrupted run not retried, a launch with nothing to do, a refused launch or a manual run.
@@ -506,3 +633,26 @@ The system SHALL pass the context option to the indexing step only when the cont
 #### Scenario: Script text
 - **WHEN** the run script is read
 - **THEN** it does not name the originals folder
+
+### Requirement: Skip a scheduled launch while a finish runs
+The system SHALL, in scheduled mode, once the launch is due and before checking the record, taking the lock or writing anything, run the pilot tool's freeze check from its code root (morning-guard-light D8): on 4, exit 0 writing nothing; on 0, go on; on any other code, go on with the unreadable-lock line of D8. It SHALL NOT read or wait for the finish lock itself, nor check in a manual run. Replaces the 06:15 and 06:45 session rules; removal: as D8.
+
+#### Scenario: Finish running at the catch-up
+- **WHEN** a due catch-up launch finds that the fake freeze check exits 4, with no run of today
+- **THEN** the launch exits 0, the log, the record and the watch lock are unchanged, and no tool of the run is called
+
+#### Scenario: Next hourly launch after the finish
+- **WHEN** the next catch-up launch of the day finds that the fake freeze check exits 0
+- **THEN** the day's steps run once and the record names the catch-up trigger
+
+#### Scenario: Freeze check impossible
+- **WHEN** a due scheduled launch finds that the fake freeze check exits 3
+- **THEN** the day's steps run and the log holds `verrou de fin illisible (code 3) : passage lancé`
+
+#### Scenario: Manual run during a finish
+- **WHEN** the script is launched without option while the fake freeze check would exit 4
+- **THEN** the freeze check is not called and the day's steps run
+
+#### Scenario: Launch not due
+- **WHEN** a scheduled launch comes before the due time
+- **THEN** the freeze check is not called and the launch exits 0 writing nothing, as before

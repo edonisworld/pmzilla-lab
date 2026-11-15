@@ -40,6 +40,7 @@ import dependencies_jira as dependances                     # noqa: E402
 import flux_config as cfg                                   # noqa: E402
 import yaml                                                 # noqa: E402
 from epic_statuses_messages import CATALOGS                 # noqa: E402
+from history_common import meme_statut                      # noqa: E402
 from messages import LANGUAGES, DEFAULT_LANGUAGE, Messages  # noqa: E402
 from yaml_strict import ErreurConfig, charger               # noqa: E402
 
@@ -76,7 +77,8 @@ def reglages(dossier_flux: Path) -> dict:
 
 
 def releve(epics: dict[str, str], cache: dict[str, dict]) -> dict[str, dict]:
-    """Par statut : épics actuellement dedans, passages observés (arrivées), transitions sortantes (Counter)."""
+    """Par statut : épics actuellement dedans, passages observés (arrivées), transitions sortantes (Counter). Une transition vers un
+    statut de même nom (espaces et casse ignorés) n'est ni un passage ni une transition sortante."""
     statuts: dict[str, dict] = {}
 
     def fiche(nom: str) -> dict:
@@ -88,6 +90,8 @@ def releve(epics: dict[str, str], cache: dict[str, dict]) -> dict[str, dict]:
             if len(transition) < 3:
                 continue
             _, depart, arrivee = transition[:3]
+            if meme_statut(depart, arrivee):          # statut de même nom : ni un passage ni une transition sortante (idée 492)
+                continue
             if arrivee:
                 fiche(arrivee)["passages"] += 1
             if depart:

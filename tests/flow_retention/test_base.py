@@ -89,11 +89,12 @@ class HorlogeEtCascade(AvecBase):
         self.conn.execute("INSERT INTO flow.links (source_key, target_key, link_type) VALUES ('PROJ-1', 'PROJ-2', 'blocks')")
         self.conn.execute("INSERT INTO flow.issue_label_periods (issue_key, label, added_at) VALUES ('PROJ-1', 'x', now())")
         self.conn.execute("INSERT INTO flow.issue_version_periods (issue_key, version, added_at) VALUES ('PROJ-1', 'v', now())")
+        self.conn.execute("INSERT INTO flow.issue_current_versions (issue_key, kind, name) VALUES ('PROJ-1', 'fix', 'v')")     # flow-version-share
         self.conn.commit()
         code, sortie, erreur = self.lancer_base("purge", "--apply", "--language", "en")
         self.assertEqual(code, 0, erreur)
         self.assertEqual(self.cles(), ["PROJ-2"])
-        for table in ("issue_teams", "transitions", "issue_label_periods", "issue_version_periods"):
+        for table in ("issue_teams", "transitions", "issue_label_periods", "issue_version_periods", "issue_current_versions"):
             self.assertEqual(self.conn.execute(f"SELECT count(*) FROM flow.{table}").fetchone()[0], 0, table)
         self.assertEqual(self.conn.execute("SELECT count(*) FROM flow.links").fetchone()[0], 0)
         self.assertEqual(self.lancer_base("check")[0], 0)
@@ -117,6 +118,42 @@ class HorlogeEtCascade(AvecBase):
         self.assertEqual(code, 1)
         self.assertEqual(self.cles(), ["PROJ-1", "PROJ-2"])         # aucune ligne supprimée, même celle qui précédait l'échec
         self.assertNotIn("PROJ", sortie + erreur)
+
+
+class PhotosHorsRegle(AvecBase):
+    """Photos de qualité par version (change version-quality-photo, tâche 1.5) : hors règle, jamais comptées ni supprimées."""
+
+    def photos(self):
+        self.conn.execute("INSERT INTO flow.version_photo_versions (name) VALUES ('zzversion')")
+        run = self.conn.execute("INSERT INTO flow.version_photo_runs (taken_at, source) VALUES (now() - interval '800 days', 'reconstructed') "
+                                "RETURNING id").fetchone()[0]
+        self.conn.execute("INSERT INTO flow.version_photo_weeks (week_start, run_id, coverage) VALUES ('2024-01-01', %s, 'partial')", (run,))
+        self.conn.execute("INSERT INTO flow.version_photo_rows (week_start, team, defects_created, defects_without_affects, resolved_week, "
+                          "resolved_week_defects) VALUES ('2024-01-01', 'Alpha', 9, 1, 12, 4)")
+        self.conn.execute("INSERT INTO flow.version_photo_n (weeks, adopted_on, taken_at) VALUES (6, '2024-02-01', now() - interval '800 days')")
+        self.conn.commit()
+
+    def contenu(self):
+        return [self.conn.execute(f"SELECT count(*) FROM flow.{t}").fetchone()[0] for t in
+                ("version_photo_versions", "version_photo_runs", "version_photo_weeks", "version_photo_rows", "version_photo_n")]
+
+    def test_vieille_photo_ni_comptee_ni_supprimee(self):
+        self.ticket("PROJ-1", jours_resolu=400)
+        self.photos()
+        avant = self.contenu()
+        code, sortie, erreur = self.lancer_base("check", "--language", "en")
+        self.assertEqual(code, 4, erreur)
+        self.assertIn("database, tickets past the rule: 1", sortie)
+        self.assertTrue(sortie.rstrip().endswith("retention check: 1 items out of rule"), sortie)
+        code, sortie, erreur = self.lancer_base("purge", "--apply", "--language", "en")
+        self.assertEqual(code, 0, erreur)
+        self.assertEqual(self.cles(), [])
+        self.assertEqual(self.contenu(), avant)
+        self.assertEqual(self.lancer_base("check")[0], 0)
+
+    def test_photos_seules_rien_hors_regle(self):
+        self.photos()
+        self.assertEqual(self.lancer_base("check")[0], 0)
 
 
 class ContenuDesStories(AvecBase):

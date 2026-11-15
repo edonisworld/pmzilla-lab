@@ -18,15 +18,31 @@ from test_db import db          # noqa: E402
 
 INTERDITES = {"summary", "title", "description", "assignee", "reporter", "creator", "author", "labels", "comment", "name_of_person",
               "po", "product_owner", "person"}          # R-58 (D3, D20) : ni PO ni donnée personnelle
-TABLES_BRUTES = {"raw_runs", "raw_run_sightings", "raw_issue_snapshots"}      # couche brute datée (change jira-data-architecture)
-TABLES = {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods"} | TABLES_BRUTES
+TABLES_BRUTES = {"raw_runs", "raw_run_sightings", "raw_issue_snapshots",
+                 "raw_version_snapshots"}      # couche brute datée (change jira-data-architecture) ; raw_version_snapshots : jira-delivery-fields, R-20261102-16 à -36 (0032)
+TABLES_LIVRAISON = {"issue_delivery_fields", "sprints", "issue_current_sprints", "issue_current_asset_versions", "issue_delivery_options",
+                    "issue_defect_fields", "issue_sprint_periods", "issue_asset_version_periods",
+                    "release_versions"}      # champs de livraison (jira-delivery-fields, R-20261102-16 à -36, migration 0032)
+TABLES_PHOTO = {"version_photo_versions", "version_photo_runs", "version_photo_weeks", "version_photo_rows",
+                "version_photo_n"}                          # magasin des photos de qualité par version (migration 0019, change version-quality-photo)
+TABLES_REFERENTIEL = {"ref_cycles", "ref_labels", "ref_dw_columns", "ref_dw_statuses", "ref_state",
+                      "ref_flow_statuses", "ref_unplanned_types", "ref_blocking_link_types"}   # référentiel des cycles (change cycle-referential-schema, décision R-20261028-91) et ses définitions (change flow-definitions-referential, décision R-20261029-09)
+TABLES = {"teams", "issues", "issue_teams", "transitions", "links", "issue_label_periods", "issue_version_periods",
+          "issue_current_versions"} | TABLES_BRUTES | TABLES_PHOTO | TABLES_REFERENTIEL | TABLES_LIVRAISON      # issue_current_versions : migration 0017 (change flow-version-share)
 TABLE_ETIQUETTES = "issue_label_periods"                  # périodes d'étiquettes déclarées (migration 0008)
+TABLE_ETIQUETTES_REFERENTIEL = "ref_labels"               # seconde et dernière table d'étiquettes, sans ticket (décision R-20261028-91, change cycle-referential-schema)
 TABLE_VERSIONS = "issue_version_periods"                  # périodes de fixVersion (migration 0008)
 VUES = {"v_team_status", "v_team_weekly_resolved", "v_team_open_age", "v_team_dependencies"}      # les quatre vues agrégées du rôle des vues
 VUES_NOMS = {"v_teams", "v_team_jira_ids"}               # les deux vues des noms d'équipe, rôle des vues (migration 0014, change team-names-readable) ; à part de VUES
                                                          # car v_teams lit le type d'équipe et v_team_jira_ids la couche brute, ce que d'autres tests refusent aux quatre
 VUE_EQUIPES_VUES = "v_team_tickets_seen"                  # revue du catalogue de check-teams : rôle en lecture seule seulement (migration 0013, D13)
-VUES_DU_SCHEMA = VUES | VUES_NOMS | {VUE_EQUIPES_VUES}
+VUE_PART_VERSIONS = "v_team_fix_version_share"           # part des items terminés avec une fix version, rôle des vues (migration 0018, change flow-version-share)
+VUES_PHOTO = {"v_version_quality_photo", "v_team_fix_version_lag"}   # photo de qualité par version et retard de la fix version, rôle des vues (migration 0020, change version-quality-photo)
+VUES_TRANCHE_1 = {"v_team_lead_time_throughput", "v_task_without_team_share", "v_team_ready_queue", "v_team_blocked_share", "v_unplanned_share"}   # cinq vues agrégées de la tranche 1 de Mothra, rôle des vues (migration 0026, tâche 15.1)
+VUE_INTERNE_T3 = "v_t3_withheld"                        # vue interne de la relation T3 (masking-sums D17, migration 0030) : aucun rôle n'y a de droit
+VUE_FLUX = {"v_team_flow_inout"}                          # créés et finis par équipe et trimestre clos, rôle des vues (migration 0031, mothra-slices 36.1)
+VUE_COUVERTURE = {"v_team_delivery_fields_coverage"}      # couverture des champs de livraison, rôle des vues (migration 0033, jira-delivery-fields, R-20261102-16 à -36)
+VUES_DU_SCHEMA = VUES | VUES_NOMS | {VUE_EQUIPES_VUES, VUE_PART_VERSIONS} | VUES_PHOTO | VUES_TRANCHE_1 | {VUE_INTERNE_T3} | VUE_FLUX | VUE_COUVERTURE
 
 
 class SchemaFlow(unittest.TestCase):
@@ -96,7 +112,7 @@ class SchemaFlow(unittest.TestCase):
             self.assertFalse(set(nom.split("_")) & {"po", "owner", "person", "assignee", "reporter", "creator", "author", "email", "account"},
                              f"{table}.{colonne} : colonne PO ou personnelle")
         avec_etiquette = {t for t, col in lignes if "label" in col.lower()}
-        self.assertEqual(avec_etiquette, {TABLE_ETIQUETTES})
+        self.assertEqual(avec_etiquette, {TABLE_ETIQUETTES, TABLE_ETIQUETTES_REFERENTIEL})
         for table in (TABLE_ETIQUETTES, TABLE_VERSIONS):
             colonnes = {col for t, col in lignes if t == table}
             self.assertLessEqual({"issue_key", "added_at", "removed_at"}, colonnes, table)
@@ -193,7 +209,7 @@ class SchemaFlow(unittest.TestCase):
     def test_le_role_des_vues_ne_lit_que_les_vues(self):
         c = self.conn()
         self.jeu(c)
-        for vue in VUES | VUES_NOMS:
+        for vue in VUES | VUES_NOMS | {VUE_PART_VERSIONS} | VUES_PHOTO | VUES_TRANCHE_1 | VUE_COUVERTURE:
             self.assertTrue(self.essaie(c, "pmzilla_flow_views", f"SELECT * FROM flow.{vue}"), vue)
         for table in TABLES:
             self.assertFalse(self.essaie(c, "pmzilla_flow_views", f"SELECT * FROM flow.{table}"), table)
@@ -260,7 +276,8 @@ class SansBase(unittest.TestCase):
     def test_role_password_n_accepte_que_les_roles_de_lecture_limitee(self):
         self.assertEqual(db.ROLES_AVEC_MOT_DE_PASSE,
                          ("pmzilla_flow_views", "pmzilla_knowledge_ro", "pmzilla_cases_ro", "pmzilla_cases", "pmzilla_flow",
-                          "pmzilla_quality_views"))
+                          "pmzilla_quality_views", "pmzilla_mothra",
+                          "pmzilla_mothra_views"))     # + pmzilla_mothra : tâche 16.1, ADR 0006 accepté le 2026-10-27 ; + pmzilla_mothra_views : R-20261107-26 décision 3 (a), A-80
         self.assertEqual(db.service_du_role("pmzilla_cases_ro"), "pmzilla-lab-db-pmzilla_cases_ro")
         self.assertEqual(db.variable_du_role("pmzilla_cases_ro"), "PMZILLA_LAB_DB_PASSWORD_PMZILLA_CASES_RO")
         self.assertEqual(db.service_du_role("pmzilla_cases"), "pmzilla-lab-db-pmzilla_cases")

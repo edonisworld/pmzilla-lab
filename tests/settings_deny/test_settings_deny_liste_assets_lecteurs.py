@@ -1,5 +1,5 @@
 """Règles `deny` de la liste Assets complète : les 25 autres lecteurs courants (change team-mapping, tâche 2.3, extension de la
-section F de etapes/r81-regles-deny.md).
+section F du fichier de règles deny de l'auteur).
 
 Complète test_settings_deny_liste_assets.py (les neuf lecteurs de départ, déjà vert et commité). Ces cas restent rouges tant que
 l'auteur n'a pas posé les 25 règles dans .claude/settings.json : ce fichier n'est donc pas commité par le change, l'auteur le

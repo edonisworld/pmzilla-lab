@@ -71,7 +71,8 @@ JOURS = {"monday": 0, "lundi": 0, "tuesday": 1, "mardi": 1, "wednesday": 2, "mer
          "friday": 4, "vendredi": 4, "saturday": 5, "samedi": 5, "sunday": 6, "dimanche": 6}
 
 # Interpréteur des suites : les paquets du lanceur de tests utiles aux cibles, pris dans le cache de uv.
-LANCEUR = ("uv", "run", "--quiet", "--with", "numpy", "--with", "pyyaml", "--with", "psycopg[binary]", "python", "-W", "ignore")
+# requests : tests/db importe tests/story_quality/aide_analyse -> tools/history_jira.py, qui importe requests ; sans lui la suite de référence échoue à l'import.
+LANCEUR = ("uv", "run", "--quiet", "--with", "numpy", "--with", "pyyaml", "--with", "psycopg[binary]", "--with", "requests", "python", "-W", "ignore")
 
 
 @dataclass(frozen=True)

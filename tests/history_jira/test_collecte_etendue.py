@@ -87,7 +87,10 @@ class Etendue(base.Base):
         code, sortie = self.lancer("collect")
         self.assertEqual(code, 0, sortie)
         corps = next(c for api, c in self.faux.corps if api == "/rest/api/3/changelog/bulkfetch")
-        self.assertEqual(sorted(corps["fieldIds"]), ["fixVersions", "labels", "status"])
+        # jira-delivery-fields, R-20261102-16 à -36 : le sprint et les versions visée et livrée rejoignent la liste fermée (D2) ;
+        # R-20261102-61 : les deux champs de version des épics aussi (liste exacte)
+        self.assertEqual(sorted(corps["fieldIds"]), ["customfield_99001", "customfield_99002", "customfield_99003", "customfield_99004",
+                                                      "customfield_99005", "fixVersions", "labels", "status"])
 
     # --- Valeurs courantes et périodes ---------------------------------------------------------------------------------
 
@@ -96,12 +99,17 @@ class Etendue(base.Base):
         self.ecrire_export(self.inventer(2))
         self.lancer("collect")
         champs = [c["fields"] for api, c in self.faux.corps if api == "/rest/api/3/search/jql" and c["fields"] != ["key"]]
-        self.assertEqual(champs, [["fixVersions", "labels"]])
+        # jira-delivery-fields, R-20261102-16 à -36 : les valeurs courantes du sprint et des versions servent aux périodes (D2) ;
+        # R-20261102-61 : et celles des deux champs de version des épics (liste exacte)
+        self.assertEqual(champs, [["fixVersions", "labels", "customfield_99001", "customfield_99002", "customfield_99003", "customfield_99004",
+                                   "customfield_99005"]])
         self.faux.corps.clear()
         self.ecrire_reglages("scopes")                                         # sans étiquette déclarée : les étiquettes ne sont pas demandées
         self.lancer("collect", "--refresh")
         champs = [c["fields"] for api, c in self.faux.corps if api == "/rest/api/3/search/jql" and c["fields"] != ["key"]]
-        self.assertEqual(champs, [["fixVersions"]])
+        # jira-delivery-fields, R-20261102-16 à -36 (idem) ; R-20261102-61 (idem)
+        self.assertEqual(champs, [["fixVersions", "customfield_99001", "customfield_99002", "customfield_99003", "customfield_99004",
+                                   "customfield_99005"]])
 
     def test_periodes_d_etiquette_declaree_et_de_fix_version(self):
         self.ecrire_reglages("scopes", extra=DECLAREES)

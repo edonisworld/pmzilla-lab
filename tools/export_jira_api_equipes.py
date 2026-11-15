@@ -27,7 +27,6 @@ import io
 import os
 import re
 import sys
-import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
@@ -59,10 +58,6 @@ class Objet(NamedTuple):
 def trier(identifiants) -> list[str]:
     """Identifiants triés par valeur numérique (le texte pour une forme non numérique)."""
     return sorted(identifiants, key=lambda i: (0, int(i), i) if i.isdigit() else (1, 0, i))
-
-
-def sans_accents(texte: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", texte) if unicodedata.category(c) != "Mn").casefold()
 
 
 # ---------------------------------------------------------------------------
@@ -285,10 +280,11 @@ def cmd_check_teams(ex, args) -> None:
         dire(ex, "table_not_covered", count=len(non_couverts))
         dire(ex, "table_ids_to_place", ids=ids_ligne(ex, non_couverts))
 
-    sans_identifiant = [e for e in equipes if not e.jira_ids]
+    sans_identifiant = [e for e in equipes if not e.jira_ids and not e.sans_equipe_jira]
     dire(ex, "without_identifier", count=len(sans_identifiant))
     if sans_identifiant:
         dire(ex, "without_identifier_paths", paths=ex.t("list_separator").join(f"{e.chemin} (L{e.ligne})" for e in sans_identifiant))
+    dire(ex, "without_jira_team", count=sum(1 for e in equipes if e.sans_equipe_jira))      # un nombre, jamais un nom ni une raison
 
     liste = derniere_liste(ex)
     if liste is None:
@@ -355,7 +351,8 @@ def extrait_des_noms(referentiel, catalogue, date: dt.date | None = None) -> Ext
     `referentiel` vaut None quand le fichier est absent. Les listes sont vides pour une source absente."""
     equipes = list(referentiel.teams.values()) if referentiel is not None else []
     cat = catalogue if catalogue is not None else org.Catalogue()
-    du_referentiel = [{"name": e.nom, "jira_team_ids": list(e.jira_ids), "without_identifier": not e.jira_ids,
+    du_referentiel = [{"name": e.nom, "jira_team_ids": list(e.jira_ids), "without_identifier": not e.jira_ids and not e.sans_equipe_jira,
+                       "without_jira_team": e.sans_equipe_jira, "without_jira_team_reason": e.raison_sans_equipe_jira,
                        "type": org.type_effectif(e, cat)} for e in equipes]
     du_catalogue = [{"name": c.nom, "jira_team_ids": list(c.jira_ids), "type": c.type, "obsolete": c.obsolete,
                      "outside_referential": referentiel is None or not any(referentiel.team_for_jira_id(i) for i in c.jira_ids)}

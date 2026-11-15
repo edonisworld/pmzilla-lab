@@ -157,10 +157,10 @@ class Voie(unittest.TestCase):
                 library.open_library()
         self.assertIn("base muette", str(cm.exception))
 
+    # Assertion sqlite portée par tests/sqlite_guard (désherbage D82, décision de l'auteur du 2026-10-28) ; à rétablir si cette garde est retirée.
     def test_la_voie_de_fichier_n_existe_plus(self):
         for nom in ("Library", "BACKENDS", "choose_backend", "connect", "migrate_chunks", "SCHEMA", "DB_PATH", "DATA_DIR"):
             self.assertFalse(hasattr(library, nom), nom)
-        self.assertNotRegex(Path(library.__file__).read_text(encoding="utf-8"), r"(?m)^\s*(?:import|from)\s+sqlite3\b")
 
     def test_base_qui_ne_repond_pas_message_clair_sans_secret(self):
         with mock.patch.object(db, "connect", side_effect=db.ErreurBase("Connexion à la base impossible : refusée.")):

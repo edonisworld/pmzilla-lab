@@ -447,10 +447,10 @@ class DepotReel(unittest.TestCase):
     une machine où les identifiants n'apparaissent nulle part (autre compte, clone neuf).
     """
     RACINE = Path(__file__).resolve().parents[2]
-    TOLERES_LOT_8 = ()
 
     def test_aucun_identifiant_personnel_dans_les_fichiers_suivis(self):
-        trouves = ip.chercher(self.RACINE, ip.EXCLUS_PAR_DEFAUT + self.TOLERES_LOT_8)
+        # Constante vide TOLERES_LOT_8 retirée le 2026-10-28 (désherbage D89) ; si une tolérance revient, la déclarer avec sa raison et sa date de retrait.
+        trouves = ip.chercher(self.RACINE, ip.EXCLUS_PAR_DEFAUT)
         detail = "; ".join(f"{nom} : lignes {', '.join(map(str, lignes))}" for nom, lignes in sorted(trouves.items()))
         self.assertFalse(trouves, f"Identifiants personnels dans des fichiers suivis : {detail}")
 

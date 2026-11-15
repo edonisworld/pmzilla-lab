@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "httpx", "pyyaml", "mcp>=1.2,<2", "psycopg[binary]"]
+# dependencies = ["numpy", "httpx", "pyyaml", "mcp>=2,<3", "psycopg[binary]"]
 # ///
 """
 PMZilla Lab — diagnostic des légendes PDF que l'indexation ne retire pas du texte de page.

@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "minThreshold": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "views": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "countColumns": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "maskableColumns": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "plainColumns": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "roleKind": {
+            "pattern": "^(flow|quality)$",
+            "type": "string"
+          },
+          "schema": {
+            "pattern": "^(flow|quality)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "schema",
+          "roleKind",
+          "countColumns",
+          "plainColumns"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "views"
+  ],
+  "type": "object"
+}

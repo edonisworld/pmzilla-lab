@@ -1,0 +1,22 @@
+{
+  "name": "@mothra/contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mothra contract package: schemas and loaders shared by the server and the front. Imports no other Mothra package.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./reponse": "./src/reponse.ts",
+    "./equipe": "./src/equipe.ts",
+    "./listes-fiche": "./src/listes-fiche.ts",
+    "./cycle-preparation": "./src/cycle-preparation/pur.ts",
+    "./composition": "./src/composition.ts"
+  },
+  "scripts": {
+    "test": "node ../outils/couverture.mjs contract",
+    "generer": "node src/generer.ts"
+  },
+  "dependencies": {
+    "typebox": "1.4.4"
+  }
+}

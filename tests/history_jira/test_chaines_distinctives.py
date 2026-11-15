@@ -13,7 +13,7 @@ from test_history_jira import AUTEUR, JETON, Base
 
 ETIQUETTE = "ZZDISTINCT-ETIQUETTE"
 VERSION = "ZZDISTINCT-VERSION"
-CLE = "ZZKEY-77"
+CLE = "ZZKEYSEPT"        # R-20261028-116 : la clé est « <CLE>-<n> », de la forme LETTRES-chiffres du client en lecture seule
 EQUIPE = "ZZDISTINCT-EQUIPE"
 
 

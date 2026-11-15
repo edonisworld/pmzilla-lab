@@ -6,10 +6,10 @@ The system SHALL print a morning summary of counts only (watch run, kept article
 ## Requirements
 
 ### Requirement: Print the morning summary with counts only
-The system SHALL provide a summary script that prints, after a title, one line each for the watch of the day, the due reviews, the ready jobs and the doctor's last check, in that order, with the key phrases of design D7, in French by default or English with the shared language option. It SHALL give counts and dates only. It SHALL NOT print an article title, a review's problem text, a job title, a path, a name or a secret.
+The system SHALL print, after a title, the automatic train's stop line when present, one line each for the watch, the due reviews, the ready jobs and the doctor's last check, then the frozen-copies line when present, in that order, with the key phrases of design D7 and of change train-auto-launchd-env D8, in French or English. It SHALL give counts, dates and codes only, and SHALL NOT print a title, a problem text, a name, a secret, or a path other than the frozen copies' command.
 
 #### Scenario: Every part known
-- **WHEN** the run record, the count file, the snapshot and the doctor's state file are today's and the database answers
+- **WHEN** the run record, the count file, the snapshot and the doctor's state file are today's, the database answers, and neither the stop file nor the frozen-copies note exists
 - **THEN** the output holds the title and four lines with the key phrases of design D7, and exit code is 0
 
 #### Scenario: No text leaks
@@ -19,6 +19,10 @@ The system SHALL provide a summary script that prints, after a title, one line e
 #### Scenario: English
 - **WHEN** the script runs with the English language option
 - **THEN** the lines use the English key phrases of design D7
+
+#### Scenario: Stop and frozen copies together
+- **WHEN** the stop file and the frozen-copies note both exist
+- **THEN** the stop line comes right after the title, the four lines follow, and the frozen-copies line is last
 
 ### Requirement: Outputs and exit codes of the summary script
 The system SHALL exit 0 once the summary is printed, whatever part is unknown; 1 when an allowed notification could not be sent; 2 on a usage error; 3 when an allowed notification was skipped because one was already sent today; 4 when it was skipped because the summary is switched off (design D2, D15). With the JSON option it SHALL print the same parts as states, counts and dates. An unknown part SHALL NOT stop the summary nor change its exit code.
@@ -144,3 +148,57 @@ The system SHALL keep the summary on unless a local setting outside Git, the mar
 #### Scenario: Switched off
 - **WHEN** the marker exists and a scheduled call runs
 - **THEN** no notification is sent, no memory is written, the "switched off" key phrase is printed and exit code is 4
+
+### Requirement: The stop of the automatic train opens the summary
+While the automatic train's stop file exists, the system SHALL print, right after the title and in the notification, the line of train-auto-launchd-env D8, read through `stop_info()` only, and give it in the JSON under `train_stop` with the state `stopped`, `unreadable` or `unknown`. It SHALL NOT read the stop file or the journal itself, print a reason outside `[A-Za-z0-9][A-Za-z0-9_-]{0,31}`, print a line or a `train_stop` key without a stop, nor change its exit code.
+
+#### Scenario: Stop armed
+- **WHEN** `stop_info()` returns `arrete` with the date `2026-11-07 21:04` and the reason `65`
+- **THEN** the first line after the title is `Train automatique arrêté depuis 2026-11-07 21:04, raison 65`, and the notification body starts with it
+
+#### Scenario: English
+- **WHEN** the same stop is read with the English language option
+- **THEN** the line is `Automatic train stopped since 2026-11-07 21:04, reason 65`
+
+#### Scenario: Date and reason unreadable
+- **WHEN** `stop_info()` returns `illisible`
+- **THEN** the line is `Train automatique arrêté (date et raison illisibles)`, or `Automatic train stopped (date and reason unreadable)` in English, and `train_stop` is `{"state": "unreadable", "date": null, "reason": null}`
+
+#### Scenario: Stop without a reason
+- **WHEN** the last stop record holds no reason
+- **THEN** the reason is written `non donnée`, or `not given` in English
+
+#### Scenario: Manual stop
+- **WHEN** `stop_info()` returns `arrete` with the reason `manuel`
+- **THEN** the line ends with `raison manuel` and `train_stop` holds the state `stopped`
+
+#### Scenario: Reason outside the allowed form
+- **WHEN** `stop_info()` returns `arrete` with a reason that holds a slash, a space or a line break, or more than 32 characters
+- **THEN** the state is `unreadable`, the line is `Train automatique arrêté (date et raison illisibles)`, and neither the output, the JSON nor the notification holds the reason
+
+#### Scenario: No stop
+- **WHEN** `stop_info()` returns `absent`
+- **THEN** no stop line is printed, the JSON has no `train_stop` key, and the exit code is unchanged
+
+#### Scenario: JSON
+- **WHEN** the script runs with the JSON option during a stop armed with the reason `65`
+- **THEN** `train_stop` is `{"state": "stopped", "date": "2026-11-07 21:04", "reason": "65"}`
+
+#### Scenario: Stop state unknown
+- **WHEN** `train_auto` cannot be imported, raises, or `stop_info()` returns `inconnu`
+- **THEN** no stop line is printed, `train_stop` is `{"state": "unknown"}`, and the exit code is unchanged
+
+### Requirement: The summary says when the frozen copies are behind main
+While the note of the frozen copies' delay exists in the lab data folder, the system SHALL print as the last line `Copies figées en retard sur main : à rafraîchir par : {command}` with the note's command, give it in the JSON under `frozen`, and put in the notification the same line without the command (R-20261110-03, -04). An unreadable note SHALL give `Copies figées en retard sur main : note illisible`. It SHALL NOT print a line or a `frozen` key without the note.
+
+#### Scenario: Copies behind
+- **WHEN** the note holds a train tip followed by the refresh command
+- **THEN** the last line gives that command, the JSON `frozen` key holds it, and the notification holds `Copies figées en retard sur main : commande dans le résumé du Terminal` and no path
+
+#### Scenario: Unreadable note
+- **WHEN** the note exists but holds no command on one line
+- **THEN** the line is `Copies figées en retard sur main : note illisible`
+
+#### Scenario: No note
+- **WHEN** the note does not exist
+- **THEN** no such line is printed and the JSON has no `frozen` key
